@@ -1,0 +1,28 @@
+import ArgumentParser
+import Foundation
+
+@main
+struct FleetMate: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "fleetmate",
+        abstract: "FleetMate - Fleet orchestration, inventory, deployment monitoring, and troubleshooting for macOS",
+        version: "1.0.0",
+        subcommands: [
+            StatusCommand.self,
+            ErrorsCommand.self,
+            DeviceCommand.self,
+            TroubleshootCommand.self,
+            LintCommand.self,
+            ValidateCommand.self,
+            SnipeCommand.self,
+            MunkiReportCommand.self,
+        ],
+        defaultSubcommand: StatusCommand.self
+    )
+    
+    @Flag(name: .shortAndLong, help: "Enable verbose output")
+    var verbose: Bool = false
+    
+    @Flag(name: .long, help: "Output in JSON format")
+    var json: Bool = false
+}

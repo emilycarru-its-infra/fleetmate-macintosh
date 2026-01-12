@@ -6,10 +6,12 @@ import PackageDescription
 let package = Package(
     name: "FleetMate",
     platforms: [
-        .macOS(.v13)
+        .macOS(.v14)
     ],
     products: [
-        .executable(name: "fleetmate", targets: ["FleetMate"])
+        .library(name: "FleetMateCore", targets: ["FleetMateCore"]),
+        .executable(name: "fleetmate", targets: ["FleetMate"]),
+        .executable(name: "FleetMateApp", targets: ["FleetMateApp"])
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
@@ -20,21 +22,38 @@ let package = Package(
         .package(url: "https://github.com/Alamofire/Alamofire.git", from: "5.8.0"),
     ],
     targets: [
+        // Shared library with services, models, and config
+        .target(
+            name: "FleetMateCore",
+            dependencies: [
+                .product(name: "Yams", package: "Yams"),
+                .product(name: "Logging", package: "swift-log"),
+                .product(name: "Alamofire", package: "Alamofire"),
+            ],
+            path: "Sources/FleetMateCore"
+        ),
+        // CLI executable
         .executableTarget(
             name: "FleetMate",
             dependencies: [
+                "FleetMateCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
-                .product(name: "Yams", package: "Yams"),
                 .product(name: "Rainbow", package: "Rainbow"),
-                .product(name: "Logging", package: "swift-log"),
                 .product(name: "Socket", package: "BlueSocket"),
-                .product(name: "Alamofire", package: "Alamofire"),
             ],
             path: "Sources/FleetMate"
         ),
+        // SwiftUI App
+        .executableTarget(
+            name: "FleetMateApp",
+            dependencies: [
+                "FleetMateCore",
+            ],
+            path: "Sources/FleetMateApp"
+        ),
         .testTarget(
             name: "FleetMateTests",
-            dependencies: ["FleetMate"],
+            dependencies: ["FleetMateCore"],
             path: "Tests/FleetMateTests"
         ),
     ]

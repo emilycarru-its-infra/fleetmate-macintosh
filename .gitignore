@@ -1,0 +1,65 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+DerivedData/
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Secrets and credentials
+.env
+*.env.local
+.env.*.local
+
+# Local config overrides
+config.yaml
+config.local.yaml
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*~
+tmpclaude-*
+
+# Logs
+*.log
+logs/
+
+# Build artifacts
+*.app
+*.framework
+*.dylib
+*.a
+
+# Code coverage
+*.gcno
+*.gcda
+*.profraw
+*.profdata
+codecov/

@@ -16,9 +16,9 @@ class SnipeService {
         return !baseUrl.isEmpty && !apiKey.isEmpty
     }
     
-    init(baseUrl: String, apiKey: String, cacheMinutes: Int = 5) {
-        self.baseUrl = baseUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        self.apiKey = apiKey
+    init(baseUrl: String?, apiKey: String?, cacheMinutes: Int = 5) {
+        self.baseUrl = (baseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        self.apiKey = apiKey ?? ""
         self.cacheDuration = TimeInterval(cacheMinutes * 60)
         
         let configuration = URLSessionConfiguration.default

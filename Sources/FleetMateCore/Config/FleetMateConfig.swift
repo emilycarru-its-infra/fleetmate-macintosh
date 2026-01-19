@@ -3,12 +3,15 @@ import Yams
 
 /// Configuration for FleetMate
 ///
+/// Credentials are loaded in order of precedence:
+/// 1. Environment variables (highest priority, for CI/CD)
+/// 2. macOS Keychain (for developer workstations)
+/// 3. .env files (legacy fallback)
+/// 4. Config YAML files (default values)
+///
 /// Required Environment Variables:
-/// - MUNKIREPORT_URL: MunkiReport instance URL
-/// - MUNKIREPORT_SSH_HOST: SSH host for MunkiReport database access
-/// - MUNKIREPORT_SSH_USER: SSH username
-/// - MUNKIREPORT_SSH_KEY_PATH: Path to SSH private key
-/// - MUNKIREPORT_DB_PATH: Path to MunkiReport SQLite database on remote host
+/// - REPORTMATE_URL: ReportMate API base URL
+/// - REPORTMATE_PASSPHRASE: ReportMate API passphrase
 /// - SNIPE_URL: Snipe-IT instance URL
 /// - SNIPE_API_KEY: Snipe-IT API key
 /// - GRAPH_TENANT_ID: Azure AD tenant ID for Microsoft Graph
@@ -24,7 +27,11 @@ import Yams
 /// - TDX_BEID: TeamDynamix BEID (for admin auth)
 /// - TDX_WEB_SERVICES_KEY: TeamDynamix web services key (for admin auth)
 public struct FleetMateConfig: Codable {
-    // MunkiReport settings (all required via environment)
+    // ReportMate API settings (replaces MunkiReport)
+    public var reportMateUrl: String?
+    public var reportMatePassphrase: String?
+    
+    // Legacy MunkiReport settings (deprecated, use ReportMate)
     public var munkiReportUrl: String?
     var munkiReportSshHost: String?
     var munkiReportSshUser: String?
@@ -32,51 +39,59 @@ public struct FleetMateConfig: Codable {
     var munkiReportDbPath: String?
 
     // Snipe-IT API settings
-    var snipeUrl: String?
-    var snipeApiKey: String?
+    public var snipeUrl: String?
+    public var snipeApiKey: String?
 
     // Microsoft Graph (Intune/Entra) settings
-    var graphTenantId: String?
-    var graphClientId: String?
-    var graphClientSecret: String?
-    var graphPageSize: Int = 100
+    public var graphTenantId: String?
+    public var graphClientId: String?
+    public var graphClientSecret: String?
+    public var graphPageSize: Int = 100
 
     // Azure DevOps settings
-    var devopsOrganization: String?
-    var devopsProject: String?
-    var devopsPat: String?
-    var devopsDefaultWorkItemType: String = "Bug"
+    public var devopsOrganization: String?
+    public var devopsProject: String?
+    public var devopsPat: String?
+    public var devopsDefaultWorkItemType: String = "Bug"
 
     // TeamDynamix (TDX) settings
-    var tdxBaseUrl: String?
-    var tdxAppId: Int?
-    var tdxUsername: String?
-    var tdxPassword: String?
-    var tdxBeid: String?
-    var tdxWebServicesKey: String?
-    var tdxDefaultTypeId: Int?
-    var tdxDefaultStatusId: Int?
-    var tdxDefaultPriorityId: Int?
-    var tdxDefaultSourceId: Int?
-    var tdxDefaultAccountId: Int?
+    public var tdxBaseUrl: String?
+    public var tdxAppId: Int?
+    public var tdxUsername: String?
+    public var tdxPassword: String?
+    public var tdxBeid: String?
+    public var tdxWebServicesKey: String?
+    public var tdxDefaultTypeId: Int?
+    public var tdxDefaultStatusId: Int?
+    public var tdxDefaultPriorityId: Int?
+    public var tdxDefaultSourceId: Int?
+    public var tdxDefaultAccountId: Int?
+    
+    // SecureShell settings
+    public var secureShell: SecureShellConfig?
 
     // Deployment repo paths
-    var deploymentPath: String = "deployment"
-    var pkgsinfoPath: String = "deployment/pkgsinfo"
-    var pkgsPath: String = "deployment/pkgs"
-    var manifestsPath: String = "deployment/manifests"
-    var catalogsPath: String = "deployment/catalogs"
+    public var deploymentPath: String = "deployment"
+    public var pkgsinfoPath: String = "deployment/pkgsinfo"
+    public var pkgsPath: String = "deployment/pkgs"
+    public var manifestsPath: String = "deployment/manifests"
+    public var catalogsPath: String = "deployment/catalogs"
 
     // Local paths
-    var packagesPath: String = "packages"
-    var logPath: String = "~/Library/Logs/FleetMate"
-    var logLevel: String = "info"
-    var cacheMinutes: Int = 5
+    public var packagesPath: String = "packages"
+    public var logPath: String = "~/Library/Logs/FleetMate"
+    public var logLevel: String = "info"
+    public var cacheMinutes: Int = 5
 
     // Repo root (detected at runtime)
-    var repoRoot: String?
+    public var repoRoot: String?
+    
+    /// Default initializer
+    public init() {}
 
     enum CodingKeys: String, CodingKey {
+        case reportMateUrl = "reportmate_url"
+        case reportMatePassphrase = "reportmate_passphrase"
         case munkiReportUrl = "munkireport_url"
         case munkiReportSshHost = "munkireport_ssh_host"
         case munkiReportSshUser = "munkireport_ssh_user"
@@ -103,6 +118,7 @@ public struct FleetMateConfig: Codable {
         case tdxDefaultPriorityId = "tdx_default_priority_id"
         case tdxDefaultSourceId = "tdx_default_source_id"
         case tdxDefaultAccountId = "tdx_default_account_id"
+        case secureShell = "secure_shell"
         case deploymentPath = "deployment_path"
         case pkgsinfoPath = "pkgsinfo_path"
         case pkgsPath = "pkgs_path"
@@ -121,8 +137,8 @@ public struct FleetMateConfig: Codable {
         "/etc/fleetmate/config.yaml"
     ]
 
-    /// Load configuration from file and environment
-    static func load() throws -> FleetMateConfig {
+    /// Load configuration from file, Keychain, and environment
+    public static func load() throws -> FleetMateConfig {
         var config = FleetMateConfig()
 
         // Try config file locations
@@ -145,8 +161,11 @@ public struct FleetMateConfig: Codable {
             let expandedPath = NSString(string: envPath).expandingTildeInPath
             loadEnvFile(path: expandedPath, into: &config)
         }
+        
+        // Load from macOS Keychain (preferred for developer workstations)
+        loadFromKeychain(into: &config)
 
-        // Environment variables override
+        // Environment variables override everything (for CI/CD)
         loadEnvironmentVariables(into: &config)
 
         // Find repo root
@@ -161,6 +180,51 @@ public struct FleetMateConfig: Codable {
         }
         let decoder = YAMLDecoder()
         return try? decoder.decode(FleetMateConfig.self, from: contents)
+    }
+    
+    /// Load credentials from macOS Keychain
+    private static func loadFromKeychain(into config: inout FleetMateConfig) {
+        let keychain = KeychainService.shared
+        
+        // ReportMate
+        if let url = keychain.get(.reportMateUrl) { config.reportMateUrl = url }
+        if let passphrase = keychain.get(.reportMatePassphrase) { config.reportMatePassphrase = passphrase }
+        
+        // Snipe-IT
+        if let url = keychain.get(.snipeUrl) { config.snipeUrl = url }
+        if let apiKey = keychain.get(.snipeApiKey) { config.snipeApiKey = apiKey }
+        
+        // Graph/Entra
+        if let tenantId = keychain.get(.graphTenantId) { config.graphTenantId = tenantId }
+        if let clientId = keychain.get(.graphClientId) { config.graphClientId = clientId }
+        if let clientSecret = keychain.get(.graphClientSecret) { config.graphClientSecret = clientSecret }
+        
+        // Azure DevOps
+        if let org = keychain.get(.devopsOrganization) { config.devopsOrganization = org }
+        if let project = keychain.get(.devopsProject) { config.devopsProject = project }
+        if let pat = keychain.get(.devopsPat) { config.devopsPat = pat }
+        
+        // TDX
+        if let url = keychain.get(.tdxBaseUrl) { config.tdxBaseUrl = url }
+        if let appId = keychain.get(.tdxAppId), let id = Int(appId) { config.tdxAppId = id }
+        if let username = keychain.get(.tdxUsername) { config.tdxUsername = username }
+        if let password = keychain.get(.tdxPassword) { config.tdxPassword = password }
+        if let beid = keychain.get(.tdxBeid) { config.tdxBeid = beid }
+        if let wsKey = keychain.get(.tdxWebServicesKey) { config.tdxWebServicesKey = wsKey }
+        
+        // SecureShell
+        if let keyPath = keychain.get(.sshKeyPath) {
+            if config.secureShell == nil { config.secureShell = SecureShellConfig() }
+            config.secureShell?.privateKeyPath = keyPath
+        }
+        if let username = keychain.get(.sshDefaultUsername) {
+            if config.secureShell == nil { config.secureShell = SecureShellConfig() }
+            config.secureShell?.defaultUsername = username
+        }
+        if let vaultName = keychain.get(.sshKeyVaultName) {
+            if config.secureShell == nil { config.secureShell = SecureShellConfig() }
+            config.secureShell?.keyVaultName = vaultName
+        }
     }
 
     private static func loadEnvFile(path: String, into config: inout FleetMateConfig) {
@@ -190,7 +254,11 @@ public struct FleetMateConfig: Codable {
     private static func loadEnvironmentVariables(into config: inout FleetMateConfig) {
         let env = ProcessInfo.processInfo.environment
 
-        // MunkiReport
+        // ReportMate
+        if let v = env["REPORTMATE_URL"] { config.reportMateUrl = v }
+        if let v = env["REPORTMATE_PASSPHRASE"] { config.reportMatePassphrase = v }
+
+        // Legacy MunkiReport (deprecated)
         if let v = env["MUNKIREPORT_URL"] { config.munkiReportUrl = v }
         if let v = env["MUNKIREPORT_SSH_HOST"] { config.munkiReportSshHost = v }
         if let v = env["MUNKIREPORT_SSH_USER"] { config.munkiReportSshUser = v }
@@ -219,10 +287,22 @@ public struct FleetMateConfig: Codable {
         if let v = env["TDX_PASSWORD"] { config.tdxPassword = v }
         if let v = env["TDX_BEID"] { config.tdxBeid = v }
         if let v = env["TDX_WEB_SERVICES_KEY"] { config.tdxWebServicesKey = v }
+        
+        // SecureShell
+        if let v = env["SSH_KEY_PATH"] {
+            if config.secureShell == nil { config.secureShell = SecureShellConfig() }
+            config.secureShell?.privateKeyPath = v
+        }
+        if let v = env["SSH_USER"] {
+            if config.secureShell == nil { config.secureShell = SecureShellConfig() }
+            config.secureShell?.defaultUsername = v
+        }
     }
 
     private static func applyConfigValue(key: String, value: String, to config: inout FleetMateConfig) {
         switch key {
+        case "REPORTMATE_URL": config.reportMateUrl = value
+        case "REPORTMATE_PASSPHRASE": config.reportMatePassphrase = value
         case "MUNKIREPORT_URL": config.munkiReportUrl = value
         case "MUNKIREPORT_SSH_HOST": config.munkiReportSshHost = value
         case "MUNKIREPORT_SSH_USER": config.munkiReportSshUser = value
@@ -259,7 +339,7 @@ public struct FleetMateConfig: Codable {
     }
 
     /// Resolve a relative path to absolute using repo root
-    func resolvePath(_ relativePath: String) -> String {
+    public func resolvePath(_ relativePath: String) -> String {
         if relativePath.hasPrefix("/") {
             return relativePath
         }
@@ -274,39 +354,61 @@ public struct FleetMateConfig: Codable {
 
     // MARK: - Helpers
 
-    /// Check if MunkiReport is configured
-    var isMunkiReportConfigured: Bool {
+    /// Check if ReportMate is configured (preferred over MunkiReport)
+    public var isReportMateConfigured: Bool {
+        return reportMateUrl != nil && !reportMateUrl!.isEmpty
+    }
+
+    /// Check if MunkiReport is configured (legacy)
+    public var isMunkiReportConfigured: Bool {
         return munkiReportUrl != nil
     }
 
     /// Check if MunkiReport SSH access is configured
-    var isMunkiReportSshConfigured: Bool {
+    public var isMunkiReportSshConfigured: Bool {
         return munkiReportSshHost != nil && munkiReportSshUser != nil && munkiReportDbPath != nil
     }
 
     /// Check if Snipe-IT is configured
-    var isSnipeConfigured: Bool {
+    public var isSnipeConfigured: Bool {
         return snipeUrl != nil && snipeApiKey != nil
     }
 
     /// Check if Graph is configured
-    var isGraphConfigured: Bool {
+    public var isGraphConfigured: Bool {
         return graphTenantId != nil && graphClientId != nil
     }
 
     /// Check if DevOps is configured
-    var isDevOpsConfigured: Bool {
+    public var isDevOpsConfigured: Bool {
         return devopsOrganization != nil && devopsProject != nil
     }
 
     /// Check if TDX is configured
-    var isTdxConfigured: Bool {
+    public var isTdxConfigured: Bool {
         return tdxBaseUrl != nil && tdxAppId != nil &&
                ((tdxUsername != nil && tdxPassword != nil) || (tdxBeid != nil && tdxWebServicesKey != nil))
     }
+    
+    /// Check if SecureShell is configured
+    public var isSecureShellConfigured: Bool {
+        if let ssh = secureShell {
+            // Check if we have a key path that exists or env var set
+            let keyPath = ssh.resolvedKeyPath
+            if FileManager.default.fileExists(atPath: keyPath) { return true }
+            if ssh.getPrivateKeyFromEnv() != nil { return true }
+            if KeychainService.shared.exists(.sshPrivateKey) { return true }
+        }
+        // Check default SSH key locations
+        let defaultPaths = [
+            "\(FileManager.default.homeDirectoryForCurrentUser.path)/.ssh/id_ed25519",
+            "\(FileManager.default.homeDirectoryForCurrentUser.path)/.ssh/id_rsa"
+        ]
+        return defaultPaths.contains { FileManager.default.fileExists(atPath: $0) }
+    }
 
     /// Get TDX tickets URL
-    func tdxTicketsUrl(_ suffix: String = "") -> String {
+    public func tdxTicketsUrl(_ suffix: String = "") -> String {
         let base = (tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let appId = tdxAppId ?? 0
         if suffix.isEmpty {
@@ -314,4 +416,15 @@ public struct FleetMateConfig: Codable {
         }
         return "\(base)/api/\(appId)/tickets/\(suffix)"
     }
+    
+    /// Get TDX assets URL
+    public func tdxAssetsUrl(_ suffix: String = "") -> String {
+        let base = (tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let appId = tdxAppId ?? 0
+        if suffix.isEmpty {
+            return "\(base)/api/\(appId)/assets"
+        }
+        return "\(base)/api/\(appId)/assets/\(suffix)"
+    }
 }
+

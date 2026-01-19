@@ -1,11 +1,12 @@
 import ArgumentParser
+import FleetMateCore
 import Foundation
 import Rainbow
 
 struct StatusCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "status",
-        abstract: "Get fleet status overview from MunkiReport and Snipe-IT"
+        abstract: "Get fleet status overview from ReportMate and Snipe-IT"
     )
     
     @Flag(name: .shortAndLong, help: "Include detailed breakdown")
@@ -19,31 +20,66 @@ struct StatusCommand: AsyncParsableCommand {
         
         var status = FleetStatus()
         
-        // Gather MunkiReport stats
-        let munkiService = MunkiReportService(config: config)
-        do {
-            let stats = try await munkiService.getInstallStats()
-            let devices = try await munkiService.getDevices()
-            let stale = try await munkiService.getStaleDevices(days: 7)
-            let errors = try await munkiService.getErrors()
-            
-            status.munkiReport = MunkiReportStatus(
-                totalDevices: devices.count,
-                staleDevices: stale.count,
-                totalErrors: errors.count,
-                totalInstalls: stats.totalInstalls,
-                pendingInstalls: stats.pendingCount,
-                connected: true
-            )
-        } catch {
-            status.munkiReport = MunkiReportStatus(connected: false, error: error.localizedDescription)
+        // Gather ReportMate stats (primary fleet monitoring)
+        if config.isReportMateConfigured {
+            let reportMateService = ReportMateService(config: config)
+            do {
+                let stats = try await reportMateService.getFleetStats()
+                let devices = try await reportMateService.getDevices()
+                let errors = try await reportMateService.getErrors()
+                
+                // Calculate stale devices (no check-in for 7+ days)
+                let sevenDaysAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
+                
+                let staleCount = devices.filter { device in
+                    guard let lastSeen = device.lastSeen else {
+                        return true // Consider devices with no date as stale
+                    }
+                    return lastSeen < sevenDaysAgo
+                }.count
+                
+                status.reportMate = ReportMateStatus(
+                    totalDevices: devices.count,
+                    staleDevices: staleCount,
+                    totalErrors: errors.count,
+                    totalInstalls: stats.totalInstalls,
+                    pendingInstalls: stats.pendingInstalls,
+                    connected: true
+                )
+            } catch {
+                status.reportMate = ReportMateStatus(connected: false, error: error.localizedDescription)
+            }
+        }
+        
+        // Fallback to legacy MunkiReport if configured
+        if status.reportMate == nil {
+            let munkiService = MunkiReportService(config: config)
+            do {
+                let stats = try await munkiService.getInstallStats()
+                let devices = try await munkiService.getDevices()
+                let stale = try await munkiService.getStaleDevices(days: 7)
+                let errors = try await munkiService.getErrors()
+                
+                // Sum up total installs from all items
+                let totalInstalls = stats.reduce(0) { $0 + $1.installedCount }
+                let pendingInstalls = stats.reduce(0) { $0 + ($1.totalDevices - $1.installedCount - $1.failedCount) }
+                
+                status.reportMate = ReportMateStatus(
+                    totalDevices: devices.count,
+                    staleDevices: stale.count,
+                    totalErrors: errors.count,
+                    totalInstalls: totalInstalls,
+                    pendingInstalls: pendingInstalls,
+                    connected: true,
+                    isLegacy: true
+                )
+            } catch {
+                status.reportMate = ReportMateStatus(connected: false, error: error.localizedDescription)
+            }
         }
         
         // Gather Snipe-IT stats
-        let snipeService = SnipeService(
-            baseUrl: config.snipeUrl,
-            apiKey: config.snipeApiKey
-        )
+        let snipeService = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey, cacheMinutes: config.cacheMinutes)
         
         if snipeService.isConfigured {
             do {
@@ -82,23 +118,28 @@ struct StatusCommand: AsyncParsableCommand {
         print("                   " + "FleetMate Status".bold.green)
         print("═══════════════════════════════════════════════════════".bold + "\n")
         
-        // MunkiReport Section
-        print("📊 " + "MunkiReport".bold.cyan)
-        if let mr = status.munkiReport {
-            if mr.connected {
+        // ReportMate Section
+        let reportTitle = status.reportMate?.isLegacy == true ? "MunkiReport (Legacy)" : "ReportMate"
+        print("📊 " + reportTitle.bold.cyan)
+        if let rm = status.reportMate {
+            if rm.connected {
                 print("   Status:".lightBlue + "        " + "Connected".green)
-                print("   Total Devices:".lightBlue + " \(mr.totalDevices)")
-                print("   Stale (7d+):".lightBlue + "   " + formatCount(mr.staleDevices, warning: 5, critical: 20))
-                print("   Errors:".lightBlue + "        " + formatCount(mr.totalErrors, warning: 1, critical: 10))
-                print("   Pending:".lightBlue + "       " + formatCount(mr.pendingInstalls, warning: 10, critical: 50))
+                print("   Total Devices:".lightBlue + " \(rm.totalDevices)")
+                print("   Stale (7d+):".lightBlue + "   " + formatCount(rm.staleDevices, warning: 5, critical: 20))
+                print("   Errors:".lightBlue + "        " + formatCount(rm.totalErrors, warning: 1, critical: 10))
+                print("   Pending:".lightBlue + "       " + formatCount(rm.pendingInstalls, warning: 10, critical: 50))
+                if rm.isLegacy {
+                    print("   ⚠️  " + "Consider migrating to ReportMate".yellow)
+                }
             } else {
                 print("   Status:".lightBlue + "        " + "Disconnected".red)
-                if let error = mr.error {
+                if let error = rm.error {
                     print("   Error:".lightBlue + "         \(error)")
                 }
             }
         } else {
             print("   Status:".lightBlue + "        " + "Not Configured".yellow)
+            print("   " + "Run 'fleetmate configure' to set up".lightBlack)
         }
         
         print("")
@@ -123,6 +164,17 @@ struct StatusCommand: AsyncParsableCommand {
             print("   Status:".lightBlue + "        " + "Not Configured".yellow)
         }
         
+        // Configuration hint
+        if verbose {
+            print("")
+            print("🔧 " + "Configuration".bold.cyan)
+            let config = try? FleetMateConfig.load()
+            print("   ReportMate:".lightBlue + "    " + (config?.isReportMateConfigured == true ? "✅" : "❌"))
+            print("   Snipe-IT:".lightBlue + "      " + (config?.snipeApiKey != nil ? "✅" : "❌"))
+            print("   Graph/Entra:".lightBlue + "   " + (config?.graphTenantId != nil ? "✅" : "❌"))
+            print("   SecureShell:".lightBlue + "   " + (config?.isSecureShellConfigured == true ? "✅" : "❌"))
+        }
+        
         print("\n" + "═══════════════════════════════════════════════════════".bold + "\n")
     }
     
@@ -140,12 +192,12 @@ struct StatusCommand: AsyncParsableCommand {
 // MARK: - Status Models
 
 struct FleetStatus: Codable {
-    var munkiReport: MunkiReportStatus?
+    var reportMate: ReportMateStatus?
     var snipeIT: SnipeITStatus?
     var timestamp: String = ISO8601DateFormatter().string(from: Date())
 }
 
-struct MunkiReportStatus: Codable {
+struct ReportMateStatus: Codable {
     var totalDevices: Int = 0
     var staleDevices: Int = 0
     var totalErrors: Int = 0
@@ -153,6 +205,7 @@ struct MunkiReportStatus: Codable {
     var pendingInstalls: Int = 0
     var connected: Bool = false
     var error: String?
+    var isLegacy: Bool = false  // True if using MunkiReport fallback
 }
 
 struct SnipeITStatus: Codable {

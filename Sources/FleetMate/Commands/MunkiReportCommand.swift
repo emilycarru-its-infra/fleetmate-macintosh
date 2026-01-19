@@ -1,39 +1,45 @@
 import ArgumentParser
 import Foundation
 import Rainbow
+import FleetMateCore
 
+/// MunkiReport command - Query MunkiReport database via SSH
 struct MunkiReportCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "munkireport",
-        abstract: "Query MunkiReport database via SSH",
+        abstract: "Query MunkiReport database",
+        discussion: """
+            Access MunkiReport data via SSH connection to the database server.
+            Requires SSH access configured (keys in Keychain or ~/.ssh/).
+            """,
         subcommands: [
-            DevicesSubcommand.self,
-            DeviceSubcommand.self,
+            MunkiDevicesSubcommand.self,
+            MunkiDeviceSubcommand.self,
             InfoSubcommand.self,
             InstallsSubcommand.self,
-            ErrorsSubcommand.self,
+            MunkiErrorsSubcommand.self,
             StaleSubcommand.self,
             QuerySubcommand.self
         ],
-        defaultSubcommand: DevicesSubcommand.self
+        defaultSubcommand: MunkiDevicesSubcommand.self
     )
 }
 
-// MARK: - Devices List
+// MARK: - List Devices
 
-struct DevicesSubcommand: AsyncParsableCommand {
+struct MunkiDevicesSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "devices",
         abstract: "List all devices in MunkiReport"
     )
     
-    @Option(name: .shortAndLong, help: "Filter by machine type (Laptop, Desktop)")
+    @Option(name: .shortAndLong, help: "Filter by machine model type")
     var type: String?
     
-    @Option(name: .shortAndLong, help: "Maximum number of results")
-    var limit: Int = 100
+    @Option(name: .shortAndLong, help: "Maximum number of devices to show")
+    var limit: Int = 50
     
-    @Flag(name: .shortAndLong, help: "Output as JSON")
+    @Flag(name: .long, help: "Output as JSON")
     var json: Bool = false
     
     func run() async throws {
@@ -43,7 +49,7 @@ struct DevicesSubcommand: AsyncParsableCommand {
         var devices = try await service.getDevices()
         
         if let type = type {
-            devices = devices.filter { $0.machineModel?.lowercased().contains(type.lowercased()) ?? false }
+            devices = devices.filter { $0.machineModel.lowercased().contains(type.lowercased()) }
         }
         
         if devices.count > limit {
@@ -68,11 +74,11 @@ struct DevicesSubcommand: AsyncParsableCommand {
         print(header.underline)
         
         for device in devices {
-            let lastCheckin = device.timestamp ?? "Never"
+            let lastCheckin = device.lastSeenFormatted
             let row = String(format: "%-20s %-30s %-15s %-20s",
-                device.serialNumber ?? "Unknown",
-                String((device.computerName ?? "Unknown").prefix(28)),
-                device.osVersion ?? "Unknown",
+                device.serialNumber,
+                String(device.displayName.prefix(28)),
+                device.osVersion,
                 String(lastCheckin.prefix(18)))
             print(row)
         }
@@ -82,23 +88,23 @@ struct DevicesSubcommand: AsyncParsableCommand {
 
 // MARK: - Single Device
 
-struct DeviceSubcommand: AsyncParsableCommand {
+struct MunkiDeviceSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "device",
         abstract: "Get details for a specific device"
     )
     
-    @Argument(help: "Serial number of the device")
+    @Argument(help: "Device serial number or hostname")
     var serial: String
     
-    @Flag(name: .shortAndLong, help: "Output as JSON")
+    @Flag(name: .long, help: "Output as JSON")
     var json: Bool = false
     
     func run() async throws {
         let config = try FleetMateConfig.load()
         let service = MunkiReportService(config: config)
         
-        guard let device = try await service.getDevice(serial: serial) else {
+        guard let device = try await service.getDevice(serial) else {
             print("Device not found: \(serial)".red)
             throw ExitCode.failure
         }
@@ -111,33 +117,35 @@ struct DeviceSubcommand: AsyncParsableCommand {
         } else {
             printDeviceDetails(device)
             
-            // Also fetch munki info
-            if let munkiInfo = try await service.getMunkiInfo(serial: serial) {
+            if let munkiInfo = try await service.getMunkiInfo(serial: device.serialNumber) {
                 printMunkiInfo(munkiInfo)
             }
         }
     }
     
     private func printDeviceDetails(_ device: MunkiDevice) {
-        print("\n" + "Device: \(device.computerName ?? device.serialNumber ?? "Unknown")".bold.green + "\n")
-        print("  Serial Number:".lightBlue + "  \(device.serialNumber ?? "Unknown")")
-        print("  Computer Name:".lightBlue + "  \(device.computerName ?? "Unknown")")
-        print("  OS Version:".lightBlue + "    \(device.osVersion ?? "Unknown")")
-        print("  Machine Model:".lightBlue + " \(device.machineModel ?? "Unknown")")
-        print("  CPU Type:".lightBlue + "      \(device.cpuType ?? "Unknown")")
-        print("  Memory:".lightBlue + "        \(device.physicalMemory ?? "Unknown")")
-        print("  Last Check-in:".lightBlue + " \(device.timestamp ?? "Never")")
+        print("\n" + "Device: \(device.displayName)".bold.green + "\n")
+        print("  Serial Number:".lightBlue + "  \(device.serialNumber)")
+        print("  Computer Name:".lightBlue + "  \(device.machineName.isEmpty ? device.hostname : device.machineName)")
+        print("  OS Version:".lightBlue + "    \(device.osVersion)")
+        print("  Machine Model:".lightBlue + " \(device.machineModel)")
+        print("  CPU Type:".lightBlue + "      \(device.cpuType)")
+        print("  Memory:".lightBlue + "        \(formatBytes(device.physicalMemory))")
+        print("  Last Check-in:".lightBlue + " \(device.lastSeenFormatted)")
     }
     
     private func printMunkiInfo(_ info: MunkiInfo) {
         print("\n" + "Munki Information".bold + "\n")
-        print("  Munki Version:".lightBlue + "     \(info.munkiVersion ?? "Unknown")")
-        print("  Manifest:".lightBlue + "          \(info.manifest ?? "Unknown")")
-        print("  Start Time:".lightBlue + "        \(info.startTime ?? "Unknown")")
-        print("  End Time:".lightBlue + "          \(info.endTime ?? "Unknown")")
-        print("  Errors:".lightBlue + "            \(info.errors ?? 0)")
-        print("  Warnings:".lightBlue + "          \(info.warnings ?? 0)")
+        print("  Munki Version:".lightBlue + "     \(info.version)")
+        print("  Manifest:".lightBlue + "          \(info.manifest)")
+        print("  Run Type:".lightBlue + "          \(info.runType)")
+        print("  Duration:".lightBlue + "          \(info.duration)")
         print("")
+    }
+    
+    private func formatBytes(_ bytes: Int64) -> String {
+        let gb = Double(bytes) / (1024 * 1024 * 1024)
+        return String(format: "%.1f GB", gb)
     }
 }
 
@@ -146,34 +154,42 @@ struct DeviceSubcommand: AsyncParsableCommand {
 struct InfoSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "info",
-        abstract: "Get Munki run information for a device"
+        abstract: "Get Munki info for a device"
     )
     
-    @Argument(help: "Serial number of the device")
+    @Argument(help: "Device serial number")
     var serial: String
+    
+    @Flag(name: .long, help: "Output as JSON")
+    var json: Bool = false
     
     func run() async throws {
         let config = try FleetMateConfig.load()
         let service = MunkiReportService(config: config)
         
         guard let info = try await service.getMunkiInfo(serial: serial) else {
-            print("No Munki info found for: \(serial)".red)
+            print("Munki info not found for: \(serial)".red)
             throw ExitCode.failure
         }
         
-        print("\n" + "Munki Info for \(serial)".bold.green + "\n")
-        print("  Version:".lightBlue + "      \(info.munkiVersion ?? "Unknown")")
-        print("  Manifest:".lightBlue + "     \(info.manifest ?? "Unknown")")
-        print("  Last Run:".lightBlue + "     \(info.startTime ?? "Unknown") - \(info.endTime ?? "Unknown")")
-        print("  Errors:".lightBlue + "       \(info.errors ?? 0)")
-        print("  Warnings:".lightBlue + "     \(info.warnings ?? 0)")
-        print("  Pending:".lightBlue + "      Installs: \(info.pendingInstalls ?? 0), Removals: \(info.pendingRemovals ?? 0)")
-        print("  Apple Updates:".lightBlue + " \(info.appleUpdates ?? 0)")
-        print("")
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(info)
+            print(String(data: data, encoding: .utf8) ?? "{}")
+        } else {
+            print("\n" + "Munki Info for \(serial)".bold.green + "\n")
+            print("  Version:".lightBlue + "      \(info.version)")
+            print("  Manifest:".lightBlue + "     \(info.manifest)")
+            print("  Manifest URL:".lightBlue + " \(info.manifestUrl)")
+            print("  Run Type:".lightBlue + "     \(info.runType)")
+            print("  Duration:".lightBlue + "     \(info.duration)")
+            print("")
+        }
     }
 }
 
-// MARK: - Managed Installs
+// MARK: - Installs
 
 struct InstallsSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
@@ -181,11 +197,14 @@ struct InstallsSubcommand: AsyncParsableCommand {
         abstract: "List managed installs for a device"
     )
     
-    @Argument(help: "Serial number of the device")
+    @Argument(help: "Device serial number")
     var serial: String
     
     @Option(name: .shortAndLong, help: "Filter by package name")
     var filter: String?
+    
+    @Flag(name: .long, help: "Output as JSON")
+    var json: Bool = false
     
     func run() async throws {
         let config = try FleetMateConfig.load()
@@ -195,72 +214,83 @@ struct InstallsSubcommand: AsyncParsableCommand {
         
         if let filter = filter {
             installs = installs.filter { 
-                $0.name?.lowercased().contains(filter.lowercased()) ?? false 
+                $0.name.lowercased().contains(filter.lowercased())
             }
         }
         
-        print("\n" + "Managed Installs for \(serial)".bold + " (\(installs.count) packages)\n")
-        
-        let header = String(format: "%-35s %-20s %-10s",
-            "Name", "Version", "Status")
-        print(header.underline)
-        
-        for install in installs {
-            let status = install.status ?? "unknown"
-            let statusColor: String
-            switch status.lowercased() {
-            case "installed": statusColor = status.green
-            case "pending": statusColor = status.yellow
-            case "error": statusColor = status.red
-            default: statusColor = status
-            }
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(installs)
+            print(String(data: data, encoding: .utf8) ?? "[]")
+        } else {
+            print("\n" + "Managed Installs for \(serial)".bold + " (\(installs.count) packages)\n")
             
-            let row = String(format: "%-35s %-20s %-10s",
-                String((install.name ?? "Unknown").prefix(33)),
-                String((install.installedVersion ?? install.version ?? "Unknown").prefix(18)),
-                statusColor)
-            print(row)
+            let header = String(format: "%-35s %-20s %-10s", "Name", "Version", "Status")
+            print(header.underline)
+            
+            for install in installs {
+                let status = install.status
+                let statusColor: String
+                switch status.lowercased() {
+                case "installed": statusColor = "✓ installed".green
+                case "": statusColor = "-"
+                default: statusColor = "✗ \(status)".red
+                }
+                
+                let row = String(format: "%-35s %-20s %-10s",
+                    String(install.name.prefix(33)),
+                    String((install.installedVersion.isEmpty ? install.version : install.installedVersion).prefix(18)),
+                    statusColor)
+                print(row)
+            }
+            print("")
         }
-        print("")
     }
 }
 
 // MARK: - Errors
 
-struct ErrorsSubcommand: AsyncParsableCommand {
+struct MunkiErrorsSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "errors",
-        abstract: "List install errors across fleet or for a device"
+        abstract: "List install errors across all devices"
     )
     
-    @Option(name: .shortAndLong, help: "Serial number to filter by")
-    var serial: String?
-    
-    @Option(name: .shortAndLong, help: "Maximum number of results")
+    @Option(name: .shortAndLong, help: "Maximum number of errors to show")
     var limit: Int = 50
+    
+    @Flag(name: .long, help: "Output as JSON")
+    var json: Bool = false
     
     func run() async throws {
         let config = try FleetMateConfig.load()
         let service = MunkiReportService(config: config)
         
-        var errors = try await service.getErrors(serial: serial)
+        var errors = try await service.getErrors()
         
         if errors.count > limit {
             errors = Array(errors.prefix(limit))
         }
         
-        if errors.isEmpty {
-            print("\n" + "No errors found!".green + "\n")
-            return
-        }
-        
-        print("\n" + "Install Errors".bold.red + " (\(errors.count) total)\n")
-        
-        for error in errors {
-            print("[\(error.serialNumber ?? "Unknown")]".lightBlue + " " + (error.name ?? "Unknown").bold)
-            print("  Version: \(error.version ?? "Unknown")")
-            print("  Error: \(error.errorMessage ?? "No message")")
-            print("  Time: \(error.timestamp ?? "Unknown")")
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(errors)
+            print(String(data: data, encoding: .utf8) ?? "[]")
+        } else {
+            print("\n" + "Install Errors".bold.red + " (\(errors.count) total)\n")
+            
+            let header = String(format: "%-35s %-25s %-20s", "Package", "Device", "Status")
+            print(header.underline)
+            
+            for error in errors {
+                let row = String(format: "%-35s %-25s %-20s",
+                    String(error.itemName.prefix(33)),
+                    String((error.hostname.isEmpty ? error.serialNumber : error.hostname).prefix(23)),
+                    String(error.status.prefix(18)))
+                print(row)
+            }
             print("")
         }
     }
@@ -271,37 +301,47 @@ struct ErrorsSubcommand: AsyncParsableCommand {
 struct StaleSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "stale",
-        abstract: "Find devices that haven't checked in recently"
+        abstract: "List devices that haven't checked in recently"
     )
     
     @Option(name: .shortAndLong, help: "Days since last check-in (default: 7)")
     var days: Int = 7
     
+    @Flag(name: .long, help: "Output as JSON")
+    var json: Bool = false
+    
     func run() async throws {
         let config = try FleetMateConfig.load()
         let service = MunkiReportService(config: config)
         
-        let devices = try await service.getStaleDevices(days: days)
+        let devices = try await service.getDevices()
+        let cutoffDate = Date().addingTimeInterval(-Double(days) * 24 * 60 * 60)
         
-        if devices.isEmpty {
-            print("\n" + "No stale devices found!".green + " (all checked in within \(days) days)\n")
-            return
+        let staleDevices = devices.filter { device in
+            guard let ts = device.timestamp else { return true }
+            return ts < cutoffDate
         }
         
-        print("\n" + "Stale Devices".bold.yellow + " (not seen in \(days)+ days, \(devices.count) total)\n")
-        
-        let header = String(format: "%-20s %-30s %-20s",
-            "Serial", "Computer Name", "Last Check-in")
-        print(header.underline)
-        
-        for device in devices {
-            let row = String(format: "%-20s %-30s %-20s",
-                device.serialNumber ?? "Unknown",
-                String((device.computerName ?? "Unknown").prefix(28)),
-                device.timestamp ?? "Never")
-            print(row)
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(staleDevices)
+            print(String(data: data, encoding: .utf8) ?? "[]")
+        } else {
+            print("\n" + "Stale Devices".bold.yellow + " (no check-in for \(days)+ days): \(staleDevices.count)\n")
+            
+            let header = String(format: "%-20s %-30s %-20s", "Serial", "Computer Name", "Last Check-in")
+            print(header.underline)
+            
+            for device in staleDevices {
+                let row = String(format: "%-20s %-30s %-20s",
+                    device.serialNumber,
+                    String(device.displayName.prefix(28)),
+                    device.lastSeenFormatted)
+                print(row)
+            }
+            print("")
         }
-        print("")
     }
 }
 
@@ -310,7 +350,7 @@ struct StaleSubcommand: AsyncParsableCommand {
 struct QuerySubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "query",
-        abstract: "Execute a raw SQL query against MunkiReport database"
+        abstract: "Execute a raw SQL query"
     )
     
     @Argument(help: "SQL query to execute")
@@ -323,6 +363,23 @@ struct QuerySubcommand: AsyncParsableCommand {
         print("\n" + "Executing Query:".bold + " \(sql)\n")
         
         let result = try await service.rawQuery(sql)
-        print(result)
+        
+        if result.isEmpty {
+            print("No results".yellow)
+        } else {
+            // Print headers
+            if let first = result.first {
+                let headers = first.keys.sorted()
+                print(headers.joined(separator: " | "))
+                print(String(repeating: "-", count: headers.joined(separator: " | ").count))
+                
+                // Print rows
+                for row in result {
+                    let values = headers.map { row[$0] ?? "" }
+                    print(values.joined(separator: " | "))
+                }
+            }
+        }
+        print("")
     }
 }

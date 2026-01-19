@@ -121,7 +121,7 @@ struct AssetsView: View {
 }
 
 struct StatusBadge: View {
-    let status: SnipeStatusLabel?
+    let status: SnipeStatusRef?
 
     var body: some View {
         let color: Color = {

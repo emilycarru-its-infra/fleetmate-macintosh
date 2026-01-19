@@ -2,25 +2,25 @@ import Foundation
 
 // MARK: - Work Item Models
 
-struct WorkItem: Codable {
-    let id: Int
-    let rev: Int?
-    let fields: WorkItemFields?
-    let url: String?
+public struct WorkItem: Codable, Identifiable {
+    public let id: Int
+    public let rev: Int?
+    public let fields: WorkItemFields?
+    public let url: String?
 }
 
-struct WorkItemFields: Codable {
-    let title: String?
-    let state: String?
-    let workItemType: String?
-    let assignedTo: IdentityRef?
-    let createdDate: String?
-    let changedDate: String?
-    let description: String?
-    let priority: Int?
-    let iterationPath: String?
-    let areaPath: String?
-    let tags: String?
+public struct WorkItemFields: Codable {
+    public let title: String?
+    public let state: String?
+    public let workItemType: String?
+    public let assignedTo: IdentityRef?
+    public let createdDate: String?
+    public let changedDate: String?
+    public let description: String?
+    public let priority: Int?
+    public let iterationPath: String?
+    public let areaPath: String?
+    public let tags: String?
 
     enum CodingKeys: String, CodingKey {
         case title = "System.Title"
@@ -37,39 +37,39 @@ struct WorkItemFields: Codable {
     }
 }
 
-struct IdentityRef: Codable {
-    let displayName: String?
-    let uniqueName: String?
-    let id: String?
+public struct IdentityRef: Codable {
+    public let displayName: String?
+    public let uniqueName: String?
+    public let id: String?
 }
 
-struct WorkItemQueryResult: Codable {
-    let queryType: String?
-    let queryResultType: String?
-    let asOf: String?
-    let workItems: [WorkItemReference]?
+public struct WorkItemQueryResult: Codable {
+    public let queryType: String?
+    public let queryResultType: String?
+    public let asOf: String?
+    public let workItems: [WorkItemReference]?
 }
 
-struct WorkItemReference: Codable {
-    let id: Int
-    let url: String?
+public struct WorkItemReference: Codable {
+    public let id: Int
+    public let url: String?
 }
 
-struct WorkItemBatchResponse: Codable {
-    let count: Int?
-    let value: [WorkItem]?
+public struct WorkItemBatchResponse: Codable {
+    public let count: Int?
+    public let value: [WorkItem]?
 }
 
 // MARK: - Sprint/Iteration Models
 
-struct Sprint: Codable {
-    let id: String?
-    let name: String?
-    let path: String?
-    let attributes: SprintAttributes?
-    let url: String?
+public struct Sprint: Codable {
+    public let id: String?
+    public let name: String?
+    public let path: String?
+    public let attributes: SprintAttributes?
+    public let url: String?
 
-    var isCurrent: Bool {
+    public var isCurrent: Bool {
         guard let start = attributes?.startDate,
               let end = attributes?.finishDate else { return false }
         let now = Date()
@@ -81,68 +81,104 @@ struct Sprint: Codable {
     }
 }
 
-struct SprintAttributes: Codable {
-    let startDate: String?
-    let finishDate: String?
-    let timeFrame: String?
+public struct SprintAttributes: Codable {
+    public let startDate: String?
+    public let finishDate: String?
+    public let timeFrame: String?
 }
 
-struct IterationsResponse: Codable {
-    let count: Int?
-    let value: [Sprint]?
+public struct IterationsResponse: Codable {
+    public let count: Int?
+    public let value: [Sprint]?
 }
 
 // MARK: - Board Models
 
-struct Board: Codable {
-    let id: String?
-    let name: String?
-    let url: String?
+public struct Board: Codable {
+    public let id: String?
+    public let name: String?
+    public let url: String?
 }
 
-struct BoardsResponse: Codable {
-    let count: Int?
-    let value: [Board]?
+public struct BoardsResponse: Codable {
+    public let count: Int?
+    public let value: [Board]?
 }
 
 // MARK: - Request Models
 
-struct CreateWorkItemRequest {
-    var title: String
-    var type: String = "Bug"
-    var description: String?
-    var assignedTo: String?
-    var priority: Int?
-    var iterationPath: String?
-    var areaPath: String?
-    var tags: [String]?
+public struct CreateWorkItemRequest {
+    public var title: String
+    public var type: String = "Bug"
+    public var description: String?
+    public var assignedTo: String?
+    public var priority: Int?
+    public var iterationPath: String?
+    public var areaPath: String?
+    public var tags: [String]?
+    
+    public init(
+        title: String,
+        type: String = "Bug",
+        description: String? = nil,
+        assignedTo: String? = nil,
+        priority: Int? = nil,
+        iterationPath: String? = nil,
+        areaPath: String? = nil,
+        tags: [String]? = nil
+    ) {
+        self.title = title
+        self.type = type
+        self.description = description
+        self.assignedTo = assignedTo
+        self.priority = priority
+        self.iterationPath = iterationPath
+        self.areaPath = areaPath
+        self.tags = tags
+    }
 }
 
-struct UpdateWorkItemRequest {
-    var title: String?
-    var state: String?
-    var assignedTo: String?
-    var priority: Int?
-    var iterationPath: String?
-    var comment: String?
+public struct UpdateWorkItemRequest {
+    public var title: String?
+    public var state: String?
+    public var assignedTo: String?
+    public var priority: Int?
+    public var iterationPath: String?
+    public var comment: String?
+    
+    public init(
+        title: String? = nil,
+        state: String? = nil,
+        assignedTo: String? = nil,
+        priority: Int? = nil,
+        iterationPath: String? = nil,
+        comment: String? = nil
+    ) {
+        self.title = title
+        self.state = state
+        self.assignedTo = assignedTo
+        self.priority = priority
+        self.iterationPath = iterationPath
+        self.comment = comment
+    }
 }
 
-struct JsonPatchOperation: Codable {
-    var op: String
-    var path: String
-    var value: Any?
+public struct JsonPatchOperation: Codable {
+    public var op: String
+    public var path: String
+    public var value: Any?
 
     enum CodingKeys: String, CodingKey {
         case op, path, value
     }
 
-    init(op: String, path: String, value: Any?) {
+    public init(op: String, path: String, value: Any?) {
         self.op = op
         self.path = path
         self.value = value
     }
 
-    func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(op, forKey: .op)
         try container.encode(path, forKey: .path)
@@ -155,7 +191,7 @@ struct JsonPatchOperation: Codable {
         }
     }
 
-    init(from decoder: Decoder) throws {
+    public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         op = try container.decode(String.self, forKey: .op)
         path = try container.decode(String.self, forKey: .path)

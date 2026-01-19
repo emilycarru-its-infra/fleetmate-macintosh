@@ -3,7 +3,7 @@ import Alamofire
 
 /// Azure DevOps service for work item management
 /// Uses Azure CLI SSO for authentication on macOS
-class AzureDevOpsService {
+public class AzureDevOpsService {
     private let config: FleetMateConfig
     private let session: Session
     private var cachedToken: String?
@@ -16,15 +16,15 @@ class AzureDevOpsService {
 
     private let adoResourceId = "499b84ac-1321-427f-aa17-267ca6975798"
 
-    var isConfigured: Bool {
+    public var isConfigured: Bool {
         return config.isDevOpsConfigured
     }
 
-    var baseUrl: String {
+    public var baseUrl: String {
         "https://azure-devops.example.com/\(config.devopsOrganization ?? "")"
     }
 
-    init(config: FleetMateConfig) {
+    public init(config: FleetMateConfig) {
         self.config = config
         self.cacheDuration = TimeInterval(config.cacheMinutes * 60)
 
@@ -124,7 +124,7 @@ class AzureDevOpsService {
         return try await getWorkItemsByIds(ids)
     }
 
-    func getWorkItemsByIds(_ ids: [Int]) async throws -> [WorkItem] {
+    public func getWorkItemsByIds(_ ids: [Int]) async throws -> [WorkItem] {
         guard !ids.isEmpty, let headers = await headers() else { return [] }
 
         var allItems: [WorkItem] = []
@@ -143,14 +143,14 @@ class AzureDevOpsService {
         return allItems
     }
 
-    func getWorkItem(id: Int) async throws -> WorkItem? {
+    public func getWorkItem(id: Int) async throws -> WorkItem? {
         guard let headers = await headers() else { return nil }
 
         let url = "\(baseUrl)/\(config.devopsProject ?? "")/_apis/wit/workitems/\(id)?api-version=7.0"
         return try await fetch(url: url, headers: headers)
     }
 
-    func getWorkItems(state: String? = nil, type: String? = nil, assignedTo: String? = nil, limit: Int = 50) async throws -> [WorkItem] {
+    public func getWorkItems(state: String? = nil, type: String? = nil, assignedTo: String? = nil, limit: Int = 50) async throws -> [WorkItem] {
         var conditions = ["[System.TeamProject] = @project"]
 
         if let state = state {
@@ -169,7 +169,7 @@ class AzureDevOpsService {
         return Array(items.prefix(limit))
     }
 
-    func createWorkItem(_ request: CreateWorkItemRequest) async throws -> WorkItem? {
+    public func createWorkItem(_ request: CreateWorkItemRequest) async throws -> WorkItem? {
         guard let headers = await headers() else { return nil }
 
         var operations: [[String: Any]] = [
@@ -203,7 +203,7 @@ class AzureDevOpsService {
         return try await postPatch(url: url, body: operations, headers: patchHeaders)
     }
 
-    func updateWorkItem(id: Int, request: UpdateWorkItemRequest) async throws -> WorkItem? {
+    public func updateWorkItem(id: Int, request: UpdateWorkItemRequest) async throws -> WorkItem? {
         guard let headers = await headers() else { return nil }
 
         var operations: [[String: Any]] = []
@@ -241,7 +241,7 @@ class AzureDevOpsService {
 
     // MARK: - Sprints
 
-    func getSprints(forceRefresh: Bool = false) async throws -> [Sprint] {
+    public func getSprints(forceRefresh: Bool = false) async throws -> [Sprint] {
         if !forceRefresh, let cached = sprintCache, Date() < sprintCacheExpiry {
             return cached
         }
@@ -257,14 +257,14 @@ class AzureDevOpsService {
         return sprintCache ?? []
     }
 
-    func getCurrentSprint() async throws -> Sprint? {
+    public func getCurrentSprint() async throws -> Sprint? {
         let sprints = try await getSprints()
         return sprints.first { $0.isCurrent }
     }
 
     // MARK: - Boards
 
-    func getBoards() async throws -> [Board] {
+    public func getBoards() async throws -> [Board] {
         guard let headers = await headers() else { return [] }
 
         let url = "\(baseUrl)/\(config.devopsProject ?? "")/_apis/work/boards?api-version=7.0"
@@ -275,7 +275,7 @@ class AzureDevOpsService {
 
     // MARK: - Error Creation
 
-    func createFromError(deviceName: String, itemName: String, errorMessage: String, assignedTo: String? = nil, priority: Int = 2) async throws -> WorkItem? {
+    public func createFromError(deviceName: String, itemName: String, errorMessage: String, assignedTo: String? = nil, priority: Int = 2) async throws -> WorkItem? {
         let title = "[FleetMate] \(itemName) failed on \(deviceName)"
         let description = """
         <h3>Installation Failure</h3>

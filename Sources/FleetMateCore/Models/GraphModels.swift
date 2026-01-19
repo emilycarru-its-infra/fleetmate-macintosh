@@ -2,30 +2,41 @@ import Foundation
 
 // MARK: - Intune Device Models
 
-struct IntuneDevice: Codable {
-    let id: String?
-    let deviceName: String?
-    let serialNumber: String?
-    let operatingSystem: String?
-    let osVersion: String?
-    let complianceState: String?
-    let managementState: String?
-    let enrolledDateTime: String?
-    let lastSyncDateTime: String?
-    let userPrincipalName: String?
-    let userDisplayName: String?
-    let model: String?
-    let manufacturer: String?
-    let deviceEnrollmentType: String?
-    let managedDeviceOwnerType: String?
-    let azureADDeviceId: String?
-    let totalStorageSpaceInBytes: Int64?
-    let freeStorageSpaceInBytes: Int64?
+public struct IntuneDevice: Codable, Identifiable {
+    private let _id: String?
+    public let deviceName: String?
+    public let serialNumber: String?
+    public let operatingSystem: String?
+    public let osVersion: String?
+    public let complianceState: String?
+    public let managementState: String?
+    public let enrolledDateTime: String?
+    public let lastSyncDateTime: String?
+    public let userPrincipalName: String?
+    public let userDisplayName: String?
+    public let model: String?
+    public let manufacturer: String?
+    public let deviceEnrollmentType: String?
+    public let managedDeviceOwnerType: String?
+    public let azureADDeviceId: String?
+    public let totalStorageSpaceInBytes: Int64?
+    public let freeStorageSpaceInBytes: Int64?
+    
+    public var id: String { _id ?? serialNumber ?? UUID().uuidString }
+    
+    private enum CodingKeys: String, CodingKey {
+        case _id = "id"
+        case deviceName, serialNumber, operatingSystem, osVersion
+        case complianceState, managementState, enrolledDateTime, lastSyncDateTime
+        case userPrincipalName, userDisplayName, model, manufacturer
+        case deviceEnrollmentType, managedDeviceOwnerType, azureADDeviceId
+        case totalStorageSpaceInBytes, freeStorageSpaceInBytes
+    }
 }
 
-struct IntuneDeviceListResponse: Codable {
-    let value: [IntuneDevice]
-    let nextLink: String?
+public struct IntuneDeviceListResponse: Codable {
+    public let value: [IntuneDevice]
+    public let nextLink: String?
 
     enum CodingKeys: String, CodingKey {
         case value
@@ -33,40 +44,40 @@ struct IntuneDeviceListResponse: Codable {
     }
 }
 
-struct DeviceCompliancePolicyState: Codable {
-    let id: String?
-    let displayName: String?
-    let state: String?
-    let platformType: String?
-    let version: Int?
+public struct DeviceCompliancePolicyState: Codable {
+    public let id: String?
+    public let displayName: String?
+    public let state: String?
+    public let platformType: String?
+    public let version: Int?
 }
 
-struct CompliancePolicyStatesResponse: Codable {
-    let value: [DeviceCompliancePolicyState]
+public struct CompliancePolicyStatesResponse: Codable {
+    public let value: [DeviceCompliancePolicyState]
 }
 
 // MARK: - Entra User Models
 
-struct EntraUser: Codable {
-    let id: String?
-    let displayName: String?
-    let userPrincipalName: String?
-    let mail: String?
-    let jobTitle: String?
-    let department: String?
-    let officeLocation: String?
-    let mobilePhone: String?
-    let accountEnabled: Bool?
-    var memberOf: [EntraGroup]?
+public struct EntraUser: Codable, Identifiable, Hashable {
+    public let id: String?
+    public let displayName: String?
+    public let userPrincipalName: String?
+    public let mail: String?
+    public let jobTitle: String?
+    public let department: String?
+    public let officeLocation: String?
+    public let mobilePhone: String?
+    public let accountEnabled: Bool?
+    public var memberOf: [EntraGroup]?
 
-    var email: String {
+    public var email: String {
         mail ?? userPrincipalName ?? ""
     }
 }
 
-struct EntraUserListResponse: Codable {
-    let value: [EntraUser]
-    let nextLink: String?
+public struct EntraUserListResponse: Codable {
+    public let value: [EntraUser]
+    public let nextLink: String?
 
     enum CodingKeys: String, CodingKey {
         case value
@@ -76,19 +87,19 @@ struct EntraUserListResponse: Codable {
 
 // MARK: - Entra Group Models
 
-struct EntraGroup: Codable {
-    let id: String?
-    let displayName: String?
-    let description: String?
-    let mail: String?
-    let mailEnabled: Bool?
-    let securityEnabled: Bool?
-    let groupTypes: [String]?
+public struct EntraGroup: Codable, Identifiable, Hashable {
+    public let id: String?
+    public let displayName: String?
+    public let description: String?
+    public let mail: String?
+    public let mailEnabled: Bool?
+    public let securityEnabled: Bool?
+    public let groupTypes: [String]?
 }
 
-struct EntraGroupListResponse: Codable {
-    let value: [EntraGroup]
-    let nextLink: String?
+public struct EntraGroupListResponse: Codable {
+    public let value: [EntraGroup]
+    public let nextLink: String?
 
     enum CodingKeys: String, CodingKey {
         case value
@@ -98,11 +109,11 @@ struct EntraGroupListResponse: Codable {
 
 // MARK: - Membership Check Models
 
-struct DirectoryObject: Codable {
-    let id: String?
-    let displayName: String?
-    let description: String?
-    let odataType: String?
+public struct DirectoryObject: Codable {
+    public let id: String?
+    public let displayName: String?
+    public let description: String?
+    public let odataType: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -111,14 +122,14 @@ struct DirectoryObject: Codable {
         case odataType = "@odata.type"
     }
 
-    var isGroup: Bool {
+    public var isGroup: Bool {
         odataType?.contains("group") == true
     }
 }
 
-struct UserMemberOfResponse: Codable {
-    let value: [DirectoryObject]
-    let nextLink: String?
+public struct UserMemberOfResponse: Codable {
+    public let value: [DirectoryObject]
+    public let nextLink: String?
 
     enum CodingKeys: String, CodingKey {
         case value
@@ -126,9 +137,9 @@ struct UserMemberOfResponse: Codable {
     }
 }
 
-struct GroupMembersResponse: Codable {
-    let value: [EntraUser]
-    let nextLink: String?
+public struct GroupMembersResponse: Codable {
+    public let value: [EntraUser]
+    public let nextLink: String?
 
     enum CodingKeys: String, CodingKey {
         case value
@@ -136,6 +147,6 @@ struct GroupMembersResponse: Codable {
     }
 }
 
-struct CheckMemberGroupsResponse: Codable {
-    let value: [String]
+public struct CheckMemberGroupsResponse: Codable {
+    public let value: [String]
 }

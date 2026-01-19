@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import Rainbow
+import FleetMateCore
 
 struct ValidateCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(

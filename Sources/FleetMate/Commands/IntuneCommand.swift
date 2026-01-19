@@ -1,4 +1,5 @@
 import ArgumentParser
+import FleetMateCore
 import Foundation
 import Rainbow
 
@@ -7,18 +8,18 @@ struct IntuneCommand: AsyncParsableCommand {
         commandName: "intune",
         abstract: "Query Intune managed devices",
         subcommands: [
-            DevicesSubcommand.self,
-            DeviceSubcommand.self,
+            IntuneDevicesSubcommand.self,
+            IntuneDeviceSubcommand.self,
             ComplianceSubcommand.self,
             NonCompliantSubcommand.self
         ],
-        defaultSubcommand: DevicesSubcommand.self
+        defaultSubcommand: IntuneDevicesSubcommand.self
     )
 }
 
 // MARK: - List Devices
 
-struct DevicesSubcommand: AsyncParsableCommand {
+struct IntuneDevicesSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "devices",
         abstract: "List managed devices from Intune"
@@ -85,7 +86,7 @@ struct DevicesSubcommand: AsyncParsableCommand {
 
 // MARK: - Single Device
 
-struct DeviceSubcommand: AsyncParsableCommand {
+struct IntuneDeviceSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "device",
         abstract: "Get details for a specific device"

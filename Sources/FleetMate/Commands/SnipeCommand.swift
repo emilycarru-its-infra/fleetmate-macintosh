@@ -1,4 +1,5 @@
 import ArgumentParser
+import FleetMateCore
 import Foundation
 import Rainbow
 

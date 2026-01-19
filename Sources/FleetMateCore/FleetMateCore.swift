@@ -1,8 +1,17 @@
 // FleetMateCore - Shared library for FleetMate CLI and GUI
+//
+// This module provides:
+// - Configuration: FleetMateConfig
+// - Keychain: KeychainService
+// - Services: ReportMateService, SnipeService, GraphService, TdxService, DevOpsService, SecureShellService
+// - Models: ReportMate, Snipe, Graph, TDX, DevOps, SSH models
+//
+// Usage:
+//   import FleetMateCore
+//
+// All public types are available directly after importing this module.
 
-// Re-export all public types
+import Foundation
 
-// Config
-@_exported import struct FleetMateCore.FleetMateConfig
-
-// Note: Services and Models are available via import FleetMateCore
+/// FleetMateCore library version
+public let fleetMateCoreVersion = "1.0.0"

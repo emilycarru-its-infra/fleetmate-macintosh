@@ -8,14 +8,25 @@ struct FleetMate: AsyncParsableCommand {
         abstract: "FleetMate - Fleet orchestration, inventory, deployment monitoring, and troubleshooting",
         version: "1.0.0",
         subcommands: [
+            // Core commands
             StatusCommand.self,
-            ErrorsCommand.self,
             DeviceCommand.self,
+            ErrorsCommand.self,
             TroubleshootCommand.self,
+            
+            // Remote access
+            SecureShellCommand.self,
+            
+            // Configuration
+            ConfigureCommand.self,
+            
+            // Validation
             LintCommand.self,
             ValidateCommand.self,
+            
+            // Service integrations
             SnipeCommand.self,
-            MunkiReportCommand.self,
+            MunkiReportCommand.self,  // Legacy - use ReportMate via DeviceCommand
             IntuneCommand.self,
             EntraCommand.self,
             DevOpsCommand.self,

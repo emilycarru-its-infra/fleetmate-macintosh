@@ -6,7 +6,7 @@ struct DevicesView: View {
     @State private var devices: [IntuneDevice] = []
     @State private var isLoading = false
     @State private var searchText = ""
-    @State private var selectedDevice: IntuneDevice?
+    @State private var selectedDeviceId: String?
     @State private var showOnlyNonCompliant = false
 
     var filteredDevices: [IntuneDevice] {
@@ -73,7 +73,7 @@ struct DevicesView: View {
             } else if filteredDevices.isEmpty {
                 ContentUnavailableView.search(text: searchText)
             } else {
-                Table(filteredDevices, selection: $selectedDevice) {
+                Table(filteredDevices, selection: $selectedDeviceId) {
                     TableColumn("Serial") { device in
                         Text(device.serialNumber ?? "-")
                             .font(.system(.body, design: .monospaced))

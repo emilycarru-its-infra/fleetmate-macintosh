@@ -1,17 +1,17 @@
 import Foundation
 
 /// Device information from MunkiReport
-struct MunkiDevice: Codable {
-    var serialNumber: String
-    var hostname: String
-    var machineName: String
-    var osVersion: String
-    var buildVersion: String
-    var machineModel: String
-    var cpuType: String
-    var physicalMemory: Int64
-    var remoteIp: String
-    var timestamp: Date?
+public struct MunkiDevice: Codable {
+    public var serialNumber: String
+    public var hostname: String
+    public var machineName: String
+    public var osVersion: String
+    public var buildVersion: String
+    public var machineModel: String
+    public var cpuType: String
+    public var physicalMemory: Int64
+    public var remoteIp: String
+    public var timestamp: Date?
     
     init(from row: [String: String]) {
         self.serialNumber = row["serial_number"] ?? ""
@@ -31,14 +31,14 @@ struct MunkiDevice: Codable {
         }
     }
     
-    var displayName: String {
+    public var displayName: String {
         if !machineName.isEmpty {
             return machineName
         }
         return hostname.isEmpty ? serialNumber : hostname
     }
     
-    var lastSeenFormatted: String {
+    public var lastSeenFormatted: String {
         guard let ts = timestamp else { return "Unknown" }
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
@@ -47,14 +47,14 @@ struct MunkiDevice: Codable {
 }
 
 /// Munki run information
-struct MunkiInfo: Codable {
-    var serialNumber: String
-    var version: String
-    var manifest: String
-    var manifestUrl: String
-    var runType: String
-    var startTime: Date?
-    var endTime: Date?
+public struct MunkiInfo: Codable {
+    public var serialNumber: String
+    public var version: String
+    public var manifest: String
+    public var manifestUrl: String
+    public var runType: String
+    public var startTime: Date?
+    public var endTime: Date?
     
     init(from row: [String: String]) {
         self.serialNumber = row["serial_number"] ?? ""
@@ -74,7 +74,7 @@ struct MunkiInfo: Codable {
         }
     }
     
-    var duration: String {
+    public var duration: String {
         guard let start = startTime, let end = endTime else { return "Unknown" }
         let interval = end.timeIntervalSince(start)
         if interval < 60 {
@@ -88,14 +88,14 @@ struct MunkiInfo: Codable {
 }
 
 /// Managed install record
-struct ManagedInstall: Codable {
-    var serialNumber: String
-    var name: String
-    var displayName: String
-    var version: String
-    var installedVersion: String
-    var status: String
-    var installed: Bool
+public struct ManagedInstall: Codable {
+    public var serialNumber: String
+    public var name: String
+    public var displayName: String
+    public var version: String
+    public var installedVersion: String
+    public var status: String
+    public var installed: Bool
     
     init(from row: [String: String]) {
         self.serialNumber = row["serial_number"] ?? ""
@@ -107,11 +107,11 @@ struct ManagedInstall: Codable {
         self.installed = row["installed"] == "1"
     }
     
-    var isError: Bool {
+    public var isError: Bool {
         return !status.isEmpty && status != "installed"
     }
     
-    var statusEmoji: String {
+    public var statusEmoji: String {
         switch status.lowercased() {
         case "installed": return "✓"
         case "": return "-"
@@ -121,13 +121,13 @@ struct ManagedInstall: Codable {
 }
 
 /// Installation error record
-struct InstallError: Codable {
-    var serialNumber: String
-    var hostname: String
-    var itemName: String
-    var displayName: String
-    var version: String
-    var status: String
+public struct InstallError: Codable {
+    public var serialNumber: String
+    public var hostname: String
+    public var itemName: String
+    public var displayName: String
+    public var version: String
+    public var status: String
     
     init(from row: [String: String]) {
         self.serialNumber = row["serial_number"] ?? ""
@@ -140,11 +140,11 @@ struct InstallError: Codable {
 }
 
 /// Install statistics by item
-struct InstallStats: Codable {
-    var name: String
-    var totalDevices: Int
-    var installedCount: Int
-    var failedCount: Int
+public struct InstallStats: Codable {
+    public var name: String
+    public var totalDevices: Int
+    public var installedCount: Int
+    public var failedCount: Int
     
     init(from row: [String: String]) {
         self.name = row["name"] ?? ""
@@ -153,7 +153,7 @@ struct InstallStats: Codable {
         self.failedCount = Int(row["failed"] ?? "0") ?? 0
     }
     
-    var successRate: Double {
+    public var successRate: Double {
         guard totalDevices > 0 else { return 0 }
         return Double(installedCount) / Double(totalDevices) * 100
     }

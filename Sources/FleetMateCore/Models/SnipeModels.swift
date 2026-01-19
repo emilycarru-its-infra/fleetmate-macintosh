@@ -2,39 +2,39 @@ import Foundation
 
 // MARK: - API Response Wrappers
 
-struct SnipeListResponse<T: Decodable>: Decodable {
-    let total: Int
-    let rows: [T]
+public struct SnipeListResponse<T: Decodable>: Decodable {
+    public let total: Int
+    public let rows: [T]
 }
 
-struct SnipeResponse: Decodable {
-    let status: String
-    let messages: String?
-    let payload: SnipeAsset?
+public struct SnipeResponse: Decodable {
+    public let status: String
+    public let messages: String?
+    public let payload: SnipeAsset?
 }
 
 // MARK: - Core Models
 
-struct SnipeAsset: Codable, Identifiable {
-    let id: Int
-    let name: String?
-    let assetTag: String?
-    let serial: String?
-    let model: SnipeModelRef?
-    let statusLabel: SnipeStatusRef?
-    let category: SnipeCategoryRef?
-    let manufacturer: SnipeManufacturerRef?
-    let location: SnipeLocationRef?
-    let rtdLocation: SnipeLocationRef?
-    let assignedTo: SnipeAssignedTo?
-    let purchaseDate: SnipeDateRef?
-    let lastCheckout: SnipeDateRef?
-    let lastAuditDate: String?
-    let nextAuditDate: String?
-    let notes: String?
-    let createdAt: SnipeDateRef?
-    let updatedAt: SnipeDateRef?
-    let customFields: [String: SnipeCustomField]?
+public struct SnipeAsset: Codable, Identifiable {
+    public let id: Int
+    public let name: String?
+    public let assetTag: String?
+    public let serial: String?
+    public let model: SnipeModelRef?
+    public let statusLabel: SnipeStatusRef?
+    public let category: SnipeCategoryRef?
+    public let manufacturer: SnipeManufacturerRef?
+    public let location: SnipeLocationRef?
+    public let rtdLocation: SnipeLocationRef?
+    public let assignedTo: SnipeAssignedTo?
+    public let purchaseDate: SnipeDateRef?
+    public let lastCheckout: SnipeDateRef?
+    public let lastAuditDate: String?
+    public let nextAuditDate: String?
+    public let notes: String?
+    public let createdAt: SnipeDateRef?
+    public let updatedAt: SnipeDateRef?
+    public let customFields: [String: SnipeCustomField]?
     
     enum CodingKeys: String, CodingKey {
         case id, name, serial, model, category, manufacturer, location, notes
@@ -63,25 +63,25 @@ struct SnipeAsset: Codable, Identifiable {
     }
 }
 
-struct SnipeUser: Codable, Identifiable {
-    let id: Int
-    let avatar: String?
-    let firstName: String?
-    let lastName: String?
-    let username: String?
-    let email: String?
-    let employeeNum: String?
-    let department: SnipeDepartmentRef?
-    let location: SnipeLocationRef?
-    let manager: SnipeManagerRef?
-    let groups: SnipeGroupsRef?
-    let activated: Bool?
-    let assetsCount: Int?
-    let licensesCount: Int?
-    let accessoriesCount: Int?
-    let consumablesCount: Int?
-    let createdAt: SnipeDateRef?
-    let updatedAt: SnipeDateRef?
+public struct SnipeUser: Codable, Identifiable {
+    public let id: Int
+    public let avatar: String?
+    public let firstName: String?
+    public let lastName: String?
+    public let username: String?
+    public let email: String?
+    public let employeeNum: String?
+    public let department: SnipeDepartmentRef?
+    public let location: SnipeLocationRef?
+    public let manager: SnipeManagerRef?
+    public let groups: SnipeGroupsRef?
+    public let activated: Bool?
+    public let assetsCount: Int?
+    public let licensesCount: Int?
+    public let accessoriesCount: Int?
+    public let consumablesCount: Int?
+    public let createdAt: SnipeDateRef?
+    public let updatedAt: SnipeDateRef?
     
     enum CodingKeys: String, CodingKey {
         case id, avatar, username, email, department, location, manager, groups, activated
@@ -96,27 +96,27 @@ struct SnipeUser: Codable, Identifiable {
         case updatedAt = "updated_at"
     }
     
-    var fullName: String {
+    public var fullName: String {
         [firstName, lastName].compactMap { $0 }.joined(separator: " ")
     }
 }
 
-struct SnipeLocation: Codable, Identifiable {
-    let id: Int
-    let name: String?
-    let address: String?
-    let address2: String?
-    let city: String?
-    let state: String?
-    let country: String?
-    let zip: String?
-    let parent: SnipeLocationRef?
-    let manager: SnipeManagerRef?
-    let assetsCount: Int?
-    let assignedAssetsCount: Int?
-    let usersCount: Int?
-    let createdAt: SnipeDateRef?
-    let updatedAt: SnipeDateRef?
+public struct SnipeLocation: Codable, Identifiable {
+    public let id: Int
+    public let name: String?
+    public let address: String?
+    public let address2: String?
+    public let city: String?
+    public let state: String?
+    public let country: String?
+    public let zip: String?
+    public let parent: SnipeLocationRef?
+    public let manager: SnipeManagerRef?
+    public let assetsCount: Int?
+    public let assignedAssetsCount: Int?
+    public let usersCount: Int?
+    public let createdAt: SnipeDateRef?
+    public let updatedAt: SnipeDateRef?
     
     enum CodingKeys: String, CodingKey {
         case id, name, address, address2, city, state, country, zip, parent, manager
@@ -128,16 +128,16 @@ struct SnipeLocation: Codable, Identifiable {
     }
 }
 
-struct SnipeModel: Codable, Identifiable {
-    let id: Int
-    let name: String?
-    let manufacturer: SnipeManufacturerRef?
-    let category: SnipeCategoryRef?
-    let modelNumber: String?
-    let eol: Int?
-    let assetsCount: Int?
-    let createdAt: SnipeDateRef?
-    let updatedAt: SnipeDateRef?
+public struct SnipeModel: Codable, Identifiable {
+    public let id: Int
+    public let name: String?
+    public let manufacturer: SnipeManufacturerRef?
+    public let category: SnipeCategoryRef?
+    public let modelNumber: String?
+    public let eol: Int?
+    public let assetsCount: Int?
+    public let createdAt: SnipeDateRef?
+    public let updatedAt: SnipeDateRef?
     
     enum CodingKeys: String, CodingKey {
         case id, name, manufacturer, category, eol
@@ -148,15 +148,15 @@ struct SnipeModel: Codable, Identifiable {
     }
 }
 
-struct SnipeCategory: Codable, Identifiable {
-    let id: Int
-    let name: String?
-    let categoryType: String?
-    let eula: Bool?
-    let checkinEmail: Bool?
-    let requireAcceptance: Bool?
-    let itemCount: Int?
-    let assetsCount: Int?
+public struct SnipeCategory: Codable, Identifiable {
+    public let id: Int
+    public let name: String?
+    public let categoryType: String?
+    public let eula: Bool?
+    public let checkinEmail: Bool?
+    public let requireAcceptance: Bool?
+    public let itemCount: Int?
+    public let assetsCount: Int?
     
     enum CodingKeys: String, CodingKey {
         case id, name, eula
@@ -168,13 +168,13 @@ struct SnipeCategory: Codable, Identifiable {
     }
 }
 
-struct SnipeStatusLabel: Codable, Identifiable {
-    let id: Int
-    let name: String?
-    let statusType: String?
-    let statusMeta: String?
-    let notes: String?
-    let assetsCount: Int?
+public struct SnipeStatusLabel: Codable, Identifiable {
+    public let id: Int
+    public let name: String?
+    public let statusType: String?
+    public let statusMeta: String?
+    public let notes: String?
+    public let assetsCount: Int?
     
     enum CodingKeys: String, CodingKey {
         case id, name, notes
@@ -186,16 +186,16 @@ struct SnipeStatusLabel: Codable, Identifiable {
 
 // MARK: - Reference Types (Embedded Objects)
 
-struct SnipeModelRef: Codable {
-    let id: Int?
-    let name: String?
+public struct SnipeModelRef: Codable {
+    public let id: Int?
+    public let name: String?
 }
 
-struct SnipeStatusRef: Codable {
-    let id: Int?
-    let name: String?
-    let statusType: String?
-    let statusMeta: String?
+public struct SnipeStatusRef: Codable {
+    public let id: Int?
+    public let name: String?
+    public let statusType: String?
+    public let statusMeta: String?
     
     enum CodingKeys: String, CodingKey {
         case id, name
@@ -204,30 +204,30 @@ struct SnipeStatusRef: Codable {
     }
 }
 
-struct SnipeCategoryRef: Codable {
-    let id: Int?
-    let name: String?
+public struct SnipeCategoryRef: Codable {
+    public let id: Int?
+    public let name: String?
 }
 
-struct SnipeManufacturerRef: Codable {
-    let id: Int?
-    let name: String?
+public struct SnipeManufacturerRef: Codable {
+    public let id: Int?
+    public let name: String?
 }
 
-struct SnipeLocationRef: Codable {
-    let id: Int?
-    let name: String?
+public struct SnipeLocationRef: Codable {
+    public let id: Int?
+    public let name: String?
 }
 
-struct SnipeAssignedTo: Codable {
-    let id: Int?
-    let username: String?
-    let name: String?
-    let firstName: String?
-    let lastName: String?
-    let email: String?
-    let employeeNumber: String?
-    let type: String?
+public struct SnipeAssignedTo: Codable {
+    public let id: Int?
+    public let username: String?
+    public let name: String?
+    public let firstName: String?
+    public let lastName: String?
+    public let email: String?
+    public let employeeNumber: String?
+    public let type: String?
     
     enum CodingKeys: String, CodingKey {
         case id, username, name, email, type
@@ -237,35 +237,35 @@ struct SnipeAssignedTo: Codable {
     }
 }
 
-struct SnipeDepartmentRef: Codable {
-    let id: Int?
-    let name: String?
+public struct SnipeDepartmentRef: Codable {
+    public let id: Int?
+    public let name: String?
 }
 
-struct SnipeManagerRef: Codable {
-    let id: Int?
-    let name: String?
+public struct SnipeManagerRef: Codable {
+    public let id: Int?
+    public let name: String?
 }
 
-struct SnipeGroupsRef: Codable {
-    let total: Int?
-    let rows: [SnipeGroupRef]?
+public struct SnipeGroupsRef: Codable {
+    public let total: Int?
+    public let rows: [SnipeGroupRef]?
 }
 
-struct SnipeGroupRef: Codable {
-    let id: Int?
-    let name: String?
+public struct SnipeGroupRef: Codable {
+    public let id: Int?
+    public let name: String?
 }
 
-struct SnipeDateRef: Codable {
-    let datetime: String?
-    let formatted: String?
+public struct SnipeDateRef: Codable {
+    public let datetime: String?
+    public let formatted: String?
 }
 
-struct SnipeCustomField: Codable {
-    let field: String?
-    let value: String?
-    let fieldFormat: String?
+public struct SnipeCustomField: Codable {
+    public let field: String?
+    public let value: String?
+    public let fieldFormat: String?
     
     enum CodingKeys: String, CodingKey {
         case field, value
@@ -275,14 +275,14 @@ struct SnipeCustomField: Codable {
 
 // MARK: - Request Models
 
-struct SnipeCheckoutRequest: Encodable {
-    let assignedUser: Int?
-    let assignedAsset: Int?
-    let assignedLocation: Int?
-    let expectedCheckin: String?
-    let checkoutAt: String?
-    let name: String?
-    let note: String?
+public struct SnipeCheckoutRequest: Encodable {
+    public let assignedUser: Int?
+    public let assignedAsset: Int?
+    public let assignedLocation: Int?
+    public let expectedCheckin: String?
+    public let checkoutAt: String?
+    public let name: String?
+    public let note: String?
     
     enum CodingKeys: String, CodingKey {
         case name, note
@@ -293,7 +293,7 @@ struct SnipeCheckoutRequest: Encodable {
         case checkoutAt = "checkout_at"
     }
     
-    init(assignedUser: Int? = nil, assignedAsset: Int? = nil, assignedLocation: Int? = nil,
+    public init(assignedUser: Int? = nil, assignedAsset: Int? = nil, assignedLocation: Int? = nil,
          expectedCheckin: String? = nil, checkoutAt: String? = nil, name: String? = nil, note: String? = nil) {
         self.assignedUser = assignedUser
         self.assignedAsset = assignedAsset
@@ -305,18 +305,18 @@ struct SnipeCheckoutRequest: Encodable {
     }
 }
 
-struct SnipeCheckinRequest: Encodable {
-    let name: String?
-    let note: String?
-    let locationId: Int?
-    let status: Int?
+public struct SnipeCheckinRequest: Encodable {
+    public let name: String?
+    public let note: String?
+    public let locationId: Int?
+    public let status: Int?
     
     enum CodingKeys: String, CodingKey {
         case name, note, status
         case locationId = "location_id"
     }
     
-    init(name: String? = nil, note: String? = nil, locationId: Int? = nil, status: Int? = nil) {
+    public init(name: String? = nil, note: String? = nil, locationId: Int? = nil, status: Int? = nil) {
         self.name = name
         self.note = note
         self.locationId = locationId
@@ -324,11 +324,11 @@ struct SnipeCheckinRequest: Encodable {
     }
 }
 
-struct SnipeAuditRequest: Encodable {
-    let assetTag: String?
-    let locationId: Int?
-    let nextAuditDate: String?
-    let note: String?
+public struct SnipeAuditRequest: Encodable {
+    public let assetTag: String?
+    public let locationId: Int?
+    public let nextAuditDate: String?
+    public let note: String?
     
     enum CodingKeys: String, CodingKey {
         case note
@@ -337,7 +337,7 @@ struct SnipeAuditRequest: Encodable {
         case nextAuditDate = "next_audit_date"
     }
     
-    init(assetTag: String? = nil, locationId: Int? = nil, nextAuditDate: String? = nil, note: String? = nil) {
+    public init(assetTag: String? = nil, locationId: Int? = nil, nextAuditDate: String? = nil, note: String? = nil) {
         self.assetTag = assetTag
         self.locationId = locationId
         self.nextAuditDate = nextAuditDate

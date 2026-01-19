@@ -2,32 +2,32 @@ import Foundation
 
 // MARK: - Ticket Models
 
-struct TdxTicket: Codable {
-    let id: Int?
-    let title: String?
-    let description: String?
-    let statusId: Int?
-    let statusName: String?
-    let typeId: Int?
-    let typeName: String?
-    let priorityId: Int?
-    let priorityName: String?
-    let requestorName: String?
-    let requestorEmail: String?
-    let requestorUid: String?
-    let responsibleFullName: String?
-    let responsibleEmail: String?
-    let responsibleUid: String?
-    let createdDate: String?
-    let modifiedDate: String?
-    let goesOffHoldDate: String?
-    let respondByDate: String?
-    let slaViolated: Bool?
-    let isOnHold: Bool?
-    let accountName: String?
-    let sourceId: Int?
-    let sourceName: String?
-    let uri: String?
+public struct TdxTicket: Codable, Identifiable {
+    public let id: Int?
+    public let title: String?
+    public let description: String?
+    public let statusId: Int?
+    public let statusName: String?
+    public let typeId: Int?
+    public let typeName: String?
+    public let priorityId: Int?
+    public let priorityName: String?
+    public let requestorName: String?
+    public let requestorEmail: String?
+    public let requestorUid: String?
+    public let responsibleFullName: String?
+    public let responsibleEmail: String?
+    public let responsibleUid: String?
+    public let createdDate: String?
+    public let modifiedDate: String?
+    public let goesOffHoldDate: String?
+    public let respondByDate: String?
+    public let slaViolated: Bool?
+    public let isOnHold: Bool?
+    public let accountName: String?
+    public let sourceId: Int?
+    public let sourceName: String?
+    public let uri: String?
 
     enum CodingKeys: String, CodingKey {
         case id = "ID"
@@ -60,14 +60,14 @@ struct TdxTicket: Codable {
 
 // MARK: - Feed Entry (Comments)
 
-struct TdxFeedEntry: Codable {
-    let id: Int?
-    let body: String?
-    let isPrivate: Bool?
-    let createdDate: String?
-    let createdFullName: String?
-    let createdEmail: String?
-    let itemType: Int?
+public struct TdxFeedEntry: Codable {
+    public let id: Int?
+    public let body: String?
+    public let isPrivate: Bool?
+    public let createdDate: String?
+    public let createdFullName: String?
+    public let createdEmail: String?
+    public let itemType: Int?
 
     enum CodingKeys: String, CodingKey {
         case id = "ID"
@@ -82,15 +82,35 @@ struct TdxFeedEntry: Codable {
 
 // MARK: - Request Models
 
-struct TicketSearchRequest: Codable {
-    var searchText: String?
-    var statusIds: [Int]?
-    var typeIds: [Int]?
-    var priorityIds: [Int]?
-    var responsibleUids: [String]?
-    var requestorUids: [String]?
-    var isOnHold: Bool?
-    var maxResults: Int = 50
+public struct TicketSearchRequest: Codable {
+    public var searchText: String?
+    public var statusIds: [Int]?
+    public var typeIds: [Int]?
+    public var priorityIds: [Int]?
+    public var responsibleUids: [String]?
+    public var requestorUids: [String]?
+    public var isOnHold: Bool?
+    public var maxResults: Int = 50
+
+    public init(
+        searchText: String? = nil,
+        statusIds: [Int]? = nil,
+        typeIds: [Int]? = nil,
+        priorityIds: [Int]? = nil,
+        responsibleUids: [String]? = nil,
+        requestorUids: [String]? = nil,
+        isOnHold: Bool? = nil,
+        maxResults: Int = 50
+    ) {
+        self.searchText = searchText
+        self.statusIds = statusIds
+        self.typeIds = typeIds
+        self.priorityIds = priorityIds
+        self.responsibleUids = responsibleUids
+        self.requestorUids = requestorUids
+        self.isOnHold = isOnHold
+        self.maxResults = maxResults
+    }
 
     enum CodingKeys: String, CodingKey {
         case searchText = "SearchText"
@@ -104,16 +124,38 @@ struct TicketSearchRequest: Codable {
     }
 }
 
-struct CreateTicketRequest: Codable {
-    var typeId: Int
-    var title: String
-    var description: String?
-    var accountId: Int?
-    var statusId: Int?
-    var priorityId: Int?
-    var sourceId: Int?
-    var requestorUid: String?
-    var responsibleUid: String?
+public struct CreateTicketRequest: Codable {
+    public var typeId: Int
+    public var title: String
+    public var description: String?
+    public var accountId: Int?
+    public var statusId: Int?
+    public var priorityId: Int?
+    public var sourceId: Int?
+    public var requestorUid: String?
+    public var responsibleUid: String?
+
+    public init(
+        typeId: Int,
+        title: String,
+        description: String? = nil,
+        accountId: Int? = nil,
+        statusId: Int? = nil,
+        priorityId: Int? = nil,
+        sourceId: Int? = nil,
+        requestorUid: String? = nil,
+        responsibleUid: String? = nil
+    ) {
+        self.typeId = typeId
+        self.title = title
+        self.description = description
+        self.accountId = accountId
+        self.statusId = statusId
+        self.priorityId = priorityId
+        self.sourceId = sourceId
+        self.requestorUid = requestorUid
+        self.responsibleUid = responsibleUid
+    }
 
     enum CodingKeys: String, CodingKey {
         case typeId = "TypeID"
@@ -128,11 +170,11 @@ struct CreateTicketRequest: Codable {
     }
 }
 
-struct CreateFeedEntryRequest: Codable {
-    var comments: String
-    var isPrivate: Bool = false
-    var isRichHtml: Bool = false
-    var notify: [String]?
+public struct CreateFeedEntryRequest: Codable {
+    public var comments: String
+    public var isPrivate: Bool = false
+    public var isRichHtml: Bool = false
+    public var notify: [String]?
 
     enum CodingKeys: String, CodingKey {
         case comments = "Comments"
@@ -144,10 +186,10 @@ struct CreateFeedEntryRequest: Codable {
 
 // MARK: - Reference Data
 
-struct TdxStatusItem: Codable {
-    let id: Int
-    let name: String?
-    let statusClass: String?
+public struct TdxStatusItem: Codable {
+    public let id: Int
+    public let name: String?
+    public let statusClass: String?
 
     enum CodingKeys: String, CodingKey {
         case id = "ID"
@@ -156,9 +198,9 @@ struct TdxStatusItem: Codable {
     }
 }
 
-struct TdxTypeItem: Codable {
-    let id: Int
-    let name: String?
+public struct TdxTypeItem: Codable {
+    public let id: Int
+    public let name: String?
 
     enum CodingKeys: String, CodingKey {
         case id = "ID"
@@ -166,10 +208,10 @@ struct TdxTypeItem: Codable {
     }
 }
 
-struct TdxPriorityItem: Codable {
-    let id: Int
-    let name: String?
-    let order: Double?
+public struct TdxPriorityItem: Codable {
+    public let id: Int
+    public let name: String?
+    public let order: Double?
 
     enum CodingKeys: String, CodingKey {
         case id = "ID"

@@ -2,12 +2,12 @@ import Foundation
 import Yams
 
 /// Service for validating and linting Munki pkgsinfo files
-class PkgInfoService {
+public class PkgInfoService {
     let pkgsInfoPath: String
     let catalogsPath: String
     let manifestsPath: String
     
-    init(deploymentPath: String) {
+    public init(deploymentPath: String) {
         self.pkgsInfoPath = (deploymentPath as NSString).appendingPathComponent("pkgsinfo")
         self.catalogsPath = (deploymentPath as NSString).appendingPathComponent("catalogs")
         self.manifestsPath = (deploymentPath as NSString).appendingPathComponent("manifests")
@@ -128,7 +128,7 @@ class PkgInfoService {
     
     // MARK: - Validation
     
-    func validate() throws -> ValidationResult {
+    public func validate() throws -> ValidationResult {
         var result = ValidationResult()
         
         // Load all data
@@ -230,7 +230,7 @@ class PkgInfoService {
     
     // MARK: - Linting
     
-    func lint() throws -> [LintIssue] {
+    public func lint() throws -> [LintIssue] {
         var issues: [LintIssue] = []
         let pkgInfos = try loadAllPkgInfo()
         
@@ -357,36 +357,50 @@ struct ManifestFile {
 
 // MARK: - Results
 
-struct ValidationResult {
-    var pkgInfoCount: Int = 0
-    var catalogCount: Int = 0
-    var manifestCount: Int = 0
-    var errors: [ValidationIssue] = []
-    var warnings: [ValidationIssue] = []
+public struct ValidationResult {
+    public var pkgInfoCount: Int = 0
+    public var catalogCount: Int = 0
+    public var manifestCount: Int = 0
+    public var errors: [ValidationIssue] = []
+    public var warnings: [ValidationIssue] = []
     
-    var isValid: Bool { errors.isEmpty }
+    public var isValid: Bool { errors.isEmpty }
+    
+    public init() {}
 }
 
-struct ValidationIssue {
-    let path: String
-    let severity: ValidationSeverity
-    let message: String
+public struct ValidationIssue {
+    public let path: String
+    public let severity: ValidationSeverity
+    public let message: String
+    
+    public init(path: String, severity: ValidationSeverity, message: String) {
+        self.path = path
+        self.severity = severity
+        self.message = message
+    }
 }
 
-enum ValidationSeverity {
+public enum ValidationSeverity {
     case error
     case warning
 }
 
-struct LintIssue {
-    let path: String
-    let rule: String
-    let message: String
+public struct LintIssue {
+    public let path: String
+    public let rule: String
+    public let message: String
+    
+    public init(path: String, rule: String, message: String) {
+        self.path = path
+        self.rule = rule
+        self.message = message
+    }
 }
 
 // MARK: - Errors
 
-enum PkgInfoError: Error {
+public enum PkgInfoError: Error {
     case pathNotFound(String)
     case parseError(String)
 }

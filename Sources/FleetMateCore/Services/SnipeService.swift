@@ -3,7 +3,7 @@ import Alamofire
 
 /// Client for Snipe-IT Asset Management API
 /// https://snipe-it.readme.io/reference/api-overview
-class SnipeService {
+public class SnipeService {
     let baseUrl: String
     let apiKey: String
     
@@ -12,11 +12,11 @@ class SnipeService {
     private var assetCacheExpiry: Date = .distantPast
     private let cacheDuration: TimeInterval
     
-    var isConfigured: Bool {
+    public var isConfigured: Bool {
         return !baseUrl.isEmpty && !apiKey.isEmpty
     }
     
-    init(baseUrl: String?, apiKey: String?, cacheMinutes: Int = 5) {
+    public init(baseUrl: String?, apiKey: String?, cacheMinutes: Int = 5) {
         self.baseUrl = (baseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         self.apiKey = apiKey ?? ""
         self.cacheDuration = TimeInterval(cacheMinutes * 60)
@@ -37,7 +37,7 @@ class SnipeService {
     
     // MARK: - Assets
     
-    func getAssets(search: String? = nil, statusId: Int? = nil, locationId: Int? = nil) async throws -> [SnipeAsset] {
+    public func getAssets(search: String? = nil, statusId: Int? = nil, locationId: Int? = nil) async throws -> [SnipeAsset] {
         var parameters: [String: Any] = ["limit": 500]
         if let search = search { parameters["search"] = search }
         if let statusId = statusId { parameters["status_id"] = statusId }
@@ -46,66 +46,66 @@ class SnipeService {
         return try await fetchList("/api/v1/hardware", parameters: parameters)
     }
     
-    func getAsset(id: Int) async throws -> SnipeAsset? {
+    public func getAsset(id: Int) async throws -> SnipeAsset? {
         return try await fetch("/api/v1/hardware/\(id)")
     }
     
-    func getAssetByTag(_ tag: String) async throws -> SnipeAsset? {
+    public func getAssetByTag(_ tag: String) async throws -> SnipeAsset? {
         let assets: [SnipeAsset] = try await fetchList("/api/v1/hardware", parameters: ["search": tag])
         return assets.first { $0.assetTag == tag }
     }
     
-    func getAssetBySerial(_ serial: String) async throws -> SnipeAsset? {
+    public func getAssetBySerial(_ serial: String) async throws -> SnipeAsset? {
         return try await fetch("/api/v1/hardware/byserial/\(serial)")
     }
     
     // MARK: - Users
     
-    func getUsers(search: String? = nil) async throws -> [SnipeUser] {
+    public func getUsers(search: String? = nil) async throws -> [SnipeUser] {
         var parameters: [String: Any] = ["limit": 500]
         if let search = search { parameters["search"] = search }
         return try await fetchList("/api/v1/users", parameters: parameters)
     }
     
-    func getUser(id: Int) async throws -> SnipeUser? {
+    public func getUser(id: Int) async throws -> SnipeUser? {
         return try await fetch("/api/v1/users/\(id)")
     }
     
     // MARK: - Locations
     
-    func getLocations() async throws -> [SnipeLocation] {
+    public func getLocations() async throws -> [SnipeLocation] {
         return try await fetchList("/api/v1/locations", parameters: ["limit": 500])
     }
     
     // MARK: - Models
     
-    func getModels() async throws -> [SnipeModel] {
+    public func getModels() async throws -> [SnipeModel] {
         return try await fetchList("/api/v1/models", parameters: ["limit": 500])
     }
     
     // MARK: - Categories
     
-    func getCategories() async throws -> [SnipeCategory] {
+    public func getCategories() async throws -> [SnipeCategory] {
         return try await fetchList("/api/v1/categories", parameters: ["limit": 500])
     }
     
     // MARK: - Status Labels
     
-    func getStatusLabels() async throws -> [SnipeStatusLabel] {
+    public func getStatusLabels() async throws -> [SnipeStatusLabel] {
         return try await fetchList("/api/v1/statuslabels", parameters: ["limit": 500])
     }
     
     // MARK: - Asset Operations
     
-    func checkoutAsset(assetId: Int, request: SnipeCheckoutRequest) async throws -> SnipeResponse {
+    public func checkoutAsset(assetId: Int, request: SnipeCheckoutRequest) async throws -> SnipeResponse {
         return try await post("/api/v1/hardware/\(assetId)/checkout", body: request)
     }
     
-    func checkinAsset(assetId: Int, request: SnipeCheckinRequest? = nil) async throws -> SnipeResponse {
+    public func checkinAsset(assetId: Int, request: SnipeCheckinRequest? = nil) async throws -> SnipeResponse {
         return try await post("/api/v1/hardware/\(assetId)/checkin", body: request ?? SnipeCheckinRequest())
     }
     
-    func auditAsset(assetId: Int, request: SnipeAuditRequest? = nil) async throws -> SnipeResponse {
+    public func auditAsset(assetId: Int, request: SnipeAuditRequest? = nil) async throws -> SnipeResponse {
         return try await post("/api/v1/hardware/\(assetId)/audit", body: request ?? SnipeAuditRequest())
     }
     

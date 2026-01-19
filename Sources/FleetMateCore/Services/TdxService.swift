@@ -3,7 +3,7 @@ import Alamofire
 
 /// TeamDynamix (TDX) service for ticket management
 /// Uses JWT authentication via username/password or BEID
-class TdxService {
+public class TdxService {
     private let config: FleetMateConfig
     private let session: Session
     private var cachedToken: String?
@@ -16,15 +16,15 @@ class TdxService {
     private var refDataExpiry: Date = .distantPast
     private let cacheDuration: TimeInterval
 
-    var isConfigured: Bool {
+    public var isConfigured: Bool {
         return config.isTdxConfigured
     }
 
-    var baseUrl: String {
+    public var baseUrl: String {
         (config.tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 
-    init(config: FleetMateConfig) {
+    public init(config: FleetMateConfig) {
         self.config = config
         self.cacheDuration = TimeInterval(config.cacheMinutes * 60)
 
@@ -104,7 +104,7 @@ class TdxService {
 
     // MARK: - Tickets
 
-    func searchTickets(search: TicketSearchRequest? = nil, maxResults: Int = 50) async throws -> [TdxTicket] {
+    public func searchTickets(search: TicketSearchRequest? = nil, maxResults: Int = 50) async throws -> [TdxTicket] {
         guard let headers = await headers() else { return [] }
 
         var request = search ?? TicketSearchRequest()
@@ -126,7 +126,7 @@ class TdxService {
         }
     }
 
-    func getTicket(id: Int) async throws -> TdxTicket? {
+    public func getTicket(id: Int) async throws -> TdxTicket? {
         guard let headers = await headers() else { return nil }
 
         let url = config.tdxTicketsUrl("\(id)")
@@ -149,7 +149,7 @@ class TdxService {
         }
     }
 
-    func createTicket(request: CreateTicketRequest) async throws -> TdxTicket? {
+    public func createTicket(request: CreateTicketRequest) async throws -> TdxTicket? {
         guard let headers = await headers() else { return nil }
 
         var createRequest = request
@@ -187,7 +187,7 @@ class TdxService {
         }
     }
 
-    func updateTicket(id: Int, updates: [String: Any]) async throws -> TdxTicket? {
+    public func updateTicket(id: Int, updates: [String: Any]) async throws -> TdxTicket? {
         guard let headers = await headers() else { return nil }
 
         let url = config.tdxTicketsUrl("\(id)")
@@ -208,7 +208,7 @@ class TdxService {
 
     // MARK: - Feed (Comments)
 
-    func getTicketFeed(ticketId: Int) async throws -> [TdxFeedEntry] {
+    public func getTicketFeed(ticketId: Int) async throws -> [TdxFeedEntry] {
         guard let headers = await headers() else { return [] }
 
         let url = config.tdxTicketsUrl("\(ticketId)/feed")
@@ -227,7 +227,7 @@ class TdxService {
         }
     }
 
-    func addComment(ticketId: Int, comment: String, isPrivate: Bool = false, notify: [String]? = nil) async throws -> Bool {
+    public func addComment(ticketId: Int, comment: String, isPrivate: Bool = false, notify: [String]? = nil) async throws -> Bool {
         guard let headers = await headers() else { return false }
 
         let request = CreateFeedEntryRequest(
@@ -254,7 +254,7 @@ class TdxService {
 
     // MARK: - Reference Data
 
-    func getStatuses() async throws -> [Int: String] {
+    public func getStatuses() async throws -> [Int: String] {
         if !statusCache.isEmpty && Date() < refDataExpiry {
             return statusCache
         }
@@ -282,7 +282,7 @@ class TdxService {
         return statusCache
     }
 
-    func getTypes() async throws -> [Int: String] {
+    public func getTypes() async throws -> [Int: String] {
         if !typeCache.isEmpty && Date() < refDataExpiry {
             return typeCache
         }
@@ -309,7 +309,7 @@ class TdxService {
         return typeCache
     }
 
-    func getPriorities() async throws -> [Int: String] {
+    public func getPriorities() async throws -> [Int: String] {
         if !priorityCache.isEmpty && Date() < refDataExpiry {
             return priorityCache
         }

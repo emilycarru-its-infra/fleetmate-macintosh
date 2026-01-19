@@ -3,22 +3,22 @@ import Foundation
 /// Service for interacting with MunkiReport via SSH
 /// Since MunkiReport doesn't have a native API, we SSH into the instance
 /// and query the SQLite database directly
-class MunkiReportService {
+public class MunkiReportService {
     let config: FleetMateConfig
     private var sshProcess: Process?
     
-    init(config: FleetMateConfig) {
+    public init(config: FleetMateConfig) {
         self.config = config
     }
     
-    var isConfigured: Bool {
+    public var isConfigured: Bool {
         return config.munkiReportSshHost != nil
     }
     
     // MARK: - SSH Execution
     
     /// Execute a command on the MunkiReport server via SSH
-    func executeSSH(_ command: String) async throws -> String {
+    public func executeSSH(_ command: String) async throws -> String {
         guard let host = config.munkiReportSshHost else {
             throw MunkiReportError.notConfigured
         }
@@ -57,7 +57,7 @@ class MunkiReportService {
     }
     
     /// Execute a SQL query on the MunkiReport database
-    func executeSQL(_ query: String) async throws -> [[String: String]] {
+    public func executeSQL(_ query: String) async throws -> [[String: String]] {
         let escapedQuery = query.replacingOccurrences(of: "'", with: "'\"'\"'")
         let command = "sqlite3 -header -separator '|' '\(config.munkiReportDbPath)' '\(escapedQuery)'"
         
@@ -89,7 +89,7 @@ class MunkiReportService {
     // MARK: - Munki Data Queries
     
     /// Get all devices (reportdata)
-    func getDevices() async throws -> [MunkiDevice] {
+    public func getDevices() async throws -> [MunkiDevice] {
         let query = """
             SELECT 
                 serial_number, hostname, machine_name, os_version, 
@@ -104,7 +104,7 @@ class MunkiReportService {
     }
     
     /// Get device by serial number or hostname
-    func getDevice(_ identifier: String) async throws -> MunkiDevice? {
+    public func getDevice(_ identifier: String) async throws -> MunkiDevice? {
         let query = """
             SELECT 
                 serial_number, hostname, machine_name, os_version,
@@ -120,7 +120,7 @@ class MunkiReportService {
     }
     
     /// Get Munki info for a device
-    func getMunkiInfo(serial: String) async throws -> MunkiInfo? {
+    public func getMunkiInfo(serial: String) async throws -> MunkiInfo? {
         let query = """
             SELECT 
                 serial_number, version, manifest, manifesturl,
@@ -136,7 +136,7 @@ class MunkiReportService {
     }
     
     /// Get managed installs for a device
-    func getManagedInstalls(serial: String) async throws -> [ManagedInstall] {
+    public func getManagedInstalls(serial: String) async throws -> [ManagedInstall] {
         let query = """
             SELECT 
                 serial_number, name, display_name, version, installed_version,
@@ -151,7 +151,7 @@ class MunkiReportService {
     }
     
     /// Get install errors across all devices
-    func getErrors() async throws -> [InstallError] {
+    public func getErrors() async throws -> [InstallError] {
         let query = """
             SELECT 
                 m.serial_number, r.hostname, m.name, m.display_name,
@@ -167,7 +167,7 @@ class MunkiReportService {
     }
     
     /// Get install statistics by item
-    func getInstallStats() async throws -> [InstallStats] {
+    public func getInstallStats() async throws -> [InstallStats] {
         let query = """
             SELECT 
                 name,
@@ -185,7 +185,7 @@ class MunkiReportService {
     }
     
     /// Get devices with stale check-ins
-    func getStaleDevices(days: Int = 7) async throws -> [MunkiDevice] {
+    public func getStaleDevices(days: Int = 7) async throws -> [MunkiDevice] {
         let query = """
             SELECT 
                 serial_number, hostname, machine_name, os_version,
@@ -201,12 +201,12 @@ class MunkiReportService {
     }
     
     /// Execute arbitrary SQL (for advanced queries)
-    func rawQuery(_ sql: String) async throws -> [[String: String]] {
+    public func rawQuery(_ sql: String) async throws -> [[String: String]] {
         return try await executeSQL(sql)
     }
     
     /// Run a shell command on the MunkiReport server
-    func runCommand(_ command: String) async throws -> String {
+    public func runCommand(_ command: String) async throws -> String {
         return try await executeSSH(command)
     }
 }

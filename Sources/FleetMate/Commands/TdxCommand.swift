@@ -29,7 +29,7 @@ struct TicketsSubcommand: AsyncParsableCommand {
     @Option(name: .shortAndLong, help: "Search text")
     var search: String?
 
-    @Option(name: .shortAndLong, help: "Filter by status ID")
+    @Option(name: [.customShort("S"), .long], help: "Filter by status ID")
     var status: Int?
 
     @Option(name: .shortAndLong, help: "Filter by type ID")
@@ -80,8 +80,12 @@ struct TicketsSubcommand: AsyncParsableCommand {
     private func printTicketsTable(_ tickets: [TdxTicket]) {
         print("\n" + "TeamDynamix Tickets".bold + " (\(tickets.count) shown)\n")
 
-        let header = String(format: "%-8s %-12s %-12s %-35s %-20s",
-            "ID", "Status", "Priority", "Title", "Requestor")
+        // Use Swift string padding instead of C format specifiers
+        let header = "ID".padding(toLength: 8, withPad: " ", startingAt: 0) +
+                     "Status".padding(toLength: 14, withPad: " ", startingAt: 0) +
+                     "Priority".padding(toLength: 12, withPad: " ", startingAt: 0) +
+                     "Title".padding(toLength: 35, withPad: " ", startingAt: 0) +
+                     "Requestor"
         print(header.underline)
 
         for ticket in tickets {
@@ -95,12 +99,11 @@ struct TicketsSubcommand: AsyncParsableCommand {
             default: statusColor = statusStr
             }
 
-            let row = String(format: "%-8d %-12s %-12s %-35s %-20s",
-                ticket.id ?? 0,
-                statusColor,
-                String((ticket.priorityName ?? "-").prefix(10)),
-                String((ticket.title ?? "-").prefix(33)),
-                String((ticket.requestorName ?? "-").prefix(18)))
+            let row = String(ticket.id ?? 0).padding(toLength: 8, withPad: " ", startingAt: 0) +
+                      statusColor.padding(toLength: 14, withPad: " ", startingAt: 0) +
+                      String((ticket.priorityName ?? "-").prefix(10)).padding(toLength: 12, withPad: " ", startingAt: 0) +
+                      String((ticket.title ?? "-").prefix(33)).padding(toLength: 35, withPad: " ", startingAt: 0) +
+                      String((ticket.requestorName ?? "-").prefix(18))
             print(row)
         }
         print("")

@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Ticket Models
 
-public struct TdxTicket: Codable, Identifiable {
+public struct TdxTicket: Codable, Identifiable, Sendable {
     public let id: Int?
     public let title: String?
     public let description: String?
@@ -18,6 +18,8 @@ public struct TdxTicket: Codable, Identifiable {
     public let responsibleFullName: String?
     public let responsibleEmail: String?
     public let responsibleUid: String?
+    public let responsibleGroupId: Int?
+    public let responsibleGroupName: String?
     public let createdDate: String?
     public let modifiedDate: String?
     public let goesOffHoldDate: String?
@@ -45,6 +47,8 @@ public struct TdxTicket: Codable, Identifiable {
         case responsibleFullName = "ResponsibleFullName"
         case responsibleEmail = "ResponsibleEmail"
         case responsibleUid = "ResponsibleUid"
+        case responsibleGroupId = "ResponsibleGroupID"
+        case responsibleGroupName = "ResponsibleGroupName"
         case createdDate = "CreatedDate"
         case modifiedDate = "ModifiedDate"
         case goesOffHoldDate = "GoesOffHoldDate"
@@ -88,6 +92,7 @@ public struct TicketSearchRequest: Codable {
     public var typeIds: [Int]?
     public var priorityIds: [Int]?
     public var responsibleUids: [String]?
+    public var responsibleGroupIds: [Int]?
     public var requestorUids: [String]?
     public var isOnHold: Bool?
     public var maxResults: Int = 50
@@ -98,6 +103,7 @@ public struct TicketSearchRequest: Codable {
         typeIds: [Int]? = nil,
         priorityIds: [Int]? = nil,
         responsibleUids: [String]? = nil,
+        responsibleGroupIds: [Int]? = nil,
         requestorUids: [String]? = nil,
         isOnHold: Bool? = nil,
         maxResults: Int = 50
@@ -107,6 +113,7 @@ public struct TicketSearchRequest: Codable {
         self.typeIds = typeIds
         self.priorityIds = priorityIds
         self.responsibleUids = responsibleUids
+        self.responsibleGroupIds = responsibleGroupIds
         self.requestorUids = requestorUids
         self.isOnHold = isOnHold
         self.maxResults = maxResults
@@ -118,9 +125,44 @@ public struct TicketSearchRequest: Codable {
         case typeIds = "TypeIDs"
         case priorityIds = "PriorityIDs"
         case responsibleUids = "ResponsibleUids"
+        case responsibleGroupIds = "ResponsibleGroupIDs"
         case requestorUids = "RequestorUids"
         case isOnHold = "IsOnHold"
         case maxResults = "MaxResults"
+    }
+    
+    // Custom encoder that skips nil values - TDX API rejects null fields
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        
+        // Only encode non-nil optional values
+        if let searchText = searchText {
+            try container.encode(searchText, forKey: .searchText)
+        }
+        if let statusIds = statusIds, !statusIds.isEmpty {
+            try container.encode(statusIds, forKey: .statusIds)
+        }
+        if let typeIds = typeIds, !typeIds.isEmpty {
+            try container.encode(typeIds, forKey: .typeIds)
+        }
+        if let priorityIds = priorityIds, !priorityIds.isEmpty {
+            try container.encode(priorityIds, forKey: .priorityIds)
+        }
+        if let responsibleUids = responsibleUids, !responsibleUids.isEmpty {
+            try container.encode(responsibleUids, forKey: .responsibleUids)
+        }
+        if let responsibleGroupIds = responsibleGroupIds, !responsibleGroupIds.isEmpty {
+            try container.encode(responsibleGroupIds, forKey: .responsibleGroupIds)
+        }
+        if let requestorUids = requestorUids, !requestorUids.isEmpty {
+            try container.encode(requestorUids, forKey: .requestorUids)
+        }
+        if let isOnHold = isOnHold {
+            try container.encode(isOnHold, forKey: .isOnHold)
+        }
+        
+        // Always encode maxResults
+        try container.encode(maxResults, forKey: .maxResults)
     }
 }
 

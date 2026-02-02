@@ -125,10 +125,13 @@ public class SecureShellService {
             for host in hostsOrDevices {
                 if shouldStop { break }
                 
-                group.addTask {
-                    // Throttle concurrent connections
-                    self.connectionSemaphore.wait()
-                    defer { self.connectionSemaphore.signal() }
+                group.addTask { [connectionSemaphore = self.connectionSemaphore] in
+                    // Throttle concurrent connections using actor isolation
+                    await withCheckedContinuation { continuation in
+                        connectionSemaphore.wait()
+                        continuation.resume()
+                    }
+                    defer { connectionSemaphore.signal() }
                     
                     do {
                         return try await self.execute(host: host, command: command, username: username)

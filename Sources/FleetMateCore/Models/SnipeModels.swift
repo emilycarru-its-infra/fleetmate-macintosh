@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - API Response Wrappers
 
-public struct SnipeListResponse<T: Decodable>: Decodable {
+public struct SnipeListResponse<T: Decodable>: Decodable, Sendable where T: Sendable {
     public let total: Int
     public let rows: [T]
 }
@@ -15,7 +15,7 @@ public struct SnipeResponse: Decodable {
 
 // MARK: - Core Models
 
-public struct SnipeAsset: Codable, Identifiable {
+public struct SnipeAsset: Codable, Identifiable, Sendable {
     public let id: Int
     public let name: String?
     public let assetTag: String?
@@ -29,8 +29,8 @@ public struct SnipeAsset: Codable, Identifiable {
     public let assignedTo: SnipeAssignedTo?
     public let purchaseDate: SnipeDateRef?
     public let lastCheckout: SnipeDateRef?
-    public let lastAuditDate: String?
-    public let nextAuditDate: String?
+    public let lastAuditDate: SnipeDateRef?  // Can be null, string, or object
+    public let nextAuditDate: SnipeDateRef?  // Can be null, string, or object
     public let notes: String?
     public let createdAt: SnipeDateRef?
     public let updatedAt: SnipeDateRef?
@@ -63,7 +63,7 @@ public struct SnipeAsset: Codable, Identifiable {
     }
 }
 
-public struct SnipeUser: Codable, Identifiable {
+public struct SnipeUser: Codable, Identifiable, Sendable {
     public let id: Int
     public let avatar: String?
     public let firstName: String?
@@ -101,7 +101,7 @@ public struct SnipeUser: Codable, Identifiable {
     }
 }
 
-public struct SnipeLocation: Codable, Identifiable {
+public struct SnipeLocation: Codable, Identifiable, Sendable {
     public let id: Int
     public let name: String?
     public let address: String?
@@ -128,7 +128,7 @@ public struct SnipeLocation: Codable, Identifiable {
     }
 }
 
-public struct SnipeModel: Codable, Identifiable {
+public struct SnipeModel: Codable, Identifiable, Sendable {
     public let id: Int
     public let name: String?
     public let manufacturer: SnipeManufacturerRef?
@@ -148,7 +148,7 @@ public struct SnipeModel: Codable, Identifiable {
     }
 }
 
-public struct SnipeCategory: Codable, Identifiable {
+public struct SnipeCategory: Codable, Identifiable, Sendable {
     public let id: Int
     public let name: String?
     public let categoryType: String?
@@ -168,7 +168,7 @@ public struct SnipeCategory: Codable, Identifiable {
     }
 }
 
-public struct SnipeStatusLabel: Codable, Identifiable {
+public struct SnipeStatusLabel: Codable, Identifiable, Sendable {
     public let id: Int
     public let name: String?
     public let statusType: String?
@@ -186,12 +186,12 @@ public struct SnipeStatusLabel: Codable, Identifiable {
 
 // MARK: - Reference Types (Embedded Objects)
 
-public struct SnipeModelRef: Codable {
+public struct SnipeModelRef: Codable, Sendable {
     public let id: Int?
     public let name: String?
 }
 
-public struct SnipeStatusRef: Codable {
+public struct SnipeStatusRef: Codable, Sendable {
     public let id: Int?
     public let name: String?
     public let statusType: String?
@@ -204,22 +204,22 @@ public struct SnipeStatusRef: Codable {
     }
 }
 
-public struct SnipeCategoryRef: Codable {
+public struct SnipeCategoryRef: Codable, Sendable {
     public let id: Int?
     public let name: String?
 }
 
-public struct SnipeManufacturerRef: Codable {
+public struct SnipeManufacturerRef: Codable, Sendable {
     public let id: Int?
     public let name: String?
 }
 
-public struct SnipeLocationRef: Codable {
+public struct SnipeLocationRef: Codable, Sendable {
     public let id: Int?
     public let name: String?
 }
 
-public struct SnipeAssignedTo: Codable {
+public struct SnipeAssignedTo: Codable, Sendable {
     public let id: Int?
     public let username: String?
     public let name: String?
@@ -237,32 +237,38 @@ public struct SnipeAssignedTo: Codable {
     }
 }
 
-public struct SnipeDepartmentRef: Codable {
+public struct SnipeDepartmentRef: Codable, Sendable {
     public let id: Int?
     public let name: String?
 }
 
-public struct SnipeManagerRef: Codable {
+public struct SnipeManagerRef: Codable, Sendable {
     public let id: Int?
     public let name: String?
 }
 
-public struct SnipeGroupsRef: Codable {
+public struct SnipeGroupsRef: Codable, Sendable {
     public let total: Int?
     public let rows: [SnipeGroupRef]?
 }
 
-public struct SnipeGroupRef: Codable {
+public struct SnipeGroupRef: Codable, Sendable {
     public let id: Int?
     public let name: String?
 }
 
-public struct SnipeDateRef: Codable {
+public struct SnipeDateRef: Codable, Sendable {
     public let datetime: String?
+    public let date: String?  // Some fields use "date" instead of "datetime"
     public let formatted: String?
+    
+    /// Returns the date value, preferring datetime over date
+    public var value: String? {
+        datetime ?? date
+    }
 }
 
-public struct SnipeCustomField: Codable {
+public struct SnipeCustomField: Codable, Sendable {
     public let field: String?
     public let value: String?
     public let fieldFormat: String?

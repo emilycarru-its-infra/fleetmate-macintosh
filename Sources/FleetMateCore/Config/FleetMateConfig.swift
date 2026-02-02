@@ -42,11 +42,23 @@ public struct FleetMateConfig: Codable {
     public var snipeUrl: String?
     public var snipeApiKey: String?
 
-    // Microsoft Graph (Intune/Entra) settings
+    // Microsoft Graph settings - shared tenant
     public var graphTenantId: String?
+    public var graphPageSize: Int = 100
+    
+    // Microsoft Graph - Devices (Intune) Service Principal
+    // Used for: /deviceManagement/managedDevices
+    public var devicesGraphId: String?
+    public var devicesGraphSecret: String?
+    
+    // Microsoft Graph - Systems (Entra) Service Principal
+    // Used for: /users, /groups
+    public var systemsGraphId: String?
+    public var systemsGraphSecret: String?
+    
+    // Legacy single-credential properties (for backward compatibility)
     public var graphClientId: String?
     public var graphClientSecret: String?
-    public var graphPageSize: Int = 100
 
     // Azure DevOps settings
     public var devopsOrganization: String?
@@ -56,7 +68,9 @@ public struct FleetMateConfig: Codable {
 
     // TeamDynamix (TDX) settings
     public var tdxBaseUrl: String?
-    public var tdxAppId: Int?
+    public var tdxAppId: Int?  // Legacy fallback
+    public var tdxTicketingAppId: Int?  // 115 at ECU
+    public var tdxAssetsAppId: Int?  // 116 at ECU
     public var tdxUsername: String?
     public var tdxPassword: String?
     public var tdxBeid: String?
@@ -66,9 +80,13 @@ public struct FleetMateConfig: Codable {
     public var tdxDefaultPriorityId: Int?
     public var tdxDefaultSourceId: Int?
     public var tdxDefaultAccountId: Int?
+    public var tdxResponsibleGroupId: Int?  // Group ID for filtering tickets
     
     // SecureShell settings
     public var secureShell: SecureShellConfig?
+    
+    // Tasks settings (multi-provider task management)
+    public var tasks: TasksConfig?
 
     // Deployment repo paths
     public var deploymentPath: String = "deployment"
@@ -103,12 +121,18 @@ public struct FleetMateConfig: Codable {
         case graphClientId = "graph_client_id"
         case graphClientSecret = "graph_client_secret"
         case graphPageSize = "graph_page_size"
+        case devicesGraphId = "devices_graph_id"
+        case devicesGraphSecret = "devices_graph_secret"
+        case systemsGraphId = "systems_graph_id"
+        case systemsGraphSecret = "systems_graph_secret"
         case devopsOrganization = "devops_organization"
         case devopsProject = "devops_project"
         case devopsPat = "devops_pat"
         case devopsDefaultWorkItemType = "devops_default_work_item_type"
         case tdxBaseUrl = "tdx_base_url"
         case tdxAppId = "tdx_app_id"
+        case tdxTicketingAppId = "tdx_ticketing_app_id"
+        case tdxAssetsAppId = "tdx_assets_app_id"
         case tdxUsername = "tdx_username"
         case tdxPassword = "tdx_password"
         case tdxBeid = "tdx_beid"
@@ -118,7 +142,9 @@ public struct FleetMateConfig: Codable {
         case tdxDefaultPriorityId = "tdx_default_priority_id"
         case tdxDefaultSourceId = "tdx_default_source_id"
         case tdxDefaultAccountId = "tdx_default_account_id"
+        case tdxResponsibleGroupId = "tdx_responsible_group_id"
         case secureShell = "secure_shell"
+        case tasks = "tasks"
         case deploymentPath = "deployment_path"
         case pkgsinfoPath = "pkgsinfo_path"
         case pkgsPath = "pkgs_path"
@@ -162,8 +188,12 @@ public struct FleetMateConfig: Codable {
             loadEnvFile(path: expandedPath, into: &config)
         }
         
-        // Load from macOS Keychain (preferred for developer workstations)
-        loadFromKeychain(into: &config)
+        // Load from secrets.yaml file (created by setup-secrets.sh)
+        // This is the PRIMARY secret storage - no Keychain prompts!
+        loadFromSecretsFile(into: &config)
+        
+        // NOTE: Keychain loading removed to avoid password prompts
+        // Secrets are now loaded from ~/.config/fleetmate/secrets.yaml
 
         // Environment variables override everything (for CI/CD)
         loadEnvironmentVariables(into: &config)
@@ -172,6 +202,81 @@ public struct FleetMateConfig: Codable {
         config.repoRoot = findRepoRoot()
 
         return config
+    }
+    
+    /// Load secrets from ~/.config/fleetmate/secrets.yaml (created by setup-secrets.sh)
+    /// Returns true if secrets file was found and loaded successfully
+    @discardableResult
+    private static func loadFromSecretsFile(into config: inout FleetMateConfig) -> Bool {
+        let secretsPath = NSString(string: "~/.config/fleetmate/secrets.yaml").expandingTildeInPath
+        
+        guard FileManager.default.fileExists(atPath: secretsPath) else {
+            print("[FleetMate] secrets.yaml not found at \(secretsPath)")
+            return false
+        }
+        
+        guard let contents = try? String(contentsOfFile: secretsPath, encoding: .utf8) else {
+            print("[FleetMate] Could not read secrets.yaml")
+            return false
+        }
+        
+        // Parse as dictionary to allow missing keys (FleetMateConfig decode requires all keys)
+        guard let yaml = try? Yams.load(yaml: contents) as? [String: Any] else {
+            print("[FleetMate] Failed to parse secrets.yaml as dictionary")
+            return false
+        }
+        
+        print("[FleetMate] Loaded \(yaml.count) secrets from \(secretsPath)")
+        
+        // Helper to get string value
+        func str(_ key: String) -> String? {
+            yaml[key] as? String
+        }
+        
+        // Helper to get int value
+        func int(_ key: String) -> Int? {
+            yaml[key] as? Int
+        }
+        
+        // Snipe-IT
+        if let v = str("snipe_url"), !v.isEmpty { config.snipeUrl = v }
+        if let v = str("snipe_api_key"), !v.isEmpty { config.snipeApiKey = v }
+        
+        // Microsoft Graph - shared tenant
+        if let v = str("graph_tenant_id"), !v.isEmpty { config.graphTenantId = v }
+        
+        // Microsoft Graph - Devices (Intune) Service Principal
+        if let v = str("devices_graph_id"), !v.isEmpty { config.devicesGraphId = v }
+        if let v = str("devices_graph_secret"), !v.isEmpty { config.devicesGraphSecret = v }
+        
+        // Microsoft Graph - Systems (Entra) Service Principal
+        if let v = str("systems_graph_id"), !v.isEmpty { config.systemsGraphId = v }
+        if let v = str("systems_graph_secret"), !v.isEmpty { config.systemsGraphSecret = v }
+        
+        // Legacy single-credential (backward compatibility)
+        if let v = str("graph_client_id"), !v.isEmpty { config.graphClientId = v }
+        if let v = str("graph_client_secret"), !v.isEmpty { config.graphClientSecret = v }
+        
+        // Azure DevOps
+        if let v = str("devops_organization"), !v.isEmpty { config.devopsOrganization = v }
+        if let v = str("devops_project"), !v.isEmpty { config.devopsProject = v }
+        
+        // TeamDynamix
+        if let v = str("tdx_base_url"), !v.isEmpty { config.tdxBaseUrl = v }
+        if let appId = int("tdx_app_id") { config.tdxAppId = appId }
+        if let appId = int("tdx_ticketing_app_id") { config.tdxTicketingAppId = appId }
+        if let appId = int("tdx_assets_app_id") { config.tdxAssetsAppId = appId }
+        if let v = str("tdx_username"), !v.isEmpty { config.tdxUsername = v }
+        if let v = str("tdx_password"), !v.isEmpty { config.tdxPassword = v }
+        if let v = str("tdx_beid"), !v.isEmpty { config.tdxBeid = v }
+        if let v = str("tdx_web_services_key"), !v.isEmpty { config.tdxWebServicesKey = v }
+        if let groupId = int("tdx_responsible_group_id") { config.tdxResponsibleGroupId = groupId }
+        
+        // ReportMate
+        if let v = str("reportmate_url"), !v.isEmpty { config.reportMateUrl = v }
+        if let v = str("reportmate_passphrase"), !v.isEmpty { config.reportMatePassphrase = v }
+        
+        return true
     }
 
     private static func loadFromFile(path: String) -> FleetMateConfig? {
@@ -283,10 +388,13 @@ public struct FleetMateConfig: Codable {
         // TDX
         if let v = env["TDX_BASE_URL"] { config.tdxBaseUrl = v }
         if let v = env["TDX_APP_ID"], let id = Int(v) { config.tdxAppId = id }
+        if let v = env["TDX_TICKETING_APP_ID"], let id = Int(v) { config.tdxTicketingAppId = id }
+        if let v = env["TDX_ASSETS_APP_ID"], let id = Int(v) { config.tdxAssetsAppId = id }
         if let v = env["TDX_USERNAME"] { config.tdxUsername = v }
         if let v = env["TDX_PASSWORD"] { config.tdxPassword = v }
         if let v = env["TDX_BEID"] { config.tdxBeid = v }
         if let v = env["TDX_WEB_SERVICES_KEY"] { config.tdxWebServicesKey = v }
+        if let v = env["TDX_RESPONSIBLE_GROUP_ID"], let id = Int(v) { config.tdxResponsibleGroupId = id }
         
         // SecureShell
         if let v = env["SSH_KEY_PATH"] {
@@ -318,6 +426,8 @@ public struct FleetMateConfig: Codable {
         case "DEVOPS_PAT", "AZURE_DEVOPS_PAT": config.devopsPat = value
         case "TDX_BASE_URL": config.tdxBaseUrl = value
         case "TDX_APP_ID": config.tdxAppId = Int(value)
+        case "TDX_TICKETING_APP_ID": config.tdxTicketingAppId = Int(value)
+        case "TDX_ASSETS_APP_ID": config.tdxAssetsAppId = Int(value)
         case "TDX_USERNAME": config.tdxUsername = value
         case "TDX_PASSWORD": config.tdxPassword = value
         case "TDX_BEID": config.tdxBeid = value
@@ -374,9 +484,19 @@ public struct FleetMateConfig: Codable {
         return snipeUrl != nil && snipeApiKey != nil
     }
 
-    /// Check if Graph is configured
+    /// Check if Graph is configured (either devices or systems service principal)
     public var isGraphConfigured: Bool {
-        return graphTenantId != nil && graphClientId != nil
+        return graphTenantId != nil && (isDevicesGraphConfigured || isSystemsGraphConfigured || graphClientId != nil)
+    }
+    
+    /// Check if Devices Graph (Intune) is configured
+    public var isDevicesGraphConfigured: Bool {
+        return graphTenantId != nil && devicesGraphId != nil && devicesGraphSecret != nil
+    }
+    
+    /// Check if Systems Graph (Entra users/groups) is configured
+    public var isSystemsGraphConfigured: Bool {
+        return graphTenantId != nil && systemsGraphId != nil && systemsGraphSecret != nil
     }
 
     /// Check if DevOps is configured
@@ -397,7 +517,7 @@ public struct FleetMateConfig: Codable {
             let keyPath = ssh.resolvedKeyPath
             if FileManager.default.fileExists(atPath: keyPath) { return true }
             if ssh.getPrivateKeyFromEnv() != nil { return true }
-            if KeychainService.shared.exists(.sshPrivateKey) { return true }
+            // NOTE: Removed Keychain check to avoid password prompts
         }
         // Check default SSH key locations
         let defaultPaths = [
@@ -406,21 +526,39 @@ public struct FleetMateConfig: Codable {
         ]
         return defaultPaths.contains { FileManager.default.fileExists(atPath: $0) }
     }
+    
+    /// Check if any tasks provider is configured
+    public var isTasksConfigured: Bool {
+        guard let tasks = tasks else { return false }
+        return tasks.providers.azdevops?.enabled == true ||
+               tasks.providers.github?.enabled == true ||
+               tasks.providers.gitea?.enabled == true
+    }
+    
+    /// Get list of enabled task providers
+    public var enabledTaskProviders: [String] {
+        guard let tasks = tasks else { return [] }
+        var providers: [String] = []
+        if tasks.providers.azdevops?.enabled == true { providers.append("azdevops") }
+        if tasks.providers.github?.enabled == true { providers.append("github") }
+        if tasks.providers.gitea?.enabled == true { providers.append("gitea") }
+        return providers
+    }
 
-    /// Get TDX tickets URL
+    /// Get TDX tickets URL (uses tdxTicketingAppId or fallback to tdxAppId)
     public func tdxTicketsUrl(_ suffix: String = "") -> String {
         let base = (tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let appId = tdxAppId ?? 0
+        let appId = tdxTicketingAppId ?? tdxAppId ?? 0
         if suffix.isEmpty {
             return "\(base)/api/\(appId)/tickets"
         }
         return "\(base)/api/\(appId)/tickets/\(suffix)"
     }
     
-    /// Get TDX assets URL
+    /// Get TDX assets URL (uses tdxAssetsAppId or fallback to tdxAppId)
     public func tdxAssetsUrl(_ suffix: String = "") -> String {
         let base = (tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let appId = tdxAppId ?? 0
+        let appId = tdxAssetsAppId ?? tdxAppId ?? 0
         if suffix.isEmpty {
             return "\(base)/api/\(appId)/assets"
         }
@@ -428,3 +566,272 @@ public struct FleetMateConfig: Codable {
     }
 }
 
+// MARK: - Tasks Configuration
+
+/// Configuration for multi-provider task management
+public struct TasksConfig: Codable {
+    /// Task provider configurations
+    public var providers: TaskProvidersConfig
+    
+    /// Microsoft Planner sync configuration (one-way push)
+    public var planner: PlannerSyncConfig?
+    
+    /// Markdown file sync configuration
+    public var markdown: MarkdownSyncConfig?
+    
+    /// Default provider for task creation when not specified
+    public var defaultProvider: String
+    
+    public init(
+        providers: TaskProvidersConfig = TaskProvidersConfig(),
+        planner: PlannerSyncConfig? = nil,
+        markdown: MarkdownSyncConfig? = nil,
+        defaultProvider: String = "azdevops"
+    ) {
+        self.providers = providers
+        self.planner = planner
+        self.markdown = markdown
+        self.defaultProvider = defaultProvider
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case providers
+        case planner
+        case markdown
+        case defaultProvider = "default_provider"
+    }
+}
+
+/// Configuration for individual task providers
+public struct TaskProvidersConfig: Codable {
+    /// Azure DevOps task provider configuration
+    public var azdevops: AzureDevOpsProviderConfig?
+    
+    /// GitHub task provider configuration
+    public var github: GitHubProviderConfig?
+    
+    /// Gitea task provider configuration
+    public var gitea: GiteaProviderConfig?
+    
+    public init(
+        azdevops: AzureDevOpsProviderConfig? = nil,
+        github: GitHubProviderConfig? = nil,
+        gitea: GiteaProviderConfig? = nil
+    ) {
+        self.azdevops = azdevops
+        self.github = github
+        self.gitea = gitea
+    }
+}
+
+/// Azure DevOps provider configuration for tasks
+public struct AzureDevOpsProviderConfig: Codable {
+    /// Whether this provider is enabled
+    public var enabled: Bool
+    
+    /// Override organization (uses devopsOrganization if not set)
+    public var organization: String?
+    
+    /// Override project (uses devopsProject if not set)
+    public var project: String?
+    
+    /// Default work item type for created tasks
+    public var defaultWorkItemType: String
+    
+    /// Area path for created tasks
+    public var areaPath: String?
+    
+    /// Iteration path for created tasks (empty = current sprint)
+    public var iterationPath: String?
+    
+    public init(
+        enabled: Bool = true,
+        organization: String? = nil,
+        project: String? = nil,
+        defaultWorkItemType: String = "Bug",
+        areaPath: String? = nil,
+        iterationPath: String? = nil
+    ) {
+        self.enabled = enabled
+        self.organization = organization
+        self.project = project
+        self.defaultWorkItemType = defaultWorkItemType
+        self.areaPath = areaPath
+        self.iterationPath = iterationPath
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case organization
+        case project
+        case defaultWorkItemType = "default_work_item_type"
+        case areaPath = "area_path"
+        case iterationPath = "iteration_path"
+    }
+}
+
+/// GitHub provider configuration for tasks
+public struct GitHubProviderConfig: Codable {
+    /// Whether this provider is enabled
+    public var enabled: Bool
+    
+    /// Repository owner (user or organization)
+    public var owner: String?
+    
+    /// Repository name
+    public var repo: String?
+    
+    /// Personal access token (or use 'gh auth token')
+    public var token: String?
+    
+    /// Default labels to apply to created issues
+    public var defaultLabels: [String]
+    
+    /// Use GitHub CLI for authentication if token not provided
+    public var useGhCli: Bool
+    
+    public init(
+        enabled: Bool = false,
+        owner: String? = nil,
+        repo: String? = nil,
+        token: String? = nil,
+        defaultLabels: [String] = [],
+        useGhCli: Bool = true
+    ) {
+        self.enabled = enabled
+        self.owner = owner
+        self.repo = repo
+        self.token = token
+        self.defaultLabels = defaultLabels
+        self.useGhCli = useGhCli
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case owner
+        case repo
+        case token
+        case defaultLabels = "default_labels"
+        case useGhCli = "use_gh_cli"
+    }
+}
+
+/// Gitea provider configuration for tasks
+public struct GiteaProviderConfig: Codable {
+    /// Whether this provider is enabled
+    public var enabled: Bool
+    
+    /// Gitea server URL (e.g., "https://git.example.com")
+    public var url: String?
+    
+    /// Repository owner
+    public var owner: String?
+    
+    /// Repository name
+    public var repo: String?
+    
+    /// API token
+    public var token: String?
+    
+    /// Default labels to apply to created issues
+    public var defaultLabels: [String]
+    
+    public init(
+        enabled: Bool = false,
+        url: String? = nil,
+        owner: String? = nil,
+        repo: String? = nil,
+        token: String? = nil,
+        defaultLabels: [String] = []
+    ) {
+        self.enabled = enabled
+        self.url = url
+        self.owner = owner
+        self.repo = repo
+        self.token = token
+        self.defaultLabels = defaultLabels
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case url
+        case owner
+        case repo
+        case token
+        case defaultLabels = "default_labels"
+    }
+}
+
+/// Microsoft Planner sync configuration (one-way push)
+public struct PlannerSyncConfig: Codable {
+    /// Whether Planner sync is enabled
+    public var enabled: Bool
+    
+    /// Planner plan ID to sync tasks to
+    public var planId: String?
+    
+    /// Default bucket ID for new tasks (nil = first available)
+    public var defaultBucketId: String?
+    
+    /// Path to store sync state mapping file
+    public var statePath: String
+    
+    public init(
+        enabled: Bool = false,
+        planId: String? = nil,
+        defaultBucketId: String? = nil,
+        statePath: String = "~/.fleetmate/planner-sync-state.json"
+    ) {
+        self.enabled = enabled
+        self.planId = planId
+        self.defaultBucketId = defaultBucketId
+        self.statePath = statePath
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case planId = "plan_id"
+        case defaultBucketId = "default_bucket_id"
+        case statePath = "state_path"
+    }
+}
+
+/// Markdown file sync configuration
+public struct MarkdownSyncConfig: Codable {
+    /// Whether markdown sync is enabled
+    public var enabled: Bool
+    
+    /// Path to the planning repo/directory
+    public var repoPath: String?
+    
+    /// Subdirectory for board markdown files
+    public var boardsPath: String
+    
+    /// Subdirectory for individual task markdown files
+    public var tasksPath: String
+    
+    /// Watch for file changes and auto-sync
+    public var watchForChanges: Bool
+    
+    public init(
+        enabled: Bool = false,
+        repoPath: String? = nil,
+        boardsPath: String = "boards",
+        tasksPath: String = "tasks",
+        watchForChanges: Bool = true
+    ) {
+        self.enabled = enabled
+        self.repoPath = repoPath
+        self.boardsPath = boardsPath
+        self.tasksPath = tasksPath
+        self.watchForChanges = watchForChanges
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case enabled
+        case repoPath = "repo_path"
+        case boardsPath = "boards_path"
+        case tasksPath = "tasks_path"
+        case watchForChanges = "watch_for_changes"
+    }
+}

@@ -37,8 +37,43 @@ public class SnipeService {
     
     // MARK: - Assets
     
-    public func getAssets(search: String? = nil, statusId: Int? = nil, locationId: Int? = nil) async throws -> [SnipeAsset] {
-        var parameters: [String: Any] = ["limit": 500]
+    /// Fetch all assets with pagination (no limit)
+    /// - Parameters:
+    ///   - search: Optional search query (matches serial, asset tag, name, etc.)
+    ///   - includeArchived: If true, includes assets with archived status (default: true)
+    /// - Returns: Array of all matching assets
+    public func getAllAssets(search: String? = nil, includeArchived: Bool = true) async throws -> [SnipeAsset] {
+        var allAssets: [SnipeAsset] = []
+        var offset = 0
+        let pageSize = 500
+        
+        while true {
+            var parameters: [String: Any] = [
+                "limit": pageSize,
+                "offset": offset
+            ]
+            if let search = search { parameters["search"] = search }
+            
+            let assets: [SnipeAsset] = try await fetchList("/api/v1/hardware", parameters: parameters)
+            
+            if assets.isEmpty {
+                break
+            }
+            
+            allAssets.append(contentsOf: assets)
+            offset += pageSize
+            
+            // Safety check - stop if we got less than a full page (last page)
+            if assets.count < pageSize {
+                break
+            }
+        }
+        
+        return allAssets
+    }
+    
+    public func getAssets(search: String? = nil, statusId: Int? = nil, locationId: Int? = nil, limit: Int = 500) async throws -> [SnipeAsset] {
+        var parameters: [String: Any] = ["limit": limit]
         if let search = search { parameters["search"] = search }
         if let statusId = statusId { parameters["status_id"] = statusId }
         if let locationId = locationId { parameters["location_id"] = locationId }
@@ -143,6 +178,12 @@ public class SnipeService {
                     case .success(let value):
                         continuation.resume(returning: value.rows)
                     case .failure(let error):
+                        // Log detailed decode error
+                        if case .responseSerializationFailed(let reason) = error {
+                            if case .decodingFailed(let decodingError) = reason {
+                                print("[SnipeService] Decode error: \(decodingError)")
+                            }
+                        }
                         continuation.resume(throwing: error)
                     }
                 }

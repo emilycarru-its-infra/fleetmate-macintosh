@@ -30,7 +30,7 @@ public class MunkiReportService {
             sshArgs.append(contentsOf: ["-i", expandedPath])
         }
         
-        sshArgs.append("\(config.munkiReportSshUser)@\(host)")
+        sshArgs.append("\(config.munkiReportSshUser ?? "root")@\(host)")
         sshArgs.append(command)
         
         let process = Process()
@@ -59,7 +59,8 @@ public class MunkiReportService {
     /// Execute a SQL query on the MunkiReport database
     public func executeSQL(_ query: String) async throws -> [[String: String]] {
         let escapedQuery = query.replacingOccurrences(of: "'", with: "'\"'\"'")
-        let command = "sqlite3 -header -separator '|' '\(config.munkiReportDbPath)' '\(escapedQuery)'"
+        let dbPath = config.munkiReportDbPath ?? "/var/munkireport/db/db.sqlite"
+        let command = "sqlite3 -header -separator '|' '\(dbPath)' '\(escapedQuery)'"
         
         let output = try await executeSSH(command)
         return parseCSV(output)

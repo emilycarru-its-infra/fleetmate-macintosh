@@ -1,0 +1,42 @@
+#!/bin/bash
+# =============================================================================
+# Post-checkout hook - FleetMate macOS
+# =============================================================================
+# Automatically runs the secure secrets setup when cloning/checking out.
+# Secrets are stored in macOS Keychain, NOT plain text files.
+#
+# To install this hook, run:
+#   git config core.hooksPath .githooks
+# =============================================================================
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+if [[ -z "$REPO_ROOT" ]]; then
+    REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+fi
+
+SETUP_SCRIPT="$REPO_ROOT/scripts/setup-secrets.sh"
+KEYCHAIN_SERVICE="com.fleetmate.secrets"
+
+# Only run if this is a fresh clone (no secrets in Keychain yet)
+if security find-generic-password -s "$KEYCHAIN_SERVICE" -a "SnipeApiKey" &>/dev/null; then
+    # Secrets already configured
+    exit 0
+fi
+
+# Check if setup script exists
+if [[ ! -f "$SETUP_SCRIPT" ]]; then
+    echo "FleetMate: setup-secrets.sh not found"
+    exit 0
+fi
+
+echo ""
+echo "============================================"
+echo "  FleetMate - First-time Setup"
+echo "============================================"
+echo ""
+echo "This appears to be a fresh clone."
+echo "Running secure secrets setup..."
+echo ""
+
+# Run the setup script
+"$SETUP_SCRIPT"

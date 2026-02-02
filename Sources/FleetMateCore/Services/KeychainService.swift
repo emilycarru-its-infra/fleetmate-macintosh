@@ -1,12 +1,14 @@
 import Foundation
 import Security
 
-/// Service for storing and retrieving secrets from macOS Keychain
-/// Replaces Windows Registry-based credential storage
+/// Service for storing and retrieving secrets from macOS Keychain.
+/// Secrets are populated by scripts/setup-secrets.sh from Azure Key Vault.
+/// Replaces Windows Registry-based credential storage.
 public class KeychainService {
     
-    /// The service name used for all FleetMate keychain items
-    public static let serviceName = "com.fleetmate.credentials"
+    /// The service name used for all FleetMate keychain items.
+    /// Must match the service name in scripts/setup-secrets.sh
+    public static let serviceName = "com.github.fleetmate-qa"
     
     /// Keychain keys for all FleetMate credentials
     public enum Key: String, CaseIterable {

@@ -261,7 +261,8 @@ public class TdxService {
 
         guard let headers = await headers() else { return statusCache }
 
-        let url = "\(baseUrl)/api/\(config.tdxAppId ?? 0)/tickets/statuses"
+        let appId = config.tdxTicketingAppId ?? config.tdxAppId ?? 0
+        let url = "\(baseUrl)/api/\(appId)/tickets/statuses"
 
         let statuses: [TdxStatusItem] = try await withCheckedThrowingContinuation { continuation in
             session.request(url, headers: headers)
@@ -289,7 +290,8 @@ public class TdxService {
 
         guard let headers = await headers() else { return typeCache }
 
-        let url = "\(baseUrl)/api/\(config.tdxAppId ?? 0)/tickets/types"
+        let appId = config.tdxTicketingAppId ?? config.tdxAppId ?? 0
+        let url = "\(baseUrl)/api/\(appId)/tickets/types"
 
         let types: [TdxTypeItem] = try await withCheckedThrowingContinuation { continuation in
             session.request(url, headers: headers)
@@ -316,7 +318,8 @@ public class TdxService {
 
         guard let headers = await headers() else { return priorityCache }
 
-        let url = "\(baseUrl)/api/\(config.tdxAppId ?? 0)/tickets/priorities"
+        let appId = config.tdxTicketingAppId ?? config.tdxAppId ?? 0
+        let url = "\(baseUrl)/api/\(appId)/tickets/priorities"
 
         let priorities: [TdxPriorityItem] = try await withCheckedThrowingContinuation { continuation in
             session.request(url, headers: headers)

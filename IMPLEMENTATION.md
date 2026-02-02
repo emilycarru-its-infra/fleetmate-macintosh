@@ -264,6 +264,82 @@ Following Windows version conventions:
 - ✅ `fleetmate ssh exec` (CLI command)
 - ✅ `SECURE_SHELL_PRIVATE_KEY_PATH` (env var)
 
+---
+
+## FleetMate Boards — Unified Task Management
+
+**Status:** ✅ COMPLETE (Implemented 2025)
+
+### Overview
+FleetMate Boards provides unified task management across Azure DevOps, GitHub, and Gitea providers with optional sync to Microsoft Planner and Markdown files.
+
+### Files Created
+
+#### Core Abstractions (FleetMateCore)
+| File | Description |
+|------|-------------|
+| `Models/TaskModels.swift` | TaskState, UnifiedTask, CreateTaskRequest, UpdateTaskRequest, TaskBucket, TaskLabel |
+| `Services/TaskProvider.swift` | Protocol (Actor-based) + TaskFilter + TaskProviderError |
+| `Services/TaskProviderRegistry.swift` | Aggregates providers, async TaskGroup queries |
+
+#### Task Providers (FleetMateCore/Services)
+| File | Description |
+|------|-------------|
+| `AzureDevOpsTaskProvider.swift` | Wraps AzureDevOpsService, maps WorkItem↔UnifiedTask |
+| `GitHubTaskProvider.swift` | Full GitHub Issues API, milestone→bucket, gh CLI token fallback |
+| `GiteaTaskProvider.swift` | Gitea Issues API v1.25, milestone→bucket, delete support |
+
+#### Sync Services (FleetMateCore/Services)
+| File | Description |
+|------|-------------|
+| `PlannerSyncService.swift` | One-way push to Microsoft Planner via Graph API |
+| `MarkdownSyncService.swift` | Bidirectional sync with .md file |
+
+#### CLI Commands (FleetMate/Commands)
+| File | Subcommands |
+|------|-------------|
+| `TasksCommand.swift` | list, show, create, update, buckets, labels, sync, providers |
+
+#### GUI Views (FleetMateApp/Views)
+| File | Description |
+|------|-------------|
+| `BoardsView.swift` | SwiftUI Kanban board with Open/InProgress/Closed columns |
+
+### CLI Usage Examples
+
+```bash
+# List all tasks from all providers
+fleetmate tasks list
+
+# List GitHub tasks only
+fleetmate tasks list --provider github
+
+# Filter by state and labels
+fleetmate tasks list --state open --label bug --label urgent
+
+# Show task details
+fleetmate tasks show github 42
+
+# Create a task
+fleetmate tasks create github --title "Fix login bug" --label bug --assignee username
+
+# Update a task
+fleetmate tasks update github 42 --state closed
+
+# Sync to Planner and/or Markdown
+fleetmate tasks sync --planner --markdown
+```
+
+### GUI Features
+- **Kanban Board**: Three-column layout (Open, In Progress, Closed)
+- **Provider Filter**: All, Azure DevOps, GitHub, or Gitea
+- **Bucket Filter**: Filter by milestone/bucket
+- **Search**: Real-time search across title and description
+- **Task Detail Sheet**: Full task details with browser link
+- **Sync Button**: One-click sync to configured destinations
+
+---
+
 ## Testing Status
 
 | Test Category | Status | Notes |

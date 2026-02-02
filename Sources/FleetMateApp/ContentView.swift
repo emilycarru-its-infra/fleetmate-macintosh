@@ -7,20 +7,22 @@ struct ContentView: View {
 
     enum Tab: String, CaseIterable {
         case dashboard = "Dashboard"
-        case devices = "Devices"
+        case management = "Management"
         case assets = "Assets"
         case tickets = "Tickets"
-        case workItems = "Work Items"
+        case tasks = "Tasks"
+        case boards = "Boards"
         case users = "Users"
         case groups = "Groups"
 
         var icon: String {
             switch self {
             case .dashboard: return "square.grid.2x2"
-            case .devices: return "laptopcomputer"
+            case .management: return "laptopcomputer"
             case .assets: return "shippingbox"
             case .tickets: return "ticket"
-            case .workItems: return "list.bullet.clipboard"
+            case .tasks: return "list.bullet.clipboard"
+            case .boards: return "rectangle.split.3x1"
             case .users: return "person"
             case .groups: return "person.3"
             }
@@ -39,14 +41,16 @@ struct ContentView: View {
                 switch selectedTab {
                 case .dashboard:
                     DashboardView()
-                case .devices:
+                case .management:
                     DevicesView()
                 case .assets:
                     AssetsView()
                 case .tickets:
                     TicketsView()
-                case .workItems:
+                case .tasks:
                     WorkItemsView()
+                case .boards:
+                    BoardsView()
                 case .users:
                     UsersView()
                 case .groups:

@@ -31,6 +31,9 @@ struct FleetMate: AsyncParsableCommand {
             EntraCommand.self,
             DevOpsCommand.self,
             TdxCommand.self,
+            
+            // Unified task management (FleetMate Boards)
+            TasksCommand.self,
         ],
         defaultSubcommand: StatusCommand.self
     )

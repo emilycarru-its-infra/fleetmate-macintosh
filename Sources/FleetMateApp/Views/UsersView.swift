@@ -44,26 +44,40 @@ struct UsersView: View {
 
             // Content
             if !appState.config.isGraphConfigured {
-                ContentUnavailableView(
-                    "Not Configured",
-                    systemImage: "gear.badge.xmark",
-                    description: Text("Microsoft Graph is not configured. Set GRAPH_TENANT_ID and GRAPH_CLIENT_ID in your config.")
-                )
+                VStack {
+                    ContentUnavailableView(
+                        "Not Configured",
+                        systemImage: "gear.badge.xmark",
+                        description: Text("Microsoft Graph is not configured. Set GRAPH_TENANT_ID and GRAPH_CLIENT_ID in your config.")
+                    )
+                    Spacer()
+                }
             } else if isLoading {
-                ProgressView("Searching...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack {
+                    ProgressView("Searching...")
+                        .padding(.top, 50)
+                    Spacer()
+                }
             } else if searchResults.isEmpty && !searchText.isEmpty {
-                ContentUnavailableView(
-                    "No Results",
-                    systemImage: "person.slash",
-                    description: Text("No users found matching '\(searchText)'")
-                )
+                VStack {
+                    ContentUnavailableView(
+                        "No Results",
+                        systemImage: "person.slash",
+                        description: Text("No users found matching '\(searchText)'")
+                    )
+                    .padding(.top, 30)
+                    Spacer()
+                }
             } else if searchResults.isEmpty {
-                ContentUnavailableView(
-                    "Search for Users",
-                    systemImage: "person.crop.circle.badge.questionmark",
-                    description: Text("Enter an email address or name to search for users")
-                )
+                VStack {
+                    ContentUnavailableView(
+                        "Search for Users",
+                        systemImage: "person.crop.circle.badge.questionmark",
+                        description: Text("Enter an email address or name to search for users")
+                    )
+                    .padding(.top, 30)
+                    Spacer()
+                }
             } else {
                 List(searchResults, id: \.id, selection: $selectedUser) { user in
                     UserRow(user: user)
@@ -80,11 +94,8 @@ struct UsersView: View {
             defer { isLoading = false }
 
             do {
-                if let user = try await appState.graphService.getUser(searchText, includeGroups: true) {
-                    searchResults = [user]
-                } else {
-                    searchResults = []
-                }
+                // Use searchUsers for partial name/email matching
+                searchResults = try await appState.graphService.searchUsers(searchText, limit: 50)
             } catch {
                 appState.errorMessage = "Failed to search users: \(error.localizedDescription)"
                 searchResults = []

@@ -32,7 +32,7 @@ struct AssetsSubcommand: AsyncParsableCommand {
     @Option(name: .shortAndLong, help: "Filter by status ID")
     var status: Int?
     
-    @Option(name: [.customShort("L"), .long], help: "Filter by location ID")
+    @Option(name: .shortAndLong, help: "Filter by location ID")
     var location: Int?
     
     @Option(name: .shortAndLong, help: "Maximum results")
@@ -69,12 +69,8 @@ struct AssetsSubcommand: AsyncParsableCommand {
     private func printAssetsTable(_ assets: [SnipeAsset]) {
         print("\n" + "Snipe-IT Assets".bold + " (\(assets.count) shown)\n")
         
-        // Use Swift string padding instead of C format specifiers
-        let header = "Asset Tag".padding(toLength: 12, withPad: " ", startingAt: 0) +
-                     "Serial".padding(toLength: 15, withPad: " ", startingAt: 0) +
-                     "Name".padding(toLength: 25, withPad: " ", startingAt: 0) +
-                     "Status".padding(toLength: 15, withPad: " ", startingAt: 0) +
-                     "Location"
+        let header = String(format: "%-12s %-15s %-25s %-15s %-15s",
+            "Asset Tag", "Serial", "Name", "Status", "Location")
         print(header.underline)
         
         for asset in assets {
@@ -88,11 +84,12 @@ struct AssetsSubcommand: AsyncParsableCommand {
             default: statusColor = statusName
             }
             
-            let row = String((asset.assetTag ?? "-").prefix(10)).padding(toLength: 12, withPad: " ", startingAt: 0) +
-                      String((asset.serial ?? "-").prefix(13)).padding(toLength: 15, withPad: " ", startingAt: 0) +
-                      String((asset.name ?? "-").prefix(23)).padding(toLength: 25, withPad: " ", startingAt: 0) +
-                      statusColor.padding(toLength: 15, withPad: " ", startingAt: 0) +
-                      String((asset.location?.name ?? "-").prefix(13))
+            let row = String(format: "%-12s %-15s %-25s %-15s %-15s",
+                String((asset.assetTag ?? "-").prefix(10)),
+                String((asset.serial ?? "-").prefix(13)),
+                String((asset.name ?? "-").prefix(23)),
+                statusColor,
+                String((asset.location?.name ?? "-").prefix(13)))
             print(row)
         }
         print("")
@@ -200,20 +197,17 @@ struct UsersSubcommand: AsyncParsableCommand {
         
         print("\n" + "Snipe-IT Users".bold + " (\(users.count) shown)\n")
         
-        // Use Swift string padding instead of C format specifiers
-        let header = "ID".padding(toLength: 8, withPad: " ", startingAt: 0) +
-                     "Username".padding(toLength: 20, withPad: " ", startingAt: 0) +
-                     "Name".padding(toLength: 25, withPad: " ", startingAt: 0) +
-                     "Email".padding(toLength: 20, withPad: " ", startingAt: 0) +
-                     "Assets"
+        let header = String(format: "%-8s %-20s %-25s %-20s %-5s",
+            "ID", "Username", "Name", "Email", "Assets")
         print(header.underline)
         
         for user in users {
-            let row = String(user.id).padding(toLength: 8, withPad: " ", startingAt: 0) +
-                      String((user.username ?? "-").prefix(18)).padding(toLength: 20, withPad: " ", startingAt: 0) +
-                      String(user.fullName.prefix(23)).padding(toLength: 25, withPad: " ", startingAt: 0) +
-                      String((user.email ?? "-").prefix(18)).padding(toLength: 20, withPad: " ", startingAt: 0) +
-                      String(user.assetsCount ?? 0)
+            let row = String(format: "%-8d %-20s %-25s %-20s %-5d",
+                user.id,
+                String((user.username ?? "-").prefix(18)),
+                String(user.fullName.prefix(23)),
+                String((user.email ?? "-").prefix(18)),
+                user.assetsCount ?? 0)
             print(row)
         }
         print("")
@@ -241,18 +235,16 @@ struct LocationsSubcommand: AsyncParsableCommand {
         
         print("\n" + "Snipe-IT Locations".bold + " (\(locations.count) total)\n")
         
-        // Use Swift string padding instead of C format specifiers
-        let header = "ID".padding(toLength: 8, withPad: " ", startingAt: 0) +
-                     "Name".padding(toLength: 30, withPad: " ", startingAt: 0) +
-                     "City".padding(toLength: 20, withPad: " ", startingAt: 0) +
-                     "Assets"
+        let header = String(format: "%-8s %-30s %-20s %-8s",
+            "ID", "Name", "City", "Assets")
         print(header.underline)
         
         for location in locations {
-            let row = String(location.id).padding(toLength: 8, withPad: " ", startingAt: 0) +
-                      String((location.name ?? "-").prefix(28)).padding(toLength: 30, withPad: " ", startingAt: 0) +
-                      String((location.city ?? "-").prefix(18)).padding(toLength: 20, withPad: " ", startingAt: 0) +
-                      String(location.assetsCount ?? 0)
+            let row = String(format: "%-8d %-30s %-20s %-8d",
+                location.id,
+                String((location.name ?? "-").prefix(28)),
+                String((location.city ?? "-").prefix(18)),
+                location.assetsCount ?? 0)
             print(row)
         }
         print("")

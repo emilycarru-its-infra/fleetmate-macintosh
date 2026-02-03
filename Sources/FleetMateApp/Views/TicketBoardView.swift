@@ -185,17 +185,6 @@ struct TicketCard: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                 }
-                
-                Spacer()
-                
-                if let group = ticket.responsibleGroupName {
-                    Text(group)
-                        .font(.caption2)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.2))
-                        .cornerRadius(4)
-                }
             }
             
             // Responsible (if assigned)

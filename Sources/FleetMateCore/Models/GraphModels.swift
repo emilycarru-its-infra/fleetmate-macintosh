@@ -61,40 +61,13 @@ public struct CompliancePolicyStatesResponse: Codable {
 public struct EntraUser: Codable, Identifiable, Hashable, Sendable {
     public let id: String?
     public let displayName: String?
-    public let givenName: String?
-    public let surname: String?
     public let userPrincipalName: String?
     public let mail: String?
-    public let otherMails: [String]?
-    public let proxyAddresses: [String]?
     public let jobTitle: String?
     public let department: String?
-    public let companyName: String?
-    public let employeeId: String?
     public let officeLocation: String?
-    public let streetAddress: String?
-    public let city: String?
-    public let state: String?
-    public let postalCode: String?
-    public let country: String?
-    public let businessPhones: [String]?
     public let mobilePhone: String?
-    public let faxNumber: String?
     public let accountEnabled: Bool?
-    public let createdDateTime: String?
-    public let lastPasswordChangeDateTime: String?
-    public let signInSessionsValidFromDateTime: String?
-    public let passwordPolicies: String?
-    public let usageLocation: String?
-    public let onPremisesSamAccountName: String?
-    public let onPremisesDistinguishedName: String?
-    public let onPremisesDomainName: String?
-    public let onPremisesImmutableId: String?
-    public let onPremisesSecurityIdentifier: String?
-    public let onPremisesSyncEnabled: Bool?
-    public let onPremisesLastSyncDateTime: String?
-    public let mailNickname: String?
-    public let userType: String?
     public var memberOf: [EntraGroup]?
 
     public var email: String {

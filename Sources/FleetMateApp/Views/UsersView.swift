@@ -94,8 +94,11 @@ struct UsersView: View {
             defer { isLoading = false }
 
             do {
-                // Use searchUsers for partial name/email matching
-                searchResults = try await appState.graphService.searchUsers(searchText, limit: 50)
+                if let user = try await appState.graphService.getUser(searchText, includeGroups: true) {
+                    searchResults = [user]
+                } else {
+                    searchResults = []
+                }
             } catch {
                 appState.errorMessage = "Failed to search users: \(error.localizedDescription)"
                 searchResults = []

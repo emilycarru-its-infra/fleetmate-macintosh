@@ -43,7 +43,7 @@ struct AssetsView: View {
                     Text("Assets")
                         .font(.largeTitle)
                         .fontWeight(.bold)
-                    Text("Assets Inventory")
+                    Text("Inventory assets (Snipe-IT, ServiceNow, etc.)")
                         .foregroundColor(.secondary)
                 }
                 Spacer()

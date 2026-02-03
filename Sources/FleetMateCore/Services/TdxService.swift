@@ -2,12 +2,18 @@ import Foundation
 import Alamofire
 
 /// TeamDynamix (TDX) service for ticket management
-/// Uses JWT authentication via username/password or BEID
+/// Uses JWT authentication via SSO, username/password, or BEID
 public class TdxService {
     private let config: FleetMateConfig
     private let session: Session
     private var cachedToken: String?
     private var tokenExpiry: Date = .distantPast
+    
+    // SSO authentication state
+    private var ssoToken: String?
+    private var ssoTokenExpiry: Date = .distantPast
+    private var ssoUserId: String?
+    private var ssoUserName: String?
 
     // Reference data caches
     private var statusCache: [Int: String] = [:]
@@ -23,6 +29,42 @@ public class TdxService {
     public var baseUrl: String {
         (config.tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
+    
+    /// Returns true if SSO authentication is active and valid
+    public var isSsoAuthenticated: Bool {
+        guard let token = ssoToken, !token.isEmpty else { return false }
+        return Date() < ssoTokenExpiry
+    }
+    
+    /// The authenticated SSO user's display name
+    public var authenticatedUserName: String? {
+        return isSsoAuthenticated ? ssoUserName : nil
+    }
+    
+    /// The authenticated SSO user's ID
+    public var authenticatedUserId: String? {
+        return isSsoAuthenticated ? ssoUserId : nil
+    }
+    
+    /// Returns true if SSO authentication is required based on config
+    public var requiresSsoLogin: Bool {
+        let method = config.tdxAuthMethod ?? .auto
+        switch method {
+        case .browserSSO:
+            return !isSsoAuthenticated
+        case .auto:
+            // SSO preferred, but can fall back to service account
+            return false
+        case .serviceAccount, .userPassword:
+            return false
+        }
+    }
+    
+    /// Returns true if SSO should be attempted (based on config)
+    public var shouldAttemptSso: Bool {
+        let method = config.tdxAuthMethod ?? .auto
+        return method == .browserSSO || method == .auto
+    }
 
     public init(config: FleetMateConfig) {
         self.config = config
@@ -32,47 +74,90 @@ public class TdxService {
         configuration.timeoutIntervalForRequest = 60
         self.session = Session(configuration: configuration)
     }
+    
+    // MARK: - SSO Authentication
+    
+    /// Set SSO token from external SSO login flow
+    public func setSsoToken(_ token: String, expiry: Date, userId: String? = nil, userName: String? = nil) {
+        self.ssoToken = token
+        self.ssoTokenExpiry = expiry
+        self.ssoUserId = userId
+        self.ssoUserName = userName
+    }
+    
+    /// Clear SSO authentication state
+    public func clearSsoToken() {
+        self.ssoToken = nil
+        self.ssoTokenExpiry = .distantPast
+        self.ssoUserId = nil
+        self.ssoUserName = nil
+    }
 
     // MARK: - Authentication
 
     private func getAccessToken() async throws -> String? {
+        let authMethod = config.tdxAuthMethod ?? .auto
+        
+        // Check for valid SSO token first (if SSO is configured)
+        if authMethod == .browserSSO || authMethod == .auto {
+            if let token = ssoToken, !token.isEmpty, Date() < ssoTokenExpiry {
+                return token
+            }
+            
+            // If browserSSO is required and no valid token, return nil
+            if authMethod == .browserSSO {
+                print("TDX SSO authentication required but no valid token available.")
+                return nil
+            }
+        }
+        
+        // Check cached service account / password token
         if let token = cachedToken, Date() < tokenExpiry {
             return token
         }
+        
+        // For SSO-only mode, don't fall back to service account
+        if authMethod == .browserSSO {
+            return nil
+        }
 
         // Try admin login first (BEID + WebServicesKey)
-        if let beid = config.tdxBeid, let webServicesKey = config.tdxWebServicesKey,
-           !beid.isEmpty, !webServicesKey.isEmpty {
-            let loginUrl = "\(baseUrl)/api/auth/loginadmin"
+        if authMethod == .serviceAccount || authMethod == .auto {
+            if let beid = config.tdxBeid, let webServicesKey = config.tdxWebServicesKey,
+               !beid.isEmpty, !webServicesKey.isEmpty {
+                let loginUrl = "\(baseUrl)/api/auth/loginadmin"
+                let body: [String: String] = [
+                    "BEID": beid,
+                    "WebServicesKey": webServicesKey
+                ]
+
+                if let token = try? await authenticate(url: loginUrl, body: body) {
+                    cachedToken = token
+                    tokenExpiry = Date().addingTimeInterval(23 * 60 * 60) // 23 hours
+                    return token
+                }
+            }
+        }
+
+        // Fallback to regular login (if configured for password auth)
+        if authMethod == .userPassword || authMethod == .auto {
+            guard let username = config.tdxUsername, let password = config.tdxPassword,
+                  !username.isEmpty, !password.isEmpty else {
+                print("TDX credentials not configured.")
+                return nil
+            }
+
+            let loginUrl = "\(baseUrl)/api/auth/login"
             let body: [String: String] = [
-                "BEID": beid,
-                "WebServicesKey": webServicesKey
+                "UserName": username,
+                "Password": password
             ]
 
             if let token = try? await authenticate(url: loginUrl, body: body) {
                 cachedToken = token
-                tokenExpiry = Date().addingTimeInterval(23 * 60 * 60) // 23 hours
+                tokenExpiry = Date().addingTimeInterval(23 * 60 * 60)
                 return token
             }
-        }
-
-        // Fallback to regular login
-        guard let username = config.tdxUsername, let password = config.tdxPassword,
-              !username.isEmpty, !password.isEmpty else {
-            print("TDX credentials not configured.")
-            return nil
-        }
-
-        let loginUrl = "\(baseUrl)/api/auth/login"
-        let body: [String: String] = [
-            "UserName": username,
-            "Password": password
-        ]
-
-        if let token = try? await authenticate(url: loginUrl, body: body) {
-            cachedToken = token
-            tokenExpiry = Date().addingTimeInterval(23 * 60 * 60)
-            return token
         }
 
         return nil
@@ -261,8 +346,7 @@ public class TdxService {
 
         guard let headers = await headers() else { return statusCache }
 
-        let appId = config.tdxTicketingAppId ?? config.tdxAppId ?? 0
-        let url = "\(baseUrl)/api/\(appId)/tickets/statuses"
+        let url = "\(baseUrl)/api/\(config.tdxAppId ?? 0)/tickets/statuses"
 
         let statuses: [TdxStatusItem] = try await withCheckedThrowingContinuation { continuation in
             session.request(url, headers: headers)
@@ -290,8 +374,7 @@ public class TdxService {
 
         guard let headers = await headers() else { return typeCache }
 
-        let appId = config.tdxTicketingAppId ?? config.tdxAppId ?? 0
-        let url = "\(baseUrl)/api/\(appId)/tickets/types"
+        let url = "\(baseUrl)/api/\(config.tdxAppId ?? 0)/tickets/types"
 
         let types: [TdxTypeItem] = try await withCheckedThrowingContinuation { continuation in
             session.request(url, headers: headers)
@@ -318,8 +401,7 @@ public class TdxService {
 
         guard let headers = await headers() else { return priorityCache }
 
-        let appId = config.tdxTicketingAppId ?? config.tdxAppId ?? 0
-        let url = "\(baseUrl)/api/\(appId)/tickets/priorities"
+        let url = "\(baseUrl)/api/\(config.tdxAppId ?? 0)/tickets/priorities"
 
         let priorities: [TdxPriorityItem] = try await withCheckedThrowingContinuation { continuation in
             session.request(url, headers: headers)

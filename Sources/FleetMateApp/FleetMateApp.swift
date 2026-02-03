@@ -1,91 +1,14 @@
 import SwiftUI
-import AppKit
 import FleetMateCore
-
-// MARK: - App Delegate for Window Activation
-// Fixes keyboard focus and dock visibility when running via `swift run`
-@MainActor
-class AppDelegate: NSObject, NSApplicationDelegate {
-    var activationTimer: Timer?
-    var attempts = 0
-    
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        // Set activation policy to show in dock (critical for swift run)
-        NSApp.setActivationPolicy(.regular)
-        
-        // Wait for window to be created, then activate
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.activateWindow()
-            
-            // Set up timer for a few attempts (window may not be ready yet)
-            self?.activationTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
-                guard let self = self else { return }
-                Task { @MainActor in
-                    self.attempts += 1
-                    self.activateWindow()
-                    
-                    if self.attempts >= 5 {
-                        self.activationTimer?.invalidate()
-                        self.activationTimer = nil
-                    }
-                }
-            }
-        }
-    }
-    
-    func applicationDidBecomeActive(_ notification: Notification) {
-        activateWindow()
-    }
-    
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        activateWindow()
-        return true
-    }
-    
-    private func activateWindow() {
-        // Activate the application
-        NSApp.activate(ignoringOtherApps: true)
-        
-        // Only activate windows with content (not system/utility windows)
-        for window in NSApp.windows {
-            // Skip windows without titles or that are sheets/panels
-            if !window.title.isEmpty && window.isVisible {
-                window.makeKeyAndOrderFront(nil)
-                window.makeKey()
-                window.orderFrontRegardless()
-                window.makeFirstResponder(window.contentView)
-            }
-        }
-        
-        // Also try the main window
-        if let mainWindow = NSApp.mainWindow, !mainWindow.title.isEmpty {
-            mainWindow.makeKeyAndOrderFront(nil)
-            mainWindow.makeKey()
-            mainWindow.orderFrontRegardless()
-            mainWindow.makeFirstResponder(mainWindow.contentView)
-        }
-    }
-}
 
 @main
 struct FleetMateApp: App {
-    // Use the app delegate to handle activation and dock visibility
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(appState)
-                .onAppear {
-                    // Additional activation when view appears
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        NSApp.activate(ignoringOtherApps: true)
-                        if let window = NSApp.windows.first {
-                            window.makeKeyAndOrderFront(nil)
-                        }
-                    }
-                }
         }
         .windowStyle(.titleBar)
         .commands {
@@ -115,6 +38,11 @@ class AppState: ObservableObject {
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var secretsConfigured = false
+    
+    // MARK: - TDX SSO State
+    @Published var showTdxSsoLogin = false
+    @Published var tdxSsoAuthenticated = false
+    @Published var tdxAuthenticatedUserName: String?
     
     // MARK: - Cached Data
     // Data caches with timestamps to avoid reloading on tab switches
@@ -283,4 +211,43 @@ class AppState: ObservableObject {
     
     /// Invalidate groups cache
     func invalidateGroupsCache() { groupsCacheTime = nil }
+    
+    // MARK: - TDX SSO Authentication
+    
+    /// Check if TDX SSO login is required
+    var requiresTdxSsoLogin: Bool {
+        return tdxService.requiresSsoLogin && !tdxSsoAuthenticated
+    }
+    
+    /// Trigger TDX SSO login flow
+    func triggerTdxSsoLogin() {
+        showTdxSsoLogin = true
+    }
+    
+    /// Handle successful SSO authentication
+    func handleTdxSsoSuccess(token: String, expiry: Date, userId: String?, userName: String?) {
+        tdxService.setSsoToken(token, expiry: expiry, userId: userId, userName: userName)
+        tdxSsoAuthenticated = true
+        tdxAuthenticatedUserName = userName
+        showTdxSsoLogin = false
+        
+        // Invalidate tickets cache to reload with new auth
+        invalidateTicketsCache()
+    }
+    
+    /// Handle SSO authentication failure or cancellation
+    func handleTdxSsoFailure(_ error: String?) {
+        showTdxSsoLogin = false
+        if let error = error {
+            errorMessage = "TDX SSO login failed: \(error)"
+        }
+    }
+    
+    /// Sign out of TDX SSO
+    func signOutTdxSso() {
+        tdxService.clearSsoToken()
+        tdxSsoAuthenticated = false
+        tdxAuthenticatedUserName = nil
+        invalidateTicketsCache()
+    }
 }

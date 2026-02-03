@@ -82,6 +82,11 @@ public struct FleetMateConfig: Codable {
     public var tdxDefaultAccountId: Int?
     public var tdxResponsibleGroupId: Int?  // Group ID for filtering tickets
     
+    // TDX SSO Authentication (user-context auth via Entra ID/Shibboleth)
+    public var tdxAuthMethod: TdxAuthMethod = .auto
+    public var tdxSsoEnabled: Bool = true  // Prefer SSO when available
+    public var tdxSsoCallbackPort: Int = 8457  // Localhost callback port
+    
     // SecureShell settings
     public var secureShell: SecureShellConfig?
     
@@ -134,6 +139,9 @@ public struct FleetMateConfig: Codable {
         case tdxTicketingAppId = "tdx_ticketing_app_id"
         case tdxAssetsAppId = "tdx_assets_app_id"
         case tdxUsername = "tdx_username"
+        case tdxAuthMethod = "tdx_auth_method"
+        case tdxSsoEnabled = "tdx_sso_enabled"
+        case tdxSsoCallbackPort = "tdx_sso_callback_port"
         case tdxPassword = "tdx_password"
         case tdxBeid = "tdx_beid"
         case tdxWebServicesKey = "tdx_web_services_key"
@@ -264,8 +272,6 @@ public struct FleetMateConfig: Codable {
         // TeamDynamix
         if let v = str("tdx_base_url"), !v.isEmpty { config.tdxBaseUrl = v }
         if let appId = int("tdx_app_id") { config.tdxAppId = appId }
-        if let appId = int("tdx_ticketing_app_id") { config.tdxTicketingAppId = appId }
-        if let appId = int("tdx_assets_app_id") { config.tdxAssetsAppId = appId }
         if let v = str("tdx_username"), !v.isEmpty { config.tdxUsername = v }
         if let v = str("tdx_password"), !v.isEmpty { config.tdxPassword = v }
         if let v = str("tdx_beid"), !v.isEmpty { config.tdxBeid = v }
@@ -388,8 +394,6 @@ public struct FleetMateConfig: Codable {
         // TDX
         if let v = env["TDX_BASE_URL"] { config.tdxBaseUrl = v }
         if let v = env["TDX_APP_ID"], let id = Int(v) { config.tdxAppId = id }
-        if let v = env["TDX_TICKETING_APP_ID"], let id = Int(v) { config.tdxTicketingAppId = id }
-        if let v = env["TDX_ASSETS_APP_ID"], let id = Int(v) { config.tdxAssetsAppId = id }
         if let v = env["TDX_USERNAME"] { config.tdxUsername = v }
         if let v = env["TDX_PASSWORD"] { config.tdxPassword = v }
         if let v = env["TDX_BEID"] { config.tdxBeid = v }
@@ -426,8 +430,6 @@ public struct FleetMateConfig: Codable {
         case "DEVOPS_PAT", "AZURE_DEVOPS_PAT": config.devopsPat = value
         case "TDX_BASE_URL": config.tdxBaseUrl = value
         case "TDX_APP_ID": config.tdxAppId = Int(value)
-        case "TDX_TICKETING_APP_ID": config.tdxTicketingAppId = Int(value)
-        case "TDX_ASSETS_APP_ID": config.tdxAssetsAppId = Int(value)
         case "TDX_USERNAME": config.tdxUsername = value
         case "TDX_PASSWORD": config.tdxPassword = value
         case "TDX_BEID": config.tdxBeid = value
@@ -545,20 +547,20 @@ public struct FleetMateConfig: Codable {
         return providers
     }
 
-    /// Get TDX tickets URL (uses tdxTicketingAppId or fallback to tdxAppId)
+    /// Get TDX tickets URL
     public func tdxTicketsUrl(_ suffix: String = "") -> String {
         let base = (tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let appId = tdxTicketingAppId ?? tdxAppId ?? 0
+        let appId = tdxAppId ?? 0
         if suffix.isEmpty {
             return "\(base)/api/\(appId)/tickets"
         }
         return "\(base)/api/\(appId)/tickets/\(suffix)"
     }
     
-    /// Get TDX assets URL (uses tdxAssetsAppId or fallback to tdxAppId)
+    /// Get TDX assets URL
     public func tdxAssetsUrl(_ suffix: String = "") -> String {
         let base = (tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let appId = tdxAssetsAppId ?? tdxAppId ?? 0
+        let appId = tdxAppId ?? 0
         if suffix.isEmpty {
             return "\(base)/api/\(appId)/assets"
         }
@@ -833,5 +835,42 @@ public struct MarkdownSyncConfig: Codable {
         case boardsPath = "boards_path"
         case tasksPath = "tasks_path"
         case watchForChanges = "watch_for_changes"
+    }
+}
+
+// MARK: - TDX Authentication Method
+
+/// Authentication method for TeamDynamix API
+public enum TdxAuthMethod: String, Codable, CaseIterable, Sendable {
+    /// Automatically choose best method: SSO if available, then service account, then user/password
+    case auto = "auto"
+    
+    /// Browser-based SSO via Entra ID / Shibboleth (user context)
+    /// All actions appear as the logged-in user
+    case browserSSO = "browser_sso"
+    
+    /// Service account using BEID + WebServicesKey (admin context)
+    /// Actions appear as the API service account
+    case serviceAccount = "service_account"
+    
+    /// Traditional username/password authentication
+    case userPassword = "user_password"
+    
+    public var displayName: String {
+        switch self {
+        case .auto: return "Automatic"
+        case .browserSSO: return "Single Sign-On (SSO)"
+        case .serviceAccount: return "Service Account"
+        case .userPassword: return "Username/Password"
+        }
+    }
+    
+    public var description: String {
+        switch self {
+        case .auto: return "Automatically selects the best available method"
+        case .browserSSO: return "Authenticate via your organization's identity provider"
+        case .serviceAccount: return "Uses BEID and WebServicesKey for API access"
+        case .userPassword: return "Traditional TDX username and password"
+        }
     }
 }

@@ -81,7 +81,7 @@ struct DevicesView: View {
                             .font(.largeTitle)
                             .fontWeight(.bold)
                         HStack {
-                            Text("Devices Management Service")
+                            Text("MDM devices (Intune, Jamf, etc.)")
                                 .foregroundColor(.secondary)
                             if !selectedDeviceIds.isEmpty {
                                 Text("• \(selectedDeviceIds.count) selected")

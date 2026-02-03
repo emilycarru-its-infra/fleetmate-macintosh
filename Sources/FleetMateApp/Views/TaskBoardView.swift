@@ -9,27 +9,14 @@ enum TaskViewMode: String, CaseIterable {
 
 /// Kanban board view for tasks - drag cards between columns to change state
 struct TaskBoardView: View {
-    let tasks: [UnifiedTaskItem]
-    let onSelectTask: (UnifiedTaskItem) -> Void
-    
-    // Define state columns
-    private var stateColumns: [(state: String, color: Color)] {
-        [
-            ("Not Started", .blue),
-            ("In Progress", .orange),
-            ("Completed", .green),
-            ("Active", .blue),
-            ("Resolved", .green),
-            ("Closed", .gray)
-        ]
-    }
+    let tasks: [UnifiedTask]
+    let onSelectTask: (UnifiedTask) -> Void
     
     // Get unique states from tasks
-    private var uniqueStates: [String] {
+    private var uniqueStates: [TaskState] {
         let allStates = Set(tasks.map { $0.state })
-        // Order by known states first, then any others
-        let knownOrder = ["Not Started", "New", "Active", "Open", "In Progress", "Pending", "Waiting", "Resolved", "Completed", "Done", "Closed"]
-        return knownOrder.filter { allStates.contains($0) } + allStates.filter { !knownOrder.contains($0) }.sorted()
+        // Order: open, inProgress, closed
+        return TaskState.allCases.filter { allStates.contains($0) }
     }
     
     var body: some View {
@@ -51,15 +38,15 @@ struct TaskBoardView: View {
 
 /// A single state column in the Tasks Kanban board
 struct TaskStateColumn: View {
-    let state: String
-    let tasks: [UnifiedTaskItem]
-    let onSelectTask: (UnifiedTaskItem) -> Void
+    let state: TaskState
+    let tasks: [UnifiedTask]
+    let onSelectTask: (UnifiedTask) -> Void
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Column header
             HStack {
-                Text(state)
+                Text(state.displayName)
                     .font(.headline)
                     .foregroundColor(.primary)
                 Spacer()
@@ -94,31 +81,26 @@ struct TaskStateColumn: View {
     }
     
     private var stateColor: Color {
-        let s = state.lowercased()
-        if s.contains("new") || s.contains("not started") || s.contains("open") {
+        switch state {
+        case .open:
             return .blue
-        } else if s.contains("progress") || s.contains("active") {
+        case .inProgress:
             return .orange
-        } else if s.contains("pending") || s.contains("waiting") {
-            return .yellow
-        } else if s.contains("resolved") || s.contains("completed") || s.contains("done") {
+        case .closed:
             return .green
-        } else if s.contains("closed") {
-            return .gray
         }
-        return .secondary
     }
 }
 
 /// Individual task card in the Kanban board
 struct TaskBoardCard: View {
-    let task: UnifiedTaskItem
+    let task: UnifiedTask
     
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Source badge and priority
+            // Provider badge and priority
             HStack {
-                TaskSourceBadge(source: task.source)
+                TaskProviderBadge(provider: task.provider)
                 Spacer()
                 if let priority = task.priority {
                     TaskPriorityBadge(priority: priority)
@@ -134,16 +116,18 @@ struct TaskBoardCard: View {
             
             // Metadata
             HStack(spacing: 8) {
-                Text(task.type)
-                    .font(.caption2)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.2))
-                    .cornerRadius(4)
+                if let bucket = task.bucket {
+                    Text(bucket)
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.2))
+                        .cornerRadius(4)
+                }
                 
                 Spacer()
                 
-                if let assignee = task.assignedTo {
+                if let assignee = task.assignees.first {
                     Label {
                         Text(assignee)
                             .lineLimit(1)
@@ -170,6 +154,38 @@ struct TaskBoardCard: View {
         .background(Color(nsColor: .controlBackgroundColor))
         .cornerRadius(8)
         .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
+    }
+}
+
+/// Badge showing the task provider (azdevops, github, gitea)
+struct TaskProviderBadge: View {
+    let provider: String
+    
+    var body: some View {
+        let (color, icon): (Color, String) = {
+            switch provider.lowercased() {
+            case "azdevops", "azure", "devops":
+                return (.blue, "cloud.fill")
+            case "github":
+                return (.purple, "chevron.left.forwardslash.chevron.right")
+            case "gitea":
+                return (.green, "leaf.fill")
+            default:
+                return (.gray, "square.grid.2x2")
+            }
+        }()
+        
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.caption2)
+            Text(provider)
+                .font(.caption2)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(color.opacity(0.2))
+        .foregroundColor(color)
+        .cornerRadius(4)
     }
 }
 

@@ -563,27 +563,6 @@ public class GraphService {
 
         return user
     }
-    
-    /// Search for users by name or email
-    /// Uses $filter with contains() for displayName and startswith() for mail/userPrincipalName
-    /// Note: Graph API doesn't support contains() on mail/upn, only displayName
-    public func searchUsers(_ searchText: String, limit: Int = 50) async throws -> [EntraUser] {
-        guard let headers = await headers(for: .systems) else { return [] }
-        
-        // Build OData filter - use contains on displayName (works for partial matches)
-        // For email, we need startswith since Graph doesn't support contains on that field
-        let escapedSearch = searchText.replacingOccurrences(of: "'", with: "''")
-        let filter = "contains(displayName,'\(escapedSearch)') or startswith(mail,'\(escapedSearch)') or startswith(userPrincipalName,'\(escapedSearch)')"
-        let encodedFilter = filter.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filter
-        
-        // Select more fields for the detail view
-        let selectFields = "id,displayName,givenName,surname,mail,userPrincipalName,jobTitle,department,companyName,employeeId,officeLocation,businessPhones,mobilePhone,accountEnabled,createdDateTime,usageLocation,onPremisesSamAccountName,onPremisesDistinguishedName,onPremisesDomainName,onPremisesSyncEnabled,onPremisesLastSyncDateTime,mailNickname,userType"
-        
-        let url = "\(baseUrl)/users?$filter=\(encodedFilter)&$top=\(limit)&$select=\(selectFields)"
-        
-        let response: EntraUserListResponse = try await fetch(url: url, headers: headers)
-        return response.value
-    }
 
     public func getUserGroups(_ userPrincipalNameOrId: String) async throws -> [EntraGroup] {
         guard let headers = await headers(for: .systems) else { return [] }

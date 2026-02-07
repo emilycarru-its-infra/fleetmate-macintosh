@@ -214,6 +214,22 @@ struct WebViewRepresentable: NSViewRepresentable {
     }
 }
 
+// MARK: - SAML Form Interceptor
+
+/// Handles intercepted SAML form submissions from WKWebView.
+/// WKWebView silently strips POST bodies on cross-origin form submissions,
+/// so we intercept the SAML assertion and submit it via URLSession instead.
+class SamlMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var viewModel: TdxSsoLoginViewModel?
+    
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let viewModel = viewModel else { return }
+        Task { @MainActor in
+            viewModel.handleSamlInterception(message)
+        }
+    }
+}
+
 // MARK: - View Model
 
 /// View model for TDX SSO login
@@ -230,6 +246,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     let ssoService: TdxSsoService
     private let config: FleetMateConfig
     private var urlSession: URLSession?
+    private var samlHandler: SamlMessageHandler?
     
     /// Patterns indicating successful authentication
     private let successPatterns = [
@@ -246,6 +263,37 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         "authToken",
         ".AspNetCore.Cookies"
     ]
+    
+    /// JavaScript injected at document-start to intercept SAML form submissions.
+    /// WKWebView drops POST bodies on cross-origin requests, so we capture
+    /// the SAMLResponse + RelayState and handle the POST natively.
+    private static let samlInterceptorScript = """
+    (function() {
+        var originalSubmit = HTMLFormElement.prototype.submit;
+        HTMLFormElement.prototype.submit = function() {
+            var action = this.action || '';
+            if (action.indexOf('Shibboleth.sso') !== -1 || action.indexOf('SAML2/POST') !== -1) {
+                var formData = {};
+                for (var i = 0; i < this.elements.length; i++) {
+                    var el = this.elements[i];
+                    if (el.name && el.name.length > 0) {
+                        formData[el.name] = el.value;
+                    }
+                }
+                try {
+                    window.webkit.messageHandlers.samlInterceptor.postMessage({
+                        action: action,
+                        data: formData
+                    });
+                } catch(e) {
+                    originalSubmit.call(this);
+                }
+                return;
+            }
+            originalSubmit.call(this);
+        };
+    })();
+    """
     
     init(config: FleetMateConfig) {
         self.config = config
@@ -266,10 +314,30 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         
         super.init()
         
+        // Set up SAML form interception (fixes WKWebView cross-origin POST issue)
+        setupSamlInterception()
+        
         // Sync cookies from shared storage to WKWebView
         Task {
             await syncCookiesToWebView()
         }
+    }
+    
+    private func setupSamlInterception() {
+        let script = WKUserScript(
+            source: Self.samlInterceptorScript,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
+        
+        let handler = SamlMessageHandler()
+        handler.viewModel = self
+        self.samlHandler = handler
+        
+        webView.configuration.userContentController.addUserScript(script)
+        webView.configuration.userContentController.add(handler, name: "samlInterceptor")
+        
+        print("[TdxSsoLogin] SAML form interceptor installed")
     }
     
     private func syncCookiesToWebView() async {
@@ -279,6 +347,260 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             await cookieStore.setCookie(cookie)
         }
         print("[TdxSsoLogin] Synced \(cookies.count) cookies from shared storage")
+    }
+    
+    // MARK: - SAML Interception Handling
+    
+    /// Called when JavaScript intercepts a SAML form submission
+    func handleSamlInterception(_ message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any],
+              let actionUrlString = body["action"] as? String,
+              let actionUrl = URL(string: actionUrlString),
+              let formData = body["data"] as? [String: String] else {
+            let logMsg = "[SAML] Invalid intercept message"
+            print("[TdxSsoLogin] \(logMsg)")
+            navigationLog.append(logMsg)
+            return
+        }
+        
+        let logMsg = "[SAML] Intercepted cross-origin form POST → \(actionUrl.host ?? "")\(actionUrl.path)"
+        print("[TdxSsoLogin] \(logMsg)")
+        navigationLog.append(logMsg)
+        
+        let fieldNames = formData.keys.sorted().joined(separator: ", ")
+        let dataLog = "[SAML] Form fields: \(fieldNames)"
+        print("[TdxSsoLogin] \(dataLog)")
+        navigationLog.append(dataLog)
+        
+        Task {
+            await submitSamlViaURLSession(to: actionUrl, formData: formData)
+        }
+    }
+    
+    /// Submit the SAML assertion via URLSession (bypasses WKWebView cross-origin POST limitation)
+    private func submitSamlViaURLSession(to url: URL, formData: [String: String]) async {
+        // Build application/x-www-form-urlencoded body
+        let bodyParts = formData.map { key, value in
+            "\(Self.formURLEncode(key))=\(Self.formURLEncode(value))"
+        }
+        let bodyString = bodyParts.joined(separator: "&")
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = bodyString.data(using: .utf8)
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue(webView.customUserAgent, forHTTPHeaderField: "User-Agent")
+        request.httpShouldHandleCookies = true
+        
+        // Sync current WebView cookies to shared storage before the request
+        let wkCookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+        for cookie in wkCookies {
+            HTTPCookieStorage.shared.setCookie(cookie)
+        }
+        
+        let sessionConfig = URLSessionConfiguration.default
+        sessionConfig.httpCookieStorage = HTTPCookieStorage.shared
+        sessionConfig.httpShouldSetCookies = true
+        sessionConfig.httpCookieAcceptPolicy = .always
+        
+        let delegate = KerberosAuthDelegate()
+        let session = URLSession(configuration: sessionConfig, delegate: delegate, delegateQueue: nil)
+        
+        do {
+            let submitLog = "[SAML] Submitting assertion via URLSession..."
+            print("[TdxSsoLogin] \(submitLog)")
+            await MainActor.run { navigationLog.append(submitLog) }
+            
+            let (data, response) = try await session.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                await MainActor.run { errorMessage = "Invalid response from identity provider" }
+                return
+            }
+            
+            let finalUrl = httpResponse.url ?? url
+            let respLog = "[SAML] Response: \(httpResponse.statusCode) → \(finalUrl.absoluteString)"
+            print("[TdxSsoLogin] \(respLog)")
+            await MainActor.run { navigationLog.append(respLog) }
+            
+            // Log relevant cookies
+            if let cookies = HTTPCookieStorage.shared.cookies(for: url) {
+                let cookieNames = cookies.map(\.name).joined(separator: ", ")
+                let cookieLog = "[SAML] Cookies for \(url.host ?? ""): \(cookieNames)"
+                print("[TdxSsoLogin] \(cookieLog)")
+                await MainActor.run { navigationLog.append(cookieLog) }
+            }
+            
+            // Sync all cookies from URLSession to WebView
+            if let allCookies = HTTPCookieStorage.shared.cookies {
+                let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
+                for cookie in allCookies {
+                    await cookieStore.setCookie(cookie)
+                }
+                let syncLog = "[SAML] Synced \(allCookies.count) cookies to WebView"
+                print("[TdxSsoLogin] \(syncLog)")
+                await MainActor.run { navigationLog.append(syncLog) }
+            }
+            
+            // Now try to get a JWT bearer token from TDX
+            await MainActor.run {
+                attemptJwtRetrieval(afterLandingOn: finalUrl)
+            }
+            
+        } catch {
+            let errLog = "[SAML] POST error: \(error.localizedDescription)"
+            print("[TdxSsoLogin] \(errLog)")
+            await MainActor.run {
+                navigationLog.append(errLog)
+                errorMessage = "SAML authentication failed: \(error.localizedDescription)"
+            }
+        }
+    }
+    
+    /// After SAML assertion is accepted, call TDX loginSSO to get a JWT bearer token
+    private func attemptJwtRetrieval(afterLandingOn landingUrl: URL) {
+        let baseUrl = (config.tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !baseUrl.isEmpty else {
+            errorMessage = "TDX base URL not configured"
+            return
+        }
+        
+        let loginSsoUrlString = "\(baseUrl)/api/auth/loginSSO"
+        guard let loginSsoUrl = URL(string: loginSsoUrlString) else {
+            loadFinalPageInWebView(url: landingUrl)
+            return
+        }
+        
+        let logMsg = "[JWT] Requesting bearer token from \(loginSsoUrlString)"
+        print("[TdxSsoLogin] \(logMsg)")
+        navigationLog.append(logMsg)
+        
+        Task {
+            var request = URLRequest(url: loginSsoUrl)
+            request.httpMethod = "GET"
+            request.setValue(webView.customUserAgent, forHTTPHeaderField: "User-Agent")
+            request.httpShouldHandleCookies = true
+            
+            let sessionConfig = URLSessionConfiguration.default
+            sessionConfig.httpCookieStorage = HTTPCookieStorage.shared
+            sessionConfig.httpShouldSetCookies = true
+            sessionConfig.httpCookieAcceptPolicy = .always
+            
+            let delegate = KerberosAuthDelegate()
+            let session = URLSession(configuration: sessionConfig, delegate: delegate, delegateQueue: nil)
+            
+            do {
+                let (data, response) = try await session.data(for: request)
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    await MainActor.run { loadFinalPageInWebView(url: landingUrl) }
+                    return
+                }
+                
+                let tokenLog = "[JWT] loginSSO response: \(httpResponse.statusCode)"
+                print("[TdxSsoLogin] \(tokenLog)")
+                await MainActor.run { navigationLog.append(tokenLog) }
+                
+                if httpResponse.statusCode == 200,
+                   let tokenText = String(data: data, encoding: .utf8) {
+                    // Token comes back as a quoted JSON string
+                    let cleanToken = tokenText
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                    
+                    if !cleanToken.isEmpty && cleanToken.count > 20 {
+                        let successLog = "[JWT] ✓ Got bearer token (\(cleanToken.prefix(20))...)"
+                        print("[TdxSsoLogin] \(successLog)")
+                        
+                        // Try to extract user info from JWT payload
+                        let userInfo = Self.extractUserInfoFromJwt(cleanToken)
+                        
+                        await MainActor.run {
+                            navigationLog.append(successLog)
+                            
+                            if let name = userInfo.name {
+                                let userLog = "[JWT] User: \(name) (\(userInfo.email ?? ""))"
+                                print("[TdxSsoLogin] \(userLog)")
+                                navigationLog.append(userLog)
+                            }
+                            
+                            authResult = TdxSsoResult.success(
+                                token: cleanToken,
+                                userName: userInfo.name,
+                                userEmail: userInfo.email
+                            )
+                        }
+                        return
+                    }
+                }
+                
+                // JWT retrieval failed — fall back to cookie-based auth
+                let fallbackLog = "[JWT] loginSSO didn't return a valid token, trying cookies"
+                print("[TdxSsoLogin] \(fallbackLog)")
+                await MainActor.run {
+                    navigationLog.append(fallbackLog)
+                    loadFinalPageInWebView(url: landingUrl)
+                }
+                
+            } catch {
+                let errLog = "[JWT] loginSSO error: \(error.localizedDescription)"
+                print("[TdxSsoLogin] \(errLog)")
+                await MainActor.run {
+                    navigationLog.append(errLog)
+                    loadFinalPageInWebView(url: landingUrl)
+                }
+            }
+        }
+    }
+    
+    /// Fall back to loading TDX in the WebView and extracting auth from cookies/page
+    private func loadFinalPageInWebView(url: URL) {
+        let logMsg = "[WEBVIEW] Loading authenticated page: \(url.absoluteString)"
+        print("[TdxSsoLogin] \(logMsg)")
+        navigationLog.append(logMsg)
+        
+        let request = URLRequest(url: url)
+        webView.load(request)
+        // didFinish handler will detect success pattern and trigger completeAuthentication()
+    }
+    
+    /// Extract user info from a JWT token's payload
+    static func extractUserInfoFromJwt(_ token: String) -> (name: String?, email: String?) {
+        let parts = token.split(separator: ".")
+        guard parts.count >= 2 else { return (nil, nil) }
+        
+        var payload = String(parts[1])
+        // Base64URL → Base64 conversion
+        payload = payload.replacingOccurrences(of: "-", with: "+")
+                         .replacingOccurrences(of: "_", with: "/")
+        // Add padding
+        let remainder = payload.count % 4
+        if remainder > 0 {
+            payload += String(repeating: "=", count: 4 - remainder)
+        }
+        
+        guard let data = Data(base64Encoded: payload),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return (nil, nil)
+        }
+        
+        let name = json["given_name"] as? String
+            ?? json["name"] as? String
+            ?? json["unique_name"] as? String
+        let email = json["email"] as? String
+            ?? json["upn"] as? String
+            ?? json["unique_name"] as? String
+        
+        return (name, email)
+    }
+    
+    /// URL form encoding (application/x-www-form-urlencoded)
+    private static func formURLEncode(_ string: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "*-._")
+        var result = string.addingPercentEncoding(withAllowedCharacters: allowed) ?? string
+        result = result.replacingOccurrences(of: "%20", with: "+")
+        return result
     }
     
     func startAuthentication() {
@@ -499,9 +821,22 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
 extension TdxSsoLoginViewModel: WKNavigationDelegate {
     
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        // Allow all navigation - we need redirects for SSO flow
         if let url = navigationAction.request.url {
-            let logMsg = "[DECISION] Allowing: \(url.absoluteString)"
+            let urlString = url.absoluteString
+            
+            // If this is the Shibboleth SAML2/POST, cancel it — our JS interceptor
+            // will handle it via the samlInterceptor message handler instead.
+            // WKWebView strips POST bodies on cross-origin requests, so we must
+            // submit via URLSession.
+            if urlString.contains("Shibboleth.sso/SAML2/POST") || urlString.contains("Shibboleth.sso/SAML2/POST") {
+                let logMsg = "[DECISION] Cancelling native POST to Shibboleth (JS interceptor handles it)"
+                print("[TdxSsoLogin] \(logMsg)")
+                navigationLog.append(logMsg)
+                decisionHandler(.cancel)
+                return
+            }
+            
+            let logMsg = "[DECISION] Allowing: \(urlString)"
             print("[TdxSsoLogin] \(logMsg)")
             navigationLog.append(logMsg)
         }

@@ -205,6 +205,12 @@ public class TdxService {
                     case .success(let tickets):
                         continuation.resume(returning: tickets)
                     case .failure(let error):
+                        // Log response body for 400 errors to help diagnose
+                        if let data = response.data, let statusCode = response.response?.statusCode, statusCode == 400 {
+                            let responseBody = String(data: data, encoding: .utf8) ?? "(unable to decode)"
+                            print("[TdxService] 400 Bad Request from search endpoint:")
+                            print("[TdxService] Response: \(responseBody)")
+                        }
                         continuation.resume(throwing: error)
                     }
                 }

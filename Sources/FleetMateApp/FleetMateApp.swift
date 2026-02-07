@@ -4,6 +4,12 @@ import FleetMateCore
 @main
 struct FleetMateApp: App {
     @StateObject private var appState = AppState()
+    
+    init() {
+        // Ensure app appears in Dock and can be activated
+        NSApplication.shared.setActivationPolicy(.regular)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
 
     var body: some Scene {
         WindowGroup {

@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Ticket Models
 
-public struct TdxTicket: Codable, Identifiable, Sendable {
+public struct TdxTicket: Codable, Identifiable, Sendable, Equatable, Hashable {
     public let id: Int?
     public let title: String?
     public let description: String?
@@ -18,6 +18,8 @@ public struct TdxTicket: Codable, Identifiable, Sendable {
     public let responsibleFullName: String?
     public let responsibleEmail: String?
     public let responsibleUid: String?
+    public let responsibleGroupId: Int?
+    public let responsibleGroupName: String?
     public let createdDate: String?
     public let modifiedDate: String?
     public let goesOffHoldDate: String?
@@ -45,6 +47,8 @@ public struct TdxTicket: Codable, Identifiable, Sendable {
         case responsibleFullName = "ResponsibleFullName"
         case responsibleEmail = "ResponsibleEmail"
         case responsibleUid = "ResponsibleUid"
+        case responsibleGroupId = "ResponsibleGroupID"
+        case responsibleGroupName = "ResponsibleGroupName"
         case createdDate = "CreatedDate"
         case modifiedDate = "ModifiedDate"
         case goesOffHoldDate = "GoesOffHoldDate"
@@ -60,7 +64,7 @@ public struct TdxTicket: Codable, Identifiable, Sendable {
 
 // MARK: - Feed Entry (Comments)
 
-public struct TdxFeedEntry: Codable {
+public struct TdxFeedEntry: Codable, Identifiable, Hashable {
     public let id: Int?
     public let body: String?
     public let isPrivate: Bool?

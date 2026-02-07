@@ -1,5 +1,6 @@
 import Foundation
 import WebKit
+import AuthenticationServices
 
 // MARK: - TDX SSO Authentication Result
 
@@ -34,8 +35,8 @@ public protocol TdxSsoDelegate: AnyObject {
 
 // MARK: - TDX SSO Service
 
-/// Service for handling TDX SSO authentication via embedded WebView
-/// Uses WKWebView to navigate the SAML/Shibboleth flow and capture the JWT token
+/// Service for handling TDX SSO authentication via system browser
+/// Uses ASWebAuthenticationSession to leverage system-level SSO (PSSO)
 @MainActor
 public class TdxSsoService: NSObject {
     
@@ -44,6 +45,7 @@ public class TdxSsoService: NSObject {
     private let config: FleetMateConfig
     private var webView: WKWebView?
     private var authContinuation: CheckedContinuation<TdxSsoResult, Never>?
+    private var authSession: ASWebAuthenticationSession?
     
     public weak var delegate: TdxSsoDelegate?
     
@@ -52,8 +54,10 @@ public class TdxSsoService: NSObject {
         guard let baseUrl = config.tdxBaseUrl?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) else {
             return nil
         }
-        // TDX SSO endpoint - initiates SAML flow
-        return URL(string: "\(baseUrl)/TDWebApi/api/auth/loginsso")
+        // Use TDWorkManagement which triggers automatic SSO
+        // Strip /TDWebApi if present to get the root
+        let rootUrl = baseUrl.replacingOccurrences(of: "/TDWebApi", with: "")
+        return URL(string: "\(rootUrl)/TDWorkManagement/")
     }
     
     /// Patterns indicating successful authentication
@@ -61,6 +65,7 @@ public class TdxSsoService: NSObject {
         "/SBTDClient/",      // TDX client home after login
         "/TDClient/",        // Another TDX client pattern
         "/TDNext/",          // TDNext interface
+        "/TDWorkManagement/", // Work management after SSO
         "/Home/Desktop"      // TDX desktop home
     ]
     
@@ -93,7 +98,7 @@ public class TdxSsoService: NSObject {
     public func createSsoWebView() -> WKWebView {
         let configuration = WKWebViewConfiguration()
         
-        // Use persistent data store for cookies
+        // Use default (shared) data store to leverage system cookies and SSO
         let dataStore = WKWebsiteDataStore.default()
         configuration.websiteDataStore = dataStore
         
@@ -139,6 +144,80 @@ public class TdxSsoService: NSObject {
             let request = URLRequest(url: url)
             webView.load(request)
         }
+    }
+    
+    /// Authenticate using system browser with SSO support (PSSO/Platform SSO)
+    /// This uses ASWebAuthenticationSession which automatically leverages system-level authentication
+    /// - Returns: The SSO authentication result
+    public func authenticateWithSystemBrowser() async -> TdxSsoResult {
+        guard let url = ssoLoginUrl else {
+            return .failure("TDX base URL not configured")
+        }
+        
+        // Use a custom URL scheme for callback
+        let callbackScheme = "fleetmate"
+        
+        return await withCheckedContinuation { continuation in
+            // Create authentication session
+            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: callbackScheme) { callbackURL, error in
+                if let error = error {
+                    // User cancelled or authentication failed
+                    if (error as NSError).code == ASWebAuthenticationSessionError.canceledLogin.rawValue {
+                        continuation.resume(returning: .failure("Authentication cancelled"))
+                    } else {
+                        continuation.resume(returning: .failure(error.localizedDescription))
+                    }
+                    return
+                }
+                
+                // Parse callback URL for token
+                if let callbackURL = callbackURL {
+                    // Extract token from URL parameters or fragment
+                    if let token = self.extractTokenFromURL(callbackURL) {
+                        continuation.resume(returning: .success(token: token))
+                    } else {
+                        continuation.resume(returning: .failure("Could not extract token from callback"))
+                    }
+                } else {
+                    continuation.resume(returning: .failure("No callback URL received"))
+                }
+            }
+            
+            // Use ephemeral session to force fresh authentication or
+            // use default to leverage existing system SSO
+            session.prefersEphemeralWebBrowserSession = false // Use system SSO
+            
+            // Present modally
+            if #available(macOS 10.15, *) {
+                session.presentationContextProvider = self
+            }
+            
+            self.authSession = session
+            session.start()
+        }
+    }
+    
+    /// Extract token from callback URL
+    private func extractTokenFromURL(_ url: URL) -> String? {
+        // Try URL parameters
+        if let components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            if let token = components.queryItems?.first(where: { $0.name == "token" })?.value {
+                return token
+            }
+        }
+        
+        // Try fragment
+        if let fragment = url.fragment {
+            let pairs = fragment.split(separator: "&")
+            for pair in pairs {
+                let parts = pair.split(separator: "=", maxSplits: 1)
+                if parts.count == 2 && parts[0] == "token" {
+                    return String(parts[1])
+                }
+            }
+        }
+        
+        return nil
     }
     
     /// Extract JWT token from cookies after successful authentication
@@ -301,6 +380,34 @@ extension TdxSsoService: WKNavigationDelegate {
         authContinuation = nil
     }
     
+    public func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        let protectionSpace = challenge.protectionSpace
+        let authMethod = protectionSpace.authenticationMethod
+        
+        print("[TdxSsoService] Auth challenge: \(authMethod) from \(protectionSpace.host)")
+        
+        // Handle server trust (SSL)
+        if authMethod == NSURLAuthenticationMethodServerTrust {
+            if let serverTrust = protectionSpace.serverTrust {
+                let credential = URLCredential(trust: serverTrust)
+                completionHandler(.useCredential, credential)
+                return
+            }
+        }
+        
+        // For Negotiate (Kerberos) / NTLM - use default handling which uses system credentials
+        if authMethod == NSURLAuthenticationMethodNegotiate ||
+           authMethod == NSURLAuthenticationMethodNTLM ||
+           authMethod == NSURLAuthenticationMethodDefault {
+            print("[TdxSsoService] Using default credential handling for \(authMethod)")
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        
+        // For other challenges, use default handling
+        completionHandler(.performDefaultHandling, nil)
+    }
+    
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         print("[TdxSsoService] Provisional navigation failed: \(error.localizedDescription)")
         
@@ -349,5 +456,15 @@ extension TdxSsoService: WKNavigationDelegate {
         }
         
         decisionHandler(.allow)
+    }
+}
+
+// MARK: - ASWebAuthenticationPresentationContextProviding
+
+@available(macOS 10.15, *)
+extension TdxSsoService: ASWebAuthenticationPresentationContextProviding {
+    public func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        // Return the main window
+        return NSApplication.shared.windows.first { $0.isKeyWindow } ?? NSApplication.shared.windows.first!
     }
 }

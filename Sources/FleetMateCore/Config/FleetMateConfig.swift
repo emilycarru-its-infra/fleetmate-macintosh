@@ -272,6 +272,8 @@ public struct FleetMateConfig: Codable {
         // TeamDynamix
         if let v = str("tdx_base_url"), !v.isEmpty { config.tdxBaseUrl = v }
         if let appId = int("tdx_app_id") { config.tdxAppId = appId }
+        if let appId = int("tdx_ticketing_app_id") { config.tdxTicketingAppId = appId }
+        if let appId = int("tdx_assets_app_id") { config.tdxAssetsAppId = appId }
         if let v = str("tdx_username"), !v.isEmpty { config.tdxUsername = v }
         if let v = str("tdx_password"), !v.isEmpty { config.tdxPassword = v }
         if let v = str("tdx_beid"), !v.isEmpty { config.tdxBeid = v }
@@ -394,6 +396,8 @@ public struct FleetMateConfig: Codable {
         // TDX
         if let v = env["TDX_BASE_URL"] { config.tdxBaseUrl = v }
         if let v = env["TDX_APP_ID"], let id = Int(v) { config.tdxAppId = id }
+        if let v = env["TDX_TICKETING_APP_ID"], let id = Int(v) { config.tdxTicketingAppId = id }
+        if let v = env["TDX_ASSETS_APP_ID"], let id = Int(v) { config.tdxAssetsAppId = id }
         if let v = env["TDX_USERNAME"] { config.tdxUsername = v }
         if let v = env["TDX_PASSWORD"] { config.tdxPassword = v }
         if let v = env["TDX_BEID"] { config.tdxBeid = v }
@@ -430,6 +434,8 @@ public struct FleetMateConfig: Codable {
         case "DEVOPS_PAT", "AZURE_DEVOPS_PAT": config.devopsPat = value
         case "TDX_BASE_URL": config.tdxBaseUrl = value
         case "TDX_APP_ID": config.tdxAppId = Int(value)
+        case "TDX_TICKETING_APP_ID": config.tdxTicketingAppId = Int(value)
+        case "TDX_ASSETS_APP_ID": config.tdxAssetsAppId = Int(value)
         case "TDX_USERNAME": config.tdxUsername = value
         case "TDX_PASSWORD": config.tdxPassword = value
         case "TDX_BEID": config.tdxBeid = value
@@ -550,7 +556,7 @@ public struct FleetMateConfig: Codable {
     /// Get TDX tickets URL
     public func tdxTicketsUrl(_ suffix: String = "") -> String {
         let base = (tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let appId = tdxAppId ?? 0
+        let appId = tdxTicketingAppId ?? tdxAppId ?? 0
         if suffix.isEmpty {
             return "\(base)/api/\(appId)/tickets"
         }
@@ -560,7 +566,7 @@ public struct FleetMateConfig: Codable {
     /// Get TDX assets URL
     public func tdxAssetsUrl(_ suffix: String = "") -> String {
         let base = (tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let appId = tdxAppId ?? 0
+        let appId = tdxAssetsAppId ?? tdxAppId ?? 0
         if suffix.isEmpty {
             return "\(base)/api/\(appId)/assets"
         }

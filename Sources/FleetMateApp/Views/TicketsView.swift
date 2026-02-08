@@ -21,6 +21,7 @@ struct TicketsView: View {
     @State private var ticketFeed: [TdxFeedEntry] = []
     @State private var isLoadingFeed = false
     @State private var hideClosed = true
+    @State private var meModeApplied = false
 
     // Filter states
     @State private var statusFilter = "All"
@@ -159,6 +160,12 @@ struct TicketsView: View {
                 loadTickets()
             }
         }
+        .onChange(of: appState.cachedTickets) { _, _ in
+            applyMeMode()
+        }
+        .onAppear {
+            applyMeMode()
+        }
         .sheet(isPresented: $appState.showTdxSsoLogin) {
             TdxSsoLoginView(config: appState.config) { result in
                 if result.success, let token = result.token {
@@ -192,17 +199,6 @@ struct TicketsView: View {
 
             ssoSection
 
-            Picker("Sort by", selection: $sortField) {
-                ForEach(TicketSortField.allCases, id: \.self) { field in
-                    Text(field.rawValue).tag(field)
-                }
-            }
-            .pickerStyle(.menu)
-            .frame(width: 120)
-            Button(action: { sortAscending.toggle() }) {
-                Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
-            }
-            .help(sortAscending ? "Ascending" : "Descending")
             Button(action: loadTickets) {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
@@ -334,41 +330,61 @@ struct TicketsView: View {
 
     private var ticketTableContent: some View {
         Table(filteredTickets, selection: $selectedTicketIds) {
-            TableColumn("ID") { ticket in
+            TableColumn(sortableHeader("ID", field: .modified)) { ticket in
                 Text("#\(ticket.id ?? 0)")
                     .font(.system(.body, design: .monospaced))
                     .textSelection(.enabled)
             }
             .width(min: 60, ideal: 80)
 
-            TableColumn("Title") { ticket in
+            TableColumn(sortableHeader("Title", field: .title)) { ticket in
                 Text(ticket.title ?? "-")
                     .textSelection(.enabled)
             }
             .width(min: 150, ideal: 250)
 
-            TableColumn("Status") { ticket in
+            TableColumn(sortableHeader("Status", field: .status)) { ticket in
                 TicketStatusBadge(statusName: ticket.statusName)
             }
             .width(min: 80, ideal: 100)
 
-            TableColumn("Priority") { ticket in
+            TableColumn(sortableHeader("Priority", field: .priority)) { ticket in
                 Text(ticket.priorityName ?? "-")
                     .textSelection(.enabled)
             }
             .width(min: 60, ideal: 80)
 
-            TableColumn("Requestor") { ticket in
+            TableColumn(sortableHeader("Requestor", field: .requestor)) { ticket in
                 Text(ticket.requestorName ?? "-")
                     .textSelection(.enabled)
             }
             .width(min: 100, ideal: 130)
 
-            TableColumn("Responsible") { ticket in
+            TableColumn(sortableHeader("Responsible", field: .responsible)) { ticket in
                 Text(ticket.responsibleFullName ?? "-")
                     .textSelection(.enabled)
             }
             .width(min: 100, ideal: 130)
+        }
+    }
+
+    /// Build a sortable column header label with sort indicator
+    private func sortableHeader(_ title: String, field: TicketSortField) -> String {
+        if sortField == field {
+            return "\(title) \(sortAscending ? "▲" : "▼")"
+        }
+        return title
+    }
+
+    /// Toggle sort on a column (call from column header tap — currently SwiftUI Table
+    /// doesn't support clickable headers natively, so we use the header text as indicator
+    /// and the user clicks the column header built into Table)
+    private func toggleSort(_ field: TicketSortField) {
+        if sortField == field {
+            sortAscending.toggle()
+        } else {
+            sortField = field
+            sortAscending = true
         }
     }
 
@@ -611,6 +627,26 @@ struct TicketsView: View {
     }
 
     // MARK: - Helpers
+
+    /// Apply "me mode" — default the Responsible filter to the authenticated user
+    private func applyMeMode() {
+        guard !meModeApplied,
+              appState.tdxSsoAuthenticated,
+              let userName = appState.tdxAuthenticatedUserName,
+              !tickets.isEmpty else { return }
+        
+        // Find a matching responsible name (case-insensitive contains for flexibility)
+        let match = responsibleOptions.first { option in
+            option != "All" &&
+            (option.localizedCaseInsensitiveContains(userName) ||
+             userName.localizedCaseInsensitiveContains(option))
+        }
+        
+        if let match = match {
+            responsibleFilter = match
+            meModeApplied = true
+        }
+    }
 
     private func compareDates(_ a: String?, _ b: String?) -> Bool {
         let aVal = a ?? ""

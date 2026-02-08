@@ -18,7 +18,7 @@ struct DevicesView: View {
     @State private var showOnlyNonCompliant = false
     @State private var sortField: DeviceSortField = .serial
     @State private var sortAscending = true
-    @State private var showActionPanel = false
+    @State private var platformFilter = "All"
     
     // Action states
     @State private var isPerformingAction = false
@@ -41,6 +41,13 @@ struct DevicesView: View {
 
         if showOnlyNonCompliant {
             result = result.filter { $0.complianceState?.lowercased() == "noncompliant" }
+        }
+
+        // Platform filter
+        if platformFilter != "All" {
+            result = result.filter {
+                ($0.operatingSystem ?? "").localizedCaseInsensitiveContains(platformFilter)
+            }
         }
 
         if !searchText.isEmpty {
@@ -70,6 +77,14 @@ struct DevicesView: View {
         devices.filter { selectedDeviceIds.contains($0.id) }
     }
 
+    var platformOptions: [String] {
+        var opts = Set<String>()
+        for d in devices {
+            if let os = d.operatingSystem, !os.isEmpty { opts.insert(os) }
+        }
+        return ["All"] + opts.sorted()
+    }
+
     var body: some View {
         HSplitView {
             // Main device list
@@ -77,11 +92,11 @@ struct DevicesView: View {
                 // Header
                 HStack {
                     VStack(alignment: .leading) {
-                        Text("Management")
+                        Text("Devices")
                             .font(.largeTitle)
                             .fontWeight(.bold)
                         HStack {
-                            Text("MDM devices (Intune, Jamf, etc.)")
+                            Text("Devices Management Service")
                                 .foregroundColor(.secondary)
                             if !selectedDeviceIds.isEmpty {
                                 Text("• \(selectedDeviceIds.count) selected")
@@ -93,22 +108,13 @@ struct DevicesView: View {
                     Spacer()
                     Toggle("Non-Compliant Only", isOn: $showOnlyNonCompliant)
                         .toggleStyle(.switch)
-                    Picker("Sort by", selection: $sortField) {
-                        ForEach(DeviceSortField.allCases, id: \.self) { field in
-                            Text(field.rawValue).tag(field)
+                    HStack(spacing: 4) {
+                        Text("Platform:").foregroundColor(.secondary)
+                        Picker("", selection: $platformFilter) {
+                            ForEach(platformOptions, id: \.self) { Text($0).tag($0) }
                         }
+                        .frame(width: 120)
                     }
-                    .pickerStyle(.menu)
-                    .frame(width: 120)
-                    Button(action: { sortAscending.toggle() }) {
-                        Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
-                    }
-                    .help(sortAscending ? "Ascending" : "Descending")
-                    Button(action: { showActionPanel.toggle() }) {
-                        Label("Actions", systemImage: "bolt.fill")
-                    }
-                    .disabled(selectedDeviceIds.isEmpty)
-                    .help("Show device actions panel")
                     Button(action: loadDevices) {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
@@ -164,37 +170,37 @@ struct DevicesView: View {
                     }
                 } else {
                     Table(filteredDevices, selection: $selectedDeviceIds) {
-                        TableColumn("Serial") { device in
+                        TableColumn(deviceSortHeader("Serial", field: .serial)) { device in
                             Text(device.serialNumber ?? "-")
                                 .font(.system(.body, design: .monospaced))
                                 .textSelection(.enabled)
                         }
                         .width(min: 100, ideal: 120)
 
-                        TableColumn("Name") { device in
+                        TableColumn(deviceSortHeader("Name", field: .name)) { device in
                             Text(device.deviceName ?? "-")
                                 .textSelection(.enabled)
                         }
                         .width(min: 150, ideal: 200)
 
-                        TableColumn("Compliance") { device in
+                        TableColumn(deviceSortHeader("Compliance", field: .compliance)) { device in
                             ComplianceBadge(state: device.complianceState)
                         }
                         .width(min: 100, ideal: 120)
 
-                        TableColumn("OS") { device in
+                        TableColumn(deviceSortHeader("OS", field: .os)) { device in
                             Text("\(device.operatingSystem ?? "-") \(device.osVersion ?? "")")
                                 .textSelection(.enabled)
                         }
                         .width(min: 100, ideal: 150)
 
-                        TableColumn("User") { device in
+                        TableColumn(deviceSortHeader("User", field: .user)) { device in
                             Text(device.userDisplayName ?? device.userPrincipalName ?? "-")
                                 .textSelection(.enabled)
                         }
                         .width(min: 150, ideal: 200)
 
-                        TableColumn("Last Sync") { device in
+                        TableColumn(deviceSortHeader("Last Sync", field: .lastSync)) { device in
                             Text(formatDate(device.lastSyncDateTime))
                                 .textSelection(.enabled)
                         }
@@ -203,8 +209,8 @@ struct DevicesView: View {
                 }
             }
             
-            // Actions Panel
-            if showActionPanel && !selectedDeviceIds.isEmpty {
+            // Actions Panel — always visible when devices are selected
+            if !selectedDeviceIds.isEmpty {
                 DeviceActionsPanel(
                     selectedDevices: selectedDevices,
                     isPerformingAction: $isPerformingAction,
@@ -220,8 +226,7 @@ struct DevicesView: View {
                     onReboot: performReboot,
                     onLock: performLock,
                     onLoadApps: loadApps,
-                    onReinstallApp: performAppReinstall,
-                    onClose: { showActionPanel = false }
+                    onReinstallApp: performAppReinstall
                 )
                 .frame(minWidth: 300, maxWidth: 350)
             }
@@ -253,6 +258,14 @@ struct DevicesView: View {
         for device in filteredDevices {
             selectedDeviceIds.insert(device.id)
         }
+    }
+
+    /// Build a sortable column header label with sort indicator
+    private func deviceSortHeader(_ title: String, field: DeviceSortField) -> String {
+        if sortField == field {
+            return "\(title) \(sortAscending ? "▲" : "▼")"
+        }
+        return title
     }
 
     private func loadDevices() {
@@ -407,9 +420,8 @@ struct DeviceActionsPanel: View {
     let onLock: () -> Void
     let onLoadApps: () -> Void
     let onReinstallApp: () -> Void
-    let onClose: () -> Void
     
-    @State private var expandedSections: Set<String> = ["sync"]
+    @State private var expandedSections: Set<String> = ["sync", "restart", "lock", "app", "update"]
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -418,11 +430,6 @@ struct DeviceActionsPanel: View {
                 Text("Device Actions")
                     .font(.headline)
                 Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
             }
             .padding()
             .background(Color.secondary.opacity(0.1))

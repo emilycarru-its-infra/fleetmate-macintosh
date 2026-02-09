@@ -23,7 +23,7 @@ CONTENTS_DIR = $(APP_BUNDLE)/Contents
 MACOS_DIR = $(CONTENTS_DIR)/MacOS
 RESOURCES_DIR = $(CONTENTS_DIR)/Resources
 ENTITLEMENTS = Sources/FleetMateApp/FleetMateApp.entitlements
-INFO_PLIST = FleetMate.app/Contents/Info.plist
+INFO_PLIST = Sources/FleetMateApp/Info.plist
 
 # Swift Build Configuration
 SWIFT_BUILD_DIR_RELEASE = .build/apple/Products/Release
@@ -169,16 +169,13 @@ sign-app: check-signing-config app-bundle
 	@echo "$(GREEN)✓ App bundle signed$(NC)"
 	@codesign --verify --deep --strict --verbose=2 "$(APP_BUNDLE)" 2>&1 | tail -3
 
-sign-debug: check-signing-config app-bundle-debug
-	@echo "$(BLUE)Signing debug app bundle with entitlements...$(NC)"
-	@codesign --force --sign "$(SIGNING_IDENTITY_APP)" \
-		--options runtime \
-		--timestamp \
-		--deep \
+sign-debug: app-bundle-debug
+	@echo "$(BLUE)Signing debug app bundle with ad-hoc signature...$(NC)"
+	@codesign --force --sign - \
 		--entitlements "$(ENTITLEMENTS)" \
 		"$(APP_BUNDLE)"
-	@echo "$(GREEN)✓ Debug app bundle signed (entitlements applied for PSSO)$(NC)"
-	@codesign --verify --deep --strict --verbose=2 "$(APP_BUNDLE)" 2>&1 | tail -3
+	@echo "$(GREEN)✓ Debug app bundle signed (entitlements applied for SSO)$(NC)"
+	@codesign --display --entitlements - "$(APP_BUNDLE)" 2>&1 | grep -A 5 "com.apple"
 
 # ─── Development ─────────────────────────────────────────────────────
 

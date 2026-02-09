@@ -141,7 +141,7 @@ struct AssetsView: View {
             }
         }
         .task {
-            if !appState.isAssetsCacheValid {
+            if !appState.isAssetsCacheValid || appState.cachedAssets.isEmpty {
                 loadAllAssets()
             }
         }

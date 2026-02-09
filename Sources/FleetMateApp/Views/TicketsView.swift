@@ -165,6 +165,10 @@ struct TicketsView: View {
         }
         .onAppear {
             applyMeMode()
+            // Auto-trigger SSO if not authenticated and SSO is available
+            if !appState.tdxSsoAuthenticated && appState.tdxService.shouldAttemptSso {
+                appState.triggerTdxSsoLogin()
+            }
         }
         .sheet(isPresented: $appState.showTdxSsoLogin) {
             TdxSsoLoginView(config: appState.config) { result in

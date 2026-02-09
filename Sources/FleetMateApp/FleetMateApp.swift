@@ -15,6 +15,9 @@ struct FleetMateApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(appState)
+                .task {
+                    await appState.preloadAllData()
+                }
         }
         .windowStyle(.titleBar)
         .commands {
@@ -49,6 +52,11 @@ class AppState: ObservableObject {
     @Published var showTdxSsoLogin = false
     @Published var tdxSsoAuthenticated = false
     @Published var tdxAuthenticatedUserName: String?
+    
+    // MARK: - Azure DevOps SSO State
+    @Published var showDevOpsSsoLogin = false
+    @Published var devOpsSsoAuthenticated = false
+    @Published var devOpsAuthenticatedUserName: String?
     
     // MARK: - Cached Data
     // Data caches with timestamps to avoid reloading on tab switches
@@ -218,6 +226,65 @@ class AppState: ObservableObject {
     /// Invalidate groups cache
     func invalidateGroupsCache() { groupsCacheTime = nil }
     
+    // MARK: - Background Preloading
+    
+    /// Preload all data sources concurrently in the background
+    func preloadAllData() async {
+        await withTaskGroup(of: Void.self) { group in
+            // Preload devices
+            if config.isGraphConfigured && !isDevicesCacheValid {
+                group.addTask { @MainActor in
+                    do {
+                        let devices = try await self.graphService.getManagedDevices(limit: 500)
+                        self.updateDevicesCache(devices)
+                    } catch {
+                        print("[Preload] Devices failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+            
+            // Preload assets
+            if config.isSnipeConfigured && !isAssetsCacheValid {
+                group.addTask { @MainActor in
+                    do {
+                        let assets = try await self.snipeService.getAllAssets()
+                        self.updateAssetsCache(assets)
+                    } catch {
+                        print("[Preload] Assets failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+            
+            // Preload tickets
+            if config.isTdxConfigured && !isTicketsCacheValid {
+                group.addTask { @MainActor in
+                    do {
+                        var search = TicketSearchRequest(maxResults: 500)
+                        if let groupId = self.config.tdxResponsibleGroupId {
+                            search.responsibleGroupIds = [groupId]
+                        }
+                        let tickets = try await self.tdxService.searchTickets(search: search, maxResults: 500)
+                        self.updateTicketsCache(tickets)
+                    } catch {
+                        print("[Preload] Tickets failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+            
+            // Preload groups
+            if config.isSystemsGraphConfigured && !isGroupsCacheValid {
+                group.addTask { @MainActor in
+                    do {
+                        let groups = try await self.graphService.searchGroups("Devices-", limit: 100)
+                        self.updateGroupsCache(groups)
+                    } catch {
+                        print("[Preload] Groups failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+        }
+    }
+    
     // MARK: - TDX SSO Authentication
     
     /// Check if TDX SSO login is required
@@ -255,5 +322,42 @@ class AppState: ObservableObject {
         tdxSsoAuthenticated = false
         tdxAuthenticatedUserName = nil
         invalidateTicketsCache()
+    }
+    
+    // MARK: - Azure DevOps SSO Authentication
+    
+    /// Check if AzDO SSO login is available (client_id + tenant_id configured)
+    var isDevOpsSsoConfigured: Bool {
+        config.devopsClientId != nil && config.devopsTenantId != nil
+    }
+    
+    /// Trigger AzDO SSO login flow
+    func triggerDevOpsSsoLogin() {
+        showDevOpsSsoLogin = true
+    }
+    
+    /// Handle successful AzDO SSO authentication
+    func handleDevOpsSsoSuccess(token: String, expiry: Date, userName: String?) {
+        devOpsService.setSsoToken(token, expiry: expiry, userId: nil, userName: userName)
+        devOpsSsoAuthenticated = true
+        devOpsAuthenticatedUserName = userName
+        showDevOpsSsoLogin = false
+        invalidateWorkItemsCache()
+    }
+    
+    /// Handle AzDO SSO failure
+    func handleDevOpsSsoFailure(_ error: String?) {
+        showDevOpsSsoLogin = false
+        if let error = error {
+            errorMessage = "Azure DevOps SSO login failed: \(error)"
+        }
+    }
+    
+    /// Sign out of AzDO SSO
+    func signOutDevOpsSso() {
+        devOpsService.clearSsoToken()
+        devOpsSsoAuthenticated = false
+        devOpsAuthenticatedUserName = nil
+        invalidateWorkItemsCache()
     }
 }

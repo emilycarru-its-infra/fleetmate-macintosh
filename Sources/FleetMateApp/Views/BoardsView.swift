@@ -1,8 +1,14 @@
 import SwiftUI
 import FleetMateCore
 
+enum BoardsViewMode: String, CaseIterable {
+    case board = "Board"
+    case list = "List"
+}
+
 struct BoardsView: View {
     @EnvironmentObject var appState: AppState
+    @State private var viewMode: BoardsViewMode = .board
     @State private var allTasks: [UnifiedTask] = []
     @State private var buckets: [String] = []
     @State private var isLoading = false
@@ -14,6 +20,27 @@ struct BoardsView: View {
     @State private var isSyncing = false
     @State private var showSyncAlert = false
     @State private var syncMessage = ""
+
+    // List mode state (AzDO work items)
+    @State private var listSearchText = ""
+    @State private var listFilterState: String?
+    @State private var isLoadingList = false
+
+    var workItems: [WorkItem] { appState.cachedWorkItems }
+
+    var filteredWorkItems: [WorkItem] {
+        var result = workItems
+        if let state = listFilterState {
+            result = result.filter { $0.fields?.state?.lowercased() == state.lowercased() }
+        }
+        if !listSearchText.isEmpty {
+            result = result.filter {
+                ($0.fields?.title?.localizedCaseInsensitiveContains(listSearchText) ?? false) ||
+                "\($0.id)".contains(listSearchText)
+            }
+        }
+        return result
+    }
 
     private var filteredTasks: [UnifiedTask] {
         var result = allTasks
@@ -56,95 +83,51 @@ struct BoardsView: View {
                     Text("Unified task management across all providers")
                         .foregroundColor(.secondary)
                 }
-                
+
                 Spacer()
-                
-                // Provider filter
-                Picker("Provider", selection: $filterProvider) {
-                    Text("All Providers").tag(nil as String?)
-                    Text("Azure DevOps").tag("azdo" as String?)
-                    Text("GitHub").tag("github" as String?)
-                    Text("Gitea").tag("gitea" as String?)
+
+                // AzDO SSO status/button
+                if appState.devOpsSsoAuthenticated, let user = appState.devOpsAuthenticatedUserName {
+                    HStack(spacing: 4) {
+                        Image(systemName: "person.crop.circle.badge.checkmark")
+                            .foregroundColor(.green)
+                        Text(user)
+                            .font(.caption)
+                        Button(action: { appState.signOutDevOpsSso() }) {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Sign out of Azure DevOps")
+                    }
+                } else if appState.isDevOpsSsoConfigured {
+                    Button(action: { appState.triggerDevOpsSsoLogin() }) {
+                        Label("Sign In", systemImage: "person.crop.circle.badge.questionmark")
+                    }
+                    .help("Sign in to Azure DevOps via SSO")
                 }
-                .pickerStyle(.menu)
-                .frame(width: 140)
-                .onChange(of: filterProvider) {
-                    loadTasks()
-                }
-                
-                Button(action: syncTasks) {
-                    Label("Sync", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .disabled(isSyncing)
-                
-                Button(action: loadTasks) {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(isLoading)
             }
             .padding()
-            
-            // Search and filters
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("Search tasks...", text: $searchText)
-                    .textFieldStyle(.plain)
-                
-                Picker("Bucket", selection: $filterBucket) {
-                    Text("All Buckets").tag(nil as String?)
-                    ForEach(buckets, id: \.self) { bucket in
-                        Text(bucket).tag(bucket as String?)
-                    }
+
+            // View mode toggle row — toggle on the left
+            HStack(spacing: 12) {
+                Picker("", selection: $viewMode) {
+                    Text("Board").tag(BoardsViewMode.board)
+                    Text("List").tag(BoardsViewMode.list)
                 }
-                .pickerStyle(.menu)
-                .frame(width: 150)
-                
-                Toggle("Show Closed", isOn: $showClosed)
-                
-                Text("\(filteredTasks.count) tasks")
-                    .foregroundColor(.secondary)
-                    .font(.caption)
+                .pickerStyle(.segmented)
+                .frame(width: 140)
+                Spacer()
             }
-            .padding(8)
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(8)
             .padding(.horizontal)
-            
-            // Kanban Board
-            if isLoading {
-                VStack {
-                    ProgressView("Loading tasks...")
-                        .padding(.top, 50)
-                    Spacer()
-                }
-            } else {
-                HStack(alignment: .top, spacing: 16) {
-                    // Open Column
-                    KanbanColumn(
-                        title: "Open",
-                        color: .green,
-                        tasks: openTasks,
-                        onSelect: selectTask
-                    )
-                    
-                    // In Progress Column
-                    KanbanColumn(
-                        title: "In Progress",
-                        color: .blue,
-                        tasks: inProgressTasks,
-                        onSelect: selectTask
-                    )
-                    
-                    // Closed Column
-                    KanbanColumn(
-                        title: "Closed",
-                        color: .gray,
-                        tasks: closedTasks,
-                        onSelect: selectTask
-                    )
-                }
-                .padding()
+            .padding(.bottom, 4)
+
+            // Content based on view mode
+            switch viewMode {
+            case .board:
+                boardContent
+            case .list:
+                listContent
             }
         }
         .task {
@@ -159,6 +142,197 @@ struct BoardsView: View {
         }
         .sheet(item: $selectedTask) { task in
             TaskDetailSheet(task: task)
+        }
+        .sheet(isPresented: $appState.showDevOpsSsoLogin) {
+            DevOpsSsoLoginView(config: appState.config) { result in
+                if result.success, let token = result.token {
+                    let expiry = Date().addingTimeInterval(TimeInterval(result.expiresIn ?? 3600))
+                    appState.handleDevOpsSsoSuccess(token: token, expiry: expiry, userName: result.userName)
+                } else {
+                    appState.handleDevOpsSsoFailure(result.error)
+                }
+            }
+        }
+    }
+
+    // MARK: - Board Content (Kanban)
+
+    private var boardContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Board toolbar
+            HStack {
+                // Provider filter
+                Picker("Provider", selection: $filterProvider) {
+                    Text("All Providers").tag(nil as String?)
+                    Text("Azure DevOps").tag("azdo" as String?)
+                    Text("GitHub").tag("github" as String?)
+                    Text("Gitea").tag("gitea" as String?)
+                }
+                .pickerStyle(.menu)
+                .frame(width: 140)
+                .onChange(of: filterProvider) {
+                    loadTasks()
+                }
+
+                Button(action: syncTasks) {
+                    Label("Sync", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(isSyncing)
+
+                Button(action: loadTasks) {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(isLoading)
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 4)
+
+            // Search and filters
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                TextField("Search tasks...", text: $searchText)
+                    .textFieldStyle(.plain)
+
+                Picker("Bucket", selection: $filterBucket) {
+                    Text("All Buckets").tag(nil as String?)
+                    ForEach(buckets, id: \.self) { bucket in
+                        Text(bucket).tag(bucket as String?)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(width: 150)
+
+                Toggle("Show Closed", isOn: $showClosed)
+
+                Text("\(filteredTasks.count) tasks")
+                    .foregroundColor(.secondary)
+                    .font(.caption)
+            }
+            .padding(8)
+            .background(Color.secondary.opacity(0.1))
+            .cornerRadius(8)
+            .padding(.horizontal)
+
+            // Kanban Board
+            if isLoading {
+                VStack {
+                    ProgressView("Loading tasks...")
+                        .padding(.top, 50)
+                    Spacer()
+                }
+            } else {
+                HStack(alignment: .top, spacing: 16) {
+                    KanbanColumn(title: "Open", color: .green, tasks: openTasks, onSelect: selectTask)
+                    KanbanColumn(title: "In Progress", color: .blue, tasks: inProgressTasks, onSelect: selectTask)
+                    KanbanColumn(title: "Closed", color: .gray, tasks: closedTasks, onSelect: selectTask)
+                }
+                .padding()
+            }
+        }
+    }
+
+    // MARK: - List Content (AzDO Work Items)
+
+    private var listContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // List toolbar
+            HStack {
+                Picker("State", selection: $listFilterState) {
+                    Text("All").tag(nil as String?)
+                    Text("Active").tag("Active" as String?)
+                    Text("Resolved").tag("Resolved" as String?)
+                    Text("Closed").tag("Closed" as String?)
+                }
+                .pickerStyle(.menu)
+                .frame(width: 120)
+
+                Button(action: loadWorkItems) {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(isLoadingList)
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 4)
+
+            // Search
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                TextField("Search work items...", text: $listSearchText)
+                    .textFieldStyle(.plain)
+                if !filteredWorkItems.isEmpty {
+                    Text("\(filteredWorkItems.count) items")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                }
+            }
+            .padding(8)
+            .background(Color.secondary.opacity(0.1))
+            .cornerRadius(8)
+            .padding(.horizontal)
+
+            // Content
+            if !appState.config.isDevOpsConfigured {
+                VStack {
+                    ContentUnavailableView(
+                        "Not Configured",
+                        systemImage: "gear.badge.xmark",
+                        description: Text("Azure DevOps is not configured. Set DEVOPS_ORGANIZATION and DEVOPS_PROJECT in your config.")
+                    )
+                    Spacer()
+                }
+            } else if isLoadingList {
+                VStack {
+                    ProgressView("Loading work items...")
+                        .padding(.top, 50)
+                    Spacer()
+                }
+            } else if filteredWorkItems.isEmpty {
+                VStack {
+                    ContentUnavailableView.search(text: listSearchText)
+                        .padding(.top, 30)
+                    Spacer()
+                }
+            } else {
+                Table(filteredWorkItems) {
+                    TableColumn("ID") { item in
+                        Text(verbatim: "#\(item.id)")
+                            .font(.system(.body, design: .monospaced))
+                    }
+                    .width(min: 60, ideal: 80)
+
+                    TableColumn("Type") { item in
+                        WorkItemTypeBadge(type: item.fields?.workItemType)
+                    }
+                    .width(min: 80, ideal: 100)
+
+                    TableColumn("Title") { item in
+                        Text(item.fields?.title ?? "-")
+                    }
+                    .width(min: 200, ideal: 300)
+
+                    TableColumn("State") { item in
+                        WorkItemStateBadge(state: item.fields?.state)
+                    }
+                    .width(min: 80, ideal: 100)
+
+                    TableColumn("Priority") { item in
+                        PriorityIndicator(priority: item.fields?.priority)
+                    }
+                    .width(min: 60, ideal: 80)
+
+                    TableColumn("Assigned To") { item in
+                        Text(item.fields?.assignedTo?.displayName ?? "-")
+                    }
+                    .width(min: 120, ideal: 150)
+                }
+            }
+        }
+        .task {
+            if !appState.isWorkItemsCacheValid {
+                loadWorkItems()
+            }
         }
     }
     
@@ -238,6 +412,20 @@ struct BoardsView: View {
     
     private func selectTask(_ task: UnifiedTask) {
         selectedTask = task
+    }
+
+    private func loadWorkItems() {
+        guard appState.config.isDevOpsConfigured else { return }
+        Task {
+            isLoadingList = true
+            defer { isLoadingList = false }
+            do {
+                let items = try await appState.devOpsService.getWorkItems(limit: 100)
+                appState.updateWorkItemsCache(items)
+            } catch {
+                appState.errorMessage = "Failed to load work items: \(error.localizedDescription)"
+            }
+        }
     }
     
     private func createRegistry(config: FleetMateConfig) async throws -> TaskProviderRegistry {

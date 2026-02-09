@@ -1,6 +1,7 @@
 import SwiftUI
 import WebKit
 import FleetMateCore
+import AuthenticationServices
 
 // MARK: - SSO Login View
 
@@ -242,11 +243,53 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     @Published var currentUrl: String = ""
     @Published var navigationLog: [String] = []
     
+    /// Log a message to both console and the unified log (visible via `log show`)
+    private func ssoLog(_ message: String) {
+        let full = "[TdxSsoLogin] \(message)"
+        print(full)
+        NSLog("%@", full)
+    }
+    
+    /// Log a message from a static context (for background detection)
+    nonisolated private static func ssoLogStatic(_ message: String) {
+        let full = "[TdxSsoLogin] \(message)"
+        print(full)
+        NSLog("%@", full)
+    }
+    
     let webView: WKWebView
     let ssoService: TdxSsoService
     private let config: FleetMateConfig
     private var urlSession: URLSession?
     private var samlHandler: SamlMessageHandler?
+    /// Timestamp when a FIDO/passkey page was first loaded.
+    /// Used for timeout-based fallback: if Platform SSO doesn't complete
+    /// the FIDO ceremony within `fidoTimeoutSeconds`, inject fallback scripts.
+    private var fidoPageLoadedAt: Date?
+    /// Whether the FIDO timeout fallback has already been injected
+    private var fidoFallbackInjected = false
+    /// How long to wait for Platform SSO to complete FIDO before falling back (seconds)
+    private let fidoTimeoutSeconds: TimeInterval = 2
+    /// Whether the Enterprise SSO Extension is available on this system
+    private var ssoExtensionAvailable = false
+    /// The user's Platform SSO UPN (e.g. user@domain.ca), detected from macOS identity
+    private var platformSsoUpn: String? {
+        didSet {
+            // When UPN becomes available, check if we're already on the Entra page
+            // and need to auto-fill. This handles the race where the page loaded
+            // before app-sso detection completed.
+            if let upn = platformSsoUpn, !upn.isEmpty, !usernameAutoFilled {
+                if let host = webView.url?.host, host.contains("login.microsoftonline.com") {
+                    let logMsg = "[PSSO] UPN now available (\(upn)) — triggering auto-fill on current page"
+                    ssoLog(logMsg)
+                    navigationLog.append(logMsg)
+                    autoFillEntraLogin()
+                }
+            }
+        }
+    }
+    /// Whether we've already auto-submitted the username on the Entra sign-in page
+    private var usernameAutoFilled = false
     
     /// Patterns indicating successful authentication
     private let successPatterns = [
@@ -295,6 +338,98 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     })();
     """
     
+    /// JavaScript injected as a fallback when the SSO Extension can't complete the
+    /// FIDO/passkey ceremony. Handles three scenarios:
+    /// 1. FIDO page with "Sign in another way" link - clicks it
+    /// 2. Error page ("Couldn't sign you in") - clicks "Back" / retry link
+    /// 3. Method selection page - picks a non-FIDO method (Authenticator, SMS, etc.)
+    private static let fidoFallbackScript = """
+    (function() {
+        var acted = false;
+        function tryFallback() {
+            if (acted) return true;
+            var bodyText = (document.body && document.body.innerText) || '';
+            var isErrorPage = bodyText.indexOf("Couldn\u{2019}t sign you in") !== -1 ||
+                              bodyText.indexOf("Couldn't sign you in") !== -1 ||
+                              bodyText.indexOf("sign-in was unsuccessful") !== -1 ||
+                              bodyText.indexOf("Something went wrong") !== -1 ||
+                              bodyText.indexOf("We couldn't verify") !== -1 ||
+                              bodyText.indexOf("error occurred") !== -1;
+            var elems = document.querySelectorAll('a, button, [role="link"], [role="button"], input[type="submit"], span, div[tabindex]');
+            if (isErrorPage) {
+                for (var i = 0; i < elems.length; i++) {
+                    var text = (elems[i].textContent || elems[i].value || '').trim().toLowerCase();
+                    if (text === 'back' || text === 'try again' || text === 'go back' ||
+                        text.indexOf('sign in another way') !== -1 ||
+                        text.indexOf('other ways') !== -1) {
+                        console.log('[FleetMate] Error page recovery - clicking: ' + text);
+                        elems[i].click();
+                        acted = true;
+                        return true;
+                    }
+                }
+                if (window.history.length > 1) {
+                    console.log('[FleetMate] Error page - going back');
+                    window.history.back();
+                    acted = true;
+                    return true;
+                }
+            }
+            for (var i = 0; i < elems.length; i++) {
+                var text = (elems[i].textContent || elems[i].value || '').trim().toLowerCase();
+                if (text.indexOf('sign in another way') !== -1 ||
+                    text.indexOf('sign in in another way') !== -1 ||
+                    text.indexOf('other ways to sign in') !== -1 ||
+                    text.indexOf('use another method') !== -1 ||
+                    text.indexOf('use a different method') !== -1 ||
+                    text.indexOf('try another way') !== -1 ||
+                    text.indexOf('try a different way') !== -1 ||
+                    text.indexOf("i can't use") !== -1) {
+                    console.log('[FleetMate] FIDO fallback - clicking: ' + text);
+                    elems[i].click();
+                    acted = true;
+                    return true;
+                }
+            }
+            var tiles = document.querySelectorAll('[data-value]');
+            if (tiles.length > 0) {
+                var preferred = ['PhoneAppNotification', 'PhoneAppOTP', 'OneWaySMS',
+                               'TwoWayVoiceMobile', 'Password', 'PhoneAppPassword'];
+                for (var p = 0; p < preferred.length; p++) {
+                    for (var t = 0; t < tiles.length; t++) {
+                        var val = tiles[t].getAttribute('data-value') || '';
+                        if (val === preferred[p]) {
+                            console.log('[FleetMate] Selecting alt method: ' + val);
+                            tiles[t].click();
+                            acted = true;
+                            setTimeout(function() {
+                                var btns = document.querySelectorAll('input[type="submit"], button[type="submit"], button');
+                                for (var j = 0; j < btns.length; j++) {
+                                    var bt = (btns[j].textContent || btns[j].value || '').trim().toLowerCase();
+                                    if (bt === 'next' || bt === 'verify' || bt === 'sign in' ||
+                                        bt === 'send code' || bt === 'yes' || bt === 'send notification') {
+                                        btns[j].click();
+                                        break;
+                                    }
+                                }
+                            }, 500);
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+        if (document.body) {
+            var observer = new MutationObserver(function() { tryFallback(); });
+            observer.observe(document.body, { childList: true, subtree: true });
+            setTimeout(function() { observer.disconnect(); }, 10000);
+        }
+        var delays = [100, 300, 600, 1000, 1500, 2500, 4000, 6000];
+        delays.forEach(function(d) { setTimeout(tryFallback, d); });
+    })();
+    """
+    
     init(config: FleetMateConfig) {
         self.config = config
         self.ssoService = TdxSsoService(config: config)
@@ -314,6 +449,17 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         
         super.init()
         
+        // Start UPN detection on a background thread immediately.
+        // This runs `app-sso platform -s` off the main thread so it doesn't
+        // block SwiftUI's AttributeGraph. The result will be available
+        // before the WebView reaches login.microsoftonline.com.
+        Task { [weak self] in
+            let upn = await Self.detectPlatformSsoUpn()
+            await MainActor.run {
+                self?.platformSsoUpn = upn
+            }
+        }
+        
         // Set up SAML form interception (fixes WKWebView cross-origin POST issue)
         setupSamlInterception()
         
@@ -324,7 +470,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     }
     
     private func setupSamlInterception() {
-        let script = WKUserScript(
+        let samlScript = WKUserScript(
             source: Self.samlInterceptorScript,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
@@ -334,10 +480,234 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         handler.viewModel = self
         self.samlHandler = handler
         
-        webView.configuration.userContentController.addUserScript(script)
+        // Only inject the SAML interceptor — let Platform SSO / WebAuthn work natively.
+        // FIDO fallback scripts are injected on-demand after a timeout if PSSO isn't available.
+        webView.configuration.userContentController.addUserScript(samlScript)
         webView.configuration.userContentController.add(handler, name: "samlInterceptor")
         
-        print("[TdxSsoLogin] SAML form interceptor installed")
+        print("[TdxSsoLogin] SAML interceptor installed (WebAuthn/FIDO allowed for Platform SSO)")
+    }
+    
+    /// Detect the current user's Platform SSO UPN via `app-sso platform -s`.
+    /// Parses the AD TGT ticket entry to find the user's UPN.
+    /// Runs on a background thread to avoid blocking the main/UI thread.
+    /// Returns the UPN (e.g. "user@domain.ca") or nil if not enrolled.
+    private static func detectPlatformSsoUpn() async -> String? {
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/app-sso")
+                process.arguments = ["platform", "-s"]
+                
+                let pipe = Pipe()
+                process.standardOutput = pipe
+                process.standardError = FileHandle.nullDevice
+                
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                } catch {
+                    Self.ssoLogStatic("[PSSO] Failed to run app-sso platform -s: \(error)")
+                    continuation.resume(returning: nil)
+                    return
+                }
+                
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                guard let output = String(data: data, encoding: .utf8) else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                
+                // Parse the output for UPN entries.
+                // The AD TGT ticket has ticketKeyPath "tgt_ad" and a clean UPN.
+                // We skip Kerberos-format UPNs (contain KERBEROS.MICROSOFTONLINE.COM).
+                var bestUpn: String?
+                for line in output.components(separatedBy: .newlines) {
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    // Match lines like:  upn = "user@DOMAIN.CA"  or  "upn" : "user@DOMAIN.CA"
+                    if trimmed.contains("upn") {
+                        // Extract the quoted value after upn
+                        if let range = trimmed.range(of: #""([^"]+@[^"]+)""#, options: .regularExpression) {
+                            let candidate = String(trimmed[range]).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                            // Skip Kerberos-format entries
+                            if candidate.uppercased().contains("KERBEROS.MICROSOFTONLINE.COM") {
+                                continue
+                            }
+                            if candidate.contains("@") {
+                                bestUpn = candidate.lowercased()
+                            }
+                        }
+                    }
+                }
+                
+                if let upn = bestUpn {
+                    Self.ssoLogStatic("[PSSO] Detected Platform SSO UPN: \(upn)")
+                    continuation.resume(returning: upn)
+                } else {
+                    Self.ssoLogStatic("[PSSO] No Platform SSO UPN found in app-sso output")
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+    
+    /// Generate JavaScript to auto-fill the username on the Entra sign-in page
+    /// and click "Next" to proceed through SSO.
+    private static func entraAutoLoginScript(upn: String) -> String {
+        // Escape the UPN for safe embedding in JavaScript
+        let escapedUpn = upn
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "'", with: "\\'")
+        
+        return """
+        (function() {
+            var filled = false;
+            function tryAutoLogin() {
+                if (filled) return;
+                // Find the username input field
+                var input = document.querySelector('input[name="loginfmt"]');
+                if (!input) input = document.querySelector('input[type="email"]');
+                if (!input) return;
+                
+                // Set the value using native input setter to trigger React/Angular change detection
+                var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                nativeSetter.call(input, '\(escapedUpn)');
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                
+                filled = true;
+                console.log('[FleetMate] Auto-filled username: \(escapedUpn)');
+                
+                // Click the Next button after a brief delay for the form to process
+                setTimeout(function() {
+                    var nextBtn = document.querySelector('input[type="submit"]');
+                    if (!nextBtn) nextBtn = document.querySelector('button[type="submit"]');
+                    if (!nextBtn) {
+                        // Try finding by value/text
+                        var btns = document.querySelectorAll('input, button');
+                        for (var i = 0; i < btns.length; i++) {
+                            var t = (btns[i].value || btns[i].textContent || '').trim().toLowerCase();
+                            if (t === 'next' || t === 'sign in') {
+                                nextBtn = btns[i];
+                                break;
+                            }
+                        }
+                    }
+                    if (nextBtn) {
+                        console.log('[FleetMate] Clicking Next button');
+                        nextBtn.click();
+                    }
+                }, 300);
+            }
+            
+            // Try immediately, then retry with delays in case the form renders asynchronously
+            tryAutoLogin();
+            [200, 500, 1000, 2000].forEach(function(d) {
+                setTimeout(tryAutoLogin, d);
+            });
+            
+            // Also watch for DOM changes
+            if (document.body) {
+                var observer = new MutationObserver(function() { tryAutoLogin(); });
+                observer.observe(document.body, { childList: true, subtree: true });
+                // Auto-disconnect after 5 seconds
+                setTimeout(function() { observer.disconnect(); }, 5000);
+            }
+        })();
+        """
+    }
+    
+    /// Inject the auto-login script on the Entra sign-in page.
+    /// Called from multiple trigger points (didFinish, navigationResponse, etc.)
+    /// to ensure it fires regardless of how the page loads.
+    private func autoFillEntraLogin() {
+        guard !usernameAutoFilled else { return }
+        guard let upn = platformSsoUpn else {
+            let logMsg = "[PSSO] No UPN available yet for auto-login — will retry when UPN is detected"
+            print("[TdxSsoLogin] \(logMsg)")
+            navigationLog.append(logMsg)
+            // Schedule a retry — UPN detection may still be running
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                if !self.usernameAutoFilled, self.platformSsoUpn != nil {
+                    self.autoFillEntraLogin()
+                }
+            }
+            return
+        }
+        
+        usernameAutoFilled = true
+        let logMsg = "[PSSO] Auto-filling Entra sign-in with: \(upn)"
+        ssoLog(logMsg)
+        navigationLog.append(logMsg)
+        
+        let script = Self.entraAutoLoginScript(upn: upn)
+        // Inject immediately, then retry with delays for SPA rendering
+        Task {
+            _ = try? await webView.evaluateJavaScript(script)
+            // Retry after delays in case the form wasn't rendered yet
+            for delay in [500, 1000, 2000] as [UInt64] {
+                try? await Task.sleep(nanoseconds: delay * 1_000_000)
+                _ = try? await webView.evaluateJavaScript(script)
+            }
+        }
+    }
+    
+    /// Detect if the Microsoft Enterprise SSO Extension is available.
+    /// Uses ASAuthorizationSingleSignOnProvider to check for the Entra IdP.
+    private func detectSsoExtension() {
+        let entraUrl = URL(string: "https://login.microsoftonline.com")!
+        let provider = ASAuthorizationSingleSignOnProvider(identityProvider: entraUrl)
+        // If canPerformAuthorization is true, the SSO Extension is registered
+        ssoExtensionAvailable = provider.canPerformAuthorization
+        let status = ssoExtensionAvailable ? "available" : "not available"
+        let logMsg = "[PSSO] Enterprise SSO Extension: \(status)"
+        print("[TdxSsoLogin] \(logMsg)")
+        navigationLog.append(logMsg)
+        
+        if !ssoExtensionAvailable {
+            let warnMsg = "[PSSO] Platform SSO not available — FIDO will timeout after \(Int(fidoTimeoutSeconds))s and fall back to interactive auth"
+            print("[TdxSsoLogin] \(warnMsg)")
+            navigationLog.append(warnMsg)
+        }
+    }
+    
+    /// Inject FIDO fallback scripts when Platform SSO wasn't able to complete the ceremony.
+    /// This is called after `fidoTimeoutSeconds` has elapsed on a FIDO page.
+    private func injectFidoFallback() {
+        guard !fidoFallbackInjected else { return }
+        fidoFallbackInjected = true
+        
+        let logMsg = "[PSSO] FIDO timeout elapsed — injecting fallback auth method selector"
+        print("[TdxSsoLogin] \(logMsg)")
+        navigationLog.append(logMsg)
+        
+        Task {
+            _ = try? await webView.evaluateJavaScript(Self.fidoFallbackScript)
+            let doneMsg = "[PSSO] Fallback script injected"
+            print("[TdxSsoLogin] \(doneMsg)")
+            await MainActor.run { navigationLog.append(doneMsg) }
+        }
+    }
+    
+    /// Schedule a FIDO timeout check. If Platform SSO hasn't completed
+    /// authentication by the time the timeout fires, inject fallback scripts.
+    private func scheduleFidoTimeout() {
+        guard fidoPageLoadedAt == nil else { return } // Already scheduled
+        fidoPageLoadedAt = Date()
+        
+        let timeout = fidoTimeoutSeconds
+        let logMsg = "[PSSO] FIDO page detected — waiting \(Int(timeout))s for Platform SSO..."
+        print("[TdxSsoLogin] \(logMsg)")
+        navigationLog.append(logMsg)
+        
+        Task {
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            // Check if auth completed while we were waiting
+            if authResult == nil && !fidoFallbackInjected {
+                injectFidoFallback()
+            }
+        }
     }
     
     private func syncCookiesToWebView() async {
@@ -442,6 +812,37 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                 await MainActor.run { navigationLog.append(syncLog) }
             }
             
+            // Check if the SAML redirect chain landed on loginSSO and returned a JWT directly
+            if let responseText = String(data: data, encoding: .utf8) {
+                let cleanToken = responseText
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                
+                if cleanToken.hasPrefix("eyJ") && cleanToken.count > 20 {
+                    let successLog = "[SAML] ✓ Got JWT directly from SAML redirect chain (\(cleanToken.prefix(20))...)"
+                    print("[TdxSsoLogin] \(successLog)")
+                    
+                    let userInfo = Self.extractUserInfoFromJwt(cleanToken)
+                    
+                    await MainActor.run {
+                        navigationLog.append(successLog)
+                        
+                        if let name = userInfo.name {
+                            let userLog = "[JWT] User: \(name) (\(userInfo.email ?? ""))"
+                            print("[TdxSsoLogin] \(userLog)")
+                            navigationLog.append(userLog)
+                        }
+                        
+                        authResult = TdxSsoResult.success(
+                            token: cleanToken,
+                            userName: userInfo.name,
+                            userEmail: userInfo.email
+                        )
+                    }
+                    return
+                }
+            }
+            
             // Now try to get a JWT bearer token from TDX
             await MainActor.run {
                 attemptJwtRetrieval(afterLandingOn: finalUrl)
@@ -508,7 +909,8 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                         .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
                     
-                    if !cleanToken.isEmpty && cleanToken.count > 20 {
+                    // Validate it's a JWT (starts with eyJ), not an HTML page
+                    if cleanToken.hasPrefix("eyJ") && cleanToken.count > 20 {
                         let successLog = "[JWT] ✓ Got bearer token (\(cleanToken.prefix(20))...)"
                         print("[TdxSsoLogin] \(successLog)")
                         
@@ -607,115 +1009,145 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         isLoading = true
         errorMessage = nil
         navigationLog.removeAll()
+        fidoPageLoadedAt = nil
+        fidoFallbackInjected = false
+        usernameAutoFilled = false
         
-        guard let url = ssoService.ssoLoginUrl else {
+        // Detect SSO Extension availability
+        detectSsoExtension()
+        
+        let baseUrl = (config.tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !baseUrl.isEmpty,
+              let loginSsoUrl = URL(string: "\(baseUrl)/api/auth/loginSSO") else {
             errorMessage = "TDX base URL not configured"
             isLoading = false
             return
         }
         
-        let logMsg = "[START] Pre-authenticating with URLSession..."
+        let logMsg = "[START] Attempting SSO authentication..."
         print("[TdxSsoLogin] \(logMsg)")
         navigationLog.append(logMsg)
         
-        // Try to pre-authenticate using URLSession first (has better Kerberos support)
+        // Try URLSession first — if a valid Shibboleth session exists
+        // from a prior login, we can get the JWT without any UI at all.
         Task {
-            await preAuthenticateWithURLSession(targetUrl: url)
+            let gotJwt = await tryLoginSsoViaURLSession()
+            if !gotJwt {
+                await MainActor.run {
+                    let logMsg = "[START] No existing session, loading SSO in WebView..."
+                    print("[TdxSsoLogin] \(logMsg)")
+                    navigationLog.append(logMsg)
+                    continueWithWebView(url: loginSsoUrl)
+                }
+            }
         }
     }
     
-    private func preAuthenticateWithURLSession(targetUrl: URL) async {
-        // Create a configuration that follows redirects and tracks cookies
-        let config = URLSessionConfiguration.default
-        config.httpCookieAcceptPolicy = .always
-        config.httpCookieStorage = HTTPCookieStorage.shared
-        config.httpShouldSetCookies = true
-        config.timeoutIntervalForRequest = 30
+    /// Try to get JWT from loginSSO via URLSession.
+    /// This works if the SSO extension handles URLSession requests (macOS 13+)
+    /// or if ASWebAuth deposited Shibboleth cookies in HTTPCookieStorage.shared.
+    private func tryLoginSsoViaURLSession() async -> Bool {
+        let baseUrl = (config.tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !baseUrl.isEmpty,
+              let loginSsoUrl = URL(string: "\(baseUrl)/api/auth/loginSSO") else { return false }
         
-        // Create a delegate that handles auth and tracks final URL
+        var request = URLRequest(url: loginSsoUrl)
+        request.httpMethod = "GET"
+        request.setValue(webView.customUserAgent, forHTTPHeaderField: "User-Agent")
+        request.httpShouldHandleCookies = true
+        
+        let sessionConfig = URLSessionConfiguration.default
+        sessionConfig.httpCookieStorage = HTTPCookieStorage.shared
+        sessionConfig.httpShouldSetCookies = true
+        sessionConfig.httpCookieAcceptPolicy = .always
+        
         let delegate = KerberosAuthDelegate()
-        let authSession = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+        let session = URLSession(configuration: sessionConfig, delegate: delegate, delegateQueue: nil)
         
         do {
-            let logMsg = "[PREAUTH] Following SSO redirect chain..."
+            let (data, response) = try await session.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200,
+                  let text = String(data: data, encoding: .utf8) else { return false }
+            
+            let cleanToken = text
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            
+            if cleanToken.hasPrefix("eyJ") && cleanToken.count > 20 {
+                let successLog = "[JWT] ✓ Got JWT via URLSession (\(cleanToken.prefix(20))...)"
+                print("[TdxSsoLogin] \(successLog)")
+                
+                let userInfo = Self.extractUserInfoFromJwt(cleanToken)
+                
+                await MainActor.run {
+                    navigationLog.append(successLog)
+                    
+                    if let name = userInfo.name {
+                        let userLog = "[JWT] User: \(name) (\(userInfo.email ?? ""))"
+                        print("[TdxSsoLogin] \(userLog)")
+                        navigationLog.append(userLog)
+                    }
+                    
+                    authResult = TdxSsoResult.success(
+                        token: cleanToken,
+                        userName: userInfo.name,
+                        userEmail: userInfo.email
+                    )
+                }
+                return true
+            }
+            
+            let logMsg = "[JWT] URLSession response not a JWT (starts with: \(cleanToken.prefix(30))...)"
             print("[TdxSsoLogin] \(logMsg)")
             await MainActor.run { navigationLog.append(logMsg) }
-            
-            var request = URLRequest(url: targetUrl)
-            request.httpShouldHandleCookies = true
-            // Set Safari user-agent to trigger Windows Integrated Auth
-            request.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15", forHTTPHeaderField: "User-Agent")
-            
-            // Follow all redirects
-            var currentURL = targetUrl
-            var redirectCount = 0
-            let maxRedirects = 15
-            
-            while redirectCount < maxRedirects {
-                let (data, response) = try await authSession.data(for: request)
-                
-                guard let httpResponse = response as? HTTPURLResponse else { break }
-                
-                let respLog = "[PREAUTH] \(redirectCount+1). \(httpResponse.statusCode) - \(httpResponse.url?.absoluteString ?? "unknown")"
-                print("[TdxSsoLogin] \(respLog)")
-                await MainActor.run { navigationLog.append(respLog) }
-                
-                currentURL = httpResponse.url ?? currentURL
-                
-                // Check if we've reached a success page (TDWorkManagement or similar)
-                if let finalURL = httpResponse.url?.absoluteString,
-                   (finalURL.contains("/TDWorkManagement") || 
-                    finalURL.contains("/Home/Desktop") ||
-                    finalURL.contains("/TDNext/Home")) {
-                    let successLog = "[PREAUTH] ✓ Reached authenticated page!"
-                    print("[TdxSsoLogin] \(successLog)")
-                    await MainActor.run { navigationLog.append(successLog) }
-                    break
-                }
-                
-                // If status is 200-299, we've likely reached final page
-                if (200...299).contains(httpResponse.statusCode) {
-                    break
-                }
-                
-                // If we got a redirect status, URLSession should have followed it automatically
-                if (300...399).contains(httpResponse.statusCode) {
-                    break // URLSession follows redirects automatically
-                }
-                
-                redirectCount += 1
-                
-                // Create next request
-                request = URLRequest(url: currentURL)
-                request.httpShouldHandleCookies = true
-            }
-            
-            // Sync all cookies to WKWebView
-            if let allCookies = HTTPCookieStorage.shared.cookies {
-                let cookieStore = webView.configuration.websiteDataStore.httpCookieStore
-                for cookie in allCookies {
-                    await cookieStore.setCookie(cookie)
-                }
-                let cookieLog = "[PREAUTH] Synced \(allCookies.count) total cookies to WebView"
-                print("[TdxSsoLogin] \(cookieLog)")
-                await MainActor.run { navigationLog.append(cookieLog) }
-            }
-            
-            // Load the final URL in WebView
-            await MainActor.run {
-                continueWithWebView(url: currentURL)
-            }
-            return
+            return false
             
         } catch {
-            let errLog = "[PREAUTH] Error: \(error.localizedDescription)"
-            print("[TdxSsoLogin] \(errLog)")
-            await MainActor.run { navigationLog.append(errLog) }
+            let logMsg = "[JWT] URLSession error: \(error.localizedDescription)"
+            print("[TdxSsoLogin] \(logMsg)")
+            await MainActor.run { navigationLog.append(logMsg) }
+            return false
         }
-        
-        // Continue with WebView regardless of pre-auth result
-        await MainActor.run {
-            continueWithWebView(url: targetUrl)
+    }
+    
+    /// Extract JWT from WebView page content (when loginSSO returns JWT as text)
+    private func extractJwtFromPageContent() async {
+        do {
+            guard let pageText = try await webView.evaluateJavaScript("document.body.innerText") as? String else { return }
+            let cleanToken = pageText
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            
+            if cleanToken.hasPrefix("eyJ") && cleanToken.count > 20 {
+                let successLog = "[JWT] ✓ Got JWT from page content (\(cleanToken.prefix(20))...)"
+                print("[TdxSsoLogin] \(successLog)")
+                
+                let userInfo = Self.extractUserInfoFromJwt(cleanToken)
+                
+                await MainActor.run {
+                    navigationLog.append(successLog)
+                    
+                    if let name = userInfo.name {
+                        let userLog = "[JWT] User: \(name) (\(userInfo.email ?? ""))"
+                        print("[TdxSsoLogin] \(userLog)")
+                        navigationLog.append(userLog)
+                    }
+                    
+                    authResult = TdxSsoResult.success(
+                        token: cleanToken,
+                        userName: userInfo.name,
+                        userEmail: userInfo.email
+                    )
+                }
+            } else {
+                let logMsg = "[JWT] loginSSO page is not a JWT, waiting for SAML flow..."
+                print("[TdxSsoLogin] \(logMsg)")
+                await MainActor.run { navigationLog.append(logMsg) }
+            }
+        } catch {
+            // Not a JWT page — SAML interceptor will handle the flow
         }
     }
     
@@ -739,7 +1171,82 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             // Give the page a moment to set cookies
             try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
             
-            // Extract token from cookies
+            // First, try to get JWT from the loginSSO endpoint (most reliable)
+            let baseUrl = (config.tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            if !baseUrl.isEmpty,
+               let loginSsoUrl = URL(string: "\(baseUrl)/api/auth/loginSSO") {
+                
+                let logMsg = "[JWT] Requesting bearer token from loginSSO"
+                print("[TdxSsoLogin] \(logMsg)")
+                await MainActor.run { navigationLog.append(logMsg) }
+                
+                // Get all WebView cookies and sync to shared storage
+                let wkCookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+                for cookie in wkCookies {
+                    HTTPCookieStorage.shared.setCookie(cookie)
+                }
+                
+                var request = URLRequest(url: loginSsoUrl)
+                request.httpMethod = "GET"
+                request.httpShouldHandleCookies = true
+                
+                let sessionConfig = URLSessionConfiguration.default
+                sessionConfig.httpCookieStorage = HTTPCookieStorage.shared
+                sessionConfig.httpShouldSetCookies = true
+                sessionConfig.httpCookieAcceptPolicy = .always
+                
+                let delegate = KerberosAuthDelegate()
+                let session = URLSession(configuration: sessionConfig, delegate: delegate, delegateQueue: nil)
+                
+                do {
+                    let (data, _) = try await session.data(for: request)
+                    
+                    if let tokenText = String(data: data, encoding: .utf8) {
+                        let cleanToken = tokenText
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                        
+                        // Validate it's actually a JWT (starts with eyJ), not an HTML page
+                        if cleanToken.hasPrefix("eyJ") && cleanToken.count > 20 {
+                            let successLog = "[JWT] ✓ Got bearer token (\(cleanToken.prefix(20))...)"
+                            print("[TdxSsoLogin] \(successLog)")
+                            
+                            let userInfo = Self.extractUserInfoFromJwt(cleanToken)
+                            
+                            await MainActor.run {
+                                navigationLog.append(successLog)
+                                
+                                if let name = userInfo.name {
+                                    let userLog = "[JWT] User: \(name) (\(userInfo.email ?? ""))"
+                                    print("[TdxSsoLogin] \(userLog)")
+                                    navigationLog.append(userLog)
+                                }
+                                
+                                authResult = TdxSsoResult.success(
+                                    token: cleanToken,
+                                    userName: userInfo.name,
+                                    userEmail: userInfo.email
+                                )
+                            }
+                            return
+                        } else {
+                            let badLog = "[JWT] Response is not a JWT (starts with: \(cleanToken.prefix(30))...)"
+                            print("[TdxSsoLogin] \(badLog)")
+                            await MainActor.run { navigationLog.append(badLog) }
+                        }
+                    }
+                } catch {
+                    let errLog = "[JWT] loginSSO error: \(error.localizedDescription)"
+                    print("[TdxSsoLogin] \(errLog)")
+                    await MainActor.run { navigationLog.append(errLog) }
+                }
+            }
+            
+            // Fallback: Extract token from cookies
+            let fallbackLog = "[JWT] Falling back to cookie extraction"
+            print("[TdxSsoLogin] \(fallbackLog)")
+            await MainActor.run { navigationLog.append(fallbackLog) }
+            
             let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
             
             var token: String?
@@ -824,11 +1331,29 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
         if let url = navigationAction.request.url {
             let urlString = url.absoluteString
             
+            // Allow autologon (Seamless SSO) and FIDO/passkey URLs to proceed.
+            // Platform SSO needs these endpoints to complete silent authentication.
+            // The SSO Extension handles the FIDO ceremony via the platform authenticator.
+            if urlString.contains("autologon.microsoftazuread-sso.com") {
+                let logMsg = "[DECISION] Allowing autologon (Seamless SSO / Platform SSO)"
+                print("[TdxSsoLogin] \(logMsg)")
+                navigationLog.append(logMsg)
+            }
+            
+            if urlString.contains("/fido/get") || urlString.contains("/fido2/") {
+                let logMsg = "[DECISION] Allowing FIDO/passkey (Platform SSO will handle)"
+                print("[TdxSsoLogin] \(logMsg)")
+                navigationLog.append(logMsg)
+                // Start the FIDO timeout — if Platform SSO doesn't complete
+                // within the timeout, fallback scripts will be injected
+                scheduleFidoTimeout()
+            }
+            
             // If this is the Shibboleth SAML2/POST, cancel it — our JS interceptor
             // will handle it via the samlInterceptor message handler instead.
             // WKWebView strips POST bodies on cross-origin requests, so we must
             // submit via URLSession.
-            if urlString.contains("Shibboleth.sso/SAML2/POST") || urlString.contains("Shibboleth.sso/SAML2/POST") {
+            if urlString.contains("Shibboleth.sso/SAML2/POST") {
                 let logMsg = "[DECISION] Cancelling native POST to Shibboleth (JS interceptor handles it)"
                 print("[TdxSsoLogin] \(logMsg)")
                 navigationLog.append(logMsg)
@@ -849,6 +1374,19 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
             let logMsg = "[RESPONSE] Status: \((navigationResponse.response as? HTTPURLResponse)?.statusCode ?? 0) - \(url.absoluteString)"
             print("[TdxSsoLogin] \(logMsg)")
             navigationLog.append(logMsg)
+            
+            // Trigger auto-fill as early as possible when we see the Entra login page
+            if let host = url.host, host.contains("login.microsoftonline.com"),
+               !usernameAutoFilled {
+                let logMsg2 = "[PSSO] Entra page detected in response — scheduling auto-fill"
+                ssoLog(logMsg2)
+                navigationLog.append(logMsg2)
+                // Delay to let the page render before injecting
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 800_000_000) // 0.8s
+                    self.autoFillEntraLogin()
+                }
+            }
         }
         decisionHandler(.allow)
     }
@@ -858,7 +1396,7 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
         if let url = webView.url {
             currentUrl = url.host ?? ""
             let logMsg = "[NAV] \(url.absoluteString)"
-            print("[TdxSsoLogin] \(logMsg)")
+            ssoLog(logMsg)
             navigationLog.append(logMsg)
             
             // After initial redirects, show the WebView even if still "loading"
@@ -875,8 +1413,76 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
         guard let url = webView.url else { return }
         currentUrl = url.host ?? ""
         let logMsg = "[DONE] \(url.absoluteString)"
-        print("[TdxSsoLogin] \(logMsg)")
+        ssoLog(logMsg)
         navigationLog.append(logMsg)
+        
+        // Check if loginSSO returned JWT as page content (when Shibboleth session already exists)
+        if url.absoluteString.contains("/api/auth/loginSSO") {
+            let jwtLog = "[DONE] Checking if loginSSO returned JWT..."
+            print("[TdxSsoLogin] \(jwtLog)")
+            navigationLog.append(jwtLog)
+            Task {
+                await extractJwtFromPageContent()
+            }
+            return
+        }
+        
+        // On Entra sign-in page: auto-fill username from Platform SSO UPN
+        // This is required because WKWebView doesn't get SSO Extension interception
+        // on the initial sign-in form — only on Kerberos/Negotiate challenges after
+        // the username is submitted and Seamless SSO kicks in.
+        if let host = url.host, host.contains("login.microsoftonline.com"),
+           !usernameAutoFilled && platformSsoUpn != nil {
+            autoFillEntraLogin()
+        }
+        
+        // On FIDO/passkey pages: inject fallback immediately.
+        // The SSO Extension intercepts FIDO but fails with Code=-5 for unsigned apps,
+        // resulting in "Couldn't sign you in". We inject the fallback right away
+        // to handle the error page and redirect to an alternative auth method.
+        let urlString = url.absoluteString
+        if urlString.contains("/fido/") || urlString.contains("/fido2/") {
+            scheduleFidoTimeout()
+            
+            // Inject fallback immediately — don't wait for the timeout
+            ssoLog("[FIDO] Injecting fallback immediately on FIDO page")
+            Task {
+                // Small delay to let the page render
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                _ = try? await webView.evaluateJavaScript(Self.fidoFallbackScript)
+            }
+            
+            // Log page elements for debugging
+            Task {
+                let dumpScript = """
+                (function() {
+                    var items = [];
+                    var elems = document.querySelectorAll('a, button, [role="link"], [role="button"], [role="option"], [data-value], input[type="submit"], span, div[tabindex]');
+                    for (var i = 0; i < elems.length; i++) {
+                        var text = (elems[i].textContent || elems[i].value || '').trim();
+                        if (text.length > 0) items.push(text.substring(0, 80));
+                    }
+                    return JSON.stringify(items.slice(0, 20));
+                })();
+                """
+                if let result = try? await webView.evaluateJavaScript(dumpScript) as? String {
+                    let logMsg = "[PAGE] Elements: \(result)"
+                    ssoLog(logMsg)
+                    await MainActor.run { navigationLog.append(logMsg) }
+                }
+            }
+        }
+        
+        // On resume pages or any login.microsoftonline.com page after FIDO attempt:
+        // inject fallback to handle error pages ("Couldn't sign you in")
+        if urlString.contains("/resume") ||
+           (urlString.contains("login.microsoftonline.com") && fidoPageLoadedAt != nil) {
+            ssoLog("[FIDO] Injecting fallback on resume/error page")
+            Task {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                _ = try? await webView.evaluateJavaScript(Self.fidoFallbackScript)
+            }
+        }
         
         // Check if we've reached a success page
         if checkForSuccessfulAuth(url: url) {
@@ -961,9 +1567,9 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
 // MARK: - Kerberos Auth Delegate for URLSession
 
 /// URLSession delegate that handles Kerberos/Negotiate authentication using system credentials
-class KerberosAuthDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
+class KerberosAuthDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, @unchecked Sendable {
     
-    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
         
         let authMethod = challenge.protectionSpace.authenticationMethod
         let host = challenge.protectionSpace.host
@@ -973,32 +1579,27 @@ class KerberosAuthDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate
         // Handle server trust
         if authMethod == NSURLAuthenticationMethodServerTrust {
             if let serverTrust = challenge.protectionSpace.serverTrust {
-                let credential = URLCredential(trust: serverTrust)
-                completionHandler(.useCredential, credential)
-                return
+                return (.useCredential, URLCredential(trust: serverTrust))
             }
         }
         
         // For Kerberos/Negotiate - use default credentials (system Kerberos ticket)
         if authMethod == NSURLAuthenticationMethodNegotiate {
             print("[KerberosAuth] Using default Kerberos credentials")
-            // Use default handling which will use the system's Kerberos ticket cache
-            completionHandler(.performDefaultHandling, nil)
-            return
+            return (.performDefaultHandling, nil)
         }
         
         // For NTLM - use default credentials
         if authMethod == NSURLAuthenticationMethodNTLM {
             print("[KerberosAuth] Using default NTLM credentials")
-            completionHandler(.performDefaultHandling, nil)
-            return
+            return (.performDefaultHandling, nil)
         }
         
         // Default handling for other methods
-        completionHandler(.performDefaultHandling, nil)
+        return (.performDefaultHandling, nil)
     }
     
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge) async -> (URLSession.AuthChallengeDisposition, URLCredential?) {
         
         let authMethod = challenge.protectionSpace.authenticationMethod
         let host = challenge.protectionSpace.host
@@ -1008,14 +1609,12 @@ class KerberosAuthDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate
         // Handle server trust
         if authMethod == NSURLAuthenticationMethodServerTrust {
             if let serverTrust = challenge.protectionSpace.serverTrust {
-                let credential = URLCredential(trust: serverTrust)
-                completionHandler(.useCredential, credential)
-                return
+                return (.useCredential, URLCredential(trust: serverTrust))
             }
         }
         
         // Use default handling for everything else
-        completionHandler(.performDefaultHandling, nil)
+        return (.performDefaultHandling, nil)
     }
 }
 

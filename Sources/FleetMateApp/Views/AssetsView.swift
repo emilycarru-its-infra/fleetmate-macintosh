@@ -40,10 +40,10 @@ struct AssetsView: View {
             // Header
             HStack {
                 VStack(alignment: .leading) {
-                    Text("Assets")
+                    Text("Inventory")
                         .font(.largeTitle)
                         .fontWeight(.bold)
-                    Text("Inventory assets (Snipe-IT, ServiceNow, etc.)")
+                    Text("Assets inventory")
                         .foregroundColor(.secondary)
                 }
                 Spacer()

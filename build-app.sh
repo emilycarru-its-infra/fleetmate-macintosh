@@ -64,7 +64,7 @@ if [ ! -f "${CONTENTS_DIR}/Info.plist" ]; then
     <key>CFBundleIconName</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.fleetmate.app</string>
+    <string>ca.ecuad.macadmin.fleetmate</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

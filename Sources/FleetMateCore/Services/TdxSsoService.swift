@@ -146,9 +146,13 @@ public class TdxSsoService: NSObject {
         }
     }
     
-    /// Authenticate using system browser with SSO support (PSSO/Platform SSO)
-    /// This uses ASWebAuthenticationSession which automatically leverages system-level authentication
-    /// - Returns: The SSO authentication result
+    /// Authenticate using system browser with SSO support (PSSO/Platform SSO).
+    /// NOTE: This method is reserved for future OIDC-based auth flows.
+    /// It cannot work with the current SAML/Shibboleth flow because TDX doesn't
+    /// support redirecting to custom URL schemes (fleetmate://) after SAML assertion.
+    /// ASWebAuthenticationSession requires a callback URL, which the Shibboleth SP won't provide.
+    /// For now, Platform SSO is handled natively in WKWebView via the Enterprise SSO Extension.
+    @available(*, deprecated, message: "Reserved for future OIDC auth. Current SAML flow uses WKWebView + Platform SSO.")
     public func authenticateWithSystemBrowser() async -> TdxSsoResult {
         guard let url = ssoLoginUrl else {
             return .failure("TDX base URL not configured")

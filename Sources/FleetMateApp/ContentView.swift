@@ -28,18 +28,18 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Top tab bar
-            HStack(spacing: 0) {
+            HStack(spacing: 2) {
                 ForEach(Tab.allCases, id: \.self) { tab in
                     Button(action: { selectedTab = tab }) {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 6) {
                             Image(systemName: tab.icon)
-                                .font(.caption)
+                                .font(.system(size: 13))
                             Text(tab.rawValue)
-                                .font(.caption)
+                                .font(.system(size: 13))
                                 .fontWeight(selectedTab == tab ? .semibold : .regular)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
                         .background(selectedTab == tab ? Color.accentColor.opacity(0.15) : Color.clear)
                         .foregroundColor(selectedTab == tab ? .accentColor : .secondary)
                         .cornerRadius(6)
@@ -49,7 +49,7 @@ struct ContentView: View {
                 Spacer()
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.vertical, 8)
             .background(Color(NSColor.windowBackgroundColor))
 
             Divider()
@@ -74,6 +74,37 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 1000, minHeight: 600)
+        .onAppear {
+            // Auto-trigger TDX SSO if not authenticated and SSO is available
+            if !appState.tdxSsoAuthenticated && appState.tdxService.shouldAttemptSso {
+                appState.triggerTdxSsoLogin()
+            }
+        }
+        .sheet(isPresented: $appState.showTdxSsoLogin) {
+            TdxSsoLoginView(config: appState.config) { result in
+                if result.success, let token = result.token {
+                    let expiry = Date().addingTimeInterval(23 * 60 * 60)
+                    appState.handleTdxSsoSuccess(
+                        token: token,
+                        expiry: expiry,
+                        userId: result.userEmail,
+                        userName: result.userName
+                    )
+                } else {
+                    appState.handleTdxSsoFailure(result.error)
+                }
+            }
+        }
+        .sheet(isPresented: $appState.showDevOpsSsoLogin) {
+            DevOpsSsoLoginView(config: appState.config) { result in
+                if result.success, let token = result.token {
+                    let expiry = Date().addingTimeInterval(TimeInterval(result.expiresIn ?? 3600))
+                    appState.handleDevOpsSsoSuccess(token: token, expiry: expiry, userName: result.userName)
+                } else {
+                    appState.handleDevOpsSsoFailure(result.error)
+                }
+            }
+        }
     }
 }
 

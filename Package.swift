@@ -53,7 +53,11 @@ let package = Package(
             dependencies: [
                 "FleetMateCore",
             ],
-            path: "Sources/FleetMateApp"
+            path: "Sources/FleetMateApp",
+            exclude: [
+                "Info.plist",
+                "FleetMateApp.entitlements"
+            ]
         ),
         .testTarget(
             name: "FleetMateTests",

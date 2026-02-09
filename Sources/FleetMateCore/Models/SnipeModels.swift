@@ -15,7 +15,10 @@ public struct SnipeResponse: Decodable {
 
 // MARK: - Core Models
 
-public struct SnipeAsset: Codable, Identifiable, Sendable {
+public struct SnipeAsset: Codable, Identifiable, Hashable, Sendable {
+    public static func == (lhs: SnipeAsset, rhs: SnipeAsset) -> Bool { lhs.id == rhs.id }
+    public func hash(into hasher: inout Hasher) { hasher.combine(id) }
+
     public let id: Int
     public let name: String?
     public let assetTag: String?
@@ -63,7 +66,10 @@ public struct SnipeAsset: Codable, Identifiable, Sendable {
     }
 }
 
-public struct SnipeUser: Codable, Identifiable, Sendable {
+public struct SnipeUser: Codable, Identifiable, Hashable, Sendable {
+    public static func == (lhs: SnipeUser, rhs: SnipeUser) -> Bool { lhs.id == rhs.id }
+    public func hash(into hasher: inout Hasher) { hasher.combine(id) }
+
     public let id: Int
     public let avatar: String?
     public let firstName: String?

@@ -8,6 +8,10 @@ public class AzureDevOpsService {
     private let session: Session
     private var cachedToken: String?
     private var tokenExpiry: Date = .distantPast
+    private var ssoToken: String?
+    private var ssoTokenExpiry: Date = .distantPast
+    private var ssoUserId: String?
+    private var ssoUserName: String?
 
     // Caches
     private var sprintCache: [Sprint]?
@@ -35,12 +39,53 @@ public class AzureDevOpsService {
 
     // MARK: - Authentication
 
+    /// Whether browser SSO is required (no PAT and no Azure CLI)
+    public var requiresSsoLogin: Bool {
+        if config.devopsPat != nil { return false }
+        // Check if az CLI is available
+        let azPaths = ["/usr/local/bin/az", "/opt/homebrew/bin/az"]
+        let azAvailable = azPaths.contains { FileManager.default.fileExists(atPath: $0) }
+        return !azAvailable
+    }
+
+    /// Set SSO token from browser-based OAuth2 flow
+    public func setSsoToken(_ token: String, expiry: Date, userId: String?, userName: String?) {
+        ssoToken = token
+        ssoTokenExpiry = expiry
+        ssoUserId = userId
+        ssoUserName = userName
+        cachedToken = token
+        tokenExpiry = expiry
+    }
+
+    /// Clear SSO token
+    public func clearSsoToken() {
+        ssoToken = nil
+        ssoTokenExpiry = .distantPast
+        ssoUserId = nil
+        ssoUserName = nil
+        cachedToken = nil
+        tokenExpiry = .distantPast
+    }
+
+    /// Check if SSO token is valid
+    public var hasSsoToken: Bool {
+        ssoToken != nil && Date() < ssoTokenExpiry
+    }
+
     private func getAccessToken() async throws -> String? {
         if let token = cachedToken, Date() < tokenExpiry {
             return token
         }
 
-        // Try PAT first if configured
+        // Try SSO token first
+        if let token = ssoToken, Date() < ssoTokenExpiry {
+            cachedToken = token
+            tokenExpiry = ssoTokenExpiry
+            return token
+        }
+
+        // Try PAT if configured
         if let pat = config.devopsPat, !pat.isEmpty {
             cachedToken = pat
             tokenExpiry = Date.distantFuture

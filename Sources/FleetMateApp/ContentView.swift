@@ -10,7 +10,7 @@ struct ContentView: View {
         case devices = "Devices"
         case inventory = "Inventory"
         case tickets = "Tickets"
-        case boards = "Boards"
+        case projects = "Projects"
         case identity = "Identity"
 
         var icon: String {
@@ -19,7 +19,7 @@ struct ContentView: View {
             case .devices: return "laptopcomputer"
             case .inventory: return "shippingbox"
             case .tickets: return "ticket"
-            case .boards: return "rectangle.split.3x1"
+            case .projects: return "rectangle.split.3x1"
             case .identity: return "person.2"
             }
         }
@@ -65,7 +65,7 @@ struct ContentView: View {
                     AssetsView()
                 case .tickets:
                     TicketsView()
-                case .boards:
+                case .projects:
                     BoardsView()
                 case .identity:
                     IdentityView()

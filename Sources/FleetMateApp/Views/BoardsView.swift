@@ -77,7 +77,7 @@ struct BoardsView: View {
             // Header
             HStack {
                 VStack(alignment: .leading) {
-                    Text("Boards")
+                    Text("Projects")
                         .font(.largeTitle)
                         .fontWeight(.bold)
                     Text("Unified task management across all providers")

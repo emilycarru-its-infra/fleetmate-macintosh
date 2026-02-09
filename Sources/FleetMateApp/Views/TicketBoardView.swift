@@ -155,7 +155,7 @@ struct TicketCard: View {
             // Ticket ID and priority
             HStack {
                 if let id = ticket.id {
-                    Text("#\(id)")
+                    Text(verbatim: "#\(id)")
                         .font(.caption)
                         .foregroundColor(.accentColor)
                         .fontWeight(.medium)

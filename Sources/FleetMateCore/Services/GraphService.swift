@@ -682,6 +682,19 @@ public class GraphService {
         let response: EntraGroupListResponse = try await fetch(url: url, headers: headers)
         return response.value
     }
+
+    /// Search users by display name or UPN prefix (partial/fuzzy search)
+    public func searchUsers(_ query: String, limit: Int = 25) async throws -> [EntraUser] {
+        guard let headers = await headers(for: .systems) else { return [] }
+
+        let escapedQuery = query.replacingOccurrences(of: "'", with: "''")
+        let filter = "startswith(displayName, '\(escapedQuery)') or startswith(userPrincipalName, '\(escapedQuery)') or startswith(mail, '\(escapedQuery)')"
+        let escapedFilter = filter.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filter
+        let url = "\(baseUrl)/users?$filter=\(escapedFilter)&$top=\(limit)&$select=id,displayName,userPrincipalName,mail,jobTitle,department,officeLocation"
+
+        let response: EntraUserListResponse = try await fetch(url: url, headers: headers)
+        return response.value
+    }
     
     /// Get device members of a group (for device-based groups like Devices-*)
     public func getGroupDeviceMembers(_ groupNameOrId: String, limit: Int = 500) async throws -> [EntraDevice] {

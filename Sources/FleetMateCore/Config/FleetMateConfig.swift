@@ -64,6 +64,8 @@ public struct FleetMateConfig: Codable {
     public var devopsOrganization: String?
     public var devopsProject: String?
     public var devopsPat: String?
+    public var devopsClientId: String?
+    public var devopsTenantId: String?
     public var devopsDefaultWorkItemType: String = "Bug"
 
     // TeamDynamix (TDX) settings
@@ -133,6 +135,8 @@ public struct FleetMateConfig: Codable {
         case devopsOrganization = "devops_organization"
         case devopsProject = "devops_project"
         case devopsPat = "devops_pat"
+        case devopsClientId = "devops_client_id"
+        case devopsTenantId = "devops_tenant_id"
         case devopsDefaultWorkItemType = "devops_default_work_item_type"
         case tdxBaseUrl = "tdx_base_url"
         case tdxAppId = "tdx_app_id"
@@ -268,6 +272,8 @@ public struct FleetMateConfig: Codable {
         // Azure DevOps
         if let v = str("devops_organization"), !v.isEmpty { config.devopsOrganization = v }
         if let v = str("devops_project"), !v.isEmpty { config.devopsProject = v }
+        if let v = str("devops_client_id"), !v.isEmpty { config.devopsClientId = v }
+        if let v = str("devops_tenant_id"), !v.isEmpty { config.devopsTenantId = v }
         
         // TeamDynamix
         if let v = str("tdx_base_url"), !v.isEmpty { config.tdxBaseUrl = v }
@@ -392,6 +398,8 @@ public struct FleetMateConfig: Codable {
         if let v = env["DEVOPS_PROJECT"] { config.devopsProject = v }
         if let v = env["DEVOPS_PAT"] { config.devopsPat = v }
         if let v = env["AZURE_DEVOPS_PAT"] { config.devopsPat = v }
+        if let v = env["DEVOPS_CLIENT_ID"] { config.devopsClientId = v }
+        if let v = env["DEVOPS_TENANT_ID"] { config.devopsTenantId = v }
 
         // TDX
         if let v = env["TDX_BASE_URL"] { config.tdxBaseUrl = v }
@@ -432,6 +440,8 @@ public struct FleetMateConfig: Codable {
         case "DEVOPS_ORGANIZATION": config.devopsOrganization = value
         case "DEVOPS_PROJECT": config.devopsProject = value
         case "DEVOPS_PAT", "AZURE_DEVOPS_PAT": config.devopsPat = value
+        case "DEVOPS_CLIENT_ID": config.devopsClientId = value
+        case "DEVOPS_TENANT_ID": config.devopsTenantId = value
         case "TDX_BASE_URL": config.tdxBaseUrl = value
         case "TDX_APP_ID": config.tdxAppId = Int(value)
         case "TDX_TICKETING_APP_ID": config.tdxTicketingAppId = Int(value)

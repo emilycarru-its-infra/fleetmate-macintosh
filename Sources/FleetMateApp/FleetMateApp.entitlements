@@ -8,13 +8,5 @@
     <true/>
     <key>com.apple.security.network.server</key>
     <true/>
-    <key>com.apple.developer.associated-domains</key>
-    <array>
-        <string>webcredentials:servicedesk.emilycarru.ca</string>
-        <string>webcredentials:login.microsoftonline.com</string>
-        <string>webcredentials:autologon.microsoftazuread-sso.com</string>
-    </array>
-    <key>com.apple.developer.web-browser</key>
-    <true/>
 </dict>
 </plist>

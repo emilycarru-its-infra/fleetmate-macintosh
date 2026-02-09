@@ -48,7 +48,7 @@ public class TdxService {
     
     /// Returns true if SSO authentication is required based on config
     public var requiresSsoLogin: Bool {
-        let method = config.tdxAuthMethod ?? .auto
+        let method = config.tdxAuthMethod
         switch method {
         case .browserSSO:
             return !isSsoAuthenticated
@@ -62,7 +62,7 @@ public class TdxService {
     
     /// Returns true if SSO should be attempted (based on config)
     public var shouldAttemptSso: Bool {
-        let method = config.tdxAuthMethod ?? .auto
+        let method = config.tdxAuthMethod
         return method == .browserSSO || method == .auto
     }
 
@@ -96,7 +96,7 @@ public class TdxService {
     // MARK: - Authentication
 
     private func getAccessToken() async throws -> String? {
-        let authMethod = config.tdxAuthMethod ?? .auto
+        let authMethod = config.tdxAuthMethod
         
         // Check for valid SSO token first (if SSO is configured)
         if authMethod == .browserSSO || authMethod == .auto {

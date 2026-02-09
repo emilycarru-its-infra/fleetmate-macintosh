@@ -143,16 +143,6 @@ struct BoardsView: View {
         .sheet(item: $selectedTask) { task in
             TaskDetailSheet(task: task)
         }
-        .sheet(isPresented: $appState.showDevOpsSsoLogin) {
-            DevOpsSsoLoginView(config: appState.config) { result in
-                if result.success, let token = result.token {
-                    let expiry = Date().addingTimeInterval(TimeInterval(result.expiresIn ?? 3600))
-                    appState.handleDevOpsSsoSuccess(token: token, expiry: expiry, userName: result.userName)
-                } else {
-                    appState.handleDevOpsSsoFailure(result.error)
-                }
-            }
-        }
     }
 
     // MARK: - Board Content (Kanban)

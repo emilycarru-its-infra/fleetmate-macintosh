@@ -178,25 +178,6 @@ struct TicketsView: View {
         }
         .onAppear {
             applyMeMode()
-            // Auto-trigger SSO if not authenticated and SSO is available
-            if !appState.tdxSsoAuthenticated && appState.tdxService.shouldAttemptSso {
-                appState.triggerTdxSsoLogin()
-            }
-        }
-        .sheet(isPresented: $appState.showTdxSsoLogin) {
-            TdxSsoLoginView(config: appState.config) { result in
-                if result.success, let token = result.token {
-                    let expiry = Date().addingTimeInterval(23 * 60 * 60)
-                    appState.handleTdxSsoSuccess(
-                        token: token,
-                        expiry: expiry,
-                        userId: result.userEmail,
-                        userName: result.userName
-                    )
-                } else {
-                    appState.handleTdxSsoFailure(result.error)
-                }
-            }
         }
     }
 

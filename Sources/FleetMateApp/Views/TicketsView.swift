@@ -2,6 +2,7 @@ import SwiftUI
 import FleetMateCore
 
 enum TicketSortField: String, CaseIterable {
+    case id = "ID"
     case modified = "Modified"
     case created = "Created"
     case title = "Title"
@@ -9,6 +10,11 @@ enum TicketSortField: String, CaseIterable {
     case priority = "Priority"
     case requestor = "Requestor"
     case responsible = "Responsible"
+}
+
+enum TicketViewMode: String, CaseIterable {
+    case table = "Table"
+    case board = "Board"
 }
 
 struct TicketsView: View {
@@ -20,8 +26,9 @@ struct TicketsView: View {
     @State private var selectedTicketIds: Set<Int?> = []
     @State private var ticketFeed: [TdxFeedEntry] = []
     @State private var isLoadingFeed = false
-    @State private var hideClosed = true
+    @State private var showClosed = false
     @State private var meModeApplied = false
+    @State private var maxResults = 500
 
     // Filter states
     @State private var statusFilter = "All"
@@ -38,6 +45,9 @@ struct TicketsView: View {
 
     // Feed filter
     @State private var feedFilter: FeedFilterType = .comments
+
+    // View mode
+    @State private var viewMode: TicketViewMode = .table
 
     var tickets: [TdxTicket] { appState.cachedTickets }
 
@@ -75,8 +85,8 @@ struct TicketsView: View {
     var filteredTickets: [TdxTicket] {
         var result = tickets
 
-        // Hide closed
-        if hideClosed {
+        // Show closed toggle (off by default = hide closed)
+        if !showClosed {
             result = result.filter {
                 let s = ($0.statusName ?? "").lowercased()
                 return s != "closed" && s != "cancelled" && s != "canceled"
@@ -109,6 +119,10 @@ struct TicketsView: View {
 
         return result.sorted { a, b in
             switch sortField {
+            case .id:
+                let aId = a.id ?? 0
+                let bId = b.id ?? 0
+                return sortAscending ? aId < bId : aId > bId
             case .modified:
                 return compareDates(a.modifiedDate, b.modifiedDate)
             case .created:
@@ -145,7 +159,6 @@ struct TicketsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             headerSection
-            filtersSection
             contentSection
         }
         .onChange(of: selectedTicketIds) { _, newIds in
@@ -190,25 +203,94 @@ struct TicketsView: View {
     // MARK: - Header Section
 
     private var headerSection: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 6) {
+            // Row 1: Title + SSO + Refresh
+            HStack {
                 Text("Tickets")
                     .font(.largeTitle)
                     .fontWeight(.bold)
-                Text("\(filteredTickets.count) of \(tickets.count) tickets")
+                Text("\(filteredTickets.count) of \(tickets.count)")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
+                    .padding(.top, 6)
+                Spacer()
+                ssoSection
+                Button(action: loadTickets) {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(isLoading)
             }
-            Spacer()
 
-            ssoSection
+            // Row 2: View mode toggle + filters + search — all in one row
+            HStack(spacing: 10) {
+                Picker("", selection: $viewMode) {
+                    Text("Table").tag(TicketViewMode.table)
+                    Text("Board").tag(TicketViewMode.board)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 140)
 
-            Button(action: loadTickets) {
-                Label("Refresh", systemImage: "arrow.clockwise")
+                Divider().frame(height: 20)
+
+                HStack(spacing: 4) {
+                    Text("Status:").foregroundColor(.secondary).font(.caption)
+                    Picker("", selection: $statusFilter) {
+                        ForEach(statusOptions, id: \.self) { Text($0).tag($0) }
+                    }
+                    .frame(width: 120)
+                }
+
+                HStack(spacing: 4) {
+                    Text("Group:").foregroundColor(.secondary).font(.caption)
+                    Picker("", selection: $groupFilter) {
+                        ForEach(groupOptions, id: \.self) { Text($0).tag($0) }
+                    }
+                    .frame(width: 140)
+                }
+
+                HStack(spacing: 4) {
+                    Text("Responsible:").foregroundColor(.secondary).font(.caption)
+                    Picker("", selection: $responsibleFilter) {
+                        ForEach(responsibleOptions, id: \.self) { Text($0).tag($0) }
+                    }
+                    .frame(width: 140)
+                }
+
+                Toggle("Show Closed", isOn: $showClosed)
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+
+                HStack(spacing: 4) {
+                    Text("Limit:").foregroundColor(.secondary).font(.caption)
+                    Picker("", selection: $maxResults) {
+                        Text("500").tag(500)
+                        Text("1000").tag(1000)
+                        Text("2000").tag(2000)
+                        Text("5000").tag(5000)
+                    }
+                    .frame(width: 80)
+                    .onChange(of: maxResults) { _, _ in
+                        loadTickets()
+                    }
+                }
+
+                Spacer()
+
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                    TextField("Search...", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .frame(width: 140)
+                }
+                .padding(5)
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(6)
             }
-            .disabled(isLoading)
         }
-        .padding()
+        .padding(.horizontal)
+        .padding(.top, 12)
+        .padding(.bottom, 6)
     }
 
     @ViewBuilder
@@ -239,56 +321,8 @@ struct TicketsView: View {
         }
     }
 
-    // MARK: - Filters Section
-
-    private var filtersSection: some View {
-        HStack(spacing: 12) {
-            Toggle("Hide Closed", isOn: $hideClosed)
-                .toggleStyle(.checkbox)
-                .font(.body)
-
-            HStack(spacing: 4) {
-                Text("Status:").foregroundColor(.secondary)
-                Picker("", selection: $statusFilter) {
-                    ForEach(statusOptions, id: \.self) { Text($0).tag($0) }
-                }
-                .frame(width: 130)
-            }
-
-            HStack(spacing: 4) {
-                Text("Group:").foregroundColor(.secondary)
-                Picker("", selection: $groupFilter) {
-                    ForEach(groupOptions, id: \.self) { Text($0).tag($0) }
-                }
-                .frame(width: 150)
-            }
-
-            HStack(spacing: 4) {
-                Text("Responsible:").foregroundColor(.secondary)
-                Picker("", selection: $responsibleFilter) {
-                    ForEach(responsibleOptions, id: \.self) { Text($0).tag($0) }
-                }
-                .frame(width: 150)
-            }
-
-            Spacer()
-
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("Search...", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .frame(width: 160)
-            }
-            .padding(6)
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(6)
-        }
-        .padding(.horizontal)
-        .padding(.bottom, 8)
-    }
-
     // MARK: - Content Section
+    // (filtersSection and viewModeToggle are now in headerSection)
 
     @ViewBuilder
     private var contentSection: some View {
@@ -314,7 +348,12 @@ struct TicketsView: View {
                 Spacer()
             }
         } else {
-            ticketsTableView
+            switch viewMode {
+            case .table:
+                ticketsTableView
+            case .board:
+                ticketsBoardView
+            }
         }
     }
 
@@ -332,57 +371,133 @@ struct TicketsView: View {
         }
     }
 
+    // MARK: - Board + Detail (60/40)
+
+    private var ticketsBoardView: some View {
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                ticketBoardContent
+                    .frame(width: selectedTicket != nil ? geometry.size.width * 0.6 : geometry.size.width)
+                if selectedTicket != nil {
+                    Divider()
+                    detailSidebarView
+                        .frame(width: geometry.size.width * 0.4)
+                }
+            }
+        }
+    }
+
+    private var ticketBoardContent: some View {
+        let statuses: [Int: String] = {
+            var map = [Int: String]()
+            for ticket in filteredTickets {
+                if let statusId = ticket.statusId, let statusName = ticket.statusName {
+                    map[statusId] = statusName
+                }
+            }
+            return map
+        }()
+        
+        return TicketBoardView(
+            tickets: filteredTickets,
+            statuses: statuses,
+            onUpdateStatus: { ticketId, newStatusId in
+                // Update ticket status via API
+                Task {
+                    do {
+                        let updates: [String: Any] = ["StatusID": newStatusId]
+                        _ = try await appState.tdxService.updateTicket(id: ticketId, updates: updates)
+                        loadTickets()
+                    } catch {
+                        print("Failed to update ticket status: \(error)")
+                    }
+                }
+            },
+            onSelectTicket: { ticket in
+                selectedTicketIds = [ticket.id]
+            }
+        )
+    }
+
     private var ticketTableContent: some View {
-        Table(filteredTickets, selection: $selectedTicketIds) {
-            TableColumn(sortableHeader("ID", field: .modified)) { ticket in
-                Text("#\(ticket.id ?? 0)")
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
+        VStack(spacing: 0) {
+            // Sortable column headers
+            HStack(spacing: 0) {
+                sortableColumnHeader("ID", field: .id, width: 100)
+                sortableColumnHeader("Title", field: .title, width: nil)
+                sortableColumnHeader("Status", field: .status, width: 110)
+                sortableColumnHeader("Priority", field: .priority, width: 90)
+                sortableColumnHeader("Requestor", field: .requestor, width: 130)
+                sortableColumnHeader("Responsible", field: .responsible, width: 130)
+                sortableColumnHeader("Modified", field: .modified, width: 120)
+                sortableColumnHeader("Created", field: .created, width: 120)
             }
-            .width(min: 60, ideal: 80)
-
-            TableColumn(sortableHeader("Title", field: .title)) { ticket in
-                Text(ticket.title ?? "-")
-                    .textSelection(.enabled)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Color.secondary.opacity(0.08))
+            
+            Divider()
+            
+            // Ticket rows
+            List(filteredTickets, id: \.id, selection: $selectedTicketIds) { ticket in
+                HStack(spacing: 0) {
+                    Text(verbatim: "#\(ticket.id ?? 0)")
+                        .font(.system(.body, design: .monospaced))
+                        .frame(width: 100, alignment: .leading)
+                        .textSelection(.enabled)
+                    Text(ticket.title ?? "-")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(1)
+                        .textSelection(.enabled)
+                    TicketStatusBadge(statusName: ticket.statusName)
+                        .frame(width: 110, alignment: .leading)
+                    Text(ticket.priorityName ?? "-")
+                        .frame(width: 90, alignment: .leading)
+                        .textSelection(.enabled)
+                    Text(ticket.requestorName ?? "-")
+                        .frame(width: 130, alignment: .leading)
+                        .lineLimit(1)
+                        .textSelection(.enabled)
+                    Text(ticket.responsibleFullName ?? "-")
+                        .frame(width: 130, alignment: .leading)
+                        .lineLimit(1)
+                        .textSelection(.enabled)
+                    Text(formatDateString(ticket.modifiedDate))
+                        .frame(width: 120, alignment: .leading)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(formatDateString(ticket.createdDate))
+                        .frame(width: 120, alignment: .leading)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
             }
-            .width(min: 150, ideal: 250)
-
-            TableColumn(sortableHeader("Status", field: .status)) { ticket in
-                TicketStatusBadge(statusName: ticket.statusName)
-            }
-            .width(min: 80, ideal: 100)
-
-            TableColumn(sortableHeader("Priority", field: .priority)) { ticket in
-                Text(ticket.priorityName ?? "-")
-                    .textSelection(.enabled)
-            }
-            .width(min: 60, ideal: 80)
-
-            TableColumn(sortableHeader("Requestor", field: .requestor)) { ticket in
-                Text(ticket.requestorName ?? "-")
-                    .textSelection(.enabled)
-            }
-            .width(min: 100, ideal: 130)
-
-            TableColumn(sortableHeader("Responsible", field: .responsible)) { ticket in
-                Text(ticket.responsibleFullName ?? "-")
-                    .textSelection(.enabled)
-            }
-            .width(min: 100, ideal: 130)
+            .listStyle(.plain)
         }
     }
 
-    /// Build a sortable column header label with sort indicator
-    private func sortableHeader(_ title: String, field: TicketSortField) -> String {
-        if sortField == field {
-            return "\(title) \(sortAscending ? "▲" : "▼")"
+    /// Build a clickable sortable column header
+    private func sortableColumnHeader(_ title: String, field: TicketSortField, width: CGFloat?) -> some View {
+        Button(action: { toggleSort(field) }) {
+            HStack(spacing: 4) {
+                Text(title)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.primary)
+                if sortField == field {
+                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                        .font(.caption2)
+                        .foregroundColor(.accentColor)
+                }
+            }
         }
-        return title
+        .buttonStyle(.plain)
+        .frame(width: width, alignment: .leading)
+        .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
     }
 
-    /// Toggle sort on a column (call from column header tap — currently SwiftUI Table
-    /// doesn't support clickable headers natively, so we use the header text as indicator
-    /// and the user clicks the column header built into Table)
+    /// Toggle sort on a column
     private func toggleSort(_ field: TicketSortField) {
         if sortField == field {
             sortAscending.toggle()
@@ -433,10 +548,49 @@ struct TicketsView: View {
     private func detailHeader(ticket: TdxTicket) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("#\(ticket.id ?? 0)")
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.accentColor)
+                // Ticket number - click to copy
+                Button(action: {
+                    let ticketNum = "\(ticket.id ?? 0)"
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(ticketNum, forType: .string)
+                }) {
+                    Text(verbatim: "#\(ticket.id ?? 0)")
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.accentColor)
+                }
+                .buttonStyle(.plain)
+                .help("Click to copy ticket number")
+                
+                // Copy link button
+                Button(action: {
+                    let baseUrl = (appState.config.tdxBaseUrl ?? "").replacingOccurrences(of: "/TDWebApi", with: "")
+                    let appId = appState.config.tdxTicketingAppId ?? appState.config.tdxAppId ?? 0
+                    let url = "\(baseUrl)/TDNext/Apps/\(appId)/Tickets/TicketDet?TicketID=\(ticket.id ?? 0)"
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(url, forType: .string)
+                }) {
+                    Image(systemName: "link")
+                        .font(.body)
+                }
+                .buttonStyle(.plain)
+                .help("Copy ticket link")
+                
+                // Open in web button
+                Button(action: {
+                    let baseUrl = (appState.config.tdxBaseUrl ?? "").replacingOccurrences(of: "/TDWebApi", with: "")
+                    let appId = appState.config.tdxTicketingAppId ?? appState.config.tdxAppId ?? 0
+                    let urlStr = "\(baseUrl)/TDNext/Apps/\(appId)/Tickets/TicketDet?TicketID=\(ticket.id ?? 0)"
+                    if let url = URL(string: urlStr) {
+                        NSWorkspace.shared.open(url)
+                    }
+                }) {
+                    Image(systemName: "globe")
+                        .font(.body)
+                }
+                .buttonStyle(.plain)
+                .help("Open ticket in web browser")
+                
                 Spacer()
                 Button(action: { loadTicketFeed(ticketId: ticket.id ?? 0) }) {
                     Image(systemName: "arrow.clockwise")
@@ -587,11 +741,11 @@ struct TicketsView: View {
             isLoading = true
             defer { isLoading = false }
             do {
-                var searchRequest = TicketSearchRequest(maxResults: 500)
+                var searchRequest = TicketSearchRequest(maxResults: maxResults)
                 if let groupId = appState.config.tdxResponsibleGroupId {
                     searchRequest.responsibleGroupIds = [groupId]
                 }
-                let fetchedTickets = try await appState.tdxService.searchTickets(search: searchRequest, maxResults: 500)
+                let fetchedTickets = try await appState.tdxService.searchTickets(search: searchRequest, maxResults: maxResults)
                 appState.updateTicketsCache(fetchedTickets)
             } catch {
                 print("Failed to load tickets: \(error)")

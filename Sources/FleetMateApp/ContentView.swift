@@ -3,17 +3,15 @@ import FleetMateCore
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
-    @State private var selectedTab: Tab = .dashboard
+    @State private var selectedTab: Tab = .tickets
 
     enum Tab: String, CaseIterable {
         case dashboard = "Dashboard"
         case devices = "Devices"
         case inventory = "Inventory"
         case tickets = "Tickets"
-        case tasks = "Tasks"
         case boards = "Boards"
-        case users = "Users"
-        case groups = "Groups"
+        case identity = "Identity"
 
         var icon: String {
             switch self {
@@ -21,22 +19,42 @@ struct ContentView: View {
             case .devices: return "laptopcomputer"
             case .inventory: return "shippingbox"
             case .tickets: return "ticket"
-            case .tasks: return "list.bullet.clipboard"
             case .boards: return "rectangle.split.3x1"
-            case .users: return "person"
-            case .groups: return "person.3"
+            case .identity: return "person.2"
             }
         }
     }
 
     var body: some View {
-        NavigationSplitView {
-            List(Tab.allCases, id: \.self, selection: $selectedTab) { tab in
-                Label(tab.rawValue, systemImage: tab.icon)
+        VStack(spacing: 0) {
+            // Top tab bar
+            HStack(spacing: 0) {
+                ForEach(Tab.allCases, id: \.self) { tab in
+                    Button(action: { selectedTab = tab }) {
+                        HStack(spacing: 5) {
+                            Image(systemName: tab.icon)
+                                .font(.caption)
+                            Text(tab.rawValue)
+                                .font(.caption)
+                                .fontWeight(selectedTab == tab ? .semibold : .regular)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(selectedTab == tab ? Color.accentColor.opacity(0.15) : Color.clear)
+                        .foregroundColor(selectedTab == tab ? .accentColor : .secondary)
+                        .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
             }
-            .navigationTitle("FleetMate")
-            .listStyle(.sidebar)
-        } detail: {
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color(NSColor.windowBackgroundColor))
+
+            Divider()
+
+            // Content
             Group {
                 switch selectedTab {
                 case .dashboard:
@@ -47,19 +65,15 @@ struct ContentView: View {
                     AssetsView()
                 case .tickets:
                     TicketsView()
-                case .tasks:
-                    WorkItemsView()
                 case .boards:
                     BoardsView()
-                case .users:
-                    UsersView()
-                case .groups:
-                    GroupsView()
+                case .identity:
+                    IdentityView()
                 }
             }
-            .frame(minWidth: 600, minHeight: 400)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 900, minHeight: 600)
+        .frame(minWidth: 1000, minHeight: 600)
     }
 }
 

@@ -87,7 +87,7 @@ struct AssetsView: View {
             .padding(.horizontal)
 
             // Content
-            if appState.config.snipeUrl == nil {
+            if !appState.config.isSnipeConfigured {
                 VStack {
                     ContentUnavailableView(
                         "Not Configured",
@@ -141,6 +141,9 @@ struct AssetsView: View {
             }
         }
         .task {
+            print("[AssetsView] .task - cache valid: \(appState.isAssetsCacheValid), assets count: \(appState.cachedAssets.count)")
+            print("[AssetsView] Snipe URL: \(appState.config.snipeUrl ?? "nil"), API Key: \(appState.config.snipeApiKey != nil ? "set" : "nil")")
+            print("[AssetsView] isSnipeConfigured: \(appState.config.isSnipeConfigured)")
             if !appState.isAssetsCacheValid || appState.cachedAssets.isEmpty {
                 loadAllAssets()
             }
@@ -233,16 +236,22 @@ struct AssetsView: View {
     }
 
     private func loadAllAssets() {
-        guard appState.config.snipeUrl != nil else { return }
+        guard appState.config.isSnipeConfigured else { 
+            print("[AssetsView] Snipe not configured")
+            return 
+        }
 
+        print("[AssetsView] Loading assets...")
         Task {
             isLoading = true
             defer { isLoading = false }
 
             do {
                 let fetchedAssets = try await appState.snipeService.getAllAssets()
+                print("[AssetsView] Loaded \(fetchedAssets.count) assets")
                 appState.updateAssetsCache(fetchedAssets)
             } catch {
+                print("[AssetsView] Failed to load assets: \(error.localizedDescription)")
                 appState.errorMessage = "Failed to load assets: \(error.localizedDescription)"
             }
         }

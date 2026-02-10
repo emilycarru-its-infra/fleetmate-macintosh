@@ -55,8 +55,11 @@ public class GraphService {
             if let token = devicesToken, Date() < devicesTokenExpiry {
                 return token
             }
-            guard let clientId = config.devicesGraphId,
-                  let clientSecret = config.devicesGraphSecret,
+            // Try dedicated devices SP first, fall back to shared credentials
+            let devClientId = config.devicesGraphId ?? config.graphClientId
+            let devClientSecret = config.devicesGraphSecret ?? config.graphClientSecret
+            guard let clientId = devClientId,
+                  let clientSecret = devClientSecret,
                   let tenantId = config.graphTenantId else {
                 print("[GraphService] Devices service principal not configured")
                 return nil
@@ -70,8 +73,11 @@ public class GraphService {
             if let token = systemsToken, Date() < systemsTokenExpiry {
                 return token
             }
-            guard let clientId = config.systemsGraphId,
-                  let clientSecret = config.systemsGraphSecret,
+            // Try dedicated systems SP first, fall back to shared credentials
+            let sysClientId = config.systemsGraphId ?? config.graphClientId
+            let sysClientSecret = config.systemsGraphSecret ?? config.graphClientSecret
+            guard let clientId = sysClientId,
+                  let clientSecret = sysClientSecret,
                   let tenantId = config.graphTenantId else {
                 print("[GraphService] Systems service principal not configured")
                 return nil

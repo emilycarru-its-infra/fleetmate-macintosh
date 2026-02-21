@@ -285,6 +285,38 @@ public struct SnipeCustomField: Codable, Sendable {
     }
 }
 
+// MARK: - Activity Log
+
+public struct SnipeActivityLog: Codable, Identifiable, Sendable {
+    public let id: Int
+    public let admin: SnipeActivityActor?
+    public let actionType: String?
+    public let target: SnipeActivityActor?
+    public let item: SnipeActivityItem?
+    public let note: String?
+    public let createdAt: SnipeDateRef?
+    public let updatedAt: SnipeDateRef?
+
+    enum CodingKeys: String, CodingKey {
+        case id, admin, target, item, note
+        case actionType = "action_type"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+public struct SnipeActivityActor: Codable, Sendable {
+    public let id: Int?
+    public let name: String?
+    public let type: String?
+}
+
+public struct SnipeActivityItem: Codable, Sendable {
+    public let id: Int?
+    public let name: String?
+    public let type: String?
+}
+
 // MARK: - Request Models
 
 public struct SnipeCheckoutRequest: Encodable {

@@ -251,18 +251,14 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     @Published var currentUrl: String = ""
     @Published var navigationLog: [String] = []
     
-    /// Log a message to both console and the unified log (visible via `log show`)
+    /// Log SSO messages to ~/.fleetmate/debug.log via the unified debug logger
     private func ssoLog(_ message: String) {
-        let full = "[TdxSsoLogin] \(message)"
-        print(full)
-        NSLog("%@", full)
+        dbg.info(message, category: "tdx-sso")
     }
     
-    /// Log a message from a static context (for background detection)
+    /// Log from a nonisolated/static context (background detection, etc.)
     nonisolated private static func ssoLogStatic(_ message: String) {
-        let full = "[TdxSsoLogin] \(message)"
-        print(full)
-        NSLog("%@", full)
+        dbg.info(message, category: "tdx-sso")
     }
     
     let webView: WKWebView
@@ -348,7 +344,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     
     /// JavaScript injected as a fallback when the SSO Extension can't complete the
     /// FIDO/passkey ceremony. Handles three scenarios:
-    /// 1. "Sign in another way" link on FIDO or error pages — always preferred
+    /// 1. "Sign in another way" link — clicked on ANY Entra page where it exists
     /// 2. Method selection page — picks a non-FIDO method (Authenticator, SMS, etc.)
     /// 3. "Back" button as last resort on error pages
     /// NEVER clicks "Try again" — that retries the failing passkey in a loop.
@@ -359,6 +355,26 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         var acted = false;
         function tryFallback() {
             if (acted) return true;
+            var elems = document.querySelectorAll('a, button, [role="link"], [role="button"], input[type="submit"], span[tabindex], div[tabindex], li[tabindex]');
+            // Priority 1: Click "Sign in another way" — fired on ANY Entra page, not just error/FIDO pages.
+            // The link appears once the passkey ceremony starts or fails; we click it immediately.
+            for (var i = 0; i < elems.length; i++) {
+                var text = (elems[i].textContent || elems[i].value || '').trim().toLowerCase();
+                if (text.indexOf('sign in another way') !== -1 ||
+                    text.indexOf('other ways to sign in') !== -1 ||
+                    text.indexOf('use another method') !== -1 ||
+                    text.indexOf('use a different method') !== -1 ||
+                    text.indexOf('try another way') !== -1 ||
+                    text.indexOf('try a different way') !== -1 ||
+                    text.indexOf('choose another') !== -1 ||
+                    text.indexOf("i can't use") !== -1) {
+                    console.log('[FleetMate] FIDO fallback - clicking: ' + text);
+                    elems[i].click();
+                    acted = true;
+                    return true;
+                }
+            }
+            // Only run Priorities 2 & 3 when we're actually on an error or FIDO page
             var bodyText = (document.body && document.body.innerText) || '';
             var isErrorPage = bodyText.indexOf("couldn\u{2019}t sign you in") !== -1 ||
                               bodyText.indexOf("couldn't sign you in") !== -1 ||
@@ -370,23 +386,6 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                              bodyText.indexOf('security key') !== -1 ||
                              bodyText.indexOf('FIDO') !== -1;
             if (!isErrorPage && !isFidoPage) return false;
-            var elems = document.querySelectorAll('a, button, [role="link"], [role="button"], input[type="submit"], span, div[tabindex]');
-            // Priority 1: Click "Sign in another way" — best escape from passkey flow
-            for (var i = 0; i < elems.length; i++) {
-                var text = (elems[i].textContent || elems[i].value || '').trim().toLowerCase();
-                if (text.indexOf('sign in another way') !== -1 ||
-                    text.indexOf('other ways to sign in') !== -1 ||
-                    text.indexOf('use another method') !== -1 ||
-                    text.indexOf('use a different method') !== -1 ||
-                    text.indexOf('try another way') !== -1 ||
-                    text.indexOf('try a different way') !== -1 ||
-                    text.indexOf("i can't use") !== -1) {
-                    console.log('[FleetMate] FIDO fallback - clicking: ' + text);
-                    elems[i].click();
-                    acted = true;
-                    return true;
-                }
-            }
             // Priority 2: Select a non-FIDO auth method tile
             var tiles = document.querySelectorAll('[data-value]');
             if (tiles.length > 0) {
@@ -432,9 +431,9 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         if (document.body) {
             var observer = new MutationObserver(function() { tryFallback(); });
             observer.observe(document.body, { childList: true, subtree: true });
-            setTimeout(function() { observer.disconnect(); }, 15000);
+            setTimeout(function() { observer.disconnect(); }, 45000);
         }
-        var delays = [100, 300, 600, 1000, 1500, 2500, 4000, 6000, 8000, 10000];
+        var delays = [200, 500, 1000, 1500, 2000, 3000, 4000, 6000, 8000, 10000, 13000, 16000, 20000];
         delays.forEach(function(d) { setTimeout(tryFallback, d); });
     })();
     """
@@ -494,7 +493,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         webView.configuration.userContentController.addUserScript(samlScript)
         webView.configuration.userContentController.add(handler, name: "samlInterceptor")
         
-        print("[TdxSsoLogin] SAML interceptor installed (WebAuthn/FIDO allowed for Platform SSO)")
+        dbg.info("[SAML] Interceptor installed (WebAuthn/FIDO allowed for Platform SSO)", category: "tdx-sso")
     }
     
     /// Detect the current user's Platform SSO UPN via `app-sso platform -s`.
@@ -639,7 +638,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         guard !usernameAutoFilled else { return }
         guard let upn = platformSsoUpn else {
             let logMsg = "[PSSO] No UPN available yet for auto-login — will retry when UPN is detected"
-            print("[TdxSsoLogin] \(logMsg)")
+            dbg.info(logMsg, category: "tdx-sso")
             navigationLog.append(logMsg)
             // Schedule a retry — UPN detection may still be running
             Task { @MainActor in
@@ -688,12 +687,12 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         ssoExtensionAvailable = provider.canPerformAuthorization
         let status = ssoExtensionAvailable ? "available" : "not available"
         let logMsg = "[PSSO] Enterprise SSO Extension: \(status)"
-        print("[TdxSsoLogin] \(logMsg)")
+        dbg.info(logMsg, category: "tdx-sso")
         navigationLog.append(logMsg)
         
         if !ssoExtensionAvailable {
             let warnMsg = "[PSSO] Platform SSO not available — FIDO will timeout after \(Int(fidoTimeoutSeconds))s and fall back to interactive auth"
-            print("[TdxSsoLogin] \(warnMsg)")
+            dbg.warn(warnMsg, category: "tdx-sso")
             navigationLog.append(warnMsg)
         }
     }
@@ -705,13 +704,13 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         fidoFallbackInjected = true
         
         let logMsg = "[PSSO] FIDO timeout elapsed — injecting fallback auth method selector"
-        print("[TdxSsoLogin] \(logMsg)")
+        dbg.info(logMsg, category: "tdx-sso")
         navigationLog.append(logMsg)
         
         Task {
             _ = try? await webView.evaluateJavaScript(Self.fidoFallbackScript)
             let doneMsg = "[PSSO] Fallback script injected"
-            print("[TdxSsoLogin] \(doneMsg)")
+            dbg.info(doneMsg, category: "tdx-sso")
             await MainActor.run { navigationLog.append(doneMsg) }
         }
     }
@@ -724,7 +723,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         
         let timeout = fidoTimeoutSeconds
         let logMsg = "[PSSO] FIDO page detected — waiting \(Int(timeout))s for Platform SSO..."
-        print("[TdxSsoLogin] \(logMsg)")
+        dbg.info(logMsg, category: "tdx-sso")
         navigationLog.append(logMsg)
         
         Task {
@@ -742,7 +741,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         for cookie in cookies {
             await cookieStore.setCookie(cookie)
         }
-        print("[TdxSsoLogin] Synced \(cookies.count) cookies from shared storage")
+        dbg.info("[COOKIES] Synced \(cookies.count) cookies from shared storage", category: "tdx-sso")
     }
     
     // MARK: - SAML Interception Handling
@@ -754,18 +753,18 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
               let actionUrl = URL(string: actionUrlString),
               let formData = body["data"] as? [String: String] else {
             let logMsg = "[SAML] Invalid intercept message"
-            print("[TdxSsoLogin] \(logMsg)")
+            dbg.warn(logMsg, category: "tdx-sso")
             navigationLog.append(logMsg)
             return
         }
         
         let logMsg = "[SAML] Intercepted cross-origin form POST → \(actionUrl.host ?? "")\(actionUrl.path)"
-        print("[TdxSsoLogin] \(logMsg)")
+        dbg.info(logMsg, category: "tdx-sso")
         navigationLog.append(logMsg)
         
         let fieldNames = formData.keys.sorted().joined(separator: ", ")
         let dataLog = "[SAML] Form fields: \(fieldNames)"
-        print("[TdxSsoLogin] \(dataLog)")
+        dbg.debug(dataLog, category: "tdx-sso")
         navigationLog.append(dataLog)
         
         Task {
@@ -804,7 +803,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         
         do {
             let submitLog = "[SAML] Submitting assertion via URLSession..."
-            print("[TdxSsoLogin] \(submitLog)")
+            dbg.info(submitLog, category: "tdx-sso")
             await MainActor.run { navigationLog.append(submitLog) }
             
             let (data, response) = try await session.data(for: request)
@@ -816,14 +815,14 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             
             let finalUrl = httpResponse.url ?? url
             let respLog = "[SAML] Response: \(httpResponse.statusCode) → \(finalUrl.absoluteString)"
-            print("[TdxSsoLogin] \(respLog)")
+            dbg.info(respLog, category: "tdx-sso")
             await MainActor.run { navigationLog.append(respLog) }
             
             // Log relevant cookies
             if let cookies = HTTPCookieStorage.shared.cookies(for: url) {
                 let cookieNames = cookies.map(\.name).joined(separator: ", ")
                 let cookieLog = "[SAML] Cookies for \(url.host ?? ""): \(cookieNames)"
-                print("[TdxSsoLogin] \(cookieLog)")
+                dbg.debug(cookieLog, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(cookieLog) }
             }
             
@@ -834,7 +833,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                     await cookieStore.setCookie(cookie)
                 }
                 let syncLog = "[SAML] Synced \(allCookies.count) cookies to WebView"
-                print("[TdxSsoLogin] \(syncLog)")
+                dbg.debug(syncLog, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(syncLog) }
             }
             
@@ -846,7 +845,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                 
                 if cleanToken.hasPrefix("eyJ") && cleanToken.count > 20 {
                     let successLog = "[SAML] ✓ Got JWT directly from SAML redirect chain (\(cleanToken.prefix(20))...)"
-                    print("[TdxSsoLogin] \(successLog)")
+                    dbg.info(successLog, category: "tdx-sso")
                     
                     let userInfo = Self.extractUserInfoFromJwt(cleanToken)
                     
@@ -855,7 +854,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                         
                         if let name = userInfo.name {
                             let userLog = "[JWT] User: \(name) (\(userInfo.email ?? ""))"
-                            print("[TdxSsoLogin] \(userLog)")
+                            dbg.info(userLog, category: "tdx-sso")
                             navigationLog.append(userLog)
                         }
                         
@@ -876,7 +875,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             
         } catch {
             let errLog = "[SAML] POST error: \(error.localizedDescription)"
-            print("[TdxSsoLogin] \(errLog)")
+            dbg.error(errLog, category: "tdx-sso")
             await MainActor.run {
                 navigationLog.append(errLog)
                 errorMessage = "SAML authentication failed: \(error.localizedDescription)"
@@ -899,7 +898,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         }
         
         let logMsg = "[JWT] Requesting bearer token from \(loginSsoUrlString)"
-        print("[TdxSsoLogin] \(logMsg)")
+        dbg.info(logMsg, category: "tdx-sso")
         navigationLog.append(logMsg)
         
         Task {
@@ -925,7 +924,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                 }
                 
                 let tokenLog = "[JWT] loginSSO response: \(httpResponse.statusCode)"
-                print("[TdxSsoLogin] \(tokenLog)")
+                dbg.info(tokenLog, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(tokenLog) }
                 
                 if httpResponse.statusCode == 200,
@@ -938,7 +937,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                     // Validate it's a JWT (starts with eyJ), not an HTML page
                     if cleanToken.hasPrefix("eyJ") && cleanToken.count > 20 {
                         let successLog = "[JWT] ✓ Got bearer token (\(cleanToken.prefix(20))...)"
-                        print("[TdxSsoLogin] \(successLog)")
+                        dbg.info(successLog, category: "tdx-sso")
                         
                         // Try to extract user info from JWT payload
                         let userInfo = Self.extractUserInfoFromJwt(cleanToken)
@@ -948,7 +947,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                             
                             if let name = userInfo.name {
                                 let userLog = "[JWT] User: \(name) (\(userInfo.email ?? ""))"
-                                print("[TdxSsoLogin] \(userLog)")
+                                dbg.info(userLog, category: "tdx-sso")
                                 navigationLog.append(userLog)
                             }
                             
@@ -964,7 +963,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                 
                 // JWT retrieval failed — fall back to cookie-based auth
                 let fallbackLog = "[JWT] loginSSO didn't return a valid token, trying cookies"
-                print("[TdxSsoLogin] \(fallbackLog)")
+                dbg.info(fallbackLog, category: "tdx-sso")
                 await MainActor.run {
                     navigationLog.append(fallbackLog)
                     loadFinalPageInWebView(url: landingUrl)
@@ -972,7 +971,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                 
             } catch {
                 let errLog = "[JWT] loginSSO error: \(error.localizedDescription)"
-                print("[TdxSsoLogin] \(errLog)")
+                dbg.error(errLog, category: "tdx-sso")
                 await MainActor.run {
                     navigationLog.append(errLog)
                     loadFinalPageInWebView(url: landingUrl)
@@ -984,7 +983,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     /// Fall back to loading TDX in the WebView and extracting auth from cookies/page
     private func loadFinalPageInWebView(url: URL) {
         let logMsg = "[WEBVIEW] Loading authenticated page: \(url.absoluteString)"
-        print("[TdxSsoLogin] \(logMsg)")
+        dbg.info(logMsg, category: "tdx-sso")
         navigationLog.append(logMsg)
         
         let request = URLRequest(url: url)
@@ -1051,7 +1050,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         }
         
         let logMsg = "[START] Attempting SSO authentication..."
-        print("[TdxSsoLogin] \(logMsg)")
+        dbg.info(logMsg, category: "tdx-sso")
         navigationLog.append(logMsg)
         
         // Try the full silent SAML flow first — if Platform SSO / SSO Extension
@@ -1061,7 +1060,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             if !gotJwt {
                 await MainActor.run {
                     let logMsg = "[START] Silent flow failed, loading SSO in WebView..."
-                    print("[TdxSsoLogin] \(logMsg)")
+                    dbg.info(logMsg, category: "tdx-sso")
                     navigationLog.append(logMsg)
                     continueWithWebView(url: loginSsoUrl)
                 }
@@ -1079,13 +1078,13 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         errorMessage = nil
         navigationLog.removeAll()
         let logMsg = "[SILENT] Attempting silent SAML chain via URLSession..."
-        print("[TdxSsoLogin] \(logMsg)")
+        dbg.info(logMsg, category: "tdx-sso")
         navigationLog.append(logMsg)
         let result = await tryFullSilentSamlFlow()
         isLoading = false
         if !result {
             let failMsg = "[SILENT] Silent SAML flow failed — interactive auth required"
-            print("[TdxSsoLogin] \(failMsg)")
+            dbg.warn(failMsg, category: "tdx-sso")
             navigationLog.append(failMsg)
         }
         return result
@@ -1125,7 +1124,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             let (data, response) = try await session.data(for: req)
             if let jwt = Self.extractJwtFromResponse(data: data, response: response) {
                 let logMsg = "[SILENT] ✓ JWT from existing session"
-                print("[TdxSsoLogin] \(logMsg)")
+                dbg.info(logMsg, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(logMsg) }
                 await handleSilentJwt(jwt)
                 return true
@@ -1135,17 +1134,17 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             if let html = String(data: data, encoding: .utf8),
                let saml = Self.parseSamlForm(html: html) {
                 let logMsg = "[SILENT] SAMLResponse found in loginSSO response — posting to Shibboleth"
-                print("[TdxSsoLogin] \(logMsg)")
+                dbg.info(logMsg, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(logMsg) }
                 return await postSamlAndFetchJwt(session: session, saml: saml, loginSsoUrl: loginSsoUrl, userAgent: userAgent)
             }
             
             let logMsg = "[SILENT] loginSSO did not return JWT or SAML — trying entry URL"
-            print("[TdxSsoLogin] \(logMsg)")
+            dbg.info(logMsg, category: "tdx-sso")
             await MainActor.run { navigationLog.append(logMsg) }
         } catch {
             let logMsg = "[SILENT] loginSSO error: \(error.localizedDescription)"
-            print("[TdxSsoLogin] \(logMsg)")
+            dbg.error(logMsg, category: "tdx-sso")
             await MainActor.run { navigationLog.append(logMsg) }
         }
         
@@ -1157,7 +1156,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             req.httpShouldHandleCookies = true
             
             let logMsg = "[SILENT] GET \(entryUrl.absoluteString) (following SAML redirects...)"
-            print("[TdxSsoLogin] \(logMsg)")
+            dbg.info(logMsg, category: "tdx-sso")
             await MainActor.run { navigationLog.append(logMsg) }
             
             let (data, response) = try await session.data(for: req)
@@ -1165,7 +1164,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             guard let httpResponse = response as? HTTPURLResponse else { return false }
             let finalUrl = httpResponse.url ?? entryUrl
             let statusLog = "[SILENT] Response: \(httpResponse.statusCode) → \(finalUrl.absoluteString)"
-            print("[TdxSsoLogin] \(statusLog)")
+            dbg.info(statusLog, category: "tdx-sso")
             await MainActor.run { navigationLog.append(statusLog) }
             
             guard let html = String(data: data, encoding: .utf8) else { return false }
@@ -1173,7 +1172,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             // Did the SSO Extension complete auth and we got a SAMLResponse?
             if let saml = Self.parseSamlForm(html: html) {
                 let samlLog = "[SILENT] ✓ SAMLResponse captured — posting to \(saml.actionUrl.host ?? "")"
-                print("[TdxSsoLogin] \(samlLog)")
+                dbg.info(samlLog, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(samlLog) }
                 return await postSamlAndFetchJwt(session: session, saml: saml, loginSsoUrl: loginSsoUrl, userAgent: userAgent)
             }
@@ -1183,7 +1182,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             if successPatterns.contains(where: { finalUrl.absoluteString.contains($0) }) &&
                !html.contains("login.microsoftonline.com") {
                 let successLog = "[SILENT] Landed on TDX success page — fetching JWT"
-                print("[TdxSsoLogin] \(successLog)")
+                dbg.info(successLog, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(successLog) }
                 return await fetchJwtFromLoginSso(session: session, url: loginSsoUrl, userAgent: userAgent)
             }
@@ -1191,13 +1190,13 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             // If we're stuck at the Entra login page, silent auth failed
             let snippet = String(html.prefix(500))
             let failLog = "[SILENT] Response not a SAML form or TDX page (snippet: \(snippet.prefix(200))...)"
-            print("[TdxSsoLogin] \(failLog)")
+            dbg.warn(failLog, category: "tdx-sso")
             await MainActor.run { navigationLog.append(failLog) }
             return false
             
         } catch {
             let logMsg = "[SILENT] SAML chain error: \(error.localizedDescription)"
-            print("[TdxSsoLogin] \(logMsg)")
+            dbg.error(logMsg, category: "tdx-sso")
             await MainActor.run { navigationLog.append(logMsg) }
             return false
         }
@@ -1220,7 +1219,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         
         do {
             let postLog = "[SILENT] POSTing SAMLResponse to \(saml.actionUrl.absoluteString)"
-            print("[TdxSsoLogin] \(postLog)")
+            dbg.info(postLog, category: "tdx-sso")
             await MainActor.run { navigationLog.append(postLog) }
             
             let (data, response) = try await session.data(for: request)
@@ -1228,13 +1227,13 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             
             let finalUrl = httpResponse.url ?? saml.actionUrl
             let respLog = "[SILENT] POST response: \(httpResponse.statusCode) → \(finalUrl.absoluteString)"
-            print("[TdxSsoLogin] \(respLog)")
+            dbg.info(respLog, category: "tdx-sso")
             await MainActor.run { navigationLog.append(respLog) }
             
             // Check if the POST response itself returned a JWT (redirect chain ended at loginSSO)
             if let jwt = Self.extractJwtFromResponse(data: data, response: response) {
                 let jwtLog = "[SILENT] ✓ JWT from SAML POST redirect chain"
-                print("[TdxSsoLogin] \(jwtLog)")
+                dbg.info(jwtLog, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(jwtLog) }
                 await handleSilentJwt(jwt)
                 return true
@@ -1245,7 +1244,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             
         } catch {
             let errLog = "[SILENT] SAML POST error: \(error.localizedDescription)"
-            print("[TdxSsoLogin] \(errLog)")
+            dbg.error(errLog, category: "tdx-sso")
             await MainActor.run { navigationLog.append(errLog) }
             return false
         }
@@ -1262,19 +1261,19 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             let (data, response) = try await session.data(for: req)
             if let jwt = Self.extractJwtFromResponse(data: data, response: response) {
                 let logMsg = "[SILENT] ✓ JWT from loginSSO"
-                print("[TdxSsoLogin] \(logMsg)")
+                dbg.info(logMsg, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(logMsg) }
                 await handleSilentJwt(jwt)
                 return true
             }
             
             let logMsg = "[SILENT] loginSSO did not return a JWT after SAML flow"
-            print("[TdxSsoLogin] \(logMsg)")
+            dbg.warn(logMsg, category: "tdx-sso")
             await MainActor.run { navigationLog.append(logMsg) }
             return false
         } catch {
             let errLog = "[SILENT] loginSSO fetch error: \(error.localizedDescription)"
-            print("[TdxSsoLogin] \(errLog)")
+            dbg.error(errLog, category: "tdx-sso")
             await MainActor.run { navigationLog.append(errLog) }
             return false
         }
@@ -1337,7 +1336,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     private func handleSilentJwt(_ jwt: String) async {
         let userInfo = Self.extractUserInfoFromJwt(jwt)
         let successLog = "[SILENT] ✓ Authenticated: \(userInfo.name ?? "unknown") (\(userInfo.email ?? ""))"
-        print("[TdxSsoLogin] \(successLog)")
+        dbg.info(successLog, category: "tdx-sso")
         await MainActor.run {
             navigationLog.append(successLog)
             authResult = TdxSsoResult.success(
@@ -1358,7 +1357,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             
             if cleanToken.hasPrefix("eyJ") && cleanToken.count > 20 {
                 let successLog = "[JWT] ✓ Got JWT from page content (\(cleanToken.prefix(20))...)"
-                print("[TdxSsoLogin] \(successLog)")
+                dbg.info(successLog, category: "tdx-sso")
                 
                 let userInfo = Self.extractUserInfoFromJwt(cleanToken)
                 
@@ -1367,7 +1366,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                     
                     if let name = userInfo.name {
                         let userLog = "[JWT] User: \(name) (\(userInfo.email ?? ""))"
-                        print("[TdxSsoLogin] \(userLog)")
+                        dbg.info(userLog, category: "tdx-sso")
                         navigationLog.append(userLog)
                     }
                     
@@ -1379,7 +1378,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                 }
             } else {
                 let logMsg = "[JWT] loginSSO page is not a JWT, waiting for SAML flow..."
-                print("[TdxSsoLogin] \(logMsg)")
+                dbg.info(logMsg, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(logMsg) }
             }
         } catch {
@@ -1389,7 +1388,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     
     private func continueWithWebView(url: URL) {
         let logMsg = "[WEBVIEW] Loading: \(url.absoluteString)"
-        print("[TdxSsoLogin] \(logMsg)")
+        dbg.info(logMsg, category: "tdx-sso")
         navigationLog.append(logMsg)
         
         webView.navigationDelegate = self
@@ -1413,7 +1412,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                let loginSsoUrl = URL(string: "\(baseUrl)/api/auth/loginSSO") {
                 
                 let logMsg = "[JWT] Requesting bearer token from loginSSO"
-                print("[TdxSsoLogin] \(logMsg)")
+                dbg.info(logMsg, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(logMsg) }
                 
                 // Get all WebView cookies and sync to shared storage
@@ -1445,7 +1444,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                         // Validate it's actually a JWT (starts with eyJ), not an HTML page
                         if cleanToken.hasPrefix("eyJ") && cleanToken.count > 20 {
                             let successLog = "[JWT] ✓ Got bearer token (\(cleanToken.prefix(20))...)"
-                            print("[TdxSsoLogin] \(successLog)")
+                            dbg.info(successLog, category: "tdx-sso")
                             
                             let userInfo = Self.extractUserInfoFromJwt(cleanToken)
                             
@@ -1454,7 +1453,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                                 
                                 if let name = userInfo.name {
                                     let userLog = "[JWT] User: \(name) (\(userInfo.email ?? ""))"
-                                    print("[TdxSsoLogin] \(userLog)")
+                                    dbg.info(userLog, category: "tdx-sso")
                                     navigationLog.append(userLog)
                                 }
                                 
@@ -1467,20 +1466,20 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                             return
                         } else {
                             let badLog = "[JWT] Response is not a JWT (starts with: \(cleanToken.prefix(30))...)"
-                            print("[TdxSsoLogin] \(badLog)")
+                            dbg.warn(badLog, category: "tdx-sso")
                             await MainActor.run { navigationLog.append(badLog) }
                         }
                     }
                 } catch {
                     let errLog = "[JWT] loginSSO error: \(error.localizedDescription)"
-                    print("[TdxSsoLogin] \(errLog)")
+                    dbg.error(errLog, category: "tdx-sso")
                     await MainActor.run { navigationLog.append(errLog) }
                 }
             }
             
             // Fallback: Extract token from cookies
             let fallbackLog = "[JWT] Falling back to cookie extraction"
-            print("[TdxSsoLogin] \(fallbackLog)")
+            dbg.info(fallbackLog, category: "tdx-sso")
             await MainActor.run { navigationLog.append(fallbackLog) }
             
             let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
@@ -1572,13 +1571,13 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
             // The SSO Extension handles the FIDO ceremony via the platform authenticator.
             if urlString.contains("autologon.microsoftazuread-sso.com") {
                 let logMsg = "[DECISION] Allowing autologon (Seamless SSO / Platform SSO)"
-                print("[TdxSsoLogin] \(logMsg)")
+                dbg.debug(logMsg, category: "tdx-sso")
                 navigationLog.append(logMsg)
             }
             
             if urlString.contains("/fido/get") || urlString.contains("/fido2/") {
                 let logMsg = "[DECISION] Allowing FIDO/passkey (Platform SSO will handle)"
-                print("[TdxSsoLogin] \(logMsg)")
+                dbg.debug(logMsg, category: "tdx-sso")
                 navigationLog.append(logMsg)
                 // Start the FIDO timeout — if Platform SSO doesn't complete
                 // within the timeout, fallback scripts will be injected
@@ -1591,14 +1590,14 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
             // submit via URLSession.
             if urlString.contains("Shibboleth.sso/SAML2/POST") {
                 let logMsg = "[DECISION] Cancelling native POST to Shibboleth (JS interceptor handles it)"
-                print("[TdxSsoLogin] \(logMsg)")
+                dbg.info(logMsg, category: "tdx-sso")
                 navigationLog.append(logMsg)
                 decisionHandler(.cancel)
                 return
             }
             
             let logMsg = "[DECISION] Allowing: \(urlString)"
-            print("[TdxSsoLogin] \(logMsg)")
+            dbg.debug(logMsg, category: "tdx-sso")
             navigationLog.append(logMsg)
         }
         decisionHandler(.allow)
@@ -1607,8 +1606,9 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         // Allow all responses
         if let url = navigationResponse.response.url {
-            let logMsg = "[RESPONSE] Status: \((navigationResponse.response as? HTTPURLResponse)?.statusCode ?? 0) - \(url.absoluteString)"
-            print("[TdxSsoLogin] \(logMsg)")
+            let status = (navigationResponse.response as? HTTPURLResponse)?.statusCode ?? 0
+            let logMsg = "[RESPONSE] Status: \(status) - \(url.absoluteString)"
+            dbg.debug(logMsg, category: "tdx-sso")
             navigationLog.append(logMsg)
             
             // Trigger auto-fill as early as possible when we see the Entra login page
@@ -1621,6 +1621,19 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 800_000_000) // 0.8s
                     self.autoFillEntraLogin()
+                }
+            }
+            
+            // When autologon (Seamless SSO) succeeds, pre-inject FIDO fallback so it's
+            // ready the moment the FIDO page appears (which is an SPA update, not a new load).
+            if status == 200, let host = url.host,
+               (host.contains("autologon.microsoftazuread-sso.com") || host.contains("autologon.")) {
+                let logMsg3 = "[PSSO] Autologon succeeded — pre-injecting FIDO fallback"
+                dbg.debug(logMsg3, category: "tdx-sso")
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+                    _ = try? await webView.evaluateJavaScript("window.__fleetmateFidoFallback = false;")
+                    _ = try? await webView.evaluateJavaScript(Self.fidoFallbackScript)
                 }
             }
         }
@@ -1655,7 +1668,7 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
         // Check if loginSSO returned JWT as page content (when Shibboleth session already exists)
         if url.absoluteString.contains("/api/auth/loginSSO") {
             let jwtLog = "[DONE] Checking if loginSSO returned JWT..."
-            print("[TdxSsoLogin] \(jwtLog)")
+            dbg.debug(jwtLog, category: "tdx-sso")
             navigationLog.append(jwtLog)
             Task {
                 await extractJwtFromPageContent()
@@ -1702,7 +1715,7 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
         // Check if we've reached a success page
         if checkForSuccessfulAuth(url: url) {
             let successMsg = "[SUCCESS] Pattern detected, completing auth"
-            print("[TdxSsoLogin] \(successMsg)")
+            dbg.info(successMsg, category: "tdx-sso")
             navigationLog.append(successMsg)
             completeAuthentication()
         }
@@ -1712,7 +1725,7 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
         isLoading = false
         isNavigating = false
         let logMsg = "[ERROR] Navigation failed: \(error.localizedDescription)"
-        print("[TdxSsoLogin] \(logMsg)")
+        dbg.error(logMsg, category: "tdx-sso")
         navigationLog.append(logMsg)
         errorMessage = error.localizedDescription
     }
@@ -1721,13 +1734,13 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
         let nsError = error as NSError
         
         let logMsg = "[ERROR] Provisional failed: \(error.localizedDescription) (code: \(nsError.code))"
-        print("[TdxSsoLogin] \(logMsg)")
+        dbg.error(logMsg, category: "tdx-sso")
         navigationLog.append(logMsg)
         
         // NSURLErrorCancelled is not an actual error (e.g., redirect)
         if nsError.code == NSURLErrorCancelled {
             let ignoreMsg = "[INFO] Ignoring cancelled error (redirect)"
-            print("[TdxSsoLogin] \(ignoreMsg)")
+            dbg.debug(ignoreMsg, category: "tdx-sso")
             navigationLog.append(ignoreMsg)
             return
         }
@@ -1735,7 +1748,7 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
         // Frame load interrupted can happen with TDX redirects - not always an error
         if nsError.code == 102 { // kCFURLErrorFileDoesNotExist / frame load interrupted
             let ignoreMsg = "[INFO] Ignoring frame load interrupted (102)"
-            print("[TdxSsoLogin] \(ignoreMsg)")
+            dbg.debug(ignoreMsg, category: "tdx-sso")
             navigationLog.append(ignoreMsg)
             // Try to continue - the redirect might still work
             return
@@ -1751,7 +1764,7 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
         let authMethod = protectionSpace.authenticationMethod
         
         let logMsg = "[AUTH] Challenge: \(authMethod) from \(protectionSpace.host)"
-        print("[TdxSsoLogin] \(logMsg)")
+        dbg.info(logMsg, category: "tdx-sso")
         navigationLog.append(logMsg)
         
         // Handle server trust (SSL)
@@ -1768,7 +1781,7 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
            authMethod == NSURLAuthenticationMethodNTLM ||
            authMethod == NSURLAuthenticationMethodDefault {
             let defaultMsg = "[AUTH] Using system credentials for \(authMethod)"
-            print("[TdxSsoLogin] \(defaultMsg)")
+            dbg.info(defaultMsg, category: "tdx-sso")
             navigationLog.append(defaultMsg)
             completionHandler(.performDefaultHandling, nil)
             return
@@ -1789,7 +1802,7 @@ class KerberosAuthDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate
         let authMethod = challenge.protectionSpace.authenticationMethod
         let host = challenge.protectionSpace.host
         
-        print("[KerberosAuth] Challenge: \(authMethod) from \(host)")
+        dbg.debug("[KerberosAuth] Challenge: \(authMethod) from \(host)", category: "tdx-sso")
         
         // Handle server trust
         if authMethod == NSURLAuthenticationMethodServerTrust {
@@ -1800,13 +1813,13 @@ class KerberosAuthDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate
         
         // For Kerberos/Negotiate - use default credentials (system Kerberos ticket)
         if authMethod == NSURLAuthenticationMethodNegotiate {
-            print("[KerberosAuth] Using default Kerberos credentials")
+            dbg.debug("[KerberosAuth] Using default Kerberos credentials", category: "tdx-sso")
             return (.performDefaultHandling, nil)
         }
         
         // For NTLM - use default credentials
         if authMethod == NSURLAuthenticationMethodNTLM {
-            print("[KerberosAuth] Using default NTLM credentials")
+            dbg.debug("[KerberosAuth] Using default NTLM credentials", category: "tdx-sso")
             return (.performDefaultHandling, nil)
         }
         
@@ -1819,7 +1832,7 @@ class KerberosAuthDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate
         let authMethod = challenge.protectionSpace.authenticationMethod
         let host = challenge.protectionSpace.host
         
-        print("[KerberosAuth] Session challenge: \(authMethod) from \(host)")
+        dbg.debug("[KerberosAuth] Session challenge: \(authMethod) from \(host)", category: "tdx-sso")
         
         // Handle server trust
         if authMethod == NSURLAuthenticationMethodServerTrust {

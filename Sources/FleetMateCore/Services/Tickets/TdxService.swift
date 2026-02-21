@@ -150,7 +150,7 @@ public class TdxService {
         if authMethod == .userPassword || authMethod == .auto {
             guard let username = config.tdxUsername, let password = config.tdxPassword,
                   !username.isEmpty, !password.isEmpty else {
-                print("TDX credentials not configured.")
+                dbg.warn("TDX credentials not configured", category: "tdx-auth")
                 return nil
             }
 
@@ -219,8 +219,7 @@ public class TdxService {
                         // Log response body for 400 errors to help diagnose
                         if let data = response.data, let statusCode = response.response?.statusCode, statusCode == 400 {
                             let responseBody = String(data: data, encoding: .utf8) ?? "(unable to decode)"
-                            print("[TdxService] 400 Bad Request from search endpoint:")
-                            print("[TdxService] Response: \(responseBody)")
+                            dbg.warn("TDX 400 Bad Request from search: \(responseBody)", category: "tdx")
                         }
                         continuation.resume(throwing: error)
                     }

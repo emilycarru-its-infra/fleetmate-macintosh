@@ -215,6 +215,14 @@ struct WebViewRepresentable: NSViewRepresentable {
     }
 }
 
+// MARK: - SAML Form Data
+
+/// Parsed SAML auto-submit form (SAMLResponse + RelayState) extracted from HTML.
+struct SamlFormData {
+    let actionUrl: URL
+    let fields: [String: String]
+}
+
 // MARK: - SAML Form Interceptor
 
 /// Handles intercepted SAML form submissions from WKWebView.
@@ -340,45 +348,33 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     
     /// JavaScript injected as a fallback when the SSO Extension can't complete the
     /// FIDO/passkey ceremony. Handles three scenarios:
-    /// 1. FIDO page with "Sign in another way" link - clicks it
-    /// 2. Error page ("Couldn't sign you in") - clicks "Back" / retry link
-    /// 3. Method selection page - picks a non-FIDO method (Authenticator, SMS, etc.)
+    /// 1. "Sign in another way" link on FIDO or error pages — always preferred
+    /// 2. Method selection page — picks a non-FIDO method (Authenticator, SMS, etc.)
+    /// 3. "Back" button as last resort on error pages
+    /// NEVER clicks "Try again" — that retries the failing passkey in a loop.
     private static let fidoFallbackScript = """
     (function() {
+        if (window.__fleetmateFidoFallback) return;
+        window.__fleetmateFidoFallback = true;
         var acted = false;
         function tryFallback() {
             if (acted) return true;
             var bodyText = (document.body && document.body.innerText) || '';
-            var isErrorPage = bodyText.indexOf("Couldn\u{2019}t sign you in") !== -1 ||
-                              bodyText.indexOf("Couldn't sign you in") !== -1 ||
+            var isErrorPage = bodyText.indexOf("couldn\u{2019}t sign you in") !== -1 ||
+                              bodyText.indexOf("couldn't sign you in") !== -1 ||
                               bodyText.indexOf("sign-in was unsuccessful") !== -1 ||
                               bodyText.indexOf("Something went wrong") !== -1 ||
-                              bodyText.indexOf("We couldn't verify") !== -1 ||
+                              bodyText.indexOf("couldn't verify") !== -1 ||
                               bodyText.indexOf("error occurred") !== -1;
+            var isFidoPage = bodyText.indexOf('passkey') !== -1 ||
+                             bodyText.indexOf('security key') !== -1 ||
+                             bodyText.indexOf('FIDO') !== -1;
+            if (!isErrorPage && !isFidoPage) return false;
             var elems = document.querySelectorAll('a, button, [role="link"], [role="button"], input[type="submit"], span, div[tabindex]');
-            if (isErrorPage) {
-                for (var i = 0; i < elems.length; i++) {
-                    var text = (elems[i].textContent || elems[i].value || '').trim().toLowerCase();
-                    if (text === 'back' || text === 'try again' || text === 'go back' ||
-                        text.indexOf('sign in another way') !== -1 ||
-                        text.indexOf('other ways') !== -1) {
-                        console.log('[FleetMate] Error page recovery - clicking: ' + text);
-                        elems[i].click();
-                        acted = true;
-                        return true;
-                    }
-                }
-                if (window.history.length > 1) {
-                    console.log('[FleetMate] Error page - going back');
-                    window.history.back();
-                    acted = true;
-                    return true;
-                }
-            }
+            // Priority 1: Click "Sign in another way" — best escape from passkey flow
             for (var i = 0; i < elems.length; i++) {
                 var text = (elems[i].textContent || elems[i].value || '').trim().toLowerCase();
                 if (text.indexOf('sign in another way') !== -1 ||
-                    text.indexOf('sign in in another way') !== -1 ||
                     text.indexOf('other ways to sign in') !== -1 ||
                     text.indexOf('use another method') !== -1 ||
                     text.indexOf('use a different method') !== -1 ||
@@ -391,6 +387,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                     return true;
                 }
             }
+            // Priority 2: Select a non-FIDO auth method tile
             var tiles = document.querySelectorAll('[data-value]');
             if (tiles.length > 0) {
                 var preferred = ['PhoneAppNotification', 'PhoneAppOTP', 'OneWaySMS',
@@ -418,14 +415,26 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                     }
                 }
             }
+            // Priority 3: "Back" on error pages only (goes back to username/method selection)
+            if (isErrorPage) {
+                for (var i = 0; i < elems.length; i++) {
+                    var text = (elems[i].textContent || elems[i].value || '').trim().toLowerCase();
+                    if (text === 'back' || text === 'go back') {
+                        console.log('[FleetMate] Error page - clicking: ' + text);
+                        elems[i].click();
+                        acted = true;
+                        return true;
+                    }
+                }
+            }
             return false;
         }
         if (document.body) {
             var observer = new MutationObserver(function() { tryFallback(); });
             observer.observe(document.body, { childList: true, subtree: true });
-            setTimeout(function() { observer.disconnect(); }, 10000);
+            setTimeout(function() { observer.disconnect(); }, 15000);
         }
-        var delays = [100, 300, 600, 1000, 1500, 2500, 4000, 6000];
+        var delays = [100, 300, 600, 1000, 1500, 2500, 4000, 6000, 8000, 10000];
         delays.forEach(function(d) { setTimeout(tryFallback, d); });
     })();
     """
@@ -597,6 +606,12 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                         console.log('[FleetMate] Clicking Next button');
                         nextBtn.click();
                     }
+                    // After submitting username, watch for passkey error pages
+                    // (SPA transitions don't trigger WKWebView navigation events)
+                    window.__fleetmateFidoFallback = false;
+                    setTimeout(function() {
+                        try { eval(window.__fleetmateFidoScript || ''); } catch(e) {}
+                    }, 3000);
                 }, 300);
             }
             
@@ -649,6 +664,17 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             for delay in [500, 1000, 2000] as [UInt64] {
                 try? await Task.sleep(nanoseconds: delay * 1_000_000)
                 _ = try? await webView.evaluateJavaScript(script)
+            }
+            
+            // After username submission, proactively inject FIDO fallback.
+            // The passkey challenge often happens as an SPA transition that
+            // doesn't trigger WKWebView navigation events.
+            ssoLog("[PSSO] Scheduling FIDO fallback injection after auto-fill")
+            scheduleFidoTimeout()
+            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3s for passkey to fail
+            if self.authResult == nil {
+                ssoLog("[PSSO] Injecting FIDO fallback after auto-fill timeout")
+                _ = try? await webView.evaluateJavaScript(Self.fidoFallbackScript)
             }
         }
     }
@@ -1028,13 +1054,13 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         print("[TdxSsoLogin] \(logMsg)")
         navigationLog.append(logMsg)
         
-        // Try URLSession first — if a valid Shibboleth session exists
-        // from a prior login, we can get the JWT without any UI at all.
+        // Try the full silent SAML flow first — if Platform SSO / SSO Extension
+        // can handle auth at the URLSession level, we get a JWT with no WebView.
         Task {
-            let gotJwt = await tryLoginSsoViaURLSession()
+            let gotJwt = await tryFullSilentSamlFlow()
             if !gotJwt {
                 await MainActor.run {
-                    let logMsg = "[START] No existing session, loading SSO in WebView..."
+                    let logMsg = "[START] Silent flow failed, loading SSO in WebView..."
                     print("[TdxSsoLogin] \(logMsg)")
                     navigationLog.append(logMsg)
                     continueWithWebView(url: loginSsoUrl)
@@ -1043,72 +1069,282 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         }
     }
     
-    /// Try to get JWT from loginSSO via URLSession.
-    /// This works if the SSO extension handles URLSession requests (macOS 13+)
-    /// or if ASWebAuth deposited Shibboleth cookies in HTTPCookieStorage.shared.
-    private func tryLoginSsoViaURLSession() async -> Bool {
+    /// Attempt authentication using URLSession only (no WebView, no UI).
+    /// Follows the full SAML redirect chain:
+    ///   loginSSO → Shibboleth → Entra ID (SSO Extension handles auth) → SAMLResponse → Shibboleth → TDX session → JWT
+    /// Returns true if a JWT was obtained silently.
+    /// Returns false if interactive auth via WebView is required.
+    func performSilentAuthentication() async -> Bool {
+        isLoading = true
+        errorMessage = nil
+        navigationLog.removeAll()
+        let logMsg = "[SILENT] Attempting silent SAML chain via URLSession..."
+        print("[TdxSsoLogin] \(logMsg)")
+        navigationLog.append(logMsg)
+        let result = await tryFullSilentSamlFlow()
+        isLoading = false
+        if !result {
+            let failMsg = "[SILENT] Silent SAML flow failed — interactive auth required"
+            print("[TdxSsoLogin] \(failMsg)")
+            navigationLog.append(failMsg)
+        }
+        return result
+    }
+
+    /// Execute the full SAML SSO flow via URLSession (no WebView).
+    /// 1. GET loginSSO — if existing session, returns JWT directly
+    /// 2. If redirect chain returns HTML with SAMLResponse, parse & POST it
+    /// 3. After Shibboleth session is established, GET loginSSO again for JWT
+    /// The Enterprise SSO Extension handles Entra ID auth at the network layer.
+    private func tryFullSilentSamlFlow() async -> Bool {
         let baseUrl = (config.tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard !baseUrl.isEmpty,
+        guard !baseUrl.isEmpty else { return false }
+        
+        let rootUrl = baseUrl.replacingOccurrences(of: "/TDWebApi", with: "")
+        guard let entryUrl = URL(string: "\(rootUrl)/TDWorkManagement/"),
               let loginSsoUrl = URL(string: "\(baseUrl)/api/auth/loginSSO") else { return false }
         
-        var request = URLRequest(url: loginSsoUrl)
-        request.httpMethod = "GET"
-        request.setValue(webView.customUserAgent, forHTTPHeaderField: "User-Agent")
-        request.httpShouldHandleCookies = true
+        let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15"
         
         let sessionConfig = URLSessionConfiguration.default
         sessionConfig.httpCookieStorage = HTTPCookieStorage.shared
         sessionConfig.httpShouldSetCookies = true
         sessionConfig.httpCookieAcceptPolicy = .always
+        sessionConfig.timeoutIntervalForRequest = 15
         
         let delegate = KerberosAuthDelegate()
         let session = URLSession(configuration: sessionConfig, delegate: delegate, delegateQueue: nil)
         
+        // ── Step 1: Quick check — does loginSSO already have a session? ──
         do {
-            let (data, response) = try await session.data(for: request)
+            var req = URLRequest(url: loginSsoUrl)
+            req.httpMethod = "GET"
+            req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            req.httpShouldHandleCookies = true
             
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200,
-                  let text = String(data: data, encoding: .utf8) else { return false }
-            
-            let cleanToken = text
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-            
-            if cleanToken.hasPrefix("eyJ") && cleanToken.count > 20 {
-                let successLog = "[JWT] ✓ Got JWT via URLSession (\(cleanToken.prefix(20))...)"
-                print("[TdxSsoLogin] \(successLog)")
-                
-                let userInfo = Self.extractUserInfoFromJwt(cleanToken)
-                
-                await MainActor.run {
-                    navigationLog.append(successLog)
-                    
-                    if let name = userInfo.name {
-                        let userLog = "[JWT] User: \(name) (\(userInfo.email ?? ""))"
-                        print("[TdxSsoLogin] \(userLog)")
-                        navigationLog.append(userLog)
-                    }
-                    
-                    authResult = TdxSsoResult.success(
-                        token: cleanToken,
-                        userName: userInfo.name,
-                        userEmail: userInfo.email
-                    )
-                }
+            let (data, response) = try await session.data(for: req)
+            if let jwt = Self.extractJwtFromResponse(data: data, response: response) {
+                let logMsg = "[SILENT] ✓ JWT from existing session"
+                print("[TdxSsoLogin] \(logMsg)")
+                await MainActor.run { navigationLog.append(logMsg) }
+                await handleSilentJwt(jwt)
                 return true
             }
             
-            let logMsg = "[JWT] URLSession response not a JWT (starts with: \(cleanToken.prefix(30))...)"
+            // Check if the response already contains a SAMLResponse form
+            if let html = String(data: data, encoding: .utf8),
+               let saml = Self.parseSamlForm(html: html) {
+                let logMsg = "[SILENT] SAMLResponse found in loginSSO response — posting to Shibboleth"
+                print("[TdxSsoLogin] \(logMsg)")
+                await MainActor.run { navigationLog.append(logMsg) }
+                return await postSamlAndFetchJwt(session: session, saml: saml, loginSsoUrl: loginSsoUrl, userAgent: userAgent)
+            }
+            
+            let logMsg = "[SILENT] loginSSO did not return JWT or SAML — trying entry URL"
             print("[TdxSsoLogin] \(logMsg)")
             await MainActor.run { navigationLog.append(logMsg) }
+        } catch {
+            let logMsg = "[SILENT] loginSSO error: \(error.localizedDescription)"
+            print("[TdxSsoLogin] \(logMsg)")
+            await MainActor.run { navigationLog.append(logMsg) }
+        }
+        
+        // ── Step 2: Navigate the full SAML chain starting from TDWorkManagement ──
+        do {
+            var req = URLRequest(url: entryUrl)
+            req.httpMethod = "GET"
+            req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            req.httpShouldHandleCookies = true
+            
+            let logMsg = "[SILENT] GET \(entryUrl.absoluteString) (following SAML redirects...)"
+            print("[TdxSsoLogin] \(logMsg)")
+            await MainActor.run { navigationLog.append(logMsg) }
+            
+            let (data, response) = try await session.data(for: req)
+            
+            guard let httpResponse = response as? HTTPURLResponse else { return false }
+            let finalUrl = httpResponse.url ?? entryUrl
+            let statusLog = "[SILENT] Response: \(httpResponse.statusCode) → \(finalUrl.absoluteString)"
+            print("[TdxSsoLogin] \(statusLog)")
+            await MainActor.run { navigationLog.append(statusLog) }
+            
+            guard let html = String(data: data, encoding: .utf8) else { return false }
+            
+            // Did the SSO Extension complete auth and we got a SAMLResponse?
+            if let saml = Self.parseSamlForm(html: html) {
+                let samlLog = "[SILENT] ✓ SAMLResponse captured — posting to \(saml.actionUrl.host ?? "")"
+                print("[TdxSsoLogin] \(samlLog)")
+                await MainActor.run { navigationLog.append(samlLog) }
+                return await postSamlAndFetchJwt(session: session, saml: saml, loginSsoUrl: loginSsoUrl, userAgent: userAgent)
+            }
+            
+            // Did we land on a TDX success page? (session already exists)
+            let successPatterns = ["/SBTDClient/", "/TDClient/", "/TDNext/", "/TDWorkManagement/", "/Home/Desktop"]
+            if successPatterns.contains(where: { finalUrl.absoluteString.contains($0) }) &&
+               !html.contains("login.microsoftonline.com") {
+                let successLog = "[SILENT] Landed on TDX success page — fetching JWT"
+                print("[TdxSsoLogin] \(successLog)")
+                await MainActor.run { navigationLog.append(successLog) }
+                return await fetchJwtFromLoginSso(session: session, url: loginSsoUrl, userAgent: userAgent)
+            }
+            
+            // If we're stuck at the Entra login page, silent auth failed
+            let snippet = String(html.prefix(500))
+            let failLog = "[SILENT] Response not a SAML form or TDX page (snippet: \(snippet.prefix(200))...)"
+            print("[TdxSsoLogin] \(failLog)")
+            await MainActor.run { navigationLog.append(failLog) }
             return false
             
         } catch {
-            let logMsg = "[JWT] URLSession error: \(error.localizedDescription)"
+            let logMsg = "[SILENT] SAML chain error: \(error.localizedDescription)"
             print("[TdxSsoLogin] \(logMsg)")
             await MainActor.run { navigationLog.append(logMsg) }
             return false
+        }
+    }
+    
+    /// POST the SAMLResponse to Shibboleth, then fetch the JWT from loginSSO.
+    private func postSamlAndFetchJwt(session: URLSession, saml: SamlFormData, loginSsoUrl: URL, userAgent: String) async -> Bool {
+        // Build form-encoded body
+        let bodyParts = saml.fields.map { key, value in
+            "\(Self.formURLEncode(key))=\(Self.formURLEncode(value))"
+        }
+        let bodyString = bodyParts.joined(separator: "&")
+        
+        var request = URLRequest(url: saml.actionUrl)
+        request.httpMethod = "POST"
+        request.httpBody = bodyString.data(using: .utf8)
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        request.httpShouldHandleCookies = true
+        
+        do {
+            let postLog = "[SILENT] POSTing SAMLResponse to \(saml.actionUrl.absoluteString)"
+            print("[TdxSsoLogin] \(postLog)")
+            await MainActor.run { navigationLog.append(postLog) }
+            
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else { return false }
+            
+            let finalUrl = httpResponse.url ?? saml.actionUrl
+            let respLog = "[SILENT] POST response: \(httpResponse.statusCode) → \(finalUrl.absoluteString)"
+            print("[TdxSsoLogin] \(respLog)")
+            await MainActor.run { navigationLog.append(respLog) }
+            
+            // Check if the POST response itself returned a JWT (redirect chain ended at loginSSO)
+            if let jwt = Self.extractJwtFromResponse(data: data, response: response) {
+                let jwtLog = "[SILENT] ✓ JWT from SAML POST redirect chain"
+                print("[TdxSsoLogin] \(jwtLog)")
+                await MainActor.run { navigationLog.append(jwtLog) }
+                await handleSilentJwt(jwt)
+                return true
+            }
+            
+            // Shibboleth session established — now fetch JWT
+            return await fetchJwtFromLoginSso(session: session, url: loginSsoUrl, userAgent: userAgent)
+            
+        } catch {
+            let errLog = "[SILENT] SAML POST error: \(error.localizedDescription)"
+            print("[TdxSsoLogin] \(errLog)")
+            await MainActor.run { navigationLog.append(errLog) }
+            return false
+        }
+    }
+    
+    /// Fetch JWT from the loginSSO endpoint (assumes session cookies are already set).
+    private func fetchJwtFromLoginSso(session: URLSession, url: URL, userAgent: String) async -> Bool {
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        req.httpShouldHandleCookies = true
+        
+        do {
+            let (data, response) = try await session.data(for: req)
+            if let jwt = Self.extractJwtFromResponse(data: data, response: response) {
+                let logMsg = "[SILENT] ✓ JWT from loginSSO"
+                print("[TdxSsoLogin] \(logMsg)")
+                await MainActor.run { navigationLog.append(logMsg) }
+                await handleSilentJwt(jwt)
+                return true
+            }
+            
+            let logMsg = "[SILENT] loginSSO did not return a JWT after SAML flow"
+            print("[TdxSsoLogin] \(logMsg)")
+            await MainActor.run { navigationLog.append(logMsg) }
+            return false
+        } catch {
+            let errLog = "[SILENT] loginSSO fetch error: \(error.localizedDescription)"
+            print("[TdxSsoLogin] \(errLog)")
+            await MainActor.run { navigationLog.append(errLog) }
+            return false
+        }
+    }
+    
+    /// Extract a JWT from an HTTP response (data + response).
+    private static func extractJwtFromResponse(data: Data, response: URLResponse) -> String? {
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200,
+              let text = String(data: data, encoding: .utf8) else { return nil }
+        
+        let cleanToken = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        
+        guard cleanToken.hasPrefix("eyJ"), cleanToken.count > 20 else { return nil }
+        return cleanToken
+    }
+    
+    /// Parse an HTML page for a SAML auto-submit form (SAMLResponse + RelayState).
+    private static func parseSamlForm(html: String) -> SamlFormData? {
+        // Find form action URL
+        guard let actionRange = html.range(of: #"<form[^>]+action="([^"]+)"#, options: .regularExpression) else { return nil }
+        let actionMatch = String(html[actionRange])
+        guard let urlStart = actionMatch.range(of: #"action=""#, options: .regularExpression) else { return nil }
+        let actionStr = String(actionMatch[urlStart.upperBound...]).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        // Decode HTML entities
+        let decodedAction = actionStr
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&#x3a;", with: ":")
+            .replacingOccurrences(of: "&#x2f;", with: "/")
+        guard let actionUrl = URL(string: decodedAction) else { return nil }
+        
+        // Extract hidden input fields
+        var fields: [String: String] = [:]
+        let inputPattern = #"<input[^>]+type="hidden"[^>]*>"#
+        let namePattern = #"name="([^"]+)""#
+        let valuePattern = #"value="([^"]*)"#
+        
+        var searchRange = html.startIndex..<html.endIndex
+        while let inputRange = html.range(of: inputPattern, options: .regularExpression, range: searchRange) {
+            let inputTag = String(html[inputRange])
+            if let nameRange = inputTag.range(of: namePattern, options: .regularExpression),
+               let valRange = inputTag.range(of: valuePattern, options: .regularExpression) {
+                let nameMatch = String(inputTag[nameRange])
+                let valMatch = String(inputTag[valRange])
+                // Extract the captured group value
+                let name = String(nameMatch.dropFirst(6).dropLast(1)) // name="..."
+                let value = String(valMatch.dropFirst(7).dropLast(1)) // value="..."
+                fields[name] = value
+            }
+            searchRange = inputRange.upperBound..<html.endIndex
+        }
+        
+        guard fields["SAMLResponse"] != nil else { return nil }
+        return SamlFormData(actionUrl: actionUrl, fields: fields)
+    }
+    
+    /// Handle a JWT obtained silently — set authResult.
+    private func handleSilentJwt(_ jwt: String) async {
+        let userInfo = Self.extractUserInfoFromJwt(jwt)
+        let successLog = "[SILENT] ✓ Authenticated: \(userInfo.name ?? "unknown") (\(userInfo.email ?? ""))"
+        print("[TdxSsoLogin] \(successLog)")
+        await MainActor.run {
+            navigationLog.append(successLog)
+            authResult = TdxSsoResult.success(
+                token: jwt,
+                userName: userInfo.name,
+                userEmail: userInfo.email
+            )
         }
     }
     
@@ -1436,40 +1672,18 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
             autoFillEntraLogin()
         }
         
-        // On FIDO/passkey pages: inject fallback immediately.
-        // The SSO Extension intercepts FIDO but fails with Code=-5 for unsigned apps,
-        // resulting in "Couldn't sign you in". We inject the fallback right away
-        // to handle the error page and redirect to an alternative auth method.
+        // On FIDO/passkey pages or any Entra page after username submission:
+        // inject fallback to handle error pages and redirect to alt auth.
+        // The script uses window.__fleetmateFidoFallback to prevent duplicate runs.
         let urlString = url.absoluteString
         if urlString.contains("/fido/") || urlString.contains("/fido2/") {
             scheduleFidoTimeout()
-            
-            // Inject fallback immediately — don't wait for the timeout
-            ssoLog("[FIDO] Injecting fallback immediately on FIDO page")
+            ssoLog("[FIDO] Injecting fallback on FIDO page")
             Task {
-                // Small delay to let the page render
                 try? await Task.sleep(nanoseconds: 500_000_000)
+                // Reset guard to allow re-injection on new page
+                _ = try? await webView.evaluateJavaScript("window.__fleetmateFidoFallback = false;")
                 _ = try? await webView.evaluateJavaScript(Self.fidoFallbackScript)
-            }
-            
-            // Log page elements for debugging
-            Task {
-                let dumpScript = """
-                (function() {
-                    var items = [];
-                    var elems = document.querySelectorAll('a, button, [role="link"], [role="button"], [role="option"], [data-value], input[type="submit"], span, div[tabindex]');
-                    for (var i = 0; i < elems.length; i++) {
-                        var text = (elems[i].textContent || elems[i].value || '').trim();
-                        if (text.length > 0) items.push(text.substring(0, 80));
-                    }
-                    return JSON.stringify(items.slice(0, 20));
-                })();
-                """
-                if let result = try? await webView.evaluateJavaScript(dumpScript) as? String {
-                    let logMsg = "[PAGE] Elements: \(result)"
-                    ssoLog(logMsg)
-                    await MainActor.run { navigationLog.append(logMsg) }
-                }
             }
         }
         
@@ -1480,6 +1694,7 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
             ssoLog("[FIDO] Injecting fallback on resume/error page")
             Task {
                 try? await Task.sleep(nanoseconds: 300_000_000)
+                _ = try? await webView.evaluateJavaScript("window.__fleetmateFidoFallback = false;")
                 _ = try? await webView.evaluateJavaScript(Self.fidoFallbackScript)
             }
         }

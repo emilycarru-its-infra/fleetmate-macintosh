@@ -3,7 +3,12 @@ import FleetMateCore
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
-    @State private var selectedTab: Tab = .tickets
+    @State private var selectedTab: Tab = .dashboard
+    /// Tracks whether we've already auto-prompted Phase 2 SSO for this session
+    @State private var hasAutoPromptedSso = false
+
+    /// Maps raw tab names (from AppState.navigateToTab) to Tab enum
+    private static let tabMap: [String: Tab] = Dictionary(uniqueKeysWithValues: Tab.allCases.map { ($0.rawValue, $0) })
 
     enum Tab: String, CaseIterable {
         case dashboard = "Dashboard"
@@ -47,6 +52,22 @@ struct ContentView: View {
                     .buttonStyle(.plain)
                 }
                 Spacer()
+                // SP Warning Badge
+                if appState.authManager.hasServicePrincipalWarning {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundColor(.orange)
+                            .font(.system(size: 11))
+                        Text("SP")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.orange)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.orange.opacity(0.12))
+                    .cornerRadius(4)
+                    .help("One or more systems are logged in as a Service Principal")
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -75,9 +96,28 @@ struct ContentView: View {
         }
         .frame(minWidth: 1000, minHeight: 600)
         .onAppear {
-            // Auto-trigger TDX SSO if not authenticated and SSO is available
+            // Phase 1: Attempt silent SSO in the background (no UI).
+            // If it fails, Phase 2 interactive login is deferred until the
+            // user navigates to a tab that actually needs TDX auth.
             if !appState.tdxSsoAuthenticated && appState.tdxService.shouldAttemptSso {
+                appState.attemptSilentTdxSso()
+            }
+        }
+        .onChange(of: selectedTab) { _, newTab in
+            // Phase 2: Auto-trigger interactive SSO when user first navigates
+            // to the Tickets tab and isn't authenticated yet.
+            if newTab == .tickets,
+               !appState.tdxSsoAuthenticated,
+               !hasAutoPromptedSso,
+               appState.tdxService.shouldAttemptSso {
+                hasAutoPromptedSso = true
                 appState.triggerTdxSsoLogin()
+            }
+        }
+        .onChange(of: appState.navigateToTab) { _, newTab in
+            if let name = newTab, let tab = Self.tabMap[name] {
+                selectedTab = tab
+                appState.navigateToTab = nil
             }
         }
         .sheet(isPresented: $appState.showTdxSsoLogin) {
@@ -95,17 +135,8 @@ struct ContentView: View {
                 }
             }
         }
-        .sheet(isPresented: $appState.showDevOpsSsoLogin) {
-            DevOpsSsoLoginView(config: appState.config) { result in
-                if result.success, let token = result.token {
-                    let expiry = Date().addingTimeInterval(TimeInterval(result.expiresIn ?? 3600))
-                    appState.handleDevOpsSsoSuccess(token: token, expiry: expiry, userName: result.userName)
-                } else {
-                    appState.handleDevOpsSsoFailure(result.error)
-                }
-            }
-        }
     }
+
 }
 
 #Preview {

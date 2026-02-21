@@ -50,7 +50,7 @@ YELLOW = \033[1;33m
 BLUE = \033[0;34m
 NC = \033[0m
 
-.PHONY: all build release debug run clean sign-app sign-debug notarize verify \
+.PHONY: all build release debug run run-debug clean sign-app sign-debug notarize verify \
         build-pkg sign-pkg build-dmg help check-signing-config app-bundle \
         app-bundle-debug swift-build swift-build-debug
 
@@ -188,6 +188,16 @@ debug: sign-debug
 run: sign-debug
 	@echo "$(BLUE)Launching FleetMate...$(NC)"
 	@open "$(APP_BUNDLE)"
+
+run-debug: sign-debug
+	@echo "$(BLUE)Launching FleetMate with live debug log...$(NC)"
+	@echo "$(GREEN)Log file: ~/.fleetmate/debug.log$(NC)"
+	@echo "$(YELLOW)Press Ctrl+C to stop$(NC)"
+	@echo ""
+	@touch ~/.fleetmate/debug.log
+	@"$(MACOS_DIR)/$(APP_NAME)" 2>&1 &
+	@sleep 0.3
+	@tail -f ~/.fleetmate/debug.log
 
 # ─── Full Release Build ─────────────────────────────────────────────
 

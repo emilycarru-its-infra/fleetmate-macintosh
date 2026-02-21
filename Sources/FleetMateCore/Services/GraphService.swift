@@ -53,6 +53,7 @@ public class GraphService {
         switch principal {
         case .devices:
             if let token = devicesToken, Date() < devicesTokenExpiry {
+                dbg.debug("Graph .devices using cached token", category: "graph-auth")
                 return token
             }
             // Try dedicated devices SP first, fall back to shared credentials
@@ -61,9 +62,10 @@ public class GraphService {
             guard let clientId = devClientId,
                   let clientSecret = devClientSecret,
                   let tenantId = config.graphTenantId else {
-                print("[GraphService] Devices service principal not configured")
+                dbg.warn("Graph .devices service principal not configured (clientId=\(config.devicesGraphId != nil), secret=\(config.devicesGraphSecret != nil), tenant=\(config.graphTenantId != nil))", category: "graph-auth")
                 return nil
             }
+            dbg.info("Graph .devices requesting token (tenantId=\(tenantId.prefix(8))...)", category: "graph-auth")
             let token = try await getClientCredentialsToken(tenantId: tenantId, clientId: clientId, clientSecret: clientSecret)
             devicesToken = token
             devicesTokenExpiry = Date().addingTimeInterval(55 * 60)
@@ -71,6 +73,7 @@ public class GraphService {
             
         case .systems:
             if let token = systemsToken, Date() < systemsTokenExpiry {
+                dbg.debug("Graph .systems using cached token", category: "graph-auth")
                 return token
             }
             // Try dedicated systems SP first, fall back to shared credentials
@@ -79,9 +82,10 @@ public class GraphService {
             guard let clientId = sysClientId,
                   let clientSecret = sysClientSecret,
                   let tenantId = config.graphTenantId else {
-                print("[GraphService] Systems service principal not configured")
+                dbg.warn("Graph .systems service principal not configured", category: "graph-auth")
                 return nil
             }
+            dbg.info("Graph .systems requesting token", category: "graph-auth")
             let token = try await getClientCredentialsToken(tenantId: tenantId, clientId: clientId, clientSecret: clientSecret)
             systemsToken = token
             systemsTokenExpiry = Date().addingTimeInterval(55 * 60)
@@ -89,8 +93,10 @@ public class GraphService {
             
         case .azureCli:
             if let token = cliToken, Date() < cliTokenExpiry {
+                dbg.debug("Graph .azureCli using cached token", category: "graph-auth")
                 return token
             }
+            dbg.info("Graph .azureCli requesting token via Azure CLI", category: "graph-auth")
             let token = try await getAzureCliToken()
             cliToken = token
             cliTokenExpiry = Date().addingTimeInterval(55 * 60)
@@ -101,6 +107,7 @@ public class GraphService {
     /// Get token using client credentials flow (OAuth2)
     private func getClientCredentialsToken(tenantId: String, clientId: String, clientSecret: String) async throws -> String? {
         let tokenUrl = "https://login.microsoftonline.com/\(tenantId)/oauth2/v2.0/token"
+        dbg.debug("Graph requesting client_credentials token from \(tokenUrl)", category: "graph-auth")
         
         let parameters: [String: String] = [
             "client_id": clientId,
@@ -114,9 +121,10 @@ public class GraphService {
                 .responseDecodable(of: TokenResponse.self) { response in
                     switch response.result {
                     case .success(let tokenResponse):
+                        dbg.info("Graph client_credentials token acquired (\(tokenResponse.accessToken.count) chars)", category: "graph-auth")
                         continuation.resume(returning: tokenResponse.accessToken)
                     case .failure(let error):
-                        print("[GraphService] Token request failed: \(error)")
+                        dbg.error("Graph client_credentials token FAILED: \(error)", category: "graph-auth")
                         continuation.resume(returning: nil)
                     }
                 }
@@ -191,7 +199,11 @@ public class GraphService {
     // MARK: - Intune Devices (uses devices service principal)
 
     public func getManagedDevices(filter: String? = nil, limit: Int = 100) async throws -> [IntuneDevice] {
-        guard let headers = await headers(for: .devices) else { return [] }
+        dbg.info("Graph getManagedDevices (filter=\(filter ?? "nil"), limit=\(limit))", category: "graph")
+        guard let headers = await headers(for: .devices) else {
+            dbg.warn("Graph getManagedDevices — no auth headers, returning []", category: "graph")
+            return []
+        }
 
         var url = "\(baseUrl)/deviceManagement/managedDevices?$top=\(min(limit, config.graphPageSize))"
         if let filter = filter {

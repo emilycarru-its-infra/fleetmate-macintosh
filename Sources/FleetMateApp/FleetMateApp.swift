@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import FleetMateCore
 
 @main
@@ -48,15 +49,20 @@ class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published var secretsConfigured = false
     
+    // MARK: - Tab Navigation (set by Dashboard to switch tabs)
+    @Published var navigateToTab: String?
+    
+    // MARK: - Auth Manager
+    @Published var authManager: AuthManager
+    
     // MARK: - TDX SSO State
     @Published var showTdxSsoLogin = false
     @Published var tdxSsoAuthenticated = false
     @Published var tdxAuthenticatedUserName: String?
+    private var ssoViewModel: TdxSsoLoginViewModel?
     
-    // MARK: - Azure DevOps SSO State
-    @Published var showDevOpsSsoLogin = false
-    @Published var devOpsSsoAuthenticated = false
-    @Published var devOpsAuthenticatedUserName: String?
+    // MARK: - Azure DevOps Auth State (managed via az CLI)
+    @Published var devOpsAzLoginRunning = false
     
     // MARK: - Cached Data
     // Data caches with timestamps to avoid reloading on tab switches
@@ -87,20 +93,51 @@ class AppState: ObservableObject {
     lazy var devOpsService: AzureDevOpsService = AzureDevOpsService(config: config)
     lazy var tdxService: TdxService = TdxService(config: config)
     lazy var snipeService: SnipeService = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
+    lazy var reportMateService: ReportMateService = ReportMateService(config: config)
 
     init() {
+        dbg.info("AppState init starting", category: "startup")
+
         // Load config - secrets are loaded from secrets.yaml automatically
+        let loadedConfig: FleetMateConfig
         do {
-            self.config = try FleetMateConfig.load()
+            loadedConfig = try FleetMateConfig.load()
+            dbg.info("Config loaded OK", category: "startup")
         } catch {
-            self.config = FleetMateConfig()
-            self.errorMessage = "Failed to load config: \(error.localizedDescription)"
+            loadedConfig = FleetMateConfig()
+            dbg.error("Config load FAILED: \(error.localizedDescription)", category: "startup")
         }
-        
+        self.config = loadedConfig
+        self.authManager = AuthManager(config: loadedConfig)
+
+        // Log configuration status
+        dbg.info("Graph configured:  \(config.isGraphConfigured)  (tenantId=\(config.graphTenantId != nil), devicesGraphId=\(config.devicesGraphId != nil), systemsGraphId=\(config.systemsGraphId != nil))", category: "config")
+        dbg.info("DevOps configured: \(config.isDevOpsConfigured) (org=\(config.devopsOrganization ?? "nil"), project=\(config.devopsProject ?? "nil"), clientId=\(config.devopsClientId != nil), tenantId=\(config.devopsTenantId != nil))", category: "config")
+        dbg.info("TDX configured:    \(config.isTdxConfigured)    (baseUrl=\(config.tdxBaseUrl != nil), appId=\(config.tdxAppId != nil), authMethod=\(config.tdxAuthMethod))", category: "config")
+        dbg.info("Snipe configured:  \(config.isSnipeConfigured)  (url=\(config.snipeUrl != nil), apiKey=\(config.snipeApiKey != nil))", category: "config")
+
+        // Tasks providers
+        if let tasks = config.tasks {
+            let azdo = tasks.providers.azdevops
+            let gh = tasks.providers.github
+            let gitea = tasks.providers.gitea
+            dbg.info("Tasks providers: azdevops.enabled=\(azdo?.enabled ?? false) github.enabled=\(gh?.enabled ?? false) gitea.enabled=\(gitea?.enabled ?? false)", category: "config")
+            if let az = azdo {
+                dbg.info("  azdevops: org=\(az.organization ?? "nil") project=\(az.project ?? "nil")", category: "config")
+            }
+            if let g = gh {
+                dbg.info("  github: org=\(g.organization ?? "nil") owner=\(g.owner ?? "nil") repo=\(g.repo ?? "nil") projectNumber=\(g.projectNumber.map(String.init) ?? "nil")", category: "config")
+            }
+        } else {
+            dbg.warn("No tasks section in config", category: "config")
+        }
+
         // Check if secrets are configured based on loaded config
         secretsConfigured = config.isGraphConfigured || 
                            config.isSnipeConfigured || 
                            config.isTdxConfigured
+        dbg.info("secretsConfigured = \(secretsConfigured)", category: "startup")
+        dbg.info("Log file: \(dbg.logFilePath)", category: "startup")
     }
 
     func reloadConfig() {
@@ -117,7 +154,11 @@ class AppState: ObservableObject {
             devOpsService = AzureDevOpsService(config: config)
             tdxService = TdxService(config: config)
             snipeService = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
+            reportMateService = ReportMateService(config: config)
             errorMessage = nil
+            
+            // Re-bootstrap auth manager
+            authManager.bootstrapFromConfig()
             
             // Clear caches on config reload
             invalidateAllCaches()
@@ -230,15 +271,23 @@ class AppState: ObservableObject {
     
     /// Preload all data sources concurrently in the background
     func preloadAllData() async {
+        dbg.info("preloadAllData starting", category: "preload")
+        dbg.info("  Graph configured:  \(config.isGraphConfigured), cache valid: \(isDevicesCacheValid)", category: "preload")
+        dbg.info("  Snipe configured:  \(config.isSnipeConfigured), cache valid: \(isAssetsCacheValid)", category: "preload")
+        dbg.info("  TDX configured:    \(config.isTdxConfigured), cache valid: \(isTicketsCacheValid)", category: "preload")
+        dbg.info("  Systems Graph:     \(config.isSystemsGraphConfigured), cache valid: \(isGroupsCacheValid)", category: "preload")
+
         await withTaskGroup(of: Void.self) { group in
             // Preload devices
             if config.isGraphConfigured && !isDevicesCacheValid {
                 group.addTask { @MainActor in
+                    dbg.info("Preloading devices...", category: "preload")
                     do {
-                        let devices = try await self.graphService.getManagedDevices(limit: 500)
+                        let devices = try await self.graphService.getManagedDevices(limit: 10000)
                         self.updateDevicesCache(devices)
+                        dbg.info("Devices preloaded: \(devices.count) devices", category: "preload")
                     } catch {
-                        print("[Preload] Devices failed: \(error.localizedDescription)")
+                        dbg.error("Devices preload FAILED: \(error)", category: "preload")
                     }
                 }
             }
@@ -246,11 +295,13 @@ class AppState: ObservableObject {
             // Preload assets
             if config.isSnipeConfigured && !isAssetsCacheValid {
                 group.addTask { @MainActor in
+                    dbg.info("Preloading assets...", category: "preload")
                     do {
                         let assets = try await self.snipeService.getAllAssets()
                         self.updateAssetsCache(assets)
+                        dbg.info("Assets preloaded: \(assets.count) assets", category: "preload")
                     } catch {
-                        print("[Preload] Assets failed: \(error.localizedDescription)")
+                        dbg.error("Assets preload FAILED: \(error)", category: "preload")
                     }
                 }
             }
@@ -258,6 +309,7 @@ class AppState: ObservableObject {
             // Preload tickets
             if config.isTdxConfigured && !isTicketsCacheValid {
                 group.addTask { @MainActor in
+                    dbg.info("Preloading tickets...", category: "preload")
                     do {
                         var search = TicketSearchRequest(maxResults: 500)
                         if let groupId = self.config.tdxResponsibleGroupId {
@@ -265,8 +317,9 @@ class AppState: ObservableObject {
                         }
                         let tickets = try await self.tdxService.searchTickets(search: search, maxResults: 500)
                         self.updateTicketsCache(tickets)
+                        dbg.info("Tickets preloaded: \(tickets.count) tickets", category: "preload")
                     } catch {
-                        print("[Preload] Tickets failed: \(error.localizedDescription)")
+                        dbg.error("Tickets preload FAILED: \(error)", category: "preload")
                     }
                 }
             }
@@ -274,15 +327,26 @@ class AppState: ObservableObject {
             // Preload groups
             if config.isSystemsGraphConfigured && !isGroupsCacheValid {
                 group.addTask { @MainActor in
+                    dbg.info("Preloading groups...", category: "preload")
                     do {
                         let groups = try await self.graphService.searchGroups("Devices-", limit: 100)
                         self.updateGroupsCache(groups)
+                        dbg.info("Groups preloaded: \(groups.count) groups", category: "preload")
                     } catch {
-                        print("[Preload] Groups failed: \(error.localizedDescription)")
+                        dbg.error("Groups preload FAILED: \(error)", category: "preload")
                     }
                 }
             }
         }
+        dbg.info("preloadAllData finished", category: "preload")
+
+        // Probe auth status for all configured systems
+        await authManager.probeAll(
+            graphService: graphService,
+            tdxService: tdxService,
+            snipeService: snipeService,
+            devOpsService: devOpsService
+        )
     }
     
     // MARK: - TDX SSO Authentication
@@ -292,9 +356,50 @@ class AppState: ObservableObject {
         return tdxService.requiresSsoLogin && !tdxSsoAuthenticated
     }
     
-    /// Trigger TDX SSO login flow
+    /// Phase 1: Attempt silent SSO authentication (no UI).
+    /// Tries a URLSession-only check — succeeds when a valid Shibboleth/Platform
+    /// SSO session is already present in the system.
+    /// If it fails, does NOT show any UI. The interactive Phase 2 sheet is
+    /// triggered later, only when the user navigates to a tab that needs auth.
+    func attemptSilentTdxSso() {
+        guard ssoViewModel == nil else { return }
+
+        let viewModel = TdxSsoLoginViewModel(config: config)
+        ssoViewModel = viewModel
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let silentSuccess = await viewModel.performSilentAuthentication()
+            self.ssoViewModel = nil
+
+            if silentSuccess,
+               let result = viewModel.authResult,
+               result.success,
+               let token = result.token {
+                // Got JWT from cached session — fully silent
+                let expiry = Date().addingTimeInterval(23 * 60 * 60)
+                self.handleTdxSsoSuccess(
+                    token: token,
+                    expiry: expiry,
+                    userId: result.userEmail,
+                    userName: result.userName
+                )
+            }
+            // Phase 1 failed — do nothing. Phase 2 is triggered on-demand
+            // when the user navigates to a tab that requires TDX auth.
+        }
+    }
+
+    /// Phase 2: Trigger interactive TDX SSO login (shows WebView sheet).
+    /// Called when the user navigates to a tab that requires TDX authentication
+    /// and silent Phase 1 didn't succeed.
     func triggerTdxSsoLogin() {
         showTdxSsoLogin = true
+    }
+
+    /// Tear down any in-progress silent SSO attempt
+    private func cleanupSsoWindow() {
+        ssoViewModel = nil
     }
     
     /// Handle successful SSO authentication
@@ -303,6 +408,7 @@ class AppState: ObservableObject {
         tdxSsoAuthenticated = true
         tdxAuthenticatedUserName = userName
         showTdxSsoLogin = false
+        authManager.update(.tdx, state: .valid(user: userName, expiry: expiry))
         
         // Invalidate tickets cache to reload with new auth
         invalidateTicketsCache()
@@ -313,6 +419,7 @@ class AppState: ObservableObject {
         showTdxSsoLogin = false
         if let error = error {
             errorMessage = "TDX SSO login failed: \(error)"
+            authManager.update(.tdx, state: .failed(message: error))
         }
     }
     
@@ -321,43 +428,34 @@ class AppState: ObservableObject {
         tdxService.clearSsoToken()
         tdxSsoAuthenticated = false
         tdxAuthenticatedUserName = nil
+        authManager.update(.tdx, state: .configured)
         invalidateTicketsCache()
     }
     
     // MARK: - Azure DevOps SSO Authentication
     
-    /// Check if AzDO SSO login is available (client_id + tenant_id configured)
+    /// True if `az` CLI is installed (DevOps auth is always via az login)
     var isDevOpsSsoConfigured: Bool {
-        config.devopsClientId != nil && config.devopsTenantId != nil
+        FileManager.default.fileExists(atPath: "/opt/homebrew/bin/az") ||
+        FileManager.default.fileExists(atPath: "/usr/local/bin/az")
     }
-    
-    /// Trigger AzDO SSO login flow
+
+    /// Launch `az login` — az CLI opens the browser and handles OAuth2 itself.
     func triggerDevOpsSsoLogin() {
-        showDevOpsSsoLogin = true
-    }
-    
-    /// Handle successful AzDO SSO authentication
-    func handleDevOpsSsoSuccess(token: String, expiry: Date, userName: String?) {
-        devOpsService.setSsoToken(token, expiry: expiry, userId: nil, userName: userName)
-        devOpsSsoAuthenticated = true
-        devOpsAuthenticatedUserName = userName
-        showDevOpsSsoLogin = false
-        invalidateWorkItemsCache()
-    }
-    
-    /// Handle AzDO SSO failure
-    func handleDevOpsSsoFailure(_ error: String?) {
-        showDevOpsSsoLogin = false
-        if let error = error {
-            errorMessage = "Azure DevOps SSO login failed: \(error)"
+        guard !devOpsAzLoginRunning else { return }
+        devOpsAzLoginRunning = true
+        Task {
+            await authManager.loginDevOps(devOpsService: devOpsService)
+            devOpsAzLoginRunning = false
+            invalidateWorkItemsCache()
         }
     }
-    
-    /// Sign out of AzDO SSO
+
+    /// Run `az logout` and reset DevOps auth state.
     func signOutDevOpsSso() {
-        devOpsService.clearSsoToken()
-        devOpsSsoAuthenticated = false
-        devOpsAuthenticatedUserName = nil
-        invalidateWorkItemsCache()
+        Task {
+            await authManager.logoutDevOps(devOpsService: devOpsService)
+            invalidateWorkItemsCache()
+        }
     }
 }

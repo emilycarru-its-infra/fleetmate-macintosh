@@ -1,138 +1,103 @@
 import SwiftUI
 import FleetMateCore
 
+// MARK: - View Mode
+
 enum BoardsViewMode: String, CaseIterable {
     case board = "Board"
     case list = "List"
 }
 
+// MARK: - Main View
+
 struct BoardsView: View {
     @EnvironmentObject var appState: AppState
+
+    // View state
     @State private var viewMode: BoardsViewMode = .board
     @State private var allTasks: [UnifiedTask] = []
     @State private var buckets: [String] = []
     @State private var isLoading = false
     @State private var searchText = ""
-    @State private var filterProvider: String?
-    @State private var filterBucket: String?
+    @State private var filterProvider: String? = nil
+    @State private var filterBucket: String? = nil
     @State private var showClosed = false
-    @State private var selectedTask: UnifiedTask?
+    @State private var selectedTask: UnifiedTask? = nil
     @State private var isSyncing = false
     @State private var showSyncAlert = false
     @State private var syncMessage = ""
+    @State private var syncEnabled = false
 
-    // List mode state (AzDO work items)
-    @State private var listSearchText = ""
-    @State private var listFilterState: String?
-    @State private var isLoadingList = false
+    // GitHub Projects info (for New Issue / New Project)
+    @State private var currentProjectId: String? = nil
+    @State private var currentGhConfig: GitHubProviderConfig? = nil
+    @State private var projectStatusField: GitHubProjectField? = nil
+    @State private var isLoadingGhInfo = false
 
-    var workItems: [WorkItem] { appState.cachedWorkItems }
+    // Create sheets
+    @State private var showCreateIssue = false
+    @State private var showCreateProject = false
+    @State private var showCreateWorkItem = false
 
-    var filteredWorkItems: [WorkItem] {
-        var result = workItems
-        if let state = listFilterState {
-            result = result.filter { $0.fields?.state?.lowercased() == state.lowercased() }
-        }
-        if !listSearchText.isEmpty {
-            result = result.filter {
-                ($0.fields?.title?.localizedCaseInsensitiveContains(listSearchText) ?? false) ||
-                "\($0.id)".contains(listSearchText)
-            }
-        }
-        return result
+    // Computed: can we create GitHub issues? (need owner + repo)
+    private var canCreateIssue: Bool {
+        guard let c = currentGhConfig else { return false }
+        let owner = c.owner ?? c.organization ?? ""
+        return !owner.isEmpty
     }
+
+    // Computed: can we create DevOps work items?
+    private var canCreateWorkItem: Bool {
+        guard let azdo = (try? FleetMateConfig.load())?.tasks?.providers.azdevops else { return false }
+        return azdo.enabled
+    }
+
+    // Computed: can we create projects? (need at least an owner)
+    private var canCreateProject: Bool {
+        guard let c = currentGhConfig else { return false }
+        let owner = c.organization ?? c.owner ?? ""
+        return !owner.isEmpty
+    }
+
+    // MARK: - Filtering
 
     private var filteredTasks: [UnifiedTask] {
         var result = allTasks
-        
-        if !searchText.isEmpty {
-            result = result.filter {
-                $0.title.localizedCaseInsensitiveContains(searchText) ||
-                ($0.description?.localizedCaseInsensitiveContains(searchText) ?? false)
-            }
+        if let provider = filterProvider {
+            result = result.filter { $0.provider == provider }
         }
-        
-        if let bucket = filterBucket, bucket != "All Buckets" {
+        if let bucket = filterBucket {
             result = result.filter { $0.bucket == bucket }
         }
-        
+        if !showClosed {
+            result = result.filter { $0.state != .closed }
+        }
+        if !searchText.isEmpty {
+            let q = searchText.lowercased()
+            result = result.filter {
+                $0.title.lowercased().contains(q) ||
+                ($0.description?.lowercased().contains(q) ?? false)
+            }
+        }
         return result
     }
-    
-    private var openTasks: [UnifiedTask] {
-        filteredTasks.filter { $0.state == .open }
-    }
-    
-    private var inProgressTasks: [UnifiedTask] {
-        filteredTasks.filter { $0.state == .inProgress }
-    }
-    
-    private var closedTasks: [UnifiedTask] {
-        let closed = filteredTasks.filter { $0.state == .closed }
-        return showClosed ? closed : Array(closed.prefix(10))
-    }
+
+    private var openTasks: [UnifiedTask]       { filteredTasks.filter { $0.state == .open } }
+    private var inProgressTasks: [UnifiedTask] { filteredTasks.filter { $0.state == .inProgress } }
+    private var closedTasks: [UnifiedTask]     { filteredTasks.filter { $0.state == .closed } }
+
+    // MARK: - Body
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header
-            HStack {
-                VStack(alignment: .leading) {
-                    Text("Projects")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                    Text("Unified task management across all providers")
-                        .foregroundColor(.secondary)
-                }
-
-                Spacer()
-
-                // AzDO SSO status/button
-                if appState.devOpsSsoAuthenticated, let user = appState.devOpsAuthenticatedUserName {
-                    HStack(spacing: 4) {
-                        Image(systemName: "person.crop.circle.badge.checkmark")
-                            .foregroundColor(.green)
-                        Text(user)
-                            .font(.caption)
-                        Button(action: { appState.signOutDevOpsSso() }) {
-                            Image(systemName: "rectangle.portrait.and.arrow.right")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Sign out of Azure DevOps")
-                    }
-                } else if appState.isDevOpsSsoConfigured {
-                    Button(action: { appState.triggerDevOpsSsoLogin() }) {
-                        Label("Sign In", systemImage: "person.crop.circle.badge.questionmark")
-                    }
-                    .help("Sign in to Azure DevOps via SSO")
-                }
-            }
-            .padding()
-
-            // View mode toggle row — toggle on the left
-            HStack(spacing: 12) {
-                Picker("", selection: $viewMode) {
-                    Text("Board").tag(BoardsViewMode.board)
-                    Text("List").tag(BoardsViewMode.list)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 140)
-                Spacer()
-            }
-            .padding(.horizontal)
-            .padding(.bottom, 4)
-
-            // Content based on view mode
-            switch viewMode {
-            case .board:
-                boardContent
-            case .list:
-                listContent
-            }
+            unifiedToolbar
+            Divider()
+            contentArea
         }
         .task {
             if allTasks.isEmpty {
                 loadTasks()
+                loadGhProjectInfo()
             }
         }
         .alert("Sync Complete", isPresented: $showSyncAlert) {
@@ -140,238 +105,403 @@ struct BoardsView: View {
         } message: {
             Text(syncMessage)
         }
-        .sheet(item: $selectedTask) { task in
-            TaskDetailSheet(task: task)
+        .sheet(isPresented: $showCreateIssue) {
+            if let ghConfig = currentGhConfig {
+                CreateIssueView(
+                    config: ghConfig,
+                    projectId: currentProjectId,
+                    statusField: projectStatusField,
+                    onCreated: { loadTasks() }
+                )
+            }
+        }
+        .sheet(isPresented: $showCreateWorkItem) {
+            CreateWorkItemView(onCreated: { loadTasks() })
+        }
+        .sheet(isPresented: $showCreateProject) {
+            if let ghConfig = currentGhConfig {
+                CreateProjectView(
+                    config: ghConfig,
+                    onCreated: { loadGhProjectInfo() }
+                )
+            }
         }
     }
 
-    // MARK: - Board Content (Kanban)
+    // MARK: - Unified Single-Row Toolbar
 
-    private var boardContent: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Board toolbar
-            HStack {
-                // Provider filter
-                Picker("Provider", selection: $filterProvider) {
-                    Text("All Providers").tag(nil as String?)
-                    Text("Azure DevOps").tag("azdo" as String?)
-                    Text("GitHub").tag("github" as String?)
-                    Text("Gitea").tag("gitea" as String?)
+    private var unifiedToolbar: some View {
+        HStack(spacing: 8) {
+            // Board / List toggle
+            Picker("", selection: $viewMode) {
+                Text("Board").tag(BoardsViewMode.board)
+                Text("List").tag(BoardsViewMode.list)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 120)
+
+            Divider().frame(height: 20)
+
+            // Provider filter
+            Picker("Provider", selection: $filterProvider) {
+                Text("Backend").tag(nil as String?)
+                Text("DevOps").tag("azdo" as String?)
+                Text("GitHub").tag("github" as String?)
+                Text("Gitea").tag("gitea" as String?)
+                Text("TDX").tag("tdx" as String?)
+            }
+            .pickerStyle(.menu)
+            .frame(width: 140)
+            .labelsHidden()
+            .onChange(of: filterProvider) { loadTasks() }
+
+            // Bucket filter (only when buckets exist)
+            if !buckets.isEmpty {
+                Picker("Bucket", selection: $filterBucket) {
+                    Text("Statuses").tag(nil as String?)
+                    ForEach(buckets, id: \.self) { Text($0).tag($0 as String?) }
                 }
                 .pickerStyle(.menu)
-                .frame(width: 140)
-                .onChange(of: filterProvider) {
-                    loadTasks()
-                }
+                .frame(width: 130)
+                .labelsHidden()
+            }
 
+            // Show Closed toggle
+            Toggle("Closed", isOn: $showClosed)
+                .toggleStyle(.checkbox)
+                .font(.subheadline)
+
+            Divider().frame(height: 20)
+
+            // Sync
+            if syncEnabled {
                 Button(action: syncTasks) {
-                    Label("Sync", systemImage: "arrow.triangle.2.circlepath")
+                    Image(systemName: "arrow.triangle.2.circlepath")
                 }
                 .disabled(isSyncing)
-
-                Button(action: loadTasks) {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(isLoading)
+                .help("Sync tasks to Planner / Markdown")
             }
-            .padding(.horizontal)
-            .padding(.bottom, 4)
 
-            // Search and filters
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("Search tasks...", text: $searchText)
-                    .textFieldStyle(.plain)
-
-                Picker("Bucket", selection: $filterBucket) {
-                    Text("All Buckets").tag(nil as String?)
-                    ForEach(buckets, id: \.self) { bucket in
-                        Text(bucket).tag(bucket as String?)
+            // New item (backend chooser)
+            Menu {
+                if canCreateWorkItem {
+                    Button(action: { showCreateWorkItem = true }) {
+                        Label("DevOps Work Item", systemImage: "building.2")
                     }
                 }
-                .pickerStyle(.menu)
-                .frame(width: 150)
-
-                Toggle("Show Closed", isOn: $showClosed)
-
-                Text("\(filteredTasks.count) tasks")
-                    .foregroundColor(.secondary)
-                    .font(.caption)
+                if canCreateIssue {
+                    Button(action: { showCreateIssue = true }) {
+                        Label("GitHub Issue", systemImage: "chevron.left.forwardslash.chevron.right")
+                    }
+                }
+            } label: {
+                Image(systemName: "plus")
             }
-            .padding(8)
+            .disabled(!canCreateIssue && !canCreateWorkItem)
+            .help("New item")
+
+            // New GitHub Project
+            Button(action: { showCreateProject = true }) {
+                Image(systemName: "folder.badge.plus")
+            }
+            .disabled(!canCreateProject)
+            .help(canCreateProject ? "New GitHub Project" : "Set organization in GitHub config")
+
+            Spacer()
+
+            // Refresh — top right
+            Button(action: { loadTasks(); loadGhProjectInfo() }) {
+                Image(systemName: "arrow.clockwise")
+            }
+            .disabled(isLoading || isLoadingGhInfo)
+            .help("Refresh")
+            .keyboardShortcut("r", modifiers: .command)
+
+            // Search field — far right
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                TextField("Search...", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .frame(width: 180)
+                if !searchText.isEmpty {
+                    Button(action: { searchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
             .background(Color.secondary.opacity(0.1))
             .cornerRadius(8)
-            .padding(.horizontal)
 
-            // Kanban Board
+            Text("\(filteredTasks.count)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .monospacedDigit()
+                .frame(minWidth: 24, alignment: .trailing)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+    }
+
+    // MARK: - Content Area
+
+    @ViewBuilder
+    private var contentArea: some View {
+        switch viewMode {
+        case .board: boardWithSidebar
+        case .list:  listWithSidebar
+        }
+    }
+
+    // MARK: - Board (Kanban + Inline Sidebar 60/40)
+
+    private var boardWithSidebar: some View {
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                boardContent
+                    .frame(width: selectedTask != nil ? geometry.size.width * 0.6 : geometry.size.width)
+                if selectedTask != nil {
+                    Divider()
+                    taskDetailSidebar
+                        .frame(width: geometry.size.width * 0.4)
+                }
+            }
+        }
+    }
+
+    private var boardContent: some View {
+        Group {
             if isLoading {
                 VStack {
                     ProgressView("Loading tasks...")
-                        .padding(.top, 50)
+                        .padding(.top, 60)
                     Spacer()
                 }
-            } else {
-                HStack(alignment: .top, spacing: 16) {
-                    KanbanColumn(title: "Open", color: .green, tasks: openTasks, onSelect: selectTask)
-                    KanbanColumn(title: "In Progress", color: .blue, tasks: inProgressTasks, onSelect: selectTask)
-                    KanbanColumn(title: "Closed", color: .gray, tasks: closedTasks, onSelect: selectTask)
-                }
-                .padding()
-            }
-        }
-    }
-
-    // MARK: - List Content (AzDO Work Items)
-
-    private var listContent: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // List toolbar
-            HStack {
-                Picker("State", selection: $listFilterState) {
-                    Text("All").tag(nil as String?)
-                    Text("Active").tag("Active" as String?)
-                    Text("Resolved").tag("Resolved" as String?)
-                    Text("Closed").tag("Closed" as String?)
-                }
-                .pickerStyle(.menu)
-                .frame(width: 120)
-
-                Button(action: loadWorkItems) {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(isLoadingList)
-            }
-            .padding(.horizontal)
-            .padding(.bottom, 4)
-
-            // Search
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("Search work items...", text: $listSearchText)
-                    .textFieldStyle(.plain)
-                if !filteredWorkItems.isEmpty {
-                    Text("\(filteredWorkItems.count) items")
-                        .foregroundColor(.secondary)
-                        .font(.caption)
-                }
-            }
-            .padding(8)
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(8)
-            .padding(.horizontal)
-
-            // Content
-            if !appState.config.isDevOpsConfigured {
+            } else if allTasks.isEmpty {
                 VStack {
                     ContentUnavailableView(
-                        "Not Configured",
-                        systemImage: "gear.badge.xmark",
-                        description: Text("Azure DevOps is not configured. Set DEVOPS_ORGANIZATION and DEVOPS_PROJECT in your config.")
+                        "No Tasks",
+                        systemImage: "plus.circle",
+                        description: Text("Your project has no items yet. Create an issue to get started.")
                     )
                     Spacer()
                 }
-            } else if isLoadingList {
-                VStack {
-                    ProgressView("Loading work items...")
-                        .padding(.top, 50)
-                    Spacer()
-                }
-            } else if filteredWorkItems.isEmpty {
-                VStack {
-                    ContentUnavailableView.search(text: listSearchText)
-                        .padding(.top, 30)
-                    Spacer()
-                }
             } else {
-                Table(filteredWorkItems) {
-                    TableColumn("ID") { item in
-                        Text(verbatim: "#\(item.id)")
-                            .font(.system(.body, design: .monospaced))
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: 16) {
+                        KanbanColumn(
+                            title: "Open", color: .green,
+                            tasks: openTasks, selectedTask: selectedTask,
+                            onSelect: { selectedTask = $0 }
+                        )
+                        KanbanColumn(
+                            title: "In Progress", color: .blue,
+                            tasks: inProgressTasks, selectedTask: selectedTask,
+                            onSelect: { selectedTask = $0 }
+                        )
+                        if showClosed {
+                            KanbanColumn(
+                                title: "Closed", color: .gray,
+                                tasks: closedTasks, selectedTask: selectedTask,
+                                onSelect: { selectedTask = $0 }
+                            )
+                        }
                     }
-                    .width(min: 60, ideal: 80)
-
-                    TableColumn("Type") { item in
-                        WorkItemTypeBadge(type: item.fields?.workItemType)
-                    }
-                    .width(min: 80, ideal: 100)
-
-                    TableColumn("Title") { item in
-                        Text(item.fields?.title ?? "-")
-                    }
-                    .width(min: 200, ideal: 300)
-
-                    TableColumn("State") { item in
-                        WorkItemStateBadge(state: item.fields?.state)
-                    }
-                    .width(min: 80, ideal: 100)
-
-                    TableColumn("Priority") { item in
-                        PriorityIndicator(priority: item.fields?.priority)
-                    }
-                    .width(min: 60, ideal: 80)
-
-                    TableColumn("Assigned To") { item in
-                        Text(item.fields?.assignedTo?.displayName ?? "-")
-                    }
-                    .width(min: 120, ideal: 150)
+                    .padding()
                 }
-            }
-        }
-        .task {
-            if !appState.isWorkItemsCacheValid {
-                loadWorkItems()
             }
         }
     }
-    
+
+    // MARK: - List (All Providers + Inline Sidebar 60/40)
+
+    private var listWithSidebar: some View {
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                listContent
+                    .frame(width: selectedTask != nil ? geometry.size.width * 0.6 : geometry.size.width)
+                if selectedTask != nil {
+                    Divider()
+                    taskDetailSidebar
+                        .frame(width: geometry.size.width * 0.4)
+                }
+            }
+        }
+    }
+
+    private var listContent: some View {
+        Group {
+            if isLoading {
+                VStack {
+                    ProgressView("Loading tasks...")
+                        .padding(.top, 60)
+                    Spacer()
+                }
+            } else if filteredTasks.isEmpty {
+                VStack {
+                    if !searchText.isEmpty {
+                        ContentUnavailableView.search(text: searchText)
+                    } else {
+                        ContentUnavailableView(
+                            "No Tasks",
+                            systemImage: "checkmark.circle",
+                            description: Text("No tasks match the current filters.")
+                        )
+                    }
+                    Spacer()
+                }
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(filteredTasks, id: \.compositeKey) { task in
+                            TaskListRow(
+                                task: task,
+                                isSelected: selectedTask?.compositeKey == task.compositeKey
+                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture { selectedTask = task }
+                            Divider().padding(.leading, 60)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Inline Task Detail Sidebar
+
+    @ViewBuilder
+    private var taskDetailSidebar: some View {
+        if let task = selectedTask {
+            TaskDetailSidebarView(
+                task: task,
+                ghConfig: currentGhConfig,
+                onClose: { selectedTask = nil }
+            )
+        } else {
+            VStack {
+                Spacer()
+                Image(systemName: "square.text.square")
+                    .font(.system(size: 40))
+                    .foregroundColor(.secondary.opacity(0.4))
+                Text("No Task Selected")
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    // MARK: - Load Tasks (all providers via registry)
+
     private func loadTasks() {
         Task {
             isLoading = true
             defer { isLoading = false }
-            
             do {
+                dbg.info("BoardsView.loadTasks starting", category: "boards")
                 let config = try FleetMateConfig.load()
-                let registry = try await createRegistry(config: config)
-                
-                // Load buckets
-                var allBuckets: [String] = []
-                for provider in await registry.allProviders {
-                    if await provider.isEnabled {
-                        let providerBuckets = try await provider.listBuckets()
-                        allBuckets.append(contentsOf: providerBuckets.map { $0.name })
-                    }
-                }
+
+                // Check if sync destinations are configured
+                syncEnabled = (config.tasks?.planner != nil) || (config.tasks?.markdown != nil)
+
+                let registry = await createRegistry(config: config)
+
+                let bucketsByProvider = await registry.listAllBuckets()
+                let allBuckets = bucketsByProvider.values.flatMap { $0.map { $0.name } }
                 buckets = Array(Set(allBuckets)).sorted()
-                
-                // Load tasks
+                dbg.info("BoardsView: \(buckets.count) buckets from \(bucketsByProvider.count) providers", category: "boards")
+
                 var filter = TaskFilter()
                 filter.includeClosed = true
                 filter.limit = 100
-                
+
                 if let provider = filterProvider {
+                    dbg.info("BoardsView: fetching tasks from provider '\(provider)'", category: "boards")
                     allTasks = await registry.listTasks(filter: filter, providerIds: [provider])
                 } else {
+                    dbg.info("BoardsView: fetching tasks from ALL providers", category: "boards")
                     allTasks = await registry.listTasks(filter: filter)
                 }
+                dbg.info("BoardsView: loaded \(allTasks.count) total tasks", category: "boards")
+                for (provider, count) in Dictionary(grouping: allTasks, by: \.provider).mapValues(\.count) {
+                    dbg.info("  provider '\(provider)': \(count) tasks", category: "boards")
+                }
             } catch {
+                dbg.error("BoardsView.loadTasks FAILED: \(error)", category: "boards")
                 appState.errorMessage = "Failed to load tasks: \(error.localizedDescription)"
             }
         }
     }
-    
+
+    // MARK: - Load GitHub Project Info (for New Issue / New Project context)
+
+    private func loadGhProjectInfo() {
+        Task {
+            isLoadingGhInfo = true
+            defer { isLoadingGhInfo = false }
+            do {
+                let config = try FleetMateConfig.load()
+                guard var ghConfig = config.tasks?.providers.github, ghConfig.enabled else { return }
+
+                let service = GitHubProjectsService(config: ghConfig)
+                guard try await service.authenticate() else { return }
+
+                let scope: ProjectScope
+                switch ghConfig.projectScope.lowercased() {
+                case "user": scope = .user
+                case "repository", "repo": scope = .repository
+                default: scope = .organization
+                }
+                let owner = ghConfig.organization ?? ghConfig.owner ?? ""
+
+                let projectId: String?
+                if let num = ghConfig.projectNumber {
+                    projectId = try await service.getProject(
+                        scope: scope, owner: owner, projectNumber: num, repo: ghConfig.repo)?.id
+                } else {
+                    projectId = try await service.listProjects(
+                        scope: scope, owner: owner, repo: ghConfig.repo, limit: 1).first?.id
+                }
+                currentProjectId = projectId
+                if let pid = projectId {
+                    projectStatusField = try await service.getStatusField(projectId: pid)
+
+                    // Auto-detect owner/repo from project items when not set in config
+                    if ghConfig.repo == nil || ghConfig.owner == nil {
+                        let items = try await service.listProjectItems(projectId: pid, limit: 10)
+                        if let repoPath = items.compactMap({ $0.content?.repository }).first {
+                            let parts = repoPath.split(separator: "/")
+                            if parts.count == 2 {
+                                if ghConfig.owner == nil { ghConfig.owner = String(parts[0]) }
+                                if ghConfig.repo == nil { ghConfig.repo = String(parts[1]) }
+                            }
+                        }
+                    }
+                }
+                currentGhConfig = ghConfig
+            } catch {
+                print("GitHub project info (non-fatal): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    // MARK: - Sync
+
     private func syncTasks() {
         Task {
             isSyncing = true
             defer { isSyncing = false }
-            
             do {
                 let config = try FleetMateConfig.load()
                 let openTasks = allTasks.filter { $0.state != .closed }
                 var messages: [String] = []
-                
-                // Try Planner sync
+
                 let plannerService = PlannerSyncService(config: config)
                 if await plannerService.isEnabled {
                     if try await plannerService.authenticate() {
@@ -379,19 +509,16 @@ struct BoardsView: View {
                         messages.append(result.message)
                     }
                 }
-                
-                // Try Markdown sync
+
                 let mdService = MarkdownSyncService(config: config)
                 if await mdService.isEnabled {
                     let result = try await mdService.syncBidirectional(providerTasks: openTasks)
                     messages.append(result.message)
                 }
-                
-                if messages.isEmpty {
-                    syncMessage = "No sync destinations configured. Enable Planner or Markdown sync in your config."
-                } else {
-                    syncMessage = messages.joined(separator: "\n")
-                }
+
+                syncMessage = messages.isEmpty
+                    ? "No sync destinations configured. Enable Planner or Markdown sync in your config."
+                    : messages.joined(separator: "\n")
                 showSyncAlert = true
             } catch {
                 syncMessage = "Sync failed: \(error.localizedDescription)"
@@ -399,114 +526,225 @@ struct BoardsView: View {
             }
         }
     }
-    
-    private func selectTask(_ task: UnifiedTask) {
-        selectedTask = task
-    }
 
-    private func loadWorkItems() {
-        guard appState.config.isDevOpsConfigured else { return }
-        Task {
-            isLoadingList = true
-            defer { isLoadingList = false }
-            do {
-                let items = try await appState.devOpsService.getWorkItems(limit: 100)
-                appState.updateWorkItemsCache(items)
-            } catch {
-                appState.errorMessage = "Failed to load work items: \(error.localizedDescription)"
-            }
-        }
-    }
-    
-    private func createRegistry(config: FleetMateConfig) async throws -> TaskProviderRegistry {
+    // MARK: - Registry Creation
+
+    private func createRegistry(config: FleetMateConfig) async -> TaskProviderRegistry {
+        dbg.info("createRegistry starting", category: "boards")
         let registry = TaskProviderRegistry()
-        
-        let azdo = AzureDevOpsTaskProvider(config: config)
-        let github = GitHubTaskProvider(config: config)
-        let gitea = GiteaTaskProvider(config: config)
-        
+        let azdo   = AzureDevOpsTaskProvider(config: config)
+        let github = GitHubProjectsTaskProvider(config: config.tasks?.providers.github ?? GitHubProviderConfig())
+        let gitea  = GiteaTaskProvider(config: config)
+
         await registry.registerProvider(azdo)
         await registry.registerProvider(github)
         await registry.registerProvider(gitea)
-        
-        for provider in await registry.allProviders {
-            if await provider.isEnabled {
-                _ = try await provider.authenticate()
-            }
+
+        dbg.info("Registered providers: azdo.enabled=\(await azdo.isEnabled) github.enabled=\(await github.isEnabled) gitea.enabled=\(await gitea.isEnabled)", category: "boards")
+
+        // Use the registry's built-in authenticateAll() which isolates per-provider failures
+        let authResults = await registry.authenticateAll()
+        for (id, success) in authResults {
+            dbg.info("Provider \(id) auth: \(success ? "OK" : "FAILED")", category: "boards")
         }
-        
         return registry
     }
 }
 
-// MARK: - Kanban Column
+// MARK: - Task List Row
+
+struct TaskListRow: View {
+    let task: UnifiedTask
+    var isSelected: Bool = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Provider icon badge
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(providerColor.opacity(0.15))
+                    .frame(width: 36, height: 36)
+                Image(systemName: providerSystemImage)
+                    .font(.system(size: 16))
+                    .foregroundColor(providerColor)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(task.title)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                    Spacer()
+                    Text(task.state.displayName)
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(stateColor.opacity(0.15))
+                        .foregroundColor(stateColor)
+                        .cornerRadius(4)
+                }
+                HStack(spacing: 8) {
+                    if let bucket = task.bucket {
+                        Text(bucket)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    ForEach(task.labels.prefix(3), id: \.self) { label in
+                        Text(label)
+                            .font(.caption2)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.15))
+                            .cornerRadius(3)
+                    }
+                    if !task.assignees.isEmpty {
+                        Spacer()
+                        HStack(spacing: 2) {
+                            Image(systemName: "person")
+                                .font(.caption2)
+                            Text(task.assignees.prefix(2).joined(separator: ", "))
+                                .font(.caption)
+                        }
+                        .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
+    }
+
+    private var stateColor: Color {
+        switch task.state {
+        case .open: return .green
+        case .inProgress: return .blue
+        case .closed: return .gray
+        }
+    }
+
+    private var providerColor: Color {
+        switch task.provider {
+        case "github": return .purple
+        case "azdo":   return .blue
+        case "gitea":  return .green
+        case "tdx":    return .orange
+        default:       return .secondary
+        }
+    }
+
+    private var providerSystemImage: String {
+        switch task.provider {
+        case "github": return "chevron.left.forwardslash.chevron.right"
+        case "azdo":   return "building.2"
+        case "gitea":  return "arrow.triangle.branch"
+        case "tdx":    return "ticket"
+        default:       return "square.and.pencil"
+        }
+    }
+}
+
+// MARK: - Kanban Column (with provider grouping within each column)
 
 struct KanbanColumn: View {
     let title: String
     let color: Color
     let tasks: [UnifiedTask]
+    let selectedTask: UnifiedTask?
     let onSelect: (UnifiedTask) -> Void
-    
+
+    private var groupedByProvider: [(provider: String, tasks: [UnifiedTask])] {
+        let providers = Array(Set(tasks.map(\.provider))).sorted()
+        return providers.map { p in (p, tasks.filter { $0.provider == p }) }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Column header
             HStack {
-                Circle()
-                    .fill(color)
-                    .frame(width: 10, height: 10)
-                Text(title)
-                    .fontWeight(.semibold)
-                Text("(\(tasks.count))")
-                    .foregroundColor(.secondary)
+                Circle().fill(color).frame(width: 10, height: 10)
+                Text(title).fontWeight(.semibold)
+                Text("(\(tasks.count))").foregroundColor(.secondary)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            
-            // Tasks
+
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    ForEach(tasks, id: \.compositeKey) { task in
-                        TaskCard(task: task)
-                            .onTapGesture {
-                                onSelect(task)
+                    if groupedByProvider.count > 1 {
+                        // Multiple providers — show section headers
+                        ForEach(groupedByProvider, id: \.provider) { group in
+                            HStack {
+                                Text(providerDisplayName(group.provider))
+                                    .font(.caption2)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.secondary)
+                                    .tracking(0.5)
+                                Spacer()
                             }
+                            .padding(.horizontal, 4)
+                            .padding(.top, 4)
+                            ForEach(group.tasks, id: \.compositeKey) { task in
+                                TaskCard(
+                                    task: task,
+                                    isSelected: selectedTask?.compositeKey == task.compositeKey
+                                )
+                                .onTapGesture { onSelect(task) }
+                            }
+                        }
+                    } else {
+                        // Single provider — no section header needed
+                        ForEach(tasks, id: \.compositeKey) { task in
+                            TaskCard(
+                                task: task,
+                                isSelected: selectedTask?.compositeKey == task.compositeKey
+                            )
+                            .onTapGesture { onSelect(task) }
+                        }
                     }
                 }
                 .padding(.horizontal, 8)
                 .padding(.bottom, 8)
             }
         }
-        .background(Color.secondary.opacity(0.1))
+        .background(Color.secondary.opacity(0.08))
         .cornerRadius(12)
-        .frame(minWidth: 250)
+        .frame(minWidth: 260)
+    }
+
+    private func providerDisplayName(_ provider: String) -> String {
+        switch provider {
+        case "github": return "GitHub"
+        case "azdo":   return "DevOps"
+        case "gitea":  return "Gitea"
+        case "tdx":    return "TDX"
+        default:       return provider.capitalized
+        }
     }
 }
 
-// MARK: - Task Card
+// MARK: - Task Card (with selection highlight)
 
 struct TaskCard: View {
     let task: UnifiedTask
-    
+    var isSelected: Bool = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top) {
                 Text(task.title)
                     .fontWeight(.medium)
                     .lineLimit(3)
-                
                 Spacer()
-                
                 Text(task.provider)
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
-            
             if let bucket = task.bucket {
                 Text(bucket)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
-            
             if !task.labels.isEmpty {
                 HStack(spacing: 4) {
                     ForEach(task.labels.prefix(3), id: \.self) { label in
@@ -519,7 +757,6 @@ struct TaskCard: View {
                     }
                 }
             }
-            
             if !task.assignees.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: "person")
@@ -533,125 +770,17 @@ struct TaskCard: View {
             }
         }
         .padding(10)
-        .background(Color.primary.opacity(0.05))
+        .background(isSelected ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.04))
         .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+        )
         .opacity(task.state == .closed ? 0.7 : 1.0)
     }
 }
 
-// MARK: - Task Detail Sheet
-
-struct TaskDetailSheet: View {
-    let task: UnifiedTask
-    @Environment(\.dismiss) private var dismiss
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("\(task.provider)#\(task.id)")
-                    .font(.headline)
-                    .foregroundColor(.secondary)
-                
-                Spacer()
-                
-                Button("Done") {
-                    dismiss()
-                }
-            }
-            
-            Text(task.title)
-                .font(.title2)
-                .fontWeight(.bold)
-            
-            HStack(spacing: 16) {
-                Label(task.state.rawValue, systemImage: stateIcon)
-                    .foregroundColor(stateColor)
-                
-                if let bucket = task.bucket {
-                    Label(bucket, systemImage: "folder")
-                }
-                
-                if let priority = task.priority {
-                    Label("P\(priority)", systemImage: "flag")
-                }
-            }
-            .font(.subheadline)
-            
-            Divider()
-            
-            if !task.labels.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Labels")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    HStack {
-                        ForEach(task.labels, id: \.self) { label in
-                            Text(label)
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.blue.opacity(0.2))
-                                .cornerRadius(4)
-                        }
-                    }
-                }
-            }
-            
-            if !task.assignees.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Assignees")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(task.assignees.joined(separator: ", "))
-                }
-            }
-            
-            if let description = task.description, !description.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Description")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    ScrollView {
-                        Text(description)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxHeight: 200)
-                }
-            }
-            
-            if let url = task.externalUrl, let urlObj = URL(string: url) {
-                Link(destination: urlObj) {
-                    Label("Open in Browser", systemImage: "arrow.up.right.square")
-                }
-                .buttonStyle(.borderedProminent)
-            }
-            
-            Spacer()
-        }
-        .padding()
-        .frame(minWidth: 400, minHeight: 300)
-    }
-    
-    private var stateIcon: String {
-        switch task.state {
-        case .open: return "circle"
-        case .inProgress: return "circle.lefthalf.filled"
-        case .closed: return "checkmark.circle.fill"
-        }
-    }
-    
-    private var stateColor: Color {
-        switch task.state {
-        case .open: return .green
-        case .inProgress: return .blue
-        case .closed: return .gray
-        }
-    }
-}
-
-// MARK: - Extensions
-
-// Note: UnifiedTask already conforms to Identifiable in FleetMateCore
+// MARK: - Preview
 
 #Preview {
     BoardsView()

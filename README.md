@@ -280,7 +280,7 @@ All credentials can be stored securely in macOS Keychain:
 - `reportMateUrl`, `reportMatePassphrase`
 - `snipeUrl`, `snipeApiKey`
 - `graphTenantId`, `graphClientId`, `graphClientSecret`
-- `devopsOrganization`, `devopsProject`, `devopsPat`
+- `devopsOrganization`, `devopsProject` (NO PAT — uses SSO only)
 - `tdxBaseUrl`, `tdxAppId`, `tdxBeid`, `tdxWebServicesKey`
 - `tdxUsername`, `tdxPassword`
 - `sshPrivateKey`, `sshKeyPath`, `sshDefaultUsername`, `sshKeyVaultName`

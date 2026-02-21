@@ -146,7 +146,7 @@ struct ListSubcommand: AsyncParsableCommand {
             ("ReportMate", [.reportMateUrl, .reportMatePassphrase]),
             ("Snipe-IT", [.snipeUrl, .snipeApiKey]),
             ("Microsoft Graph", [.graphTenantId, .graphClientId, .graphClientSecret]),
-            ("Azure DevOps", [.devopsOrganization, .devopsProject, .devopsPat]),
+            ("Azure DevOps", [.devopsOrganization, .devopsProject]),
             ("TDX (TeamDynamix)", [.tdxBaseUrl, .tdxBeid, .tdxAppId, .tdxUsername, .tdxPassword]),
             ("Secure Shell", [.sshPrivateKey, .sshKeyVaultName, .sshKeyPath])
         ]
@@ -231,11 +231,9 @@ struct ImportSubcommand: AsyncParsableCommand {
             ("GRAPH_CLIENT_ID", .graphClientId),
             ("GRAPH_CLIENT_SECRET", .graphClientSecret),
             ("AZURE_TENANT_ID", .graphTenantId),  // Alternative name
-            // DevOps
+            // DevOps (NO PAT — Azure DevOps uses SSO only)
             ("DEVOPS_ORGANIZATION", .devopsOrganization),
             ("DEVOPS_PROJECT", .devopsProject),
-            ("DEVOPS_PAT", .devopsPat),
-            ("AZURE_DEVOPS_EXT_PAT", .devopsPat),  // Alternative name
             // TDX
             ("TDX_BASE_URL", .tdxBaseUrl),
             ("TDX_BEID", .tdxBeid),
@@ -433,17 +431,17 @@ struct ValidateSubcommand: AsyncParsableCommand {
     
     private func validateDevOps(config: FleetMateConfig) async {
         print("Azure DevOps: ", terminator: "")
-        
-        guard config.devopsPat != nil else {
-            print("❌ Not configured".red)
+        // NO PAT — Azure DevOps uses SSO only (browser OAuth2 or Azure CLI with Platform SSO)
+        guard config.isDevOpsConfigured else {
+            print("❌ Not configured (need organization + project)".red)
             return
         }
         
         let service = AzureDevOpsService(config: config)
         if service.isConfigured {
-            print("✅ Configured (test connection during work item queries)".green)
+            print("✅ Configured (SSO auth, test connection during work item queries)".green)
         } else {
-            print("⚠️ Credentials set but not validated".yellow)
+            print("⚠️ Organization/project set but not validated".yellow)
         }
     }
     

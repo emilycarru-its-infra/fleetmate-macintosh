@@ -34,6 +34,9 @@ struct FleetMate: AsyncParsableCommand {
             
             // Unified task management (FleetMate Boards)
             TasksCommand.self,
+
+            // GitHub Projects v2 board and management
+            ProjectsCommand.self,
         ],
         defaultSubcommand: StatusCommand.self
     )

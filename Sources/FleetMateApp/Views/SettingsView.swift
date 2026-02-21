@@ -3,8 +3,27 @@ import FleetMateCore
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
+    @AppStorage("settings.selectedTab") private var selectedTabIndex: Int = 0
 
     var body: some View {
+        TabView(selection: $selectedTabIndex) {
+            generalTab
+                .tabItem {
+                    Label("General", systemImage: "gear")
+                }
+                .tag(0)
+
+            AuthSettingsView()
+                .environmentObject(appState)
+                .tabItem {
+                    Label("Authentication", systemImage: "lock.shield")
+                }
+                .tag(1)
+        }
+        .frame(minWidth: 560, maxWidth: 560, minHeight: 400, idealHeight: 620, maxHeight: 900)
+    }
+
+    private var generalTab: some View {
         Form {
             Section("Configuration") {
                 LabeledContent("Config File") {
@@ -27,7 +46,6 @@ struct SettingsView: View {
             Section("Azure DevOps") {
                 ConfigRow(label: "Organization", value: appState.config.devopsOrganization, isSecret: false)
                 ConfigRow(label: "Project", value: appState.config.devopsProject, isSecret: false)
-                ConfigRow(label: "PAT", value: appState.config.devopsPat, isSecret: true)
             }
 
             Section("TeamDynamix") {
@@ -53,7 +71,6 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 500, height: 600)
     }
 }
 

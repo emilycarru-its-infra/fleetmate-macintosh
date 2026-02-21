@@ -51,6 +51,8 @@ class AppState: ObservableObject {
     
     // MARK: - Tab Navigation (set by Dashboard to switch tabs)
     @Published var navigateToTab: String?
+    @Published var navigateToDeviceId: String?
+    @Published var navigateToTicketId: Int?
     
     // MARK: - Auth Manager
     @Published var authManager: AuthManager

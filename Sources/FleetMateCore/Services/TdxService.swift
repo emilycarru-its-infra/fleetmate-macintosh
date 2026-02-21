@@ -97,22 +97,25 @@ public class TdxService {
 
     private func getAccessToken() async throws -> String? {
         let authMethod = config.tdxAuthMethod
+        dbg.debug("TDX getAccessToken (method=\(authMethod), ssoValid=\(ssoToken != nil && Date() < ssoTokenExpiry))", category: "tdx-auth")
         
         // Check for valid SSO token first (if SSO is configured)
         if authMethod == .browserSSO || authMethod == .auto {
             if let token = ssoToken, !token.isEmpty, Date() < ssoTokenExpiry {
+                dbg.info("TDX using SSO token (expires in \(Int(ssoTokenExpiry.timeIntervalSinceNow))s)", category: "tdx-auth")
                 return token
             }
             
             // If browserSSO is required and no valid token, return nil
             if authMethod == .browserSSO {
-                print("TDX SSO authentication required but no valid token available.")
+                dbg.warn("TDX browserSSO required but no valid SSO token", category: "tdx-auth")
                 return nil
             }
         }
         
         // Check cached service account / password token
         if let token = cachedToken, Date() < tokenExpiry {
+            dbg.debug("TDX using cached service token", category: "tdx-auth")
             return token
         }
         
@@ -125,6 +128,7 @@ public class TdxService {
         if authMethod == .serviceAccount || authMethod == .auto {
             if let beid = config.tdxBeid, let webServicesKey = config.tdxWebServicesKey,
                !beid.isEmpty, !webServicesKey.isEmpty {
+                dbg.info("TDX trying admin login (BEID)", category: "tdx-auth")
                 let loginUrl = "\(baseUrl)/api/auth/loginadmin"
                 let body: [String: String] = [
                     "BEID": beid,
@@ -134,7 +138,10 @@ public class TdxService {
                 if let token = try? await authenticate(url: loginUrl, body: body) {
                     cachedToken = token
                     tokenExpiry = Date().addingTimeInterval(23 * 60 * 60) // 23 hours
+                    dbg.info("TDX admin login OK (\(token.count) chars)", category: "tdx-auth")
                     return token
+                } else {
+                    dbg.warn("TDX admin login failed", category: "tdx-auth")
                 }
             }
         }
@@ -190,7 +197,11 @@ public class TdxService {
     // MARK: - Tickets
 
     public func searchTickets(search: TicketSearchRequest? = nil, maxResults: Int = 50) async throws -> [TdxTicket] {
-        guard let headers = await headers() else { return [] }
+        dbg.info("TDX searchTickets (maxResults=\(maxResults))", category: "tdx")
+        guard let headers = await headers() else {
+            dbg.warn("TDX searchTickets — no auth headers, returning []", category: "tdx")
+            return []
+        }
 
         var request = search ?? TicketSearchRequest()
         request.maxResults = maxResults

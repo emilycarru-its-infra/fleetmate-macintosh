@@ -33,13 +33,14 @@ public actor GiteaTaskProvider: TaskProvider {
     }
     
     public func authenticate() async throws -> Bool {
+        dbg.info("Gitea TaskProvider authenticate() (enabled=\(isEnabled), baseUrl=\(baseUrl))", category: "gitea-provider")
         // Try environment variable if no token configured
         if token == nil || token!.isEmpty {
             token = ProcessInfo.processInfo.environment["GITEA_TOKEN"]
         }
         
         guard let token = token, !token.isEmpty else {
-            print("Gitea: No token configured")
+            dbg.warn("Gitea: No token configured", category: "gitea-provider")
             return false
         }
         
@@ -47,10 +48,10 @@ public actor GiteaTaskProvider: TaskProvider {
         do {
             let _: GiteaUser = try await fetch(url: "\(baseUrl)/api/v1/user", headers: headers())
             authenticated = true
-            print("Authenticated with Gitea: \(baseUrl)")
+            dbg.info("Gitea authenticated OK: \(baseUrl)", category: "gitea-provider")
             return true
         } catch {
-            print("Gitea authentication failed: \(error)")
+            dbg.error("Gitea authenticate FAILED: \(error)", category: "gitea-provider")
             authenticated = false
             return false
         }

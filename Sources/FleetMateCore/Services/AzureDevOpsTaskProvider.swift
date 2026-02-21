@@ -22,20 +22,21 @@ public actor AzureDevOpsTaskProvider: TaskProvider {
     }
     
     public func authenticate() async throws -> Bool {
-        // Try a simple query to verify auth works
+        dbg.info("AzDO TaskProvider authenticate() starting (enabled=\(isEnabled), org=\(mainConfig.devopsOrganization ?? "nil"), project=\(mainConfig.devopsProject ?? "nil"))", category: "azdo-provider")
         do {
-            _ = try await service.getSprints()
-            authenticated = true
-            print("Authenticated with Azure DevOps: \(mainConfig.devopsOrganization ?? "")/\(mainConfig.devopsProject ?? "")")
-            return true
+            let ok = try await service.verifyAuth()
+            authenticated = ok
+            dbg.info("AzDO TaskProvider authenticate \(ok ? "OK" : "FAILED (verifyAuth returned false)")", category: "azdo-provider")
+            return ok
         } catch {
-            print("Failed to authenticate with Azure DevOps: \(error)")
+            dbg.error("AzDO TaskProvider authenticate FAILED: \(error)", category: "azdo-provider")
             authenticated = false
             return false
         }
     }
     
     public func listTasks(filter: TaskFilter?) async throws -> [UnifiedTask] {
+        dbg.info("AzDO TaskProvider listTasks (authenticated=\(authenticated))", category: "azdo-provider")
         var conditions = ["[System.TeamProject] = @project"]
         
         // Build filter conditions

@@ -25,6 +25,8 @@ struct ActivityItem: Identifiable {
     let time: String
     let timestamp: Date
     let tab: String
+    var deviceId: String?
+    var ticketId: Int?
 }
 
 struct AlertPill: Hashable {
@@ -60,6 +62,7 @@ struct DashboardView: View {
     @State private var assetCategoryBars: [ChartBar] = []
     @State private var errorCategoryBars: [ChartBar] = []
     @State private var activityItems: [ActivityItem] = []
+    @State private var snipeActivity: [SnipeActivityLog] = []
 
     // Counts
     @State private var deviceCount = 0
@@ -80,6 +83,8 @@ struct DashboardView: View {
     @State private var isLoadingReportMate = false
     @State private var isLoadingTickets = false
     @State private var isLoadingInventory = false
+    @State private var showAuthPopover = false
+    @State private var activityFilter: String? = nil
 
     private var isAnyLoading: Bool {
         isLoadingFleet || isLoadingReportMate || isLoadingTickets || isLoadingInventory
@@ -97,31 +102,44 @@ struct DashboardView: View {
     ]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 0) {
+            // Fixed top: header + alerts + KPIs
+            VStack(alignment: .leading, spacing: 10) {
                 headerSection
-
-                if !hasAnyService {
-                    connectServicesPrompt
-                } else {
+                if let error = appState.errorMessage { errorBanner(error) }
+                if hasAnyService {
                     alertBanner
                     kpiStrip
-
-                    // Top split: charts (left) + activity feed (right)
-                    HStack(alignment: .top, spacing: 16) {
-                        chartGrid
-                            .frame(maxWidth: .infinity)
-                        activityFeedSection
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-
-                if let error = appState.errorMessage {
-                    errorBanner(error)
                 }
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 8)
+
+            if !hasAnyService {
+                connectServicesPrompt
+                    .padding(.horizontal, 16)
+                Spacer()
+            } else {
+                // Fill remaining window height
+                HStack(alignment: .top, spacing: 0) {
+                    // Left 50%: charts, scrollable
+                    ScrollView {
+                        chartGrid
+                            .padding(16)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    Divider()
+
+                    // Right 50%: activity feed fills height
+                    activityFeedSection
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .frame(maxHeight: .infinity)
+            }
         }
+        .frame(maxHeight: .infinity)
         .task { await loadAllSections() }
         .onChange(of: appState.cachedDevices.count) { _, _ in Task { await loadFleetHealth(); buildActivityFeed() } }
         .onChange(of: appState.cachedAssets.count) { _, _ in Task { await loadInventory(); buildActivityFeed() } }
@@ -129,7 +147,9 @@ struct DashboardView: View {
         .onChange(of: appState.cachedWorkItems.count) { _, _ in Task { await loadTicketsWork(); buildActivityFeed() } }
     }
 
-    private func navigate(to tab: String) {
+    private func navigate(to tab: String, deviceId: String? = nil, ticketId: Int? = nil) {
+        if let deviceId { appState.navigateToDeviceId = deviceId }
+        if let ticketId { appState.navigateToTicketId = ticketId }
         appState.navigateToTab = tab
     }
 
@@ -151,8 +171,14 @@ struct DashboardView: View {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .disabled(isAnyLoading)
-            Button(action: { settingsSelectedTab = 1; openSettings() }) {
+            Button(action: { showAuthPopover.toggle() }) {
                 Label("Authentication", systemImage: "lock.shield")
+            }
+            .popover(isPresented: $showAuthPopover, arrowEdge: .bottom) {
+                AuthSettingsView()
+                    .environmentObject(appState)
+                    .frame(width: 480)
+                    .frame(minHeight: 300, idealHeight: 560, maxHeight: 640)
             }
         }
     }
@@ -349,48 +375,85 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: - Activity Feed (right column)
+    // MARK: - Activity Feed (right column, fills height)
 
     private var activityFeedSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Recent Activity")
-                .font(.headline)
+            HStack {
+                Text("Recent Activity").font(.headline)
+                Spacer()
+                if isAnyLoading { ProgressView().controlSize(.mini) }
+            }
+
+            // Filter chips
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(["All", "Devices", "Inventory", "Tickets", "Projects", "Identity"], id: \.self) { label in
+                        activityFilterChip(label)
+                    }
+                }
+            }
+
+            // Feed fills remaining height
             GroupBox {
-                if activityItems.isEmpty {
-                    Text("Activity will appear once data loads.")
+                if filteredActivityItems.isEmpty {
+                    Text(activityItems.isEmpty ? "Activity will appear once data loads." : "No activity for this filter.")
                         .foregroundStyle(.secondary).font(.callout)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 8)
                 } else {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(activityItems) { item in
-                            Button(action: { navigate(to: item.tab) }) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: item.icon)
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 16)
-                                    Text(item.text)
-                                        .font(.system(size: 12))
-                                        .lineLimit(1)
-                                        .foregroundStyle(.primary)
-                                    Spacer()
-                                    Text(item.time)
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(filteredActivityItems) { item in
+                                Button(action: { navigate(to: item.tab, deviceId: item.deviceId, ticketId: item.ticketId) }) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: item.icon)
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 16)
+                                        Text(item.text)
+                                            .font(.system(size: 12))
+                                            .lineLimit(1)
+                                            .foregroundStyle(.primary)
+                                        Spacer()
+                                        Text(item.time)
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    .padding(.vertical, 5)
+                                    .padding(.horizontal, 2)
+                                    .contentShape(Rectangle())
                                 }
-                                .padding(.vertical, 5)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            if item.id != activityItems.last?.id {
+                                .buttonStyle(.plain)
                                 Divider()
                             }
                         }
                     }
+                    .frame(maxHeight: .infinity)
                 }
             }
+            .frame(maxHeight: .infinity)
         }
+        .padding(16)
+    }
+
+    private func activityFilterChip(_ label: String) -> some View {
+        let tab: String? = label == "All" ? nil : label
+        let isSelected = activityFilter == tab
+        return Button(action: { activityFilter = tab }) {
+            Text(label)
+                .font(.caption).fontWeight(.medium)
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.12))
+                .foregroundStyle(isSelected ? Color.white : Color.primary)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var filteredActivityItems: [ActivityItem] {
+        guard let filter = activityFilter else { return activityItems }
+        return activityItems.filter { $0.tab == filter }
     }
 
     // MARK: - Error Banner
@@ -590,7 +653,6 @@ struct DashboardView: View {
                     return !closed.contains(s) && t.isOnHold != true
                 }.count
                 let onHold = tickets.filter { $0.isOnHold == true }.count
-                let closedN = tickets.count - open - onHold
 
                 openTicketCount = open
                 ticketStatusSlices = [
@@ -689,6 +751,13 @@ struct DashboardView: View {
             .prefix(8)
         let catColors: [Color] = [.orange, .blue, .purple, .teal, .green, .red, .brown, .indigo]
         assetCategoryBars = cats.enumerated().map { i, c in ChartBar(label: c.cat, value: c.count, color: catColors[i % catColors.count]) }
+
+        // Fetch recent activity log (last 24h worth, up to 50 entries)
+        do {
+            snipeActivity = try await appState.snipeService.getActivityLog(limit: 50)
+        } catch {
+            dbg.error("Dashboard snipe activity: \(error)", category: "dashboard")
+        }
     }
 
     private func buildActivityFeed() {
@@ -697,63 +766,77 @@ struct DashboardView: View {
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let isoAlt = ISO8601DateFormatter()
         isoAlt.formatOptions = [.withInternetDateTime]
+        let cutoff = Date().addingTimeInterval(-86400) // last 24 hours
 
         func parse(_ str: String?) -> Date? {
             guard let s = str else { return nil }
             return iso.date(from: s) ?? isoAlt.date(from: s)
         }
 
-        // Tickets (recent by modifiedDate)
-        let sortedTickets = appState.cachedTickets
-            .compactMap { t -> (TdxTicket, Date)? in
-                guard let d = parse(t.modifiedDate) else { return nil }
+        // Tickets – all modified in last 24h
+        for (t, date) in appState.cachedTickets
+            .compactMap({ t -> (TdxTicket, Date)? in
+                guard let d = parse(t.modifiedDate), d > cutoff else { return nil }
                 return (t, d)
-            }
-            .sorted { $0.1 > $1.1 }
-            .prefix(8)
-        for (t, date) in sortedTickets {
+            })
+            .sorted(by: { $0.1 > $1.1 }) {
             let title = String((t.title ?? "").prefix(50))
             items.append(ActivityItem(icon: "ticket", text: "#\(t.id ?? 0)  \(title)  -  \(t.statusName ?? "")",
-                                      time: formatRelative(date), timestamp: date, tab: "Tickets"))
+                                      time: formatRelative(date), timestamp: date, tab: "Tickets", ticketId: t.id))
         }
 
-        // Work items
-        let sortedWork = appState.cachedWorkItems
-            .compactMap { w -> (WorkItem, Date)? in
-                guard let d = parse(w.fields?.changedDate) else { return nil }
+        // Work items – all changed in last 24h
+        for (w, date) in appState.cachedWorkItems
+            .compactMap({ w -> (WorkItem, Date)? in
+                guard let d = parse(w.fields?.changedDate), d > cutoff else { return nil }
                 return (w, d)
-            }
-            .sorted { $0.1 > $1.1 }
-            .prefix(6)
-        for (w, date) in sortedWork {
+            })
+            .sorted(by: { $0.1 > $1.1 }) {
             let title = String((w.fields?.title ?? "").prefix(50))
             items.append(ActivityItem(icon: "list.bullet.rectangle", text: "#\(w.id)  \(title)  -  \(w.fields?.state ?? "")",
                                       time: formatRelative(date), timestamp: date, tab: "Projects"))
         }
 
-        // Devices
-        let sortedDevices = appState.cachedDevices
-            .compactMap { d -> (IntuneDevice, Date)? in
-                guard let dt = parse(d.lastSyncDateTime) else { return nil }
+        // Devices – all synced in last 24h
+        for (d, date) in appState.cachedDevices
+            .compactMap({ d -> (IntuneDevice, Date)? in
+                guard let dt = parse(d.lastSyncDateTime), dt > cutoff else { return nil }
                 return (d, dt)
-            }
-            .sorted { $0.1 > $1.1 }
-            .prefix(4)
-        for (d, date) in sortedDevices {
+            })
+            .sorted(by: { $0.1 > $1.1 }) {
             items.append(ActivityItem(icon: "laptopcomputer", text: "\(d.deviceName ?? "Device") synced  -  \(d.operatingSystem ?? "")",
-                                      time: formatRelative(date), timestamp: date, tab: "Devices"))
+                                      time: formatRelative(date), timestamp: date, tab: "Devices", deviceId: d.id))
         }
 
-        // Assets
-        for a in appState.cachedAssets.prefix(4) {
-            if let dateStr = a.updatedAt?.value, let date = parse(dateStr) {
+        // Assets – all updated in last 24h
+        for a in appState.cachedAssets {
+            if let dateStr = a.updatedAt?.value, let date = parse(dateStr), date > cutoff {
                 let name = a.name ?? a.assetTag ?? "Asset"
                 items.append(ActivityItem(icon: "shippingbox", text: "\(name)  -  \(a.statusLabel?.name ?? "")",
                                           time: formatRelative(date), timestamp: date, tab: "Inventory"))
             }
         }
 
-        activityItems = items.sorted { $0.timestamp > $1.timestamp }.prefix(15).map { $0 }
+        // Snipe activity log – filter to last 24h
+        let dateFmt = DateFormatter()
+        dateFmt.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSSZ"
+        let dateFmtAlt = DateFormatter()
+        dateFmtAlt.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        dateFmtAlt.timeZone = TimeZone(identifier: "UTC")
+        for entry in snipeActivity {
+            let dateStr = entry.createdAt?.value
+            let date = dateStr.flatMap { parse($0) ?? dateFmt.date(from: $0) ?? dateFmtAlt.date(from: $0) }
+            if let date = date, date > cutoff {
+                let action = entry.actionType ?? "activity"
+                let itemName = entry.item?.name ?? "item"
+                let admin = entry.admin?.name ?? ""
+                let text = "\(admin) \(action) \(itemName)".trimmingCharacters(in: .whitespaces)
+                items.append(ActivityItem(icon: "arrow.triangle.2.circlepath", text: text,
+                                          time: formatRelative(date), timestamp: date, tab: "Inventory"))
+            }
+        }
+
+        activityItems = items.sorted { $0.timestamp > $1.timestamp }
     }
 
     private func formatRelative(_ date: Date) -> String {

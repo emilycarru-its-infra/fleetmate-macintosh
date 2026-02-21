@@ -4,6 +4,8 @@ import FleetMateCore
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
     @State private var selectedTab: Tab = .dashboard
+    /// Tracks which tabs have been created (lazy keep-alive)
+    @State private var createdTabs: Set<Tab> = [.dashboard]
     /// Tracks whether we've already auto-prompted Phase 2 SSO for this session
     @State private var hasAutoPromptedSso = false
 
@@ -35,7 +37,7 @@ struct ContentView: View {
             // Top tab bar
             HStack(spacing: 2) {
                 ForEach(Tab.allCases, id: \.self) { tab in
-                    Button(action: { selectedTab = tab }) {
+                    Button(action: { createdTabs.insert(tab); selectedTab = tab }) {
                         HStack(spacing: 6) {
                             Image(systemName: tab.icon)
                                 .font(.system(size: 13))
@@ -75,21 +77,37 @@ struct ContentView: View {
 
             Divider()
 
-            // Content
-            Group {
-                switch selectedTab {
-                case .dashboard:
+            // Content — lazy keep-alive: views are created on first visit and kept alive
+            ZStack {
+                if createdTabs.contains(.dashboard) {
                     DashboardView()
-                case .devices:
+                        .opacity(selectedTab == .dashboard ? 1 : 0)
+                        .allowsHitTesting(selectedTab == .dashboard)
+                }
+                if createdTabs.contains(.devices) {
                     DevicesView()
-                case .inventory:
+                        .opacity(selectedTab == .devices ? 1 : 0)
+                        .allowsHitTesting(selectedTab == .devices)
+                }
+                if createdTabs.contains(.inventory) {
                     AssetsView()
-                case .tickets:
+                        .opacity(selectedTab == .inventory ? 1 : 0)
+                        .allowsHitTesting(selectedTab == .inventory)
+                }
+                if createdTabs.contains(.tickets) {
                     TicketsView()
-                case .projects:
+                        .opacity(selectedTab == .tickets ? 1 : 0)
+                        .allowsHitTesting(selectedTab == .tickets)
+                }
+                if createdTabs.contains(.projects) {
                     BoardsView()
-                case .identity:
+                        .opacity(selectedTab == .projects ? 1 : 0)
+                        .allowsHitTesting(selectedTab == .projects)
+                }
+                if createdTabs.contains(.identity) {
                     IdentityView()
+                        .opacity(selectedTab == .identity ? 1 : 0)
+                        .allowsHitTesting(selectedTab == .identity)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -116,6 +134,7 @@ struct ContentView: View {
         }
         .onChange(of: appState.navigateToTab) { _, newTab in
             if let name = newTab, let tab = Self.tabMap[name] {
+                createdTabs.insert(tab)
                 selectedTab = tab
                 appState.navigateToTab = nil
             }

@@ -276,7 +276,7 @@ struct DevicesView: View {
             defer { isLoading = false }
 
             do {
-                let fetchedDevices = try await appState.graphService.getManagedDevices(limit: 500)
+                let fetchedDevices = try await appState.graphService.getManagedDevices(limit: 10000)
                 appState.updateDevicesCache(fetchedDevices)
             } catch {
                 appState.errorMessage = "Failed to load devices: \(error.localizedDescription)"

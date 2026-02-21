@@ -19,7 +19,9 @@ import Yams
 /// - GRAPH_CLIENT_SECRET: Azure AD application client secret (optional)
 /// - DEVOPS_ORGANIZATION: Azure DevOps organization name
 /// - DEVOPS_PROJECT: Azure DevOps project name
-/// - DEVOPS_PAT: Azure DevOps personal access token (optional)
+/// - DEVOPS_CLIENT_ID: Azure AD app client ID for OAuth2 SSO (optional)
+/// - DEVOPS_TENANT_ID: Azure AD tenant ID for OAuth2 SSO (optional)
+/// NOTE: NO PAT (Personal Access Token) — Azure DevOps uses SSO only.
 /// - TDX_BASE_URL: TeamDynamix Web API base URL
 /// - TDX_APP_ID: TeamDynamix application ID
 /// - TDX_USERNAME: TeamDynamix username (for regular auth)
@@ -61,9 +63,9 @@ public struct FleetMateConfig: Codable {
     public var graphClientSecret: String?
 
     // Azure DevOps settings
+    // NO PAT — Azure DevOps uses SSO only (browser OAuth2 or Azure CLI with Platform SSO).
     public var devopsOrganization: String?
     public var devopsProject: String?
-    public var devopsPat: String?
     public var devopsClientId: String?
     public var devopsTenantId: String?
     public var devopsDefaultWorkItemType: String = "Bug"
@@ -134,7 +136,7 @@ public struct FleetMateConfig: Codable {
         case systemsGraphSecret = "systems_graph_secret"
         case devopsOrganization = "devops_organization"
         case devopsProject = "devops_project"
-        case devopsPat = "devops_pat"
+        // NO PAT — Azure DevOps uses SSO only
         case devopsClientId = "devops_client_id"
         case devopsTenantId = "devops_tenant_id"
         case devopsDefaultWorkItemType = "devops_default_work_item_type"
@@ -187,6 +189,10 @@ public struct FleetMateConfig: Codable {
                     config = loaded
                     break
                 }
+                // Codable decode failed (camelCase keys vs snake_case CodingKeys) — 
+                // fall back to dictionary-based loading for nested sections
+                loadConfigDictionary(path: expandedPath, into: &config)
+                break
             }
         }
 
@@ -300,6 +306,94 @@ public struct FleetMateConfig: Codable {
         let decoder = YAMLDecoder()
         return try? decoder.decode(FleetMateConfig.self, from: contents)
     }
+
+    /// Fallback dictionary-based config loader for nested sections (tasks, secureShell, etc.)
+    /// Handles both camelCase YAML keys and the proper Codable snake_case keys.
+    private static func loadConfigDictionary(path: String, into config: inout FleetMateConfig) {
+        guard let contents = try? String(contentsOfFile: path, encoding: .utf8),
+              let yaml = try? Yams.load(yaml: contents) as? [String: Any] else { return }
+
+        // SecureShell (camelCase in existing YAML)
+        if let ssh = (yaml["secureShell"] ?? yaml["secure_shell"]) as? [String: Any] {
+            var s = config.secureShell ?? SecureShellConfig()
+            if let v = ssh["privateKeyPath"] as? String { s.privateKeyPath = v }
+            if let v = ssh["privateKeyEnvVar"] as? String { s.privateKeyEnvVar = v }
+            if let v = ssh["keyVaultName"] as? String { s.keyVaultName = v }
+            if let v = ssh["defaultUsername"] as? String { s.defaultUsername = v }
+            if let v = ssh["connectionTimeoutSeconds"] as? Int { s.connectionTimeoutSeconds = v }
+            if let v = ssh["commandTimeoutSeconds"] as? Int { s.commandTimeoutSeconds = v }
+            if let v = ssh["maxConcurrentConnections"] as? Int { s.maxConcurrentConnections = v }
+            if let v = ssh["port"] as? Int { s.port = v }
+            config.secureShell = s
+        }
+
+        // Graph
+        if let graph = yaml["graph"] as? [String: Any] {
+            if let v = graph["useAzureCliAuth"] as? Bool, v { /* stored elsewhere */ }
+        }
+
+        // TDX (camelCase in existing YAML)
+        if let tdx = yaml["tdx"] as? [String: Any] {
+            if let v = tdx["baseUrl"] as? String { config.tdxBaseUrl = v }
+            if let v = tdx["appId"] as? Int { config.tdxAppId = v }
+        }
+
+        // Log level
+        if let ll = (yaml["logLevel"] ?? yaml["log_level"]) as? String {
+            config.logLevel = ll
+        }
+
+        // Tasks — nested section (snake_case keys matching CodingKeys)
+        if let tasks = yaml["tasks"] as? [String: Any],
+           let providers = tasks["providers"] as? [String: Any] {
+            var tasksConfig = config.tasks ?? TasksConfig()
+            var providersConfig = tasksConfig.providers
+
+            // Azure DevOps provider
+            if let ado = providers["azdevops"] as? [String: Any] {
+                var adoConfig = providersConfig.azdevops ?? AzureDevOpsProviderConfig()
+                if let v = ado["enabled"] as? Bool { adoConfig.enabled = v }
+                if let v = ado["organization"] as? String { adoConfig.organization = v }
+                if let v = ado["project"] as? String { adoConfig.project = v }
+                if let v = ado["default_work_item_type"] as? String { adoConfig.defaultWorkItemType = v }
+                if let v = ado["area_path"] as? String { adoConfig.areaPath = v }
+                if let v = ado["iteration_path"] as? String { adoConfig.iterationPath = v }
+                providersConfig.azdevops = adoConfig
+            }
+
+            // GitHub provider
+            if let gh = providers["github"] as? [String: Any] {
+                var ghConfig = providersConfig.github ?? GitHubProviderConfig()
+                if let v = gh["enabled"] as? Bool { ghConfig.enabled = v }
+                if let v = gh["owner"] as? String { ghConfig.owner = v }
+                if let v = gh["repo"] as? String { ghConfig.repo = v }
+                if let v = gh["token"] as? String { ghConfig.token = v }
+                if let v = gh["organization"] as? String { ghConfig.organization = v }
+                if let v = gh["project_number"] as? Int { ghConfig.projectNumber = v }
+                if let v = gh["project_scope"] as? String { ghConfig.projectScope = v }
+                if let v = gh["use_gh_cli"] as? Bool { ghConfig.useGhCli = v }
+                if let v = gh["oauth_client_id"] as? String { ghConfig.oauthClientId = v }
+                if let v = gh["default_labels"] as? [String] { ghConfig.defaultLabels = v }
+                providersConfig.github = ghConfig
+            }
+
+            // Gitea provider
+            if let gt = providers["gitea"] as? [String: Any] {
+                var gtConfig = providersConfig.gitea ?? GiteaProviderConfig()
+                if let v = gt["enabled"] as? Bool { gtConfig.enabled = v }
+                if let v = gt["url"] as? String { gtConfig.url = v }
+                if let v = gt["owner"] as? String { gtConfig.owner = v }
+                if let v = gt["repo"] as? String { gtConfig.repo = v }
+                if let v = gt["token"] as? String { gtConfig.token = v }
+                if let v = gt["default_labels"] as? [String] { gtConfig.defaultLabels = v }
+                providersConfig.gitea = gtConfig
+            }
+
+            tasksConfig.providers = providersConfig
+            if let dp = tasks["default_provider"] as? String { tasksConfig.defaultProvider = dp }
+            config.tasks = tasksConfig
+        }
+    }
     
     /// Load credentials from macOS Keychain
     private static func loadFromKeychain(into config: inout FleetMateConfig) {
@@ -321,7 +415,7 @@ public struct FleetMateConfig: Codable {
         // Azure DevOps
         if let org = keychain.get(.devopsOrganization) { config.devopsOrganization = org }
         if let project = keychain.get(.devopsProject) { config.devopsProject = project }
-        if let pat = keychain.get(.devopsPat) { config.devopsPat = pat }
+        // NO PAT — Azure DevOps uses SSO only
         
         // TDX
         if let url = keychain.get(.tdxBaseUrl) { config.tdxBaseUrl = url }
@@ -396,8 +490,7 @@ public struct FleetMateConfig: Codable {
         // Azure DevOps
         if let v = env["DEVOPS_ORGANIZATION"] { config.devopsOrganization = v }
         if let v = env["DEVOPS_PROJECT"] { config.devopsProject = v }
-        if let v = env["DEVOPS_PAT"] { config.devopsPat = v }
-        if let v = env["AZURE_DEVOPS_PAT"] { config.devopsPat = v }
+        // NO PAT — Azure DevOps uses SSO only
         if let v = env["DEVOPS_CLIENT_ID"] { config.devopsClientId = v }
         if let v = env["DEVOPS_TENANT_ID"] { config.devopsTenantId = v }
 
@@ -439,7 +532,7 @@ public struct FleetMateConfig: Codable {
         case "GRAPH_CLIENT_SECRET": config.graphClientSecret = value
         case "DEVOPS_ORGANIZATION": config.devopsOrganization = value
         case "DEVOPS_PROJECT": config.devopsProject = value
-        case "DEVOPS_PAT", "AZURE_DEVOPS_PAT": config.devopsPat = value
+        // NO PAT — Azure DevOps uses SSO only
         case "DEVOPS_CLIENT_ID": config.devopsClientId = value
         case "DEVOPS_TENANT_ID": config.devopsTenantId = value
         case "TDX_BASE_URL": config.tdxBaseUrl = value
@@ -618,6 +711,14 @@ public struct TasksConfig: Codable {
         case markdown
         case defaultProvider = "default_provider"
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        providers = try container.decodeIfPresent(TaskProvidersConfig.self, forKey: .providers) ?? TaskProvidersConfig()
+        planner = try container.decodeIfPresent(PlannerSyncConfig.self, forKey: .planner)
+        markdown = try container.decodeIfPresent(MarkdownSyncConfig.self, forKey: .markdown)
+        defaultProvider = try container.decodeIfPresent(String.self, forKey: .defaultProvider) ?? "azdevops"
+    }
 }
 
 /// Configuration for individual task providers
@@ -708,13 +809,31 @@ public struct GitHubProviderConfig: Codable {
     /// Use GitHub CLI for authentication if token not provided
     public var useGhCli: Bool
     
+    /// GitHub OAuth App client ID for Device Flow authentication.
+    /// Register at github.com/settings/applications/new with "Device" grant type enabled.
+    /// Enables invisible token acquisition with no config required for the end user.
+    public var oauthClientId: String?
+    
+    /// Organization name for org-level Projects v2 queries
+    public var organization: String?
+    
+    /// Default project number to use
+    public var projectNumber: Int?
+    
+    /// Default scope for project queries (organization, user, repository)
+    public var projectScope: String
+    
     public init(
         enabled: Bool = false,
         owner: String? = nil,
         repo: String? = nil,
         token: String? = nil,
         defaultLabels: [String] = [],
-        useGhCli: Bool = true
+        useGhCli: Bool = true,
+        oauthClientId: String? = nil,
+        organization: String? = nil,
+        projectNumber: Int? = nil,
+        projectScope: String = "organization"
     ) {
         self.enabled = enabled
         self.owner = owner
@@ -722,6 +841,10 @@ public struct GitHubProviderConfig: Codable {
         self.token = token
         self.defaultLabels = defaultLabels
         self.useGhCli = useGhCli
+        self.oauthClientId = oauthClientId
+        self.organization = organization
+        self.projectNumber = projectNumber
+        self.projectScope = projectScope
     }
     
     enum CodingKeys: String, CodingKey {
@@ -731,6 +854,24 @@ public struct GitHubProviderConfig: Codable {
         case token
         case defaultLabels = "default_labels"
         case useGhCli = "use_gh_cli"
+        case oauthClientId = "oauth_client_id"
+        case organization
+        case projectNumber = "project_number"
+        case projectScope = "project_scope"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+        owner = try container.decodeIfPresent(String.self, forKey: .owner)
+        repo = try container.decodeIfPresent(String.self, forKey: .repo)
+        token = try container.decodeIfPresent(String.self, forKey: .token)
+        defaultLabels = try container.decodeIfPresent([String].self, forKey: .defaultLabels) ?? []
+        useGhCli = try container.decodeIfPresent(Bool.self, forKey: .useGhCli) ?? true
+        oauthClientId = try container.decodeIfPresent(String.self, forKey: .oauthClientId)
+        organization = try container.decodeIfPresent(String.self, forKey: .organization)
+        projectNumber = try container.decodeIfPresent(Int.self, forKey: .projectNumber)
+        projectScope = try container.decodeIfPresent(String.self, forKey: .projectScope) ?? "organization"
     }
 }
 
@@ -782,7 +923,8 @@ public struct GiteaProviderConfig: Codable {
 
 /// Microsoft Planner sync configuration (one-way push)
 public struct PlannerSyncConfig: Codable {
-    /// Whether Planner sync is enabled
+    /// Whether Planner sync is enabled (deprecated — use GitHub Projects v2 instead)
+    @available(*, deprecated, message: "Planner sync is deprecated. Use GitHub Projects v2 via the 'projects' command.")
     public var enabled: Bool
     
     /// Planner plan ID to sync tasks to

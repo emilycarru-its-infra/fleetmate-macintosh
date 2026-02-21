@@ -5,6 +5,7 @@ import Alamofire
 /// Maps GitHub Issues to UnifiedTask format.
 public actor GitHubTaskProvider: TaskProvider {
     private let config: GitHubProviderConfig
+    private let tokenSource: GitHubTokenSource
     private let session: Session
     private var cachedToken: String?
     private var authenticated: Bool = false
@@ -18,8 +19,10 @@ public actor GitHubTaskProvider: TaskProvider {
         config.repo != nil && !config.repo!.isEmpty
     }
     
-    public init(config: FleetMateConfig) {
-        self.config = config.tasks?.providers.github ?? GitHubProviderConfig()
+    public init(config: FleetMateConfig, deviceFlowPrompt: ((String, URL) async -> Void)? = nil) {
+        let githubConfig = config.tasks?.providers.github ?? GitHubProviderConfig()
+        self.config = githubConfig
+        self.tokenSource = GitHubTokenSource(config: githubConfig, deviceFlowPrompt: deviceFlowPrompt)
         
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 30
@@ -27,7 +30,7 @@ public actor GitHubTaskProvider: TaskProvider {
     }
     
     public func authenticate() async throws -> Bool {
-        guard let token = await getToken() else {
+        guard let token = await tokenSource.token() else {
             print("GitHub: No token available")
             return false
         }
@@ -50,57 +53,6 @@ public actor GitHubTaskProvider: TaskProvider {
             print("GitHub authentication failed: \(error)")
             authenticated = false
             return false
-        }
-    }
-    
-    private func getToken() async -> String? {
-        if let cached = cachedToken, !cached.isEmpty {
-            return cached
-        }
-        
-        // Try configured token first
-        if let token = config.token, !token.isEmpty {
-            return token
-        }
-        
-        // Try environment variable
-        if let envToken = ProcessInfo.processInfo.environment["GITHUB_TOKEN"] ?? 
-                          ProcessInfo.processInfo.environment["GH_TOKEN"],
-           !envToken.isEmpty {
-            return envToken
-        }
-        
-        // Try gh CLI if enabled
-        if config.useGhCli {
-            return await getTokenFromGhCli()
-        }
-        
-        return nil
-    }
-    
-    private func getTokenFromGhCli() async -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["gh", "auth", "token"]
-        
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        
-        do {
-            try process.run()
-            process.waitUntilExit()
-            
-            guard process.terminationStatus == 0 else {
-                return nil
-            }
-            
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let token = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return token
-        } catch {
-            print("Failed to get token from gh CLI: \(error)")
-            return nil
         }
     }
     
@@ -361,10 +313,6 @@ private struct GitHubIssue: Decodable {
     }
 }
 
-private struct GitHubUser: Decodable {
-    let login: String
-}
-
 private struct GitHubLabel: Decodable {
     let name: String
     let color: String?
@@ -373,17 +321,6 @@ private struct GitHubLabel: Decodable {
     enum CodingKeys: String, CodingKey {
         case name, color
         case labelDescription = "description"
-    }
-}
-
-private struct GitHubMilestone: Decodable {
-    let number: Int
-    let title: String
-    let dueOn: Date?
-    
-    enum CodingKeys: String, CodingKey {
-        case number, title
-        case dueOn = "due_on"
     }
 }
 

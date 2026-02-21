@@ -508,17 +508,18 @@ private func createRegistry(config: FleetMateConfig) async throws -> TaskProvide
     let registry = TaskProviderRegistry()
 
     let azdo = AzureDevOpsTaskProvider(config: config)
-    let github = GitHubTaskProvider(config: config)
+    let github = GitHubProjectsTaskProvider(config: config.tasks?.providers.github ?? GitHubProviderConfig())
     let gitea = GiteaTaskProvider(config: config)
 
     await registry.registerProvider(azdo)
     await registry.registerProvider(github)
     await registry.registerProvider(gitea)
 
-    // Authenticate enabled providers
-    for provider in await registry.allProviders {
-        if await provider.isEnabled {
-            _ = try await provider.authenticate()
+    // Use the registry's built-in authenticateAll() which isolates per-provider failures
+    let authResults = await registry.authenticateAll()
+    for (id, success) in authResults {
+        if !success {
+            print("Warning: Provider \(id) auth failed (non-fatal)")
         }
     }
 

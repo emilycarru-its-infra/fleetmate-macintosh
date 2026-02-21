@@ -12,6 +12,12 @@ public final class DebugLogger {
     private let fileHandle: FileHandle?
     private let queue = DispatchQueue(label: "com.fleetmate.debuglogger")
     private let startTime = Date()
+    private let timestampFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
 
     private init() {
         let dir = FileManager.default.homeDirectoryForCurrentUser
@@ -47,8 +53,10 @@ public final class DebugLogger {
     // MARK: - Public API
 
     public func log(_ message: String, category: String = "general", level: LogLevel = .info) {
-        let elapsed = String(format: "%.3f", Date().timeIntervalSince(startTime))
-        let line = "[\(elapsed)s] [\(category)] \(level.prefix) \(message)"
+        let now = Date()
+        let ts = timestampFormatter.string(from: now)
+        let elapsed = String(format: "%.3f", now.timeIntervalSince(startTime))
+        let line = "[\(ts)] [\(elapsed)s] [\(category)] \(level.prefix) \(message)"
 
         // stderr (visible when app is launched from terminal)
         queue.async {

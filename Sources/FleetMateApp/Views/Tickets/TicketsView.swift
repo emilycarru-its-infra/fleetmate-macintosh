@@ -327,7 +327,7 @@ struct TicketsView: View {
                 )
                 Spacer()
             }
-        } else if isLoading {
+        } else if isLoading && appState.cachedTickets.isEmpty {
             VStack {
                 ProgressView("Loading tickets...")
                     .padding(.top, 50)

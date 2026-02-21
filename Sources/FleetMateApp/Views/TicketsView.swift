@@ -172,6 +172,17 @@ struct TicketsView: View {
             if !appState.isTicketsCacheValid {
                 loadTickets()
             }
+            // Handle deep link set before view was created
+            if let id = appState.navigateToTicketId {
+                selectedTicketIds = [id]
+                appState.navigateToTicketId = nil
+            }
+        }
+        .onChange(of: appState.navigateToTicketId) { _, newId in
+            if let id = newId {
+                selectedTicketIds = [id]
+                appState.navigateToTicketId = nil
+            }
         }
         .onChange(of: appState.cachedTickets) { _, _ in
             applyMeMode()

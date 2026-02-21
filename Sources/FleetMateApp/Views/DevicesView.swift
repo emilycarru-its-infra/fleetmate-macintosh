@@ -235,6 +235,17 @@ struct DevicesView: View {
             if !appState.isDevicesCacheValid {
                 loadDevices()
             }
+            // Handle deep link set before view was created
+            if let id = appState.navigateToDeviceId {
+                selectedDeviceIds = [id]
+                appState.navigateToDeviceId = nil
+            }
+        }
+        .onChange(of: appState.navigateToDeviceId) { _, newId in
+            if let id = newId {
+                selectedDeviceIds = [id]
+                appState.navigateToDeviceId = nil
+            }
         }
         .alert("Confirm Reboot", isPresented: $showRebootConfirmation) {
             Button("Cancel", role: .cancel) { }

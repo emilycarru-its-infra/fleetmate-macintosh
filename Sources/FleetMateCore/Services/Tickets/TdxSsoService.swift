@@ -282,7 +282,7 @@ public class TdxSsoService: NSObject {
                 return (json["name"], json["email"])
             }
         } catch {
-            print("[TdxSsoService] Failed to extract user info: \(error)")
+            dbg.warn("[TdxSsoService] Failed to extract user info: \(error)", category: "tdx-sso")
         }
         
         return (nil, nil)
@@ -366,17 +366,17 @@ extension TdxSsoService: WKNavigationDelegate {
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard let url = webView.url else { return }
         
-        print("[TdxSsoService] Navigation finished: \(url.absoluteString)")
+        dbg.info("[TdxSsoService] Navigation finished: \(url.absoluteString)", category: "tdx-sso")
         
         // Check if we've reached a success page
         if checkForSuccessfulAuth(url: url) {
-            print("[TdxSsoService] Detected successful authentication")
+            dbg.info("[TdxSsoService] Detected successful authentication", category: "tdx-sso")
             completeAuthentication()
         }
     }
     
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        print("[TdxSsoService] Navigation failed: \(error.localizedDescription)")
+        dbg.error("[TdxSsoService] Navigation failed: \(error.localizedDescription)", category: "tdx-sso")
         
         let result = TdxSsoResult.failure("Navigation failed: \(error.localizedDescription)")
         delegate?.tdxSsoDidComplete(result: result)
@@ -388,7 +388,7 @@ extension TdxSsoService: WKNavigationDelegate {
         let protectionSpace = challenge.protectionSpace
         let authMethod = protectionSpace.authenticationMethod
         
-        print("[TdxSsoService] Auth challenge: \(authMethod) from \(protectionSpace.host)")
+        dbg.info("[TdxSsoService] Auth challenge: \(authMethod) from \(protectionSpace.host)", category: "tdx-sso")
         
         // Handle server trust (SSL)
         if authMethod == NSURLAuthenticationMethodServerTrust {
@@ -403,7 +403,7 @@ extension TdxSsoService: WKNavigationDelegate {
         if authMethod == NSURLAuthenticationMethodNegotiate ||
            authMethod == NSURLAuthenticationMethodNTLM ||
            authMethod == NSURLAuthenticationMethodDefault {
-            print("[TdxSsoService] Using default credential handling for \(authMethod)")
+            dbg.debug("[TdxSsoService] Using default credential handling for \(authMethod)", category: "tdx-sso")
             completionHandler(.performDefaultHandling, nil)
             return
         }
@@ -413,7 +413,7 @@ extension TdxSsoService: WKNavigationDelegate {
     }
     
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        print("[TdxSsoService] Provisional navigation failed: \(error.localizedDescription)")
+        dbg.error("[TdxSsoService] Provisional navigation failed: \(error.localizedDescription)", category: "tdx-sso")
         
         // NSURLErrorCancelled is not an actual error (e.g., redirect)
         if (error as NSError).code == NSURLErrorCancelled {
@@ -431,7 +431,7 @@ extension TdxSsoService: WKNavigationDelegate {
                         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         
         if let url = navigationAction.request.url {
-            print("[TdxSsoService] Navigating to: \(url.absoluteString)")
+            dbg.debug("[TdxSsoService] Navigating to: \(url.absoluteString)", category: "tdx-sso")
         }
         
         decisionHandler(.allow)
@@ -446,14 +446,14 @@ extension TdxSsoService: WKNavigationDelegate {
            let url = response.url {
             
             // Log response for debugging
-            print("[TdxSsoService] Response from \(url.host ?? "unknown"): \(response.statusCode)")
+            dbg.debug("[TdxSsoService] Response from \(url.host ?? "unknown"): \(response.statusCode)", category: "tdx-sso")
             
             // Check cookies in response
             if let headerFields = response.allHeaderFields as? [String: String] {
                 let cookies = HTTPCookie.cookies(withResponseHeaderFields: headerFields, for: url)
                 for cookie in cookies {
                     if tokenCookieNames.contains(cookie.name) {
-                        print("[TdxSsoService] Found auth token cookie: \(cookie.name)")
+                        dbg.info("[TdxSsoService] Found auth token cookie: \(cookie.name)", category: "tdx-sso")
                     }
                 }
             }

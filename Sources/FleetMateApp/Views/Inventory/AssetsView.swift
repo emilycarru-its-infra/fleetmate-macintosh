@@ -96,7 +96,7 @@ struct AssetsView: View {
                     )
                     Spacer()
                 }
-            } else if isLoading {
+            } else if isLoading && appState.cachedAssets.isEmpty {
                 VStack {
                     ProgressView("Loading all assets...")
                         .padding(.top, 50)

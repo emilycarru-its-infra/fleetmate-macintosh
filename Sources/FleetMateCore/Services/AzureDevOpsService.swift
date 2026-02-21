@@ -1,305 +1,232 @@
 import Foundation
-import Alamofire
 
-/// Azure DevOps service for work item management
-/// Uses Azure CLI SSO for authentication on macOS
+/// Azure DevOps service — all operations via `az devops` / `az boards` CLI.
+/// Auth is handled by the Azure CLI itself (`az login` user session).
+/// **NO PAT, NO service principal, NO REST-with-Bearer** — CLI only.
 public class AzureDevOpsService {
     private let config: FleetMateConfig
-    private let session: Session
-    private var cachedToken: String?
-    private var tokenExpiry: Date = .distantPast
-    private var ssoToken: String?
-    private var ssoTokenExpiry: Date = .distantPast
-    private var ssoUserId: String?
-    private var ssoUserName: String?
+    private let azPath: String
+    private let orgUrl: String
+    private let project: String
 
     // Caches
     private var sprintCache: [Sprint]?
     private var sprintCacheExpiry: Date = .distantPast
     private let cacheDuration: TimeInterval
 
-    private let adoResourceId = "499b84ac-1321-427f-aa17-267ca6975798"
-
     public var isConfigured: Bool {
-        return config.isDevOpsConfigured
+        config.isDevOpsConfigured
     }
 
     public var baseUrl: String {
-        "https://dev.azure.com/\(config.devopsOrganization ?? "")"
+        orgUrl
     }
 
     public init(config: FleetMateConfig) {
         self.config = config
         self.cacheDuration = TimeInterval(config.cacheMinutes * 60)
+        self.orgUrl = "https://dev.azure.com/\(config.devopsOrganization ?? "")"
+        self.project = config.devopsProject ?? ""
 
-        let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 60
-        self.session = Session(configuration: configuration)
-    }
-
-    // MARK: - Authentication
-
-    /// Whether browser SSO is required (no PAT and no Azure CLI)
-    public var requiresSsoLogin: Bool {
-        if config.devopsPat != nil { return false }
-        // Check if az CLI is available
-        let azPaths = ["/usr/local/bin/az", "/opt/homebrew/bin/az"]
-        let azAvailable = azPaths.contains { FileManager.default.fileExists(atPath: $0) }
-        return !azAvailable
-    }
-
-    /// Set SSO token from browser-based OAuth2 flow
-    public func setSsoToken(_ token: String, expiry: Date, userId: String?, userName: String?) {
-        ssoToken = token
-        ssoTokenExpiry = expiry
-        ssoUserId = userId
-        ssoUserName = userName
-        cachedToken = token
-        tokenExpiry = expiry
-    }
-
-    /// Clear SSO token
-    public func clearSsoToken() {
-        ssoToken = nil
-        ssoTokenExpiry = .distantPast
-        ssoUserId = nil
-        ssoUserName = nil
-        cachedToken = nil
-        tokenExpiry = .distantPast
-    }
-
-    /// Check if SSO token is valid
-    public var hasSsoToken: Bool {
-        ssoToken != nil && Date() < ssoTokenExpiry
-    }
-
-    private func getAccessToken() async throws -> String? {
-        if let token = cachedToken, Date() < tokenExpiry {
-            return token
+        // Resolve az CLI path
+        if FileManager.default.fileExists(atPath: "/opt/homebrew/bin/az") {
+            self.azPath = "/opt/homebrew/bin/az"
+        } else if FileManager.default.fileExists(atPath: "/usr/local/bin/az") {
+            self.azPath = "/usr/local/bin/az"
+        } else {
+            self.azPath = "az" // hope PATH resolves it
         }
+    }
 
-        // Try SSO token first
-        if let token = ssoToken, Date() < ssoTokenExpiry {
-            cachedToken = token
-            tokenExpiry = ssoTokenExpiry
-            return token
-        }
+    // MARK: - CLI Runner
 
-        // Try PAT if configured
-        if let pat = config.devopsPat, !pat.isEmpty {
-            cachedToken = pat
-            tokenExpiry = Date.distantFuture
-            return pat
-        }
-
-        // Use Azure CLI SSO
+    /// Run an `az` command and return stdout as Data. Throws on non-zero exit.
+    private func runAz(_ arguments: [String]) async throws -> Data {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/local/bin/az")
-        process.arguments = ["account", "get-access-token", "--resource", adoResourceId, "--query", "accessToken", "-o", "tsv"]
+        process.executableURL = URL(fileURLWithPath: azPath)
+        process.arguments = arguments
+        // Inject org + project so every call is scoped
+        process.environment = ProcessInfo.processInfo.environment
 
-        // Try Homebrew arm64 path
-        if !FileManager.default.fileExists(atPath: "/usr/local/bin/az") {
-            if FileManager.default.fileExists(atPath: "/opt/homebrew/bin/az") {
-                process.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/az")
-            } else {
-                print("Azure CLI not found and no PAT configured.")
-                return nil
-            }
+        let out = Pipe()
+        let err = Pipe()
+        process.standardOutput = out
+        process.standardError = err
+
+        dbg.debug("az \(arguments.joined(separator: " "))", category: "azdo")
+
+        try process.run()
+        process.waitUntilExit()
+
+        let outData = out.fileHandleForReading.readDataToEndOfFile()
+
+        guard process.terminationStatus == 0 else {
+            let errStr = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            dbg.error("az exit \(process.terminationStatus): \(errStr.prefix(500))", category: "azdo")
+            throw AzDevOpsError.cliError(code: process.terminationStatus, message: errStr)
         }
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-
-            guard process.terminationStatus == 0 else {
-                print("Azure CLI failed. Run 'az login' first.")
-                return nil
-            }
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let token = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            cachedToken = token
-            tokenExpiry = Date().addingTimeInterval(55 * 60)
-
-            return token
-        } catch {
-            print("Failed to run Azure CLI: \(error)")
-            return nil
-        }
+        return outData
     }
 
-    private func headers() async -> HTTPHeaders? {
-        guard let token = try? await getAccessToken() else { return nil }
+    /// Run az command and decode JSON output.
+    private func runAzJson<T: Decodable>(_ arguments: [String], as type: T.Type) async throws -> T {
+        let data = try await runAz(arguments)
+        // az output may have BOM
+        let clean = data.dropBOM()
+        return try JSONDecoder().decode(T.self, from: clean)
+    }
 
-        // If using PAT, use Basic auth
-        if config.devopsPat != nil {
-            let auth = ":\(token)".data(using: .utf8)?.base64EncodedString() ?? ""
-            return [
-                "Authorization": "Basic \(auth)",
-                "Content-Type": "application/json"
-            ]
+    // MARK: - Auth Check
+
+    /// Verify the CLI can talk to Azure DevOps (user must be `az login`-ed).
+    public func verifyAuth() async throws -> Bool {
+        do {
+            let data = try await runAz([
+                "devops", "project", "list",
+                "--org", orgUrl,
+                "--query", "[0].name",
+                "-o", "tsv"
+            ])
+            let name = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            dbg.info("AzDO auth verified — first project: \(name)", category: "azdo-auth")
+            return !name.isEmpty
+        } catch {
+            dbg.error("AzDO auth verification failed: \(error)", category: "azdo-auth")
+            return false
         }
-
-        return [
-            "Authorization": "Bearer \(token)",
-            "Content-Type": "application/json"
-        ]
     }
 
     // MARK: - Work Items
 
+    /// Query work items via WIQL using `az boards query`.
     func queryWorkItems(_ wiql: String) async throws -> [WorkItem] {
-        guard let headers = await headers() else { return [] }
+        dbg.debug("AzDO queryWorkItems: \(wiql.prefix(120))...", category: "azdo")
 
-        let url = "\(baseUrl)/\(config.devopsProject ?? "")/_apis/wit/wiql?api-version=7.0"
-        let body = ["query": wiql]
+        let data = try await runAz([
+            "boards", "query",
+            "--wiql", wiql,
+            "--org", orgUrl,
+            "--project", project,
+            "-o", "json"
+        ])
 
-        let queryResult: WorkItemQueryResult = try await post(url: url, body: body, headers: headers)
-
-        guard let workItemRefs = queryResult.workItems, !workItemRefs.isEmpty else {
-            return []
-        }
-
-        let ids = workItemRefs.map { $0.id }
-        return try await getWorkItemsByIds(ids)
-    }
-
-    public func getWorkItemsByIds(_ ids: [Int]) async throws -> [WorkItem] {
-        guard !ids.isEmpty, let headers = await headers() else { return [] }
-
-        var allItems: [WorkItem] = []
-
-        // Batch requests (max 200 per request)
-        for batch in ids.chunked(into: 200) {
-            let idsParam = batch.map { String($0) }.joined(separator: ",")
-            let url = "\(baseUrl)/\(config.devopsProject ?? "")/_apis/wit/workitems?ids=\(idsParam)&api-version=7.0"
-
-            let response: WorkItemBatchResponse = try await fetch(url: url, headers: headers)
-            if let items = response.value {
-                allItems.append(contentsOf: items)
-            }
-        }
-
-        return allItems
+        // `az boards query` returns array of work items directly (with fields populated)
+        let clean = data.dropBOM()
+        let items = try JSONDecoder().decode([AzCliWorkItem].self, from: clean)
+        dbg.info("AzDO query returned \(items.count) work items", category: "azdo")
+        return items.map { $0.toWorkItem() }
     }
 
     public func getWorkItem(id: Int) async throws -> WorkItem? {
-        guard let headers = await headers() else { return nil }
+        dbg.debug("AzDO getWorkItem(\(id))", category: "azdo")
+        let data = try await runAz([
+            "boards", "work-item", "show",
+            "--id", String(id),
+            "--org", orgUrl,
+            "-o", "json"
+        ])
+        let clean = data.dropBOM()
+        let item = try JSONDecoder().decode(AzCliWorkItem.self, from: clean)
+        return item.toWorkItem()
+    }
 
-        let url = "\(baseUrl)/\(config.devopsProject ?? "")/_apis/wit/workitems/\(id)?api-version=7.0"
-        return try await fetch(url: url, headers: headers)
+    public func getWorkItemsByIds(_ ids: [Int]) async throws -> [WorkItem] {
+        guard !ids.isEmpty else { return [] }
+        // az boards work-item show only takes one ID — use WIQL instead
+        let idList = ids.map { String($0) }.joined(separator: ",")
+        let wiql = "SELECT [System.Id] FROM WorkItems WHERE [System.Id] IN (\(idList))"
+        return try await queryWorkItems(wiql)
     }
 
     public func getWorkItems(state: String? = nil, type: String? = nil, assignedTo: String? = nil, limit: Int = 50) async throws -> [WorkItem] {
         var conditions = ["[System.TeamProject] = @project"]
-
-        if let state = state {
-            conditions.append("[System.State] = '\(state)'")
-        }
-        if let type = type {
-            conditions.append("[System.WorkItemType] = '\(type)'")
-        }
-        if let assignedTo = assignedTo {
-            conditions.append("[System.AssignedTo] = '\(assignedTo)'")
-        }
-
+        if let state = state { conditions.append("[System.State] = '\(state)'") }
+        if let type = type { conditions.append("[System.WorkItemType] = '\(type)'") }
+        if let assignedTo = assignedTo { conditions.append("[System.AssignedTo] = '\(assignedTo)'") }
         let wiql = "SELECT [System.Id] FROM WorkItems WHERE \(conditions.joined(separator: " AND ")) ORDER BY [System.ChangedDate] DESC"
-
         let items = try await queryWorkItems(wiql)
         return Array(items.prefix(limit))
     }
 
     public func createWorkItem(_ request: CreateWorkItemRequest) async throws -> WorkItem? {
-        guard let headers = await headers() else { return nil }
-
-        var operations: [[String: Any]] = [
-            ["op": "add", "path": "/fields/System.Title", "value": request.title]
+        dbg.info("AzDO createWorkItem: \(request.title)", category: "azdo")
+        var args: [String] = [
+            "boards", "work-item", "create",
+            "--title", request.title,
+            "--type", request.type,
+            "--org", orgUrl,
+            "--project", project,
+            "-o", "json"
         ]
+        if let desc = request.description { args += ["--description", desc] }
+        if let assignee = request.assignedTo { args += ["--assigned-to", assignee] }
+        if let iter = request.iterationPath { args += ["--iteration-path", iter] }
+        if let area = request.areaPath { args += ["--area-path", area] }
 
-        if let description = request.description {
-            operations.append(["op": "add", "path": "/fields/System.Description", "value": description])
-        }
-        if let assignedTo = request.assignedTo {
-            operations.append(["op": "add", "path": "/fields/System.AssignedTo", "value": assignedTo])
-        }
-        if let priority = request.priority {
-            operations.append(["op": "add", "path": "/fields/Microsoft.VSTS.Common.Priority", "value": priority])
-        }
-        if let iterationPath = request.iterationPath {
-            operations.append(["op": "add", "path": "/fields/System.IterationPath", "value": iterationPath])
-        }
-        if let areaPath = request.areaPath {
-            operations.append(["op": "add", "path": "/fields/System.AreaPath", "value": areaPath])
-        }
-        if let tags = request.tags, !tags.isEmpty {
-            operations.append(["op": "add", "path": "/fields/System.Tags", "value": tags.joined(separator: "; ")])
-        }
+        // Fields that aren't direct flags go via --fields
+        var fields: [String] = []
+        if let priority = request.priority { fields.append("Microsoft.VSTS.Common.Priority=\(priority)") }
+        if let tags = request.tags, !tags.isEmpty { fields.append("System.Tags=\(tags.joined(separator: "; "))") }
+        if !fields.isEmpty { args += ["--fields"] + fields }
 
-        let url = "\(baseUrl)/\(config.devopsProject ?? "")/_apis/wit/workitems/$\(request.type)?api-version=7.0"
-
-        var patchHeaders = headers
-        patchHeaders.add(name: "Content-Type", value: "application/json-patch+json")
-
-        return try await postPatch(url: url, body: operations, headers: patchHeaders)
+        let data = try await runAz(args)
+        let clean = data.dropBOM()
+        let item = try JSONDecoder().decode(AzCliWorkItem.self, from: clean)
+        return item.toWorkItem()
     }
 
     public func updateWorkItem(id: Int, request: UpdateWorkItemRequest) async throws -> WorkItem? {
-        guard let headers = await headers() else { return nil }
+        dbg.info("AzDO updateWorkItem(\(id))", category: "azdo")
+        var args: [String] = [
+            "boards", "work-item", "update",
+            "--id", String(id),
+            "--org", orgUrl,
+            "-o", "json"
+        ]
+        if let title = request.title { args += ["--title", title] }
+        if let state = request.state { args += ["--state", state] }
+        if let assignee = request.assignedTo { args += ["--assigned-to", assignee] }
+        if let iter = request.iterationPath { args += ["--iteration-path", iter] }
+        if let comment = request.comment { args += ["--discussion", comment] }
 
-        var operations: [[String: Any]] = []
+        var fields: [String] = []
+        if let priority = request.priority { fields.append("Microsoft.VSTS.Common.Priority=\(priority)") }
+        if !fields.isEmpty { args += ["--fields"] + fields }
 
-        if let title = request.title {
-            operations.append(["op": "add", "path": "/fields/System.Title", "value": title])
-        }
-        if let state = request.state {
-            operations.append(["op": "add", "path": "/fields/System.State", "value": state])
-        }
-        if let assignedTo = request.assignedTo {
-            operations.append(["op": "add", "path": "/fields/System.AssignedTo", "value": assignedTo])
-        }
-        if let priority = request.priority {
-            operations.append(["op": "add", "path": "/fields/Microsoft.VSTS.Common.Priority", "value": priority])
-        }
-        if let iterationPath = request.iterationPath {
-            operations.append(["op": "add", "path": "/fields/System.IterationPath", "value": iterationPath])
-        }
-        if let comment = request.comment {
-            operations.append(["op": "add", "path": "/fields/System.History", "value": comment])
-        }
-
-        guard !operations.isEmpty else {
-            return try await getWorkItem(id: id)
-        }
-
-        let url = "\(baseUrl)/\(config.devopsProject ?? "")/_apis/wit/workitems/\(id)?api-version=7.0"
-
-        var patchHeaders = headers
-        patchHeaders.add(name: "Content-Type", value: "application/json-patch+json")
-
-        return try await patchRequest(url: url, body: operations, headers: patchHeaders)
+        let data = try await runAz(args)
+        let clean = data.dropBOM()
+        let item = try JSONDecoder().decode(AzCliWorkItem.self, from: clean)
+        return item.toWorkItem()
     }
 
-    // MARK: - Sprints
+    // MARK: - Sprints / Iterations
 
     public func getSprints(forceRefresh: Bool = false) async throws -> [Sprint] {
         if !forceRefresh, let cached = sprintCache, Date() < sprintCacheExpiry {
+            dbg.debug("AzDO getSprints: using cache (\(cached.count) sprints)", category: "azdo")
             return cached
         }
 
-        guard let headers = await headers() else { return sprintCache ?? [] }
+        dbg.info("AzDO getSprints via az boards iteration", category: "azdo")
 
-        let url = "\(baseUrl)/\(config.devopsProject ?? "")/_apis/work/teamsettings/iterations?api-version=7.0"
+        // First get the default team
+        let team = try await getDefaultTeam()
 
-        let response: IterationsResponse = try await fetch(url: url, headers: headers)
-        sprintCache = response.value ?? []
+        let data = try await runAz([
+            "boards", "iteration", "team", "list",
+            "--team", team,
+            "--org", orgUrl,
+            "--project", project,
+            "-o", "json"
+        ])
+        let clean = data.dropBOM()
+        let cliIterations = try JSONDecoder().decode([AzCliIteration].self, from: clean)
+        let sprints = cliIterations.map { $0.toSprint() }
+
+        sprintCache = sprints
         sprintCacheExpiry = Date().addingTimeInterval(cacheDuration)
-
-        return sprintCache ?? []
+        dbg.info("AzDO getSprints: \(sprints.count) sprints loaded", category: "azdo")
+        return sprints
     }
 
     public func getCurrentSprint() async throws -> Sprint? {
@@ -307,14 +234,53 @@ public class AzureDevOpsService {
         return sprints.first { $0.isCurrent }
     }
 
+    /// Get the default team name for the project.
+    private func getDefaultTeam() async throws -> String {
+        let data = try await runAz([
+            "devops", "team", "list",
+            "--org", orgUrl,
+            "--project", project,
+            "-o", "json"
+        ])
+        let clean = data.dropBOM()
+        struct AzTeam: Decodable { let name: String; let id: String }
+        let teams = try JSONDecoder().decode([AzTeam].self, from: clean)
+        // Convention: default team is usually "{project} Team" or the first one
+        let defaultTeam = teams.first { $0.name == "\(project) Team" } ?? teams.first
+        let name = defaultTeam?.name ?? project
+        dbg.debug("AzDO default team: \(name)", category: "azdo")
+        return name
+    }
+
     // MARK: - Boards
 
     public func getBoards() async throws -> [Board] {
-        guard let headers = await headers() else { return [] }
+        // az boards doesn't have a direct list command — use invoke
+        let data = try await runAz([
+            "devops", "invoke",
+            "--area", "work",
+            "--resource", "boards",
+            "--org", orgUrl,
+            "--route-parameters", "project=\(project)", "team=\(project) Team",
+            "--api-version", "7.0",
+            "-o", "json"
+        ])
+        let clean = data.dropBOM()
+        let response = try JSONDecoder().decode(BoardsResponse.self, from: clean)
+        return response.value ?? []
+    }
 
-        let url = "\(baseUrl)/\(config.devopsProject ?? "")/_apis/work/boards?api-version=7.0"
+    // MARK: - Projects (list from org)
 
-        let response: BoardsResponse = try await fetch(url: url, headers: headers)
+    public func listProjects() async throws -> [AzCliProject] {
+        dbg.info("AzDO listProjects via az devops project list", category: "azdo")
+        let data = try await runAz([
+            "devops", "project", "list",
+            "--org", orgUrl,
+            "-o", "json"
+        ])
+        let clean = data.dropBOM()
+        let response = try JSONDecoder().decode(AzCliProjectList.self, from: clean)
         return response.value ?? []
     }
 
@@ -331,7 +297,6 @@ public class AzureDevOpsService {
         <hr/>
         <p><em>Created automatically by FleetMate</em></p>
         """
-
         let request = CreateWorkItemRequest(
             title: title,
             type: config.devopsDefaultWorkItemType,
@@ -340,71 +305,132 @@ public class AzureDevOpsService {
             priority: priority,
             tags: ["FleetMate", "AutoGenerated", itemName]
         )
-
         return try await createWorkItem(request)
     }
 
-    // MARK: - Private Helpers
+    // Keep SSO-related API surface for backward compat (no-ops now)
+    public var requiresSsoLogin: Bool { false }
+    public var hasSsoToken: Bool { false }
+    public func setSsoToken(_ token: String, expiry: Date, userId: String?, userName: String?) {}
+    public func clearSsoToken() {}
+}
 
-    private func fetch<T: Decodable>(url: String, headers: HTTPHeaders) async throws -> T {
-        return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, headers: headers)
-                .validate()
-                .responseDecodable(of: T.self) { response in
-                    switch response.result {
-                    case .success(let value):
-                        continuation.resume(returning: value)
-                    case .failure(let error):
-                        continuation.resume(throwing: error)
-                    }
-                }
+// MARK: - Error
+
+public enum AzDevOpsError: Error, LocalizedError {
+    case cliError(code: Int32, message: String)
+    case notLoggedIn
+
+    public var errorDescription: String? {
+        switch self {
+        case .cliError(let code, let message):
+            return "az CLI error (\(code)): \(message)"
+        case .notLoggedIn:
+            return "Not logged in. Run 'az login' first."
         }
     }
+}
 
-    private func post<T: Decodable>(url: String, body: [String: Any], headers: HTTPHeaders) async throws -> T {
-        return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, method: .post, parameters: body, encoding: JSONEncoding.default, headers: headers)
-                .validate()
-                .responseDecodable(of: T.self) { response in
-                    switch response.result {
-                    case .success(let value):
-                        continuation.resume(returning: value)
-                    case .failure(let error):
-                        continuation.resume(throwing: error)
-                    }
-                }
-        }
-    }
+// MARK: - az CLI JSON models
 
-    private func postPatch<T: Decodable>(url: String, body: [[String: Any]], headers: HTTPHeaders) async throws -> T {
-        return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, method: .post, parameters: body.asParameters(), encoding: ArrayEncoding(), headers: headers)
-                .validate()
-                .responseDecodable(of: T.self) { response in
-                    switch response.result {
-                    case .success(let value):
-                        continuation.resume(returning: value)
-                    case .failure(let error):
-                        continuation.resume(throwing: error)
-                    }
-                }
-        }
-    }
+/// Work item as returned by `az boards query` / `az boards work-item show`.
+struct AzCliWorkItem: Decodable {
+    let id: Int
+    let rev: Int?
+    let url: String?
+    let fields: [String: AnyCodable]?
 
-    private func patchRequest<T: Decodable>(url: String, body: [[String: Any]], headers: HTTPHeaders) async throws -> T {
-        return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, method: .patch, parameters: body.asParameters(), encoding: ArrayEncoding(), headers: headers)
-                .validate()
-                .responseDecodable(of: T.self) { response in
-                    switch response.result {
-                    case .success(let value):
-                        continuation.resume(returning: value)
-                    case .failure(let error):
-                        continuation.resume(throwing: error)
-                    }
-                }
+    func toWorkItem() -> WorkItem {
+        let f = fields ?? [:]
+        let assignedToDict = f["System.AssignedTo"]?.dictValue
+        let assignedTo = assignedToDict.map { d in
+            IdentityRef(
+                displayName: d["displayName"] as? String,
+                uniqueName: d["uniqueName"] as? String,
+                id: d["id"] as? String
+            )
         }
+        return WorkItem(
+            id: id,
+            rev: rev,
+            fields: WorkItemFields(
+                title: f["System.Title"]?.stringValue,
+                state: f["System.State"]?.stringValue,
+                workItemType: f["System.WorkItemType"]?.stringValue,
+                assignedTo: assignedTo,
+                createdDate: f["System.CreatedDate"]?.stringValue,
+                changedDate: f["System.ChangedDate"]?.stringValue,
+                description: f["System.Description"]?.stringValue,
+                priority: f["Microsoft.VSTS.Common.Priority"]?.intValue,
+                iterationPath: f["System.IterationPath"]?.stringValue,
+                areaPath: f["System.AreaPath"]?.stringValue,
+                tags: f["System.Tags"]?.stringValue
+            ),
+            url: url
+        )
     }
+}
+
+/// Iteration as returned by `az boards iteration team list`.
+struct AzCliIteration: Decodable {
+    let id: String?
+    let name: String?
+    let path: String?
+    let attributes: AzCliIterationAttributes?
+    let url: String?
+
+    func toSprint() -> Sprint {
+        Sprint(
+            id: id,
+            name: name,
+            path: path,
+            attributes: attributes.map {
+                SprintAttributes(startDate: $0.startDate, finishDate: $0.finishDate, timeFrame: $0.timeFrame)
+            },
+            url: url
+        )
+    }
+}
+
+struct AzCliIterationAttributes: Decodable {
+    let startDate: String?
+    let finishDate: String?
+    let timeFrame: String?
+}
+
+/// Project list wrapper from `az devops project list`.
+public struct AzCliProjectList: Decodable {
+    public let value: [AzCliProject]?
+}
+
+public struct AzCliProject: Decodable {
+    public let id: String
+    public let name: String
+    public let state: String?
+}
+
+// MARK: - AnyCodable convenience (uses public AnyCodable from ReportMateModels)
+
+extension AnyCodable {
+    var stringValue: String? { value as? String }
+    var intValue: Int? { value as? Int }
+    var dictValue: [String: Any]? { value as? [String: Any] }
+}
+
+// MARK: - Data BOM helper
+
+extension Data {
+    /// Drop UTF-8 BOM if present (az CLI sometimes adds it).
+    func dropBOM() -> Data {
+        if count >= 3, self[0] == 0xEF, self[1] == 0xBB, self[2] == 0xBF {
+            return self.dropFirst(3).asData
+        }
+        return self
+    }
+}
+
+private extension Data.SubSequence {
+    var asData: Data { Data(self) }
 }
 
 // MARK: - Helpers
@@ -414,20 +440,5 @@ extension Array where Element == Int {
         stride(from: 0, to: count, by: size).map {
             Array(self[$0..<Swift.min($0 + size, count)])
         }
-    }
-}
-
-extension Array where Element == [String: Any] {
-    func asParameters() -> Parameters {
-        return ["": self]
-    }
-}
-
-struct ArrayEncoding: ParameterEncoding {
-    func encode(_ urlRequest: URLRequestConvertible, with parameters: Parameters?) throws -> URLRequest {
-        var request = try urlRequest.asURLRequest()
-        guard let array = parameters?[""] as? [[String: Any]] else { return request }
-        request.httpBody = try JSONSerialization.data(withJSONObject: array)
-        return request
     }
 }

@@ -28,7 +28,7 @@ public class KeychainService {
         // Azure DevOps
         case devopsOrganization = "DevOpsOrganization"
         case devopsProject = "DevOpsProject"
-        case devopsPat = "DevOpsPat"
+        // NO PAT — Azure DevOps uses SSO only
         
         // TeamDynamix
         case tdxBaseUrl = "TdxBaseUrl"
@@ -169,8 +169,7 @@ public class KeychainService {
             ("GRAPH_CLIENT_SECRET", .graphClientSecret),
             ("DEVOPS_ORGANIZATION", .devopsOrganization),
             ("DEVOPS_PROJECT", .devopsProject),
-            ("DEVOPS_PAT", .devopsPat),
-            ("AZURE_DEVOPS_PAT", .devopsPat),
+            // NO PAT — Azure DevOps uses SSO only
             ("TDX_BASE_URL", .tdxBaseUrl),
             ("TDX_APP_ID", .tdxAppId),
             ("TDX_USERNAME", .tdxUsername),

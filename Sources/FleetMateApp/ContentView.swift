@@ -4,8 +4,8 @@ import FleetMateCore
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
     @State private var selectedTab: Tab = .dashboard
-    /// Tracks which tabs have been created (lazy keep-alive)
-    @State private var createdTabs: Set<Tab> = [.dashboard]
+    /// All tabs are created eagerly so .task fires immediately and data preloads in background
+    @State private var createdTabs: Set<Tab> = Set(Tab.allCases)
     /// Tracks whether we've already auto-prompted Phase 2 SSO for this session
     @State private var hasAutoPromptedSso = false
 
@@ -37,7 +37,7 @@ struct ContentView: View {
             // Top tab bar
             HStack(spacing: 2) {
                 ForEach(Tab.allCases, id: \.self) { tab in
-                    Button(action: { createdTabs.insert(tab); selectedTab = tab }) {
+                    Button(action: { selectedTab = tab }) {
                         HStack(spacing: 6) {
                             Image(systemName: tab.icon)
                                 .font(.system(size: 13))
@@ -134,7 +134,6 @@ struct ContentView: View {
         }
         .onChange(of: appState.navigateToTab) { _, newTab in
             if let name = newTab, let tab = Self.tabMap[name] {
-                createdTabs.insert(tab)
                 selectedTab = tab
                 appState.navigateToTab = nil
             }

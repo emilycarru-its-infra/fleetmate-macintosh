@@ -156,7 +156,7 @@ struct DevicesView: View {
                         )
                         Spacer()
                     }
-                } else if isLoading {
+                } else if isLoading && appState.cachedDevices.isEmpty {
                     VStack {
                         ProgressView("Loading devices...")
                             .padding(.top, 50)

@@ -101,7 +101,7 @@ struct GroupsContentView: View {
                     )
                     Spacer()
                 }
-            } else if isLoading {
+            } else if isLoading && appState.cachedGroups.isEmpty {
                 VStack {
                     ProgressView("Loading device groups...")
                         .padding(.top, 50)

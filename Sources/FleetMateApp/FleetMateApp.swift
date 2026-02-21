@@ -278,6 +278,7 @@ class AppState: ObservableObject {
         dbg.info("  Snipe configured:  \(config.isSnipeConfigured), cache valid: \(isAssetsCacheValid)", category: "preload")
         dbg.info("  TDX configured:    \(config.isTdxConfigured), cache valid: \(isTicketsCacheValid)", category: "preload")
         dbg.info("  Systems Graph:     \(config.isSystemsGraphConfigured), cache valid: \(isGroupsCacheValid)", category: "preload")
+        dbg.info("  DevOps configured: \(config.isDevOpsConfigured), cache valid: \(isWorkItemsCacheValid)", category: "preload")
 
         await withTaskGroup(of: Void.self) { group in
             // Preload devices
@@ -339,6 +340,20 @@ class AppState: ObservableObject {
                     }
                 }
             }
+            
+            // Preload work items (DevOps)
+            if config.isDevOpsConfigured && !isWorkItemsCacheValid {
+                group.addTask { @MainActor in
+                    dbg.info("Preloading work items...", category: "preload")
+                    do {
+                        let items = try await self.devOpsService.getWorkItems(limit: 200)
+                        self.updateWorkItemsCache(items)
+                        dbg.info("Work items preloaded: \(items.count) items", category: "preload")
+                    } catch {
+                        dbg.error("Work items preload FAILED: \(error)", category: "preload")
+                    }
+                }
+            }
         }
         dbg.info("preloadAllData finished", category: "preload")
 
@@ -365,6 +380,7 @@ class AppState: ObservableObject {
     /// triggered later, only when the user navigates to a tab that needs auth.
     func attemptSilentTdxSso() {
         guard ssoViewModel == nil else { return }
+        dbg.info("[SSO Phase 1] Starting silent TDX SSO attempt (authMethod=\(config.tdxAuthMethod), ssoEnabled=\(config.tdxSsoEnabled))", category: "tdx-sso")
 
         let viewModel = TdxSsoLoginViewModel(config: config)
         ssoViewModel = viewModel
@@ -380,15 +396,83 @@ class AppState: ObservableObject {
                let token = result.token {
                 // Got JWT from cached session — fully silent
                 let expiry = Date().addingTimeInterval(23 * 60 * 60)
+                dbg.info("[SSO Phase 1] Silent SSO SUCCEEDED — user=\(result.userName ?? "unknown") email=\(result.userEmail ?? "unknown")", category: "tdx-sso")
                 self.handleTdxSsoSuccess(
                     token: token,
                     expiry: expiry,
                     userId: result.userEmail,
                     userName: result.userName
                 )
+            } else {
+                dbg.warn("[SSO Phase 1] Silent SSO FAILED — will attempt headless WKWebView (Phase 1.5)", category: "tdx-sso")
+                // Phase 1.5: Try headless WKWebView SSO before falling back to interactive sheet
+                self.attemptHeadlessTdxSso()
             }
-            // Phase 1 failed — do nothing. Phase 2 is triggered on-demand
-            // when the user navigates to a tab that requires TDX auth.
+        }
+    }
+    
+    /// Phase 1.5: Attempt SSO using a hidden WKWebView.
+    /// The Enterprise SSO Extension can intercept WKWebView requests (but not plain URLSession),
+    /// so this may complete silently where Phase 1 failed.
+    func attemptHeadlessTdxSso() {
+        guard ssoViewModel == nil else { return }
+        dbg.info("[SSO Phase 1.5] Starting headless WKWebView SSO attempt", category: "tdx-sso")
+
+        let viewModel = TdxSsoLoginViewModel(config: config)
+        ssoViewModel = viewModel
+
+        // Create a hidden off-screen window to host the WKWebView
+        let hiddenWindow = NSWindow(
+            contentRect: NSRect(x: -9999, y: -9999, width: 1, height: 1),
+            styleMask: [],
+            backing: .buffered,
+            defer: true
+        )
+        hiddenWindow.isReleasedWhenClosed = false
+        hiddenWindow.orderOut(nil)
+
+        // Attach the WebView to the hidden window so SSO Extension can intercept
+        let webView = viewModel.webView
+        hiddenWindow.contentView = webView
+        webView.frame = NSRect(x: 0, y: 0, width: 1, height: 1)
+
+        // Start the WebView-based SSO flow
+        viewModel.startAuthentication()
+
+        // Watch for completion with a timeout
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            // Wait up to 40 seconds for headless SSO to complete.
+            // NOTE: startAuthentication() runs tryFullSilentSamlFlow() first (~4–10 s) before
+            // the WebView begins loading. After that, the autologon/Kerberos flow takes
+            // ~8 s and FIDO fallback needs up to ~15 s — so 40 s is the safe minimum.
+            let deadline = Date().addingTimeInterval(40)
+            while Date() < deadline {
+                if let result = viewModel.authResult {
+                    self.ssoViewModel = nil
+                    hiddenWindow.close()
+                    if result.success, let token = result.token {
+                        let expiry = Date().addingTimeInterval(23 * 60 * 60)
+                        dbg.info("[SSO Phase 1.5] Headless WKWebView SSO SUCCEEDED — user=\(result.userName ?? "unknown")", category: "tdx-sso")
+                        self.handleTdxSsoSuccess(
+                            token: token,
+                            expiry: expiry,
+                            userId: result.userEmail,
+                            userName: result.userName
+                        )
+                        return
+                    }
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s poll
+            }
+
+            self.ssoViewModel = nil
+            hiddenWindow.close()
+            dbg.warn("[SSO Phase 1.5] Headless WKWebView SSO FAILED or timed out — triggering interactive Phase 2", category: "tdx-sso")
+            // Phase 2: Fall back to interactive sheet
+            self.triggerTdxSsoLogin()
         }
     }
 

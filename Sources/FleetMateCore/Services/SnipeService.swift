@@ -130,6 +130,12 @@ public class SnipeService {
         return try await fetchList("/api/v1/statuslabels", parameters: ["limit": 500])
     }
     
+    // MARK: - Activity Reports
+    
+    public func getActivityLog(limit: Int = 15) async throws -> [SnipeActivityLog] {
+        return try await fetchList("/api/v1/reports/activity", parameters: ["limit": limit, "order": "desc", "sort": "created_at"])
+    }
+    
     // MARK: - Asset Operations
     
     public func checkoutAsset(assetId: Int, request: SnipeCheckoutRequest) async throws -> SnipeResponse {

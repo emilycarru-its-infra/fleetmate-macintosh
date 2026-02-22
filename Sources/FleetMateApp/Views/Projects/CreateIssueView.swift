@@ -127,7 +127,7 @@ struct CreateIssueView: View {
 
                             if showMarkdownPreview {
                                 ScrollView {
-                                    Text(markdownPreview)
+                                    MarkdownTextView(content: markdownPreviewContent)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .padding(8)
                                 }
@@ -264,8 +264,8 @@ struct CreateIssueView: View {
 
     // MARK: - Markdown Preview
 
-    private var markdownPreview: AttributedString {
-        (try? AttributedString(markdown: bodyText.isEmpty ? "*No content*" : bodyText)) ?? AttributedString(bodyText)
+    private var markdownPreviewContent: String {
+        bodyText.isEmpty ? "*No content*" : bodyText
     }
 
     // MARK: - Metadata Section Builder

@@ -160,10 +160,13 @@ class AuthManager: ObservableObject {
             }
         }
         
-        // DevOps (az CLI)
+        // DevOps (OAuth2 SSO)
         if systems[.devops] != nil {
-            update(.devops, state: .authenticating)
-            await probeDevOps(devOpsService: devOpsService)
+            if devOpsService.hasValidToken {
+                update(.devops, state: .authenticating)
+                await probeDevOps(devOpsService: devOpsService)
+            }
+            // If no token yet, leave at .configured — SSO will handle it
         }
         
         // GitHub (gh CLI)

@@ -307,6 +307,32 @@ public class TdxService {
         }
     }
 
+    /// Update a ticket using a full TicketUpdateRequest (required fields included to avoid 400).
+    /// Uses POST — TDX's PATCH is really a full replace and POST is the reliable method.
+    public func updateTicket(id: Int, request: TicketUpdateRequest) async throws -> TdxTicket? {
+        guard let headers = await headers() else { return nil }
+
+        let url = config.tdxTicketsUrl("\(id)")
+        dbg.info("TDX updateTicket \(id) → POST \(url)", category: "tdx")
+
+        return try await withCheckedThrowingContinuation { continuation in
+            session.request(url, method: .post, parameters: request, encoder: JSONParameterEncoder.default, headers: headers)
+                .validate()
+                .responseDecodable(of: TdxTicket.self) { response in
+                    switch response.result {
+                    case .success(let ticket):
+                        continuation.resume(returning: ticket)
+                    case .failure(let error):
+                        if let data = response.data {
+                            let body = String(data: data, encoding: .utf8) ?? "(unreadable)"
+                            dbg.warn("TDX updateTicket \(id) error (\(response.response?.statusCode ?? 0)): \(body)", category: "tdx")
+                        }
+                        continuation.resume(throwing: error)
+                    }
+                }
+        }
+    }
+
     // MARK: - Feed (Comments)
 
     public func getTicketFeed(ticketId: Int) async throws -> [TdxFeedEntry] {
@@ -348,6 +374,32 @@ public class TdxService {
                         continuation.resume(returning: true)
                     case .failure:
                         continuation.resume(returning: false)
+                    }
+                }
+        }
+    }
+
+    // MARK: - People Search
+
+    /// Search for people in TDX by name or email
+    public func searchPeople(searchText: String, maxResults: Int = 10) async throws -> [TdxPerson] {
+        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+        guard let headers = await headers() else { return [] }
+
+        let encoded = searchText.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? searchText
+        let url = config.tdxPeopleUrl("lookup?searchText=\(encoded)&maxResults=\(maxResults)")
+        dbg.debug("TDX searchPeople → GET \(url)", category: "tdx")
+
+        return try await withCheckedThrowingContinuation { continuation in
+            session.request(url, headers: headers)
+                .validate()
+                .responseDecodable(of: [TdxPerson].self) { response in
+                    switch response.result {
+                    case .success(let people):
+                        continuation.resume(returning: people)
+                    case .failure(let error):
+                        dbg.warn("TDX searchPeople failed: \(error.localizedDescription)", category: "tdx")
+                        continuation.resume(returning: [])
                     }
                 }
         }

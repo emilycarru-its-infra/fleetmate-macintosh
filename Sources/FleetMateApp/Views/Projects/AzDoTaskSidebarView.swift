@@ -832,12 +832,18 @@ struct AzDoTaskSidebarView: View {
         Task {
             defer { isLoadingDetail = false }
             do {
-                async let itemResult = service.getWorkItem(id: id)
-                async let commentsResult = service.getComments(workItemId: id)
-                workItem = try await itemResult
-                comments = try await commentsResult
+                workItem = try await service.getWorkItem(id: id)
             } catch {
                 loadError = error.localizedDescription
+                return
+            }
+            // Comments are non-blocking — failures don't prevent detail from showing
+            Task {
+                do {
+                    comments = try await service.getComments(workItemId: id)
+                } catch {
+                    dbg.warn("AzDO comments load failed (non-fatal): \(error)", category: "azdo")
+                }
             }
         }
     }

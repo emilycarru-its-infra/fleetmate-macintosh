@@ -14,7 +14,8 @@ struct DevOpsCommand: AsyncParsableCommand {
             UpdateItemSubcommand.self,
             SprintsSubcommand.self,
             BoardsSubcommand.self,
-            FromErrorSubcommand.self
+            FromErrorSubcommand.self,
+            DevOpsTestSubcommand.self
         ],
         defaultSubcommand: ItemsSubcommand.self
     )
@@ -419,5 +420,161 @@ struct FromErrorSubcommand: AsyncParsableCommand {
             print("  Device: \(device)")
             print("")
         }
+    }
+}
+
+// MARK: - Test Subcommand
+
+struct DevOpsTestSubcommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "test",
+        abstract: "Test Azure DevOps connectivity end-to-end (SSO token refresh → discovery → WIQL)"
+    )
+
+    @Flag(name: .shortAndLong, help: "Show verbose output")
+    var verbose: Bool = false
+
+    func run() async throws {
+        print("Azure DevOps End-to-End Test".bold)
+        print(String(repeating: "─", count: 40))
+
+        // 1. Load config
+        let config = try FleetMateConfig.load()
+        let org = config.tasks?.providers.azdevops?.organization
+                  ?? config.devopsOrganization
+                  ?? ""
+        let configProject = config.tasks?.providers.azdevops?.project
+                            ?? config.devopsProject
+                            ?? ""
+        let tenantId = config.devopsTenantId ?? config.graphTenantId
+
+        print("\n" + "1. Configuration".cyan.bold)
+        print("   Organization: \(org.isEmpty ? "(not set)".red : org.green)")
+        print("   Project:      \(configProject.isEmpty ? "(will auto-discover)".yellow : configProject.green)")
+        print("   Tenant ID:    \(tenantId ?? "organizations (default)")")
+
+        guard !org.isEmpty else {
+            print("\n" + "✘ No organization configured. Set azdevops.organization in config.yaml".red)
+            throw ExitCode.failure
+        }
+
+        // 2. Token acquisition (az CLI → MSAL cache → refresh token)
+        print("\n" + "2. Token Acquisition".cyan.bold)
+        let sso = DevOpsSsoService(tenantId: tenantId)
+
+        let result = try await sso.refreshAccessToken()
+        guard result.success, let accessToken = result.accessToken else {
+            print("   ✘ Token acquisition failed: \(result.error ?? "unknown")".red)
+            print("   Run 'az login' to authenticate via Platform SSO".yellow)
+            throw ExitCode.failure
+        }
+        print("   ✓ Access token acquired (via az CLI / MSAL cache)".green)
+        print("   User:       \(result.userName ?? "unknown")")
+        print("   Expires in: \(result.expiresIn ?? 0)s")
+
+        // 3. API service + auth check
+        print("\n" + "3. API Auth Verification".cyan.bold)
+        let service = AzureDevOpsService(config: config)
+        service.setBearerToken(accessToken, expiry: Date().addingTimeInterval(TimeInterval(result.expiresIn ?? 3600)))
+
+        let authOk = try await service.verifyAuth()
+        print("   Auth status: \(authOk ? "✓ OK".green : "✘ FAILED".red)")
+        guard authOk else { throw ExitCode.failure }
+
+        // 4. Project discovery / listing
+        print("\n" + "4. Projects".cyan.bold)
+        let projects = try await service.listProjects()
+        if projects.isEmpty {
+            print("   ✘ No projects found in org '\(org)'".red)
+            throw ExitCode.failure
+        }
+        for p in projects {
+            print("   • \(p.name) (\(p.state ?? "?"))")
+        }
+
+        let resolvedProject: String
+        if configProject.isEmpty {
+            print("   Auto-discovering project...")
+            guard let discovered = try await service.discoverProject() else {
+                print("   ✘ Discovery failed".red)
+                throw ExitCode.failure
+            }
+            resolvedProject = discovered
+            print("   ✓ Using discovered project: '\(resolvedProject)'".green)
+        } else {
+            service.setProject(configProject)
+            resolvedProject = configProject
+            print("   Using configured project: '\(resolvedProject)'".green)
+        }
+
+        // 5. Org-level WIQL query — all projects in one call
+        print("\n" + "5. Work Items (org-level WIQL)".cyan.bold)
+        let wiql = """
+        SELECT [System.Id] FROM WorkItems \
+        WHERE [System.State] <> 'Closed' AND [System.State] <> 'Done' AND [System.State] <> 'Removed' \
+        ORDER BY [System.ChangedDate] DESC
+        """
+        if verbose {
+            print("   WIQL: \(wiql)")
+        }
+        let allItems = try await service.queryWorkItems(wiql, orgLevel: true)
+        let totalItems = allItems.count
+        print("   \(totalItems) active work items across all projects".green)
+
+        // Group by project for display
+        var byProject: [String: Int] = [:]
+        for item in allItems {
+            let proj = item.fields?.teamProject ?? "unknown"
+            byProject[proj, default: 0] += 1
+        }
+        for (proj, count) in byProject.sorted(by: { $0.key < $1.key }) {
+            print("   • \(proj): \(count) items")
+        }
+
+        // Show top items
+        if !allItems.isEmpty {
+            print("")
+            let showCount = min(allItems.count, 10)
+            for item in allItems.prefix(showCount) {
+                let state = item.fields?.state ?? "?"
+                let type = item.fields?.workItemType ?? "?"
+                let title = item.fields?.title ?? "(no title)"
+                let proj = item.fields?.teamProject ?? "?"
+                let assignee = item.fields?.assignedTo?.displayName ?? "unassigned"
+                print("   #\(item.id) [\(proj)/\(type)] \(state.cyan) \(title) → \(assignee.dim)")
+            }
+            if allItems.count > showCount {
+                print("   ... and \(allItems.count - showCount) more")
+            }
+        }
+
+        // Set project for sprints query
+        service.setProject(resolvedProject)
+
+        // 6. Sprints
+        print("\n" + "6. Sprints".cyan.bold)
+        do {
+            let sprints = try await service.getSprints()
+            print("   \(sprints.count) sprints found")
+            if let current = sprints.first(where: { $0.isCurrent }) {
+                print("   Current: \(current.name ?? "unknown")".green)
+            }
+            if verbose {
+                for s in sprints {
+                    let marker = s.isCurrent ? " ← current".green : ""
+                    print("   • \(s.name ?? "?")\(marker)")
+                }
+            }
+        } catch {
+            print("   ⚠ Could not load sprints: \(error.localizedDescription)".yellow)
+        }
+
+        // Summary
+        print("\n" + String(repeating: "─", count: 40))
+        print("✓ All checks passed!".green.bold)
+        print("  Org:      \(org)")
+        print("  Project:  \(resolvedProject)")
+        print("  Projects: \(projects.map { $0.name }.joined(separator: ", "))")
+        print("  Items:    \(totalItems) active work items across all projects")
     }
 }

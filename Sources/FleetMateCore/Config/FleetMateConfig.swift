@@ -675,6 +675,15 @@ public struct FleetMateConfig: Codable {
         }
         return "\(base)/api/\(appId)/assets/\(suffix)"
     }
+
+    /// Get TDX people URL (not app-scoped)
+    public func tdxPeopleUrl(_ suffix: String = "") -> String {
+        let base = (tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if suffix.isEmpty {
+            return "\(base)/api/people"
+        }
+        return "\(base)/api/people/\(suffix)"
+    }
 }
 
 // MARK: - Tasks Configuration

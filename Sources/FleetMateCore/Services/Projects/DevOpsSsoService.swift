@@ -2,6 +2,10 @@ import Foundation
 import Crypto
 import Security
 
+#if canImport(AppKit)
+import AppKit
+#endif
+
 // MARK: - DevOps SSO Result
 
 /// Result of a DevOps SSO authentication attempt
@@ -56,19 +60,17 @@ public class DevOpsSsoService {
     public private(set) var userName: String?
     public private(set) var userEmail: String?
 
-    // Keychain
-    private let keychainService = "ca.ecuad.macadmin.fleetmate.devops-sso"
-    private let keychainRefreshKey = "refresh_token"
-
     /// True if we have a non-expired access token (with 5-minute buffer)
     public var isAuthenticated: Bool {
         guard let token = accessToken, !token.isEmpty else { return false }
         return Date().addingTimeInterval(5 * 60) < tokenExpiry
     }
 
-    /// True if a refresh token is available (possibly from Keychain)
+    /// True if a refresh token is available (from MSAL cache or in-memory)
     public var hasRefreshToken: Bool {
-        refreshToken != nil && !refreshToken!.isEmpty
+        if let rt = refreshToken, !rt.isEmpty { return true }
+        // Check MSAL cache file for a refresh token
+        return loadRefreshTokenFromMsalCache() != nil
     }
 
     public init(tenantId: String? = nil) {
@@ -76,11 +78,7 @@ public class DevOpsSsoService {
         self.authorizeUrl = "https://login.microsoftonline.com/\(tenant)/oauth2/v2.0/authorize"
         self.tokenUrl = "https://login.microsoftonline.com/\(tenant)/oauth2/v2.0/token"
 
-        // Load persisted refresh token from Keychain
-        self.refreshToken = loadFromKeychain(key: keychainRefreshKey)
-        if refreshToken != nil {
-            dbg.info("[DevOps SSO] Loaded refresh token from Keychain", category: "devops-sso")
-        }
+        dbg.info("[DevOps SSO] Initialized (tenant=\(tenant), az CLI + MSAL cache — no Keychain)", category: "devops-sso")
     }
 
     // MARK: - PKCE + Authorize URL
@@ -165,34 +163,53 @@ public class DevOpsSsoService {
         return result
     }
 
-    /// Refresh the access token using the stored refresh token
+    /// Acquire a valid access token.
+    /// Priority: 1) `az` CLI  2) MSAL cache refresh token  3) in-memory refresh token
     public func refreshAccessToken() async throws -> DevOpsSsoResult {
-        guard let refresh = refreshToken, !refresh.isEmpty else {
-            return .failure("No refresh token available")
+        // 1. Try `az` CLI first — seamless with Platform SSO, no prompts
+        dbg.info("[DevOps SSO] Attempting token acquisition via az CLI...", category: "devops-sso")
+        let azResult = await acquireTokenFromAzCli()
+        if azResult.success {
+            dbg.info("[DevOps SSO] az CLI token acquired — user=\(azResult.userName ?? "unknown")", category: "devops-sso")
+            return azResult
+        }
+        dbg.warn("[DevOps SSO] az CLI failed: \(azResult.error ?? "unknown") — trying MSAL cache...", category: "devops-sso")
+
+        // 2. Try MSAL cache file (same tokens az CLI uses, but read directly)
+        if let msalRefresh = loadRefreshTokenFromMsalCache() {
+            dbg.info("[DevOps SSO] Found refresh token in MSAL cache, refreshing...", category: "devops-sso")
+            let msalResult = try await refreshWithToken(msalRefresh)
+            if msalResult.success {
+                return msalResult
+            }
+            dbg.warn("[DevOps SSO] MSAL cache refresh failed: \(msalResult.error ?? "unknown")", category: "devops-sso")
         }
 
-        dbg.info("[DevOps SSO] Attempting token refresh...", category: "devops-sso")
+        // 3. Try in-memory refresh token (from previous PKCE flow in this session)
+        if let refresh = refreshToken, !refresh.isEmpty {
+            dbg.info("[DevOps SSO] Trying in-memory refresh token...", category: "devops-sso")
+            let result = try await refreshWithToken(refresh)
+            if !result.success {
+                self.refreshToken = nil
+            }
+            return result
+        }
 
+        return .failure("No token source available (az CLI, MSAL cache, or refresh token)")
+    }
+
+    /// Refresh using a specific refresh token
+    private func refreshWithToken(_ refresh: String) async throws -> DevOpsSsoResult {
         let body = [
             "client_id": Self.clientId,
             "grant_type": "refresh_token",
             "refresh_token": refresh,
             "scope": Self.scope,
         ]
-
-        let result = try await postTokenRequest(body)
-
-        if !result.success {
-            // Refresh token may be expired — clear it
-            dbg.warn("[DevOps SSO] Refresh failed — clearing stored token", category: "devops-sso")
-            self.refreshToken = nil
-            deleteFromKeychain(key: keychainRefreshKey)
-        }
-
-        return result
+        return try await postTokenRequest(body)
     }
 
-    /// Set tokens from an external source
+    /// Set tokens from an external source (in-memory only — no Keychain)
     public func setTokens(accessToken: String, refreshToken: String? = nil, expiresIn: Int = 3600, userName: String? = nil, userEmail: String? = nil) {
         self.accessToken = accessToken
         self.tokenExpiry = Date().addingTimeInterval(TimeInterval(expiresIn))
@@ -200,19 +217,17 @@ public class DevOpsSsoService {
         self.userEmail = userEmail
         if let refresh = refreshToken {
             self.refreshToken = refresh
-            saveToKeychain(key: keychainRefreshKey, value: refresh)
         }
     }
 
-    /// Clear all tokens and Keychain state
+    /// Clear all in-memory token state
     public func clearTokens() {
         accessToken = nil
         refreshToken = nil
         tokenExpiry = .distantPast
         userName = nil
         userEmail = nil
-        deleteFromKeychain(key: keychainRefreshKey)
-        dbg.info("[DevOps SSO] Tokens cleared", category: "devops-sso")
+        dbg.info("[DevOps SSO] Tokens cleared (in-memory)", category: "devops-sso")
     }
 
     /// Get a valid access token, refreshing if needed. Throws if not authenticated.
@@ -279,7 +294,6 @@ public class DevOpsSsoService {
 
         if let refresh = tokenResponse.refresh_token {
             self.refreshToken = refresh
-            saveToKeychain(key: keychainRefreshKey, value: refresh)
         }
 
         dbg.info("[DevOps SSO] Token acquired — user=\(userInfo.name ?? "unknown"), expires in \(expiresIn)s", category: "devops-sso")
@@ -323,44 +337,123 @@ public class DevOpsSsoService {
         return (name, email)
     }
 
-    // MARK: - Keychain
+    // MARK: - az CLI Token Acquisition
 
-    private func saveToKeychain(key: String, value: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: key,
-        ]
-        SecItemDelete(query as CFDictionary)
-
-        var addQuery = query
-        addQuery[kSecValueData as String] = value.data(using: .utf8)
-        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        SecItemAdd(addQuery as CFDictionary, nil)
+    /// Acquire a DevOps access token via `az account get-access-token`.
+    /// This is seamless with Platform SSO — no prompts, no Keychain.
+    private func acquireTokenFromAzCli() async -> DevOpsSsoResult {
+        do {
+            let result = try await runAzCli()
+            return result
+        } catch {
+            return .failure("az CLI: \(error.localizedDescription)")
+        }
     }
 
-    private func loadFromKeychain(key: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: key,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
+    private func runAzCli() async throws -> DevOpsSsoResult {
+        return try await withCheckedThrowingContinuation { continuation in
+            let process = Process()
+            let pipe = Pipe()
 
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+            // Find az in common locations
+            let azPaths = ["/opt/homebrew/bin/az", "/usr/local/bin/az", "/usr/bin/az"]
+            let azPath = azPaths.first { FileManager.default.isExecutableFile(atPath: $0) }
+            guard let path = azPath else {
+                continuation.resume(returning: .failure("az CLI not found"))
+                return
+            }
+
+            process.executableURL = URL(fileURLWithPath: path)
+            process.arguments = ["account", "get-access-token", "--resource", Self.devOpsResource, "--output", "json"]
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+            process.environment = ProcessInfo.processInfo.environment
+
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(returning: .failure("az CLI launch failed: \(error)"))
+                return
+            }
+
+            process.waitUntilExit()
+
+            guard process.terminationStatus == 0 else {
+                continuation.resume(returning: .failure("az CLI exited with status \(process.terminationStatus)"))
+                return
+            }
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard !data.isEmpty else {
+                continuation.resume(returning: .failure("az CLI returned empty output"))
+                return
+            }
+
+            struct AzTokenResponse: Decodable {
+                let accessToken: String
+                let expiresOn: String?
+                let expires_on: Int?
+                let tenant: String?
+                let tokenType: String?
+            }
+
+            do {
+                let tokenResp = try JSONDecoder().decode(AzTokenResponse.self, from: data)
+                let userInfo = Self.extractUserInfoFromJwt(tokenResp.accessToken)
+
+                // Calculate expires_in from expires_on timestamp
+                let expiresIn: Int
+                if let ts = tokenResp.expires_on {
+                    expiresIn = max(ts - Int(Date().timeIntervalSince1970), 60)
+                } else {
+                    expiresIn = 3600
+                }
+
+                // Store token in memory
+                self.accessToken = tokenResp.accessToken
+                self.tokenExpiry = Date().addingTimeInterval(TimeInterval(expiresIn))
+                self.userName = userInfo.name
+                self.userEmail = userInfo.email
+
+                continuation.resume(returning: .success(
+                    accessToken: tokenResp.accessToken,
+                    expiresIn: expiresIn,
+                    userName: userInfo.name,
+                    userEmail: userInfo.email
+                ))
+            } catch {
+                continuation.resume(returning: .failure("az CLI JSON parse failed: \(error)"))
+            }
+        }
     }
 
-    private func deleteFromKeychain(key: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: key,
-        ]
-        SecItemDelete(query as CFDictionary)
+    // MARK: - MSAL Token Cache (fallback)
+
+    /// Read refresh token from az CLI's MSAL token cache file (~/.azure/msal_token_cache.json).
+    /// No Keychain access — just reads a JSON file.
+    private func loadRefreshTokenFromMsalCache() -> String? {
+        let cacheUrl = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".azure")
+            .appendingPathComponent("msal_token_cache.json")
+
+        guard let data = try? Data(contentsOf: cacheUrl),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let refreshTokens = json["RefreshToken"] as? [String: Any] else {
+            return nil
+        }
+
+        // Find a refresh token for our client ID
+        for (_, value) in refreshTokens {
+            guard let entry = value as? [String: Any],
+                  let clientId = entry["client_id"] as? String,
+                  clientId == Self.clientId,
+                  let secret = entry["secret"] as? String,
+                  !secret.isEmpty else {
+                continue
+            }
+            return secret
+        }
+        return nil
     }
 
     // MARK: - Encoding Helpers

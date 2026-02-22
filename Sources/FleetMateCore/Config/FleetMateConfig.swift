@@ -610,9 +610,9 @@ public struct FleetMateConfig: Codable {
         return graphTenantId != nil && systemsGraphId != nil && systemsGraphSecret != nil
     }
 
-    /// Check if DevOps is configured
+    /// Check if DevOps is configured (org is enough — project can be auto-discovered)
     public var isDevOpsConfigured: Bool {
-        return devopsOrganization != nil && devopsProject != nil
+        return devopsOrganization != nil || tasks?.providers.azdevops?.organization != nil
     }
 
     /// Check if TDX is configured

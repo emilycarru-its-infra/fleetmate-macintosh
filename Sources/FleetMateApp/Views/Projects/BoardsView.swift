@@ -145,7 +145,7 @@ struct BoardsView: View {
             // Provider filter
             Picker("Provider", selection: $filterProvider) {
                 Text("Backend").tag(nil as String?)
-                Text("DevOps").tag("azdo" as String?)
+                Text("DevOps").tag("azdevops" as String?)
                 Text("GitHub").tag("github" as String?)
                 Text("Gitea").tag("gitea" as String?)
                 Text("TDX").tag("tdx" as String?)
@@ -640,7 +640,7 @@ struct TaskListRow: View {
     private var providerColor: Color {
         switch task.provider {
         case "github": return .purple
-        case "azdo":   return .blue
+        case "azdevops":   return .blue
         case "gitea":  return .green
         case "tdx":    return .orange
         default:       return .secondary
@@ -650,7 +650,7 @@ struct TaskListRow: View {
     private var providerSystemImage: String {
         switch task.provider {
         case "github": return "chevron.left.forwardslash.chevron.right"
-        case "azdo":   return "building.2"
+        case "azdevops":   return "building.2"
         case "gitea":  return "arrow.triangle.branch"
         case "tdx":    return "ticket"
         default:       return "square.and.pencil"
@@ -728,7 +728,7 @@ struct KanbanColumn: View {
     private func providerDisplayName(_ provider: String) -> String {
         switch provider {
         case "github": return "GitHub"
-        case "azdo":   return "DevOps"
+        case "azdevops":   return "DevOps"
         case "gitea":  return "Gitea"
         case "tdx":    return "TDX"
         default:       return provider.capitalized

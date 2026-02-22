@@ -21,7 +21,8 @@ struct ChartBar: Identifiable {
 struct ActivityItem: Identifiable {
     let id = UUID()
     let icon: String
-    let text: String
+    let name: String
+    let detail: String
     let time: String
     let timestamp: Date
     let tab: String
@@ -303,7 +304,7 @@ struct DashboardView: View {
                     if osSlices.isEmpty && !isLoadingFleet {
                         emptyState("No device data")
                     } else {
-                        donutChart(osSlices, size: 160)
+                        treemapChart(osSlices, height: 160)
                     }
                 }
             }
@@ -419,19 +420,30 @@ struct DashboardView: View {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(filteredActivityItems) { item in
                                 Button(action: { navigate(to: item.tab, deviceId: item.deviceId, ticketId: item.ticketId) }) {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: item.icon)
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(.secondary)
-                                            .frame(width: 16)
-                                        Text(item.text)
-                                            .font(.system(size: 12))
+                                    HStack(spacing: 0) {
+                                        // Column 1: Icon + Name
+                                        HStack(spacing: 6) {
+                                            Image(systemName: item.icon)
+                                                .font(.system(size: 12))
+                                                .foregroundStyle(.secondary)
+                                                .frame(width: 16)
+                                            Text(item.name)
+                                                .font(.system(size: 12))
+                                                .lineLimit(1)
+                                                .foregroundStyle(.primary)
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        // Column 2: Detail (platform/status)
+                                        Text(item.detail)
+                                            .font(.system(size: 11))
                                             .lineLimit(1)
-                                            .foregroundStyle(.primary)
-                                        Spacer()
+                                            .foregroundStyle(.secondary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                        // Column 3: Timestamp
                                         Text(item.time)
                                             .font(.caption2)
                                             .foregroundStyle(.tertiary)
+                                            .frame(width: 50, alignment: .trailing)
                                     }
                                     .padding(.vertical, 5)
                                     .padding(.horizontal, 2)
@@ -538,9 +550,110 @@ struct DashboardView: View {
         .chartForegroundStyleScale(domain: bars.map(\.label), range: bars.map(\.color))
         .chartLegend(.hidden)
         .chartXAxis {
-            AxisMarks { _ in AxisValueLabel().font(.caption2) }
+            AxisMarks { _ in
+                AxisValueLabel(orientation: .vertical)
+                    .font(.caption2)
+            }
         }
         .frame(height: height)
+    }
+
+    private func treemapChart(_ slices: [ChartSlice], height: CGFloat) -> some View {
+        let total = slices.reduce(0) { $0 + $1.value }
+        return VStack(spacing: 4) {
+            GeometryReader { geo in
+                let rects = treemapLayout(slices: slices, total: total, bounds: CGRect(origin: .zero, size: geo.size))
+                ZStack {
+                    ForEach(Array(zip(slices, rects)), id: \.0.id) { slice, rect in
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(slice.color)
+                            .frame(width: max(rect.width - 2, 0), height: max(rect.height - 2, 0))
+                            .overlay {
+                                if rect.width > 40 && rect.height > 30 {
+                                    VStack(spacing: 1) {
+                                        Text(slice.label)
+                                            .font(.caption2.bold())
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.7)
+                                        Text("\(slice.value)")
+                                            .font(.caption2)
+                                    }
+                                    .foregroundStyle(.white)
+                                }
+                            }
+                            .position(x: rect.midX, y: rect.midY)
+                    }
+                }
+            }
+            .frame(height: height)
+            // Legend below
+            HStack(spacing: 10) {
+                ForEach(slices) { slice in
+                    HStack(spacing: 4) {
+                        Circle().fill(slice.color).frame(width: 7, height: 7)
+                        Text("\(slice.label) (\(slice.value))")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Squarified treemap layout — slices into rects within bounds
+    private func treemapLayout(slices: [ChartSlice], total: Int, bounds: CGRect) -> [CGRect] {
+        guard !slices.isEmpty, total > 0 else { return [] }
+        let areas = slices.map { CGFloat($0.value) / CGFloat(total) * bounds.width * bounds.height }
+        var rects = Array(repeating: CGRect.zero, count: slices.count)
+        var remaining = bounds
+        var i = 0
+        while i < slices.count {
+            let isWide = remaining.width >= remaining.height
+            let sideLen = isWide ? remaining.height : remaining.width
+            // Greedily fill one row/col
+            var rowIndices: [Int] = []
+            var rowArea: CGFloat = 0
+            var bestWorst: CGFloat = .infinity
+            for j in i..<slices.count {
+                let candidate = rowArea + areas[j]
+                let strip = candidate / sideLen
+                let ws = (rowIndices + [j]).map { areas[$0] / strip }
+                let worst = max(ws.max()! / ws.min()!, ws.min()! / ws.max()!)
+                // Aspect ratio: max(w/h, h/w) for each rect in strip
+                let aspectWorst = (rowIndices + [j]).map { idx -> CGFloat in
+                    let w = areas[idx] / strip
+                    let h = strip
+                    return max(w / h, h / w)
+                }.max() ?? .infinity
+                if aspectWorst <= bestWorst || rowIndices.isEmpty {
+                    rowIndices.append(j)
+                    rowArea = candidate
+                    bestWorst = aspectWorst
+                } else {
+                    break
+                }
+            }
+            // Lay out row
+            let stripSize = rowArea / sideLen
+            var offset: CGFloat = 0
+            for idx in rowIndices {
+                let itemLen = areas[idx] / stripSize
+                if isWide {
+                    rects[idx] = CGRect(x: remaining.minX, y: remaining.minY + offset, width: stripSize, height: itemLen)
+                } else {
+                    rects[idx] = CGRect(x: remaining.minX + offset, y: remaining.minY, width: itemLen, height: stripSize)
+                }
+                offset += itemLen
+            }
+            if isWide {
+                remaining = CGRect(x: remaining.minX + stripSize, y: remaining.minY,
+                                   width: remaining.width - stripSize, height: remaining.height)
+            } else {
+                remaining = CGRect(x: remaining.minX, y: remaining.minY + stripSize,
+                                   width: remaining.width, height: remaining.height - stripSize)
+            }
+            i += rowIndices.count
+        }
+        return rects
     }
 
     private func emptyState(_ msg: String) -> some View {
@@ -610,13 +723,27 @@ struct DashboardView: View {
             ChartSlice(label: "Non-Compliant", value: nonCompliantCount, color: .red)
         ].filter { $0.value > 0 }
 
-        let osCounts = Dictionary(grouping: devices, by: { $0.operatingSystem ?? "Unknown" })
+        let platformColorMap: [String: Color] = [
+            "Macintosh": .orange,
+            "Windows": .blue,
+            "iOS/iPadOS": .purple,
+            "Android": .green,
+            "Linux": .teal,
+            "ChromeOS": .brown
+        ]
+        let platformLabelMap: [String: String] = [
+            "macOS": "Macintosh",
+            "iOS": "iOS/iPadOS",
+            "iPadOS": "iOS/iPadOS"
+        ]
+        let osCounts = Dictionary(grouping: devices, by: { platformLabelMap[$0.operatingSystem ?? ""] ?? ($0.operatingSystem ?? "") })
+            .filter { !$0.key.isEmpty && $0.value.count > 0 }
             .map { (key: $0.key, count: $0.value.count) }
             .sorted { $0.count > $1.count }
             .prefix(6)
-        let colors: [Color] = [.blue, .purple, .orange, .teal, .brown, .gray]
+        let fallbackColors: [Color] = [.blue, .purple, .orange, .teal, .brown, .gray]
         osSlices = osCounts.enumerated().map { i, os in
-            ChartSlice(label: os.key, value: os.count, color: colors[i % colors.count])
+            ChartSlice(label: os.key, value: os.count, color: platformColorMap[os.key] ?? fallbackColors[i % fallbackColors.count])
         }
     }
 
@@ -794,7 +921,8 @@ struct DashboardView: View {
             })
             .sorted(by: { $0.1 > $1.1 }) {
             let title = String((t.title ?? "").prefix(50))
-            items.append(ActivityItem(icon: "ticket", text: "#\(t.id ?? 0)  \(title)  -  \(t.statusName ?? "")",
+            items.append(ActivityItem(icon: "ticket", name: "#\(t.id ?? 0)  \(title)",
+                                      detail: t.statusName ?? "",
                                       time: formatRelative(date), timestamp: date, tab: "Tickets", ticketId: t.id))
         }
 
@@ -806,7 +934,8 @@ struct DashboardView: View {
             })
             .sorted(by: { $0.1 > $1.1 }) {
             let title = String((w.fields?.title ?? "").prefix(50))
-            items.append(ActivityItem(icon: "list.bullet.rectangle", text: "#\(w.id)  \(title)  -  \(w.fields?.state ?? "")",
+            items.append(ActivityItem(icon: "list.bullet.rectangle", name: "#\(w.id)  \(title)",
+                                      detail: w.fields?.state ?? "",
                                       time: formatRelative(date), timestamp: date, tab: "Projects"))
         }
 
@@ -817,7 +946,8 @@ struct DashboardView: View {
                 return (d, dt)
             })
             .sorted(by: { $0.1 > $1.1 }) {
-            items.append(ActivityItem(icon: "laptopcomputer", text: "\(d.deviceName ?? "Device") synced  -  \(d.operatingSystem ?? "")",
+            items.append(ActivityItem(icon: "laptopcomputer", name: d.deviceName ?? "Device",
+                                      detail: "\(d.operatingSystem ?? "") · synced",
                                       time: formatRelative(date), timestamp: date, tab: "Devices", deviceId: d.id))
         }
 
@@ -825,7 +955,8 @@ struct DashboardView: View {
         for a in appState.cachedAssets {
             if let dateStr = a.updatedAt?.value, let date = parse(dateStr), date > cutoff {
                 let name = a.name ?? a.assetTag ?? "Asset"
-                items.append(ActivityItem(icon: "shippingbox", text: "\(name)  -  \(a.statusLabel?.name ?? "")",
+                items.append(ActivityItem(icon: "shippingbox", name: name,
+                                          detail: a.statusLabel?.name ?? "",
                                           time: formatRelative(date), timestamp: date, tab: "Inventory"))
             }
         }
@@ -843,8 +974,8 @@ struct DashboardView: View {
                 let action = entry.actionType ?? "activity"
                 let itemName = entry.item?.name ?? "item"
                 let admin = entry.admin?.name ?? ""
-                let text = "\(admin) \(action) \(itemName)".trimmingCharacters(in: .whitespaces)
-                items.append(ActivityItem(icon: "arrow.triangle.2.circlepath", text: text,
+                items.append(ActivityItem(icon: "arrow.triangle.2.circlepath", name: "\(admin) \(action)".trimmingCharacters(in: .whitespaces),
+                                          detail: itemName,
                                           time: formatRelative(date), timestamp: date, tab: "Inventory"))
             }
         }

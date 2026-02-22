@@ -56,11 +56,36 @@ struct TicketsView: View {
     @State private var editStatusId: Int? = nil
     @State private var editPriorityId: Int? = nil
     @State private var editDescription = ""
+    @State private var editResponsibleGroupId: Int? = nil
+    @State private var editServiceId: Int? = nil
+    @State private var editFormId: Int? = nil
+    @State private var editRequestorUid: String? = nil
+    @State private var editRequestorName: String = ""
+    @State private var editResponsibleUid: String? = nil
+    @State private var editResponsibleName: String = ""
+    @State private var editClassification: Int? = nil
+    // People search state
+    @State private var requestorSearchText = ""
+    @State private var requestorSearchResults: [TdxPerson] = []
+    @State private var isSearchingRequestor = false
+    @State private var showRequestorResults = false
+    @State private var isChangingRequestor = false
+    @State private var responsibleSearchText = ""
+    @State private var responsibleSearchResults: [TdxPerson] = []
+    @State private var isSearchingResponsible = false
+    @State private var showResponsibleResults = false
+    @State private var isReassigning = false
+    // Actions menu
+    @State private var showActionsMenu = false
+    @State private var showSetParentSheet = false
+    @State private var parentTicketIdText = ""
+    @State private var isSettingParent = false
     @State private var isSaving = false
     @State private var hasEdits = false
     @State private var isEditingDescription = false
     @State private var saveErrorMessage: String? = nil
     @State private var saveSucceeded = false
+    @State private var isSavingDescription = false
 
     @FocusState private var descriptionFocused: Bool
 
@@ -92,6 +117,58 @@ struct TicketsView: View {
         var result: [(id: Int, name: String)] = []
         for t in tickets {
             if let id = t.priorityId, let name = t.priorityName, !name.isEmpty, !seen.contains(id) {
+                seen.insert(id)
+                result.append((id: id, name: name))
+            }
+        }
+        return result.sorted { $0.name < $1.name }
+    }
+
+    /// Unique group (id, name) pairs from loaded tickets
+    var groupIdOptions: [(id: Int, name: String)] {
+        var seen = Set<Int>()
+        var result: [(id: Int, name: String)] = []
+        for t in tickets {
+            if let id = t.responsibleGroupId, let name = t.responsibleGroupName, !name.isEmpty, !seen.contains(id) {
+                seen.insert(id)
+                result.append((id: id, name: name))
+            }
+        }
+        return result.sorted { $0.name < $1.name }
+    }
+
+    /// Unique service (id, name) pairs from loaded tickets
+    var serviceIdOptions: [(id: Int, name: String)] {
+        var seen = Set<Int>()
+        var result: [(id: Int, name: String)] = []
+        for t in tickets {
+            if let id = t.serviceId, let name = t.serviceName, !name.isEmpty, !seen.contains(id) {
+                seen.insert(id)
+                result.append((id: id, name: name))
+            }
+        }
+        return result.sorted { $0.name < $1.name }
+    }
+
+    /// Unique form (id, name) pairs from loaded tickets
+    var formIdOptions: [(id: Int, name: String)] {
+        var seen = Set<Int>()
+        var result: [(id: Int, name: String)] = []
+        for t in tickets {
+            if let id = t.formId, let name = t.formName, !name.isEmpty, !seen.contains(id) {
+                seen.insert(id)
+                result.append((id: id, name: name))
+            }
+        }
+        return result.sorted { $0.name < $1.name }
+    }
+
+    /// Unique classification (id, name) pairs from loaded tickets
+    var classificationIdOptions: [(id: Int, name: String)] {
+        var seen = Set<Int>()
+        var result: [(id: Int, name: String)] = []
+        for t in tickets {
+            if let id = t.classification, let name = t.classificationName, !name.isEmpty, !seen.contains(id) {
                 seen.insert(id)
                 result.append((id: id, name: name))
             }
@@ -184,10 +261,32 @@ struct TicketsView: View {
 
     // MARK: - Feed Filtering
 
+    /// Check if a feed entry body looks like a system-generated activity message
+    private static func isSystemActivity(_ body: String) -> Bool {
+        let stripped = body.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let activityPhrases = [
+            "edited this", "updated this", "changed the", "modified this",
+            "reassigned this", "set the", "cleared the", "removed the",
+            "added a task", "completed a task", "created this",
+            "attached", "unattached", "merged", "associated",
+            "escalated", "de-escalated",
+            "changed status", "changed priority", "changed responsible",
+            "moved from", "moved to"
+        ]
+        return activityPhrases.contains { stripped.hasPrefix($0) || stripped.contains($0) }
+    }
+
     var filteredFeed: [TdxFeedEntry] {
         switch feedFilter {
         case .comments:
-            return ticketFeed.filter { $0.createdFullName != "System" && $0.body != nil && !($0.body ?? "").isEmpty }
+            // Real user comments only — exclude System author AND system-generated activity bodies
+            return ticketFeed.filter { entry in
+                guard entry.createdFullName != "System" else { return false }
+                guard let body = entry.body, !body.isEmpty else { return false }
+                return !Self.isSystemActivity(body)
+            }
         case .activity:
             return ticketFeed.filter { $0.createdFullName != "System" }
         case .all:
@@ -438,11 +537,13 @@ struct TicketsView: View {
             tickets: filteredTickets,
             statuses: statuses,
             onUpdateStatus: { ticketId, newStatusId in
-                // Update ticket status via API
+                // Update ticket status via API — use full TicketUpdateRequest to avoid TDX 400
                 Task {
                     do {
-                        let updates: [String: Any] = ["StatusID": newStatusId]
-                        _ = try await appState.tdxService.updateTicket(id: ticketId, updates: updates)
+                        if let base = filteredTickets.first(where: { $0.id == ticketId }) {
+                            let req = TicketUpdateRequest(from: base, statusId: newStatusId)
+                            _ = try await appState.tdxService.updateTicket(id: ticketId, request: req)
+                        }
                         loadTickets()
                     } catch {
                         print("Failed to update ticket status: \(error)")
@@ -662,6 +763,24 @@ struct TicketsView: View {
                         .help("Saved")
                 }
 
+                // Actions menu
+                Menu {
+                    Button(action: { showSetParentSheet = true }) {
+                        Label("Set Parent Ticket", systemImage: "arrow.up.doc")
+                    }
+                    Button(action: { createParentTicket(for: ticket) }) {
+                        Label("Create Parent", systemImage: "plus.rectangle.on.rectangle")
+                    }
+                    Button(action: { /* TODO: merge into */ }) {
+                        Label("Merge Into...", systemImage: "arrow.triangle.merge")
+                    }
+                } label: {
+                    Label("Actions", systemImage: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .frame(width: 80)
+                .help("Ticket actions")
+
                 Button(action: {
                     loadTicketDetail(ticketId: ticket.id ?? 0)
                     loadTicketFeed(ticketId: ticket.id ?? 0)
@@ -728,68 +847,366 @@ struct TicketsView: View {
 
     private func detailFields(ticket: TdxTicket) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            DetailRow(label: "Requestor", value: ticket.requestorName ?? "-")
-            DetailRow(label: "Email", value: ticket.requestorEmail ?? "-")
-            if let group = ticket.responsibleGroupName, !group.isEmpty {
-                DetailRow(label: "Group", value: group)
-            }
-            DetailRow(label: "Responsible", value: ticket.responsibleFullName ?? "-")
-            DetailRow(label: "Created", value: formatDateString(ticket.createdDate))
-            DetailRow(label: "Modified", value: formatDateString(ticket.modifiedDate))
-
-            // Description (read-only by default, editable on demand)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Description")
-                        .font(.body)
-                        .fontWeight(.medium)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Button(action: { isEditingDescription.toggle() }) {
-                        Label(isEditingDescription ? "Done" : "Edit",
-                              systemImage: isEditingDescription ? "checkmark" : "pencil")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.borderless)
-                    .help(isEditingDescription ? "Finish editing description" : "Edit description")
-                }
-                if isEditingDescription {
-                    TextEditor(text: $editDescription)
-                        .font(.body)
-                        .frame(minHeight: 80, maxHeight: 300)
-                        .focused($descriptionFocused)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.accentColor.opacity(0.5), lineWidth: 1)
-                        )
-                        .onChange(of: editDescription) { _, _ in trackEdits(ticket: ticket) }
-                        .onChange(of: isEditingDescription) { _, editing in
-                            if editing { descriptionFocused = true }
+            // Two-column grid: left = editable fields, right = metadata
+            HStack(alignment: .top, spacing: 16) {
+                // LEFT COLUMN — editable fields
+                VStack(alignment: .leading, spacing: 6) {
+                    // Responsible + ... menu
+                    fieldRow(label: "Responsible") {
+                        HStack(spacing: 4) {
+                            Text(editResponsibleName.isEmpty ? "-" : editResponsibleName)
+                                .font(.body)
+                                .lineLimit(1)
+                            Spacer()
+                            Menu {
+                                if let myName = appState.tdxAuthenticatedUserName,
+                                   let myUid = appState.tdxService.authenticatedUserId {
+                                    Button(action: {
+                                        editResponsibleUid = myUid
+                                        editResponsibleName = myName
+                                        isReassigning = false
+                                        trackEdits(ticket: ticket)
+                                    }) {
+                                        Label("Assign to me", systemImage: "person.fill")
+                                    }
+                                }
+                                Button(action: {
+                                    isReassigning = true
+                                    responsibleSearchText = ""
+                                    responsibleSearchResults = []
+                                }) {
+                                    Label("Reassign", systemImage: "person.2.fill")
+                                }
+                                Button(action: {
+                                    editResponsibleUid = nil
+                                    editResponsibleName = ""
+                                    isReassigning = false
+                                    trackEdits(ticket: ticket)
+                                }) {
+                                    Label("Unassign", systemImage: "person.fill.xmark")
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .menuStyle(.borderlessButton)
+                            .frame(width: 20)
                         }
-                } else {
-                    let text = editDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if text.isEmpty {
-                        Text("No description")
-                            .font(.body)
-                            .foregroundColor(.secondary.opacity(0.6))
-                            .italic()
-                            .padding(8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.secondary.opacity(0.06))
-                            .cornerRadius(6)
-                    } else {
-                        Text(text)
-                            .font(.body)
-                            .textSelection(.enabled)
-                            .padding(8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.secondary.opacity(0.06))
-                            .cornerRadius(6)
                     }
+                    // Search field — only shown when reassigning
+                    if isReassigning {
+                        personSearchField(
+                            searchText: $responsibleSearchText,
+                            searchResults: $responsibleSearchResults,
+                            isSearching: $isSearchingResponsible,
+                            showResults: $showResponsibleResults,
+                            onSelect: { person in
+                                editResponsibleUid = person.uid
+                                editResponsibleName = person.fullName ?? ""
+                                responsibleSearchText = ""
+                                showResponsibleResults = false
+                                isReassigning = false
+                                trackEdits(ticket: ticket)
+                            }
+                        )
+                        .padding(.leading, 84)
+                    }
+
+                    // Group picker (below Responsible)
+                    if !groupIdOptions.isEmpty {
+                        fieldRow(label: "Group") {
+                            Picker("", selection: Binding(
+                                get: { editResponsibleGroupId ?? ticket.responsibleGroupId ?? 0 },
+                                set: { editResponsibleGroupId = $0; trackEdits(ticket: ticket) }
+                            )) {
+                                Text("None").tag(0)
+                                ForEach(groupIdOptions, id: \.id) { option in
+                                    Text(option.name).tag(option.id)
+                                }
+                            }
+                            .labelsHidden()
+                        }
+                    } else {
+                        DetailRow(label: "Group", value: ticket.responsibleGroupName ?? "-")
+                    }
+
+                    // Service picker
+                    if !serviceIdOptions.isEmpty {
+                        fieldRow(label: "Service") {
+                            Picker("", selection: Binding(
+                                get: { editServiceId ?? ticket.serviceId ?? 0 },
+                                set: { editServiceId = $0; trackEdits(ticket: ticket) }
+                            )) {
+                                Text("None").tag(0)
+                                ForEach(serviceIdOptions, id: \.id) { option in
+                                    Text(option.name).tag(option.id)
+                                }
+                            }
+                            .labelsHidden()
+                        }
+                    } else if let service = ticket.serviceName, !service.isEmpty {
+                        DetailRow(label: "Service", value: service)
+                    }
+
+                    // Form picker
+                    if !formIdOptions.isEmpty {
+                        fieldRow(label: "Form") {
+                            Picker("", selection: Binding(
+                                get: { editFormId ?? ticket.formId ?? 0 },
+                                set: { editFormId = $0; trackEdits(ticket: ticket) }
+                            )) {
+                                Text("None").tag(0)
+                                ForEach(formIdOptions, id: \.id) { option in
+                                    Text(option.name).tag(option.id)
+                                }
+                            }
+                            .labelsHidden()
+                        }
+                    } else if let form = ticket.formName, !form.isEmpty {
+                        DetailRow(label: "Form", value: form)
+                    }
+
+                    // Classification picker
+                    if !classificationIdOptions.isEmpty {
+                        fieldRow(label: "Classification") {
+                            Picker("", selection: Binding(
+                                get: { editClassification ?? ticket.classification ?? 0 },
+                                set: { editClassification = $0; trackEdits(ticket: ticket) }
+                            )) {
+                                Text("None").tag(0)
+                                ForEach(classificationIdOptions, id: \.id) { option in
+                                    Text(option.name).tag(option.id)
+                                }
+                            }
+                            .labelsHidden()
+                        }
+                    } else if let cls = ticket.classificationName, !cls.isEmpty {
+                        DetailRow(label: "Classification", value: cls)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // RIGHT COLUMN — requestor + metadata
+                VStack(alignment: .leading, spacing: 6) {
+                    // Requestor — with inline search on demand
+                    fieldRow(label: "Requestor") {
+                        HStack(spacing: 4) {
+                            Text(editRequestorName.isEmpty ? "-" : editRequestorName)
+                                .font(.body)
+                                .lineLimit(1)
+                            Spacer()
+                            Button(action: {
+                                isChangingRequestor.toggle()
+                                if isChangingRequestor {
+                                    requestorSearchText = ""
+                                    requestorSearchResults = []
+                                }
+                            }) {
+                                Image(systemName: isChangingRequestor ? "xmark" : "pencil")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    if isChangingRequestor {
+                        personSearchField(
+                            searchText: $requestorSearchText,
+                            searchResults: $requestorSearchResults,
+                            isSearching: $isSearchingRequestor,
+                            showResults: $showRequestorResults,
+                            onSelect: { person in
+                                editRequestorUid = person.uid
+                                editRequestorName = person.fullName ?? ""
+                                requestorSearchText = ""
+                                showRequestorResults = false
+                                isChangingRequestor = false
+                                trackEdits(ticket: ticket)
+                            }
+                        )
+                        .padding(.leading, 84)
+                    }
+
+                    DetailRow(label: "Email", value: ticket.requestorEmail ?? "-")
+                    DetailRow(label: "Created", value: formatDateString(ticket.createdDate))
+                    DetailRow(label: "Modified", value: formatDateString(ticket.modifiedDate))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // Description — full width below the two columns
+            descriptionSection(ticket: ticket)
+        }
+        .padding(.vertical, 4)
+        .sheet(isPresented: $showSetParentSheet) {
+            setParentSheet(ticket: ticket)
+        }
+    }
+
+    /// A labeled field row — compact label + content
+    @ViewBuilder
+    private func fieldRow<Content: View>(label: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .top, spacing: 4) {
+            Text(label)
+                .font(.body)
+                .foregroundColor(.secondary)
+                .frame(width: 80, alignment: .leading)
+            content()
+            Spacer()
+        }
+    }
+
+    /// Searchable person field with autocomplete dropdown
+    @ViewBuilder
+    private func personSearchField(
+        searchText: Binding<String>,
+        searchResults: Binding<[TdxPerson]>,
+        isSearching: Binding<Bool>,
+        showResults: Binding<Bool>,
+        onSelect: @escaping (TdxPerson) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            // Search field
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                TextField("Search...", text: searchText)
+                    .textFieldStyle(.plain)
+                    .font(.caption)
+                    .onChange(of: searchText.wrappedValue) { _, newValue in
+                        if newValue.count >= 2 {
+                            searchPeopleDebounced(text: newValue, results: searchResults, isSearching: isSearching, showResults: showResults)
+                        } else {
+                            showResults.wrappedValue = false
+                        }
+                    }
+                if isSearching.wrappedValue {
+                    ProgressView().controlSize(.mini)
+                }
+            }
+            .padding(4)
+            .background(Color.secondary.opacity(0.08))
+            .cornerRadius(4)
+
+            if showResults.wrappedValue && !searchResults.wrappedValue.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(searchResults.wrappedValue, id: \.uid) { person in
+                        Button(action: { onSelect(person) }) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(person.fullName ?? "")
+                                    .font(.caption)
+                                    .foregroundColor(.primary)
+                                if let email = person.primaryEmail, !email.isEmpty {
+                                    Text(email)
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                        .background(Color.clear)
+                        .contentShape(Rectangle())
+                        .onHover { hovering in
+                            // hover effect handled by SwiftUI
+                        }
+                    }
+                }
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(4)
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.2), lineWidth: 1))
+                .shadow(radius: 2)
+            }
+        }
+    }
+
+    /// Debounced people search
+    private func searchPeopleDebounced(
+        text: String,
+        results: Binding<[TdxPerson]>,
+        isSearching: Binding<Bool>,
+        showResults: Binding<Bool>
+    ) {
+        let searchText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard searchText.count >= 2 else { return }
+        Task {
+            isSearching.wrappedValue = true
+            defer { isSearching.wrappedValue = false }
+            do {
+                let people = try await appState.tdxService.searchPeople(searchText: searchText)
+                results.wrappedValue = people
+                showResults.wrappedValue = !people.isEmpty
+            } catch {
+                results.wrappedValue = []
+                showResults.wrappedValue = false
+            }
+        }
+    }
+
+    /// Description section — full width, read-only by default, editable on demand, auto-saves on Done
+    @ViewBuilder
+    private func descriptionSection(ticket: TdxTicket) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("Description")
+                    .font(.body)
+                    .fontWeight(.medium)
+                    .foregroundColor(.secondary)
+                Spacer()
+                if isSavingDescription {
+                    ProgressView().controlSize(.small)
+                }
+                Button(action: {
+                    if isEditingDescription {
+                        saveDescriptionOnly(ticket: ticket)
+                    } else {
+                        isEditingDescription = true
+                        descriptionFocused = true
+                    }
+                }) {
+                    Label(isEditingDescription ? "Done" : "Edit",
+                          systemImage: isEditingDescription ? "checkmark" : "pencil")
+                        .font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .disabled(isSavingDescription)
+                .help(isEditingDescription ? "Save description" : "Edit description")
+            }
+            if isEditingDescription {
+                TextEditor(text: $editDescription)
+                    .font(.body)
+                    .frame(minHeight: 80, maxHeight: 300)
+                    .focused($descriptionFocused)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.accentColor.opacity(0.5), lineWidth: 1)
+                    )
+            } else {
+                let text = editDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                if text.isEmpty {
+                    Text("No description")
+                        .font(.body)
+                        .foregroundColor(.secondary.opacity(0.6))
+                        .italic()
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.secondary.opacity(0.06))
+                        .cornerRadius(6)
+                } else {
+                    Text(text)
+                        .font(.body)
+                        .textSelection(.enabled)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.secondary.opacity(0.06))
+                        .cornerRadius(6)
                 }
             }
         }
-        .padding(.vertical, 4)
     }
 
     // MARK: - Add Comment Section
@@ -932,21 +1349,77 @@ struct TicketsView: View {
         editStatusId = ticket.statusId
         editPriorityId = ticket.priorityId
         editDescription = Self.decodeHtml(ticket.description ?? "")
+        editResponsibleGroupId = ticket.responsibleGroupId
+        editServiceId = ticket.serviceId
+        editFormId = ticket.formId
+        editClassification = ticket.classification
+        editRequestorUid = ticket.requestorUid
+        editRequestorName = ticket.requestorName ?? ""
+        editResponsibleUid = ticket.responsibleUid
+        editResponsibleName = ticket.responsibleFullName ?? ""
+        // Reset search state
+        requestorSearchText = ""
+        requestorSearchResults = []
+        showRequestorResults = false
+        responsibleSearchText = ""
+        responsibleSearchResults = []
+        showResponsibleResults = false
+        isReassigning = false
+        isChangingRequestor = false
         hasEdits = false
         isEditingDescription = false
     }
 
     private func trackEdits(ticket: TdxTicket) {
         let origTitle = ticket.title ?? ""
-        let origDesc = Self.decodeHtml(ticket.description ?? "")
         hasEdits = editTitle.trimmingCharacters(in: .whitespacesAndNewlines) != origTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             || editStatusId != ticket.statusId
             || editPriorityId != ticket.priorityId
-            || editDescription.trimmingCharacters(in: .whitespacesAndNewlines) != origDesc.trimmingCharacters(in: .whitespacesAndNewlines)
+            || editResponsibleGroupId != ticket.responsibleGroupId
+            || editServiceId != ticket.serviceId
+            || editFormId != ticket.formId
+            || editClassification != ticket.classification
+            || editRequestorUid != ticket.requestorUid
+            || editResponsibleUid != ticket.responsibleUid
     }
 
     private func discardEdits(ticket: TdxTicket) {
         populateEditFields(from: ticket)
+    }
+
+    /// Save only the description field immediately (called when user clicks Done)
+    private func saveDescriptionOnly(ticket: TdxTicket) {
+        guard let ticketId = ticket.id else { return }
+        let trimmedDesc = editDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        let origDesc = Self.decodeHtml(ticket.description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard trimmedDesc != origDesc else {
+            isEditingDescription = false
+            return
+        }
+
+        Task {
+            isSavingDescription = true
+            defer { isSavingDescription = false }
+            do {
+                let htmlDesc = trimmedDesc.isEmpty ? "" : trimmedDesc
+                    .split(separator: "\n", omittingEmptySubsequences: false)
+                    .map { "<p>\($0)</p>" }
+                    .joined()
+
+                let updateRequest = TicketUpdateRequest(from: ticket, description: htmlDesc)
+
+                if let updated = try await appState.tdxService.updateTicket(id: ticketId, request: updateRequest) {
+                    detailedTicket = updated
+                    editDescription = Self.decodeHtml(updated.description ?? "")
+                    isEditingDescription = false
+                } else {
+                    saveErrorMessage = "Failed to save description — server returned no data."
+                }
+            } catch {
+                saveErrorMessage = "Description save failed: \(error.localizedDescription)"
+            }
+        }
     }
 
     private func saveTicket(ticket: TdxTicket) {
@@ -957,33 +1430,27 @@ struct TicketsView: View {
             saveSucceeded = false
             defer { isSaving = false }
             do {
-                var updates: [String: Any] = [:]
                 let trimmedTitle = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmedTitle != (ticket.title ?? "") {
-                    updates["Title"] = trimmedTitle
-                }
-                if editStatusId != ticket.statusId, let newStatus = editStatusId {
-                    updates["StatusID"] = newStatus
-                }
-                if editPriorityId != ticket.priorityId, let newPriority = editPriorityId {
-                    updates["PriorityID"] = newPriority
-                }
-                let trimmedDesc = editDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-                let origDesc = Self.decodeHtml(ticket.description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                if trimmedDesc != origDesc {
-                    // TDX stores description as HTML; wrap plain text in a paragraph
-                    let htmlDesc = trimmedDesc.isEmpty ? "" : "<p>\(trimmedDesc.replacingOccurrences(of: "\n", with: "</p><p>"))</p>"
-                    updates["Description"] = htmlDesc
-                }
-                guard !updates.isEmpty else {
-                    hasEdits = false
-                    return
-                }
-                if let updated = try await appState.tdxService.updateTicket(id: ticketId, updates: updates) {
+
+                // Build update request — always echoes back original description HTML
+                // isRichHtml is always true inside TicketUpdateRequest
+                let updateRequest = TicketUpdateRequest(
+                    from: ticket,
+                    title: trimmedTitle.isEmpty ? nil : trimmedTitle,
+                    statusId: editStatusId,
+                    priorityId: editPriorityId,
+                    classification: editClassification != ticket.classification ? editClassification : nil,
+                    requestorUid: editRequestorUid != ticket.requestorUid ? editRequestorUid : nil,
+                    responsibleUid: editResponsibleUid != ticket.responsibleUid ? editResponsibleUid : nil,
+                    responsibleGroupId: editResponsibleGroupId,
+                    serviceId: editServiceId != ticket.serviceId ? editServiceId : nil,
+                    formId: editFormId != ticket.formId ? editFormId : nil
+                )
+
+                if let updated = try await appState.tdxService.updateTicket(id: ticketId, request: updateRequest) {
                     detailedTicket = updated
                     populateEditFields(from: updated)
                     saveSucceeded = true
-                    // Fade out the success indicator after 2 seconds
                     try? await Task.sleep(for: .seconds(2))
                     saveSucceeded = false
                     loadTickets()
@@ -994,6 +1461,65 @@ struct TicketsView: View {
                 saveErrorMessage = error.localizedDescription
             }
         }
+    }
+
+    // MARK: - Set Parent Sheet
+
+    private func setParentSheet(ticket: TdxTicket) -> some View {
+        VStack(spacing: 16) {
+            Text("Set Parent Ticket")
+                .font(.headline)
+            TextField("Parent Ticket ID", text: $parentTicketIdText)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 200)
+            HStack(spacing: 12) {
+                Button("Cancel") {
+                    showSetParentSheet = false
+                    parentTicketIdText = ""
+                }
+                Button("Set Parent") {
+                    setParentTicket(ticket: ticket)
+                }
+                .disabled(parentTicketIdText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSettingParent)
+                .keyboardShortcut(.defaultAction)
+            }
+            if isSettingParent {
+                ProgressView()
+                    .controlSize(.small)
+            }
+        }
+        .padding(24)
+    }
+
+    private func setParentTicket(ticket: TdxTicket) {
+        guard let ticketId = ticket.id else { return }
+        let parentIdStr = parentTicketIdText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let parentId = Int(parentIdStr) else {
+            saveErrorMessage = "Invalid parent ticket ID."
+            return
+        }
+        Task {
+            isSettingParent = true
+            defer { isSettingParent = false }
+            do {
+                let updateRequest = TicketUpdateRequest(from: ticket, parentId: parentId)
+                if let updated = try await appState.tdxService.updateTicket(id: ticketId, request: updateRequest) {
+                    detailedTicket = updated
+                    populateEditFields(from: updated)
+                    showSetParentSheet = false
+                    parentTicketIdText = ""
+                } else {
+                    saveErrorMessage = "Failed to set parent ticket."
+                }
+            } catch {
+                saveErrorMessage = "Set parent failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func createParentTicket(for ticket: TdxTicket) {
+        // TODO: Implement create parent ticket — creates a new ticket and sets it as parent
+        saveErrorMessage = "Create Parent is not yet implemented."
     }
 
     private func addComment(ticket: TdxTicket) async {
@@ -1033,6 +1559,15 @@ struct TicketsView: View {
         if let match = match {
             responsibleFilter = match
             meModeApplied = true
+        }
+
+        // Default group filter to the configured responsible group
+        if groupFilter == "All",
+           let configGroupId = appState.config.tdxResponsibleGroupId {
+            let groupMatch = tickets.first(where: { $0.responsibleGroupId == configGroupId })?.responsibleGroupName
+            if let groupMatch = groupMatch {
+                groupFilter = groupMatch
+            }
         }
     }
 

@@ -91,10 +91,8 @@ struct GiteaIssueSidebarView: View {
                     // Description
                     if let description = task.description, !description.isEmpty {
                         SidebarSection(title: "Description", icon: "text.alignleft") {
-                            Text((try? AttributedString(markdown: description)) ?? AttributedString(description))
-                                .font(.body)
+                            MarkdownTextView(content: description)
                                 .fixedSize(horizontal: false, vertical: true)
-                                .textSelection(.enabled)
                         }
                     }
 

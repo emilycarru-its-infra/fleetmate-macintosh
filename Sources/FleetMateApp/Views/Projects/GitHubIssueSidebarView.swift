@@ -232,10 +232,8 @@ struct GitHubIssueSidebarView: View {
                 .frame(width: 160)
 
                 if showBodyPreview {
-                    let preview = (try? AttributedString(markdown: editedBody.isEmpty ? "*No content*" : editedBody))
-                        ?? AttributedString(editedBody)
                     ScrollView {
-                        Text(preview)
+                        MarkdownTextView(content: editedBody.isEmpty ? "*No content*" : editedBody)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(8)
                     }
@@ -260,11 +258,8 @@ struct GitHubIssueSidebarView: View {
             } else {
                 let body = detail?.body ?? task.description
                 if let body = body, !body.isEmpty {
-                    let rendered = (try? AttributedString(markdown: body)) ?? AttributedString(body)
-                    Text(rendered)
-                        .font(.body)
+                    MarkdownTextView(content: body)
                         .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
                 } else {
                     Text("No description provided.")
                         .font(.body)
@@ -719,11 +714,8 @@ private struct CommentBubble: View {
                         .foregroundColor(.secondary)
                 }
             }
-            let rendered = (try? AttributedString(markdown: comment.body)) ?? AttributedString(comment.body)
-            Text(rendered)
-                .font(.body)
+            MarkdownTextView(content: comment.body)
                 .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
         }
         .padding(10)
         .background(Color.secondary.opacity(0.06))

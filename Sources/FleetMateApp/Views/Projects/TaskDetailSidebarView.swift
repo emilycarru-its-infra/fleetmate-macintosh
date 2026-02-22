@@ -5,6 +5,7 @@ import FleetMateCore
 struct TaskDetailSidebarView: View {
     let task: UnifiedTask
     let ghConfig: GitHubProviderConfig?
+    let devOpsService: AzureDevOpsService?
     let onClose: () -> Void
 
     var body: some View {
@@ -12,7 +13,11 @@ struct TaskDetailSidebarView: View {
         case "github":
             GitHubIssueSidebarView(task: task, config: ghConfig, onClose: onClose)
         case "azdo":
-            AzDoTaskSidebarView(task: task, onClose: onClose)
+            if let service = devOpsService {
+                AzDoTaskSidebarView(task: task, service: service, onClose: onClose)
+            } else {
+                GenericTaskSidebarView(task: task, onClose: onClose)
+            }
         case "gitea":
             GiteaIssueSidebarView(task: task, onClose: onClose)
         default:
@@ -100,14 +105,8 @@ struct GenericTaskSidebarView: View {
                     // Description — render HTML or markdown
                     if let description = task.description, !description.isEmpty {
                         SidebarSection(title: "Description", icon: "text.alignleft") {
-                            if description.contains("<") && description.contains(">") {
-                                HtmlTextView(html: description)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            } else {
-                                Text((try? AttributedString(markdown: description)) ?? AttributedString(description))
-                                    .font(.body)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
+                            MarkdownTextView(content: description)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
 

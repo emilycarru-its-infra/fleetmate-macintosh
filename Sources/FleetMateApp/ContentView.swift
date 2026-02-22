@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var createdTabs: Set<Tab> = Set(Tab.allCases)
     /// Tracks whether we've already auto-prompted Phase 2 SSO for this session
     @State private var hasAutoPromptedSso = false
+    @State private var hasAutoPromptedDevOpsSso = false
 
     /// Maps raw tab names (from AppState.navigateToTab) to Tab enum
     private static let tabMap: [String: Tab] = Dictionary(uniqueKeysWithValues: Tab.allCases.map { ($0.rawValue, $0) })
@@ -116,9 +117,13 @@ struct ContentView: View {
         .onAppear {
             // Phase 1: Attempt silent SSO in the background (no UI).
             // If it fails, Phase 2 interactive login is deferred until the
-            // user navigates to a tab that actually needs TDX auth.
+            // user navigates to a tab that actually needs auth.
             if !appState.tdxSsoAuthenticated && appState.tdxService.shouldAttemptSso {
                 appState.attemptSilentTdxSso()
+            }
+            // DevOps: same 3-phase pattern
+            if !appState.devOpsSsoAuthenticated && appState.isDevOpsSsoConfigured {
+                appState.attemptSilentDevOpsSso()
             }
         }
         .onChange(of: selectedTab) { _, newTab in
@@ -130,6 +135,14 @@ struct ContentView: View {
                appState.tdxService.shouldAttemptSso {
                 hasAutoPromptedSso = true
                 appState.triggerTdxSsoLogin()
+            }
+            // DevOps: auto-trigger interactive SSO for Projects tab
+            if newTab == .projects,
+               !appState.devOpsSsoAuthenticated,
+               !hasAutoPromptedDevOpsSso,
+               appState.isDevOpsSsoConfigured {
+                hasAutoPromptedDevOpsSso = true
+                appState.triggerDevOpsSsoLogin()
             }
         }
         .onChange(of: appState.navigateToTab) { _, newTab in
@@ -150,6 +163,21 @@ struct ContentView: View {
                     )
                 } else {
                     appState.handleTdxSsoFailure(result.error)
+                }
+            }
+        }
+        .sheet(isPresented: $appState.showDevOpsSsoLogin) {
+            DevOpsSsoLoginView(ssoService: appState.devOpsSsoService, config: appState.config) { result in
+                if result.success, let token = result.accessToken {
+                    let expiry = Date().addingTimeInterval(TimeInterval(result.expiresIn ?? 3600))
+                    appState.handleDevOpsSsoSuccess(
+                        accessToken: token,
+                        expiry: expiry,
+                        userName: result.userName,
+                        userEmail: result.userEmail
+                    )
+                } else {
+                    appState.handleDevOpsSsoFailure(result.error)
                 }
             }
         }

@@ -154,6 +154,9 @@ struct BoardsView: View {
             .frame(width: 140)
             .labelsHidden()
             .onChange(of: filterProvider) { loadTasks() }
+            .onChange(of: appState.devOpsProjectReady) { ready in
+                if ready { loadTasks() }
+            }
 
             // Bucket filter (only when buckets exist)
             if !buckets.isEmpty {
@@ -291,27 +294,37 @@ struct BoardsView: View {
                     Spacer()
                 }
             } else {
-                ScrollView(.horizontal) {
-                    HStack(alignment: .top, spacing: 16) {
-                        KanbanColumn(
-                            title: "Open", color: .green,
-                            tasks: openTasks, selectedTask: selectedTask,
-                            onSelect: { selectedTask = $0 }
-                        )
-                        KanbanColumn(
-                            title: "In Progress", color: .blue,
-                            tasks: inProgressTasks, selectedTask: selectedTask,
-                            onSelect: { selectedTask = $0 }
-                        )
-                        if showClosed {
+                GeometryReader { geo in
+                    let columnCount = CGFloat(showClosed ? 3 : 2)
+                    let spacing: CGFloat = 16
+                    let totalSpacing = spacing * (columnCount - 1) + 32 // 32 = padding
+                    let columnWidth = max(220, (geo.size.width - totalSpacing) / columnCount)
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: spacing) {
                             KanbanColumn(
-                                title: "Closed", color: .gray,
-                                tasks: closedTasks, selectedTask: selectedTask,
+                                title: "Open", color: .green,
+                                tasks: openTasks, selectedTask: selectedTask,
                                 onSelect: { selectedTask = $0 }
                             )
+                            .frame(width: columnWidth)
+                            KanbanColumn(
+                                title: "In Progress", color: .blue,
+                                tasks: inProgressTasks, selectedTask: selectedTask,
+                                onSelect: { selectedTask = $0 }
+                            )
+                            .frame(width: columnWidth)
+                            if showClosed {
+                                KanbanColumn(
+                                    title: "Closed", color: .gray,
+                                    tasks: closedTasks, selectedTask: selectedTask,
+                                    onSelect: { selectedTask = $0 }
+                                )
+                                .frame(width: columnWidth)
+                            }
                         }
+                        .padding()
                     }
-                    .padding()
                 }
             }
         }
@@ -380,6 +393,7 @@ struct BoardsView: View {
             TaskDetailSidebarView(
                 task: task,
                 ghConfig: currentGhConfig,
+                devOpsService: appState.devOpsService,
                 onClose: { selectedTask = nil }
             )
         } else {
@@ -530,9 +544,9 @@ struct BoardsView: View {
     // MARK: - Registry Creation
 
     private func createRegistry(config: FleetMateConfig) async -> TaskProviderRegistry {
-        dbg.info("createRegistry starting", category: "boards")
+        dbg.info("createRegistry starting — devOpsService.hasValidToken=\(appState.devOpsService.hasValidToken) org=\(config.devopsOrganization ?? "nil") project=\(config.devopsProject ?? "nil")", category: "boards")
         let registry = TaskProviderRegistry()
-        let azdo   = AzureDevOpsTaskProvider(config: config)
+        let azdo   = AzureDevOpsTaskProvider(service: appState.devOpsService, config: config)
         let github = GitHubProjectsTaskProvider(config: config.tasks?.providers.github ?? GitHubProviderConfig())
         let gitea  = GiteaTaskProvider(config: config)
 
@@ -709,7 +723,6 @@ struct KanbanColumn: View {
         }
         .background(Color.secondary.opacity(0.08))
         .cornerRadius(12)
-        .frame(minWidth: 260)
     }
 
     private func providerDisplayName(_ provider: String) -> String {

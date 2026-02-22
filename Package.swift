@@ -22,6 +22,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
         .package(url: "https://github.com/apple/swift-nio-ssh.git", from: "0.8.0"),
         .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
+        .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
     ],
     targets: [
         // Shared library with services, models, and config
@@ -52,6 +53,7 @@ let package = Package(
             name: "FleetMateApp",
             dependencies: [
                 "FleetMateCore",
+                .product(name: "MarkdownUI", package: "swift-markdown-ui"),
             ],
             path: "Sources/FleetMateApp",
             exclude: [

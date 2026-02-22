@@ -63,8 +63,11 @@ class AppState: ObservableObject {
     @Published var tdxAuthenticatedUserName: String?
     private var ssoViewModel: TdxSsoLoginViewModel?
     
-    // MARK: - Azure DevOps Auth State (managed via az CLI)
-    @Published var devOpsAzLoginRunning = false
+    // MARK: - Azure DevOps SSO State
+    @Published var showDevOpsSsoLogin = false
+    @Published var devOpsSsoAuthenticated = false
+    @Published var devOpsSsoUserName: String?
+    private var devOpsSsoViewModel: DevOpsSsoLoginViewModel?
     
     // MARK: - Cached Data
     // Data caches with timestamps to avoid reloading on tab switches
@@ -93,6 +96,7 @@ class AppState: ObservableObject {
     // Services (lazy initialization)
     lazy var graphService: GraphService = GraphService(config: config)
     lazy var devOpsService: AzureDevOpsService = AzureDevOpsService(config: config)
+    lazy var devOpsSsoService: DevOpsSsoService = DevOpsSsoService(tenantId: config.devopsTenantId ?? config.graphTenantId)
     lazy var tdxService: TdxService = TdxService(config: config)
     lazy var snipeService: SnipeService = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
     lazy var reportMateService: ReportMateService = ReportMateService(config: config)
@@ -154,6 +158,7 @@ class AppState: ObservableObject {
             // Reinitialize services
             graphService = GraphService(config: config)
             devOpsService = AzureDevOpsService(config: config)
+            devOpsSsoService = DevOpsSsoService(tenantId: config.devopsTenantId ?? config.graphTenantId)
             tdxService = TdxService(config: config)
             snipeService = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
             reportMateService = ReportMateService(config: config)
@@ -520,28 +525,139 @@ class AppState: ObservableObject {
     
     // MARK: - Azure DevOps SSO Authentication
     
-    /// True if `az` CLI is installed (DevOps auth is always via az login)
+    /// True if DevOps is configured (org + project set)
     var isDevOpsSsoConfigured: Bool {
-        FileManager.default.fileExists(atPath: "/opt/homebrew/bin/az") ||
-        FileManager.default.fileExists(atPath: "/usr/local/bin/az")
+        config.isDevOpsConfigured
     }
 
-    /// Launch `az login` — az CLI opens the browser and handles OAuth2 itself.
+    /// Phase 1: Attempt silent SSO authentication (refresh token only, no UI).
+    /// If it fails, Phase 1.5 headless WKWebView is tried next.
+    func attemptSilentDevOpsSso() {
+        guard devOpsSsoViewModel == nil else { return }
+        dbg.info("[DevOps SSO Phase 1] Starting silent refresh token attempt", category: "devops-sso")
+
+        let viewModel = DevOpsSsoLoginViewModel(ssoService: devOpsSsoService, config: config)
+        devOpsSsoViewModel = viewModel
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let silentSuccess = await viewModel.performSilentAuthentication()
+            self.devOpsSsoViewModel = nil
+
+            if silentSuccess,
+               let result = viewModel.authResult,
+               result.success,
+               let token = result.accessToken {
+                let expiry = Date().addingTimeInterval(TimeInterval(result.expiresIn ?? 3600))
+                dbg.info("[DevOps SSO Phase 1] Silent refresh SUCCEEDED — user=\(result.userName ?? "unknown")", category: "devops-sso")
+                self.handleDevOpsSsoSuccess(
+                    accessToken: token,
+                    expiry: expiry,
+                    userName: result.userName,
+                    userEmail: result.userEmail
+                )
+            } else {
+                dbg.warn("[DevOps SSO Phase 1] Silent refresh FAILED — trying headless WKWebView (Phase 1.5)", category: "devops-sso")
+                self.attemptHeadlessDevOpsSso()
+            }
+        }
+    }
+
+    /// Phase 1.5: Attempt SSO using a hidden WKWebView.
+    /// Platform SSO Extension intercepts WKWebView requests to login.microsoftonline.com
+    /// and handles auth silently (Kerberos/FIDO).
+    func attemptHeadlessDevOpsSso() {
+        guard devOpsSsoViewModel == nil else { return }
+        dbg.info("[DevOps SSO Phase 1.5] Starting headless WKWebView SSO attempt", category: "devops-sso")
+
+        let viewModel = DevOpsSsoLoginViewModel(ssoService: devOpsSsoService, config: config)
+        devOpsSsoViewModel = viewModel
+
+        // Create a hidden off-screen window to host the WKWebView
+        let hiddenWindow = NSWindow(
+            contentRect: NSRect(x: -9999, y: -9999, width: 1, height: 1),
+            styleMask: [],
+            backing: .buffered,
+            defer: true
+        )
+        hiddenWindow.isReleasedWhenClosed = false
+        hiddenWindow.orderOut(nil)
+
+        // Attach the WebView so SSO Extension can intercept network requests
+        let webView = viewModel.webView
+        hiddenWindow.contentView = webView
+        webView.frame = NSRect(x: 0, y: 0, width: 1, height: 1)
+
+        // Start the OAuth2 flow in the hidden WebView
+        viewModel.startAuthentication()
+
+        // Poll for completion with timeout
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            // 40s timeout: auth flow needs ~8s for autologon, ~15s for FIDO fallback
+            let deadline = Date().addingTimeInterval(40)
+            while Date() < deadline {
+                if let result = viewModel.authResult {
+                    self.devOpsSsoViewModel = nil
+                    hiddenWindow.close()
+                    if result.success, let token = result.accessToken {
+                        let expiry = Date().addingTimeInterval(TimeInterval(result.expiresIn ?? 3600))
+                        dbg.info("[DevOps SSO Phase 1.5] Headless SSO SUCCEEDED — user=\(result.userName ?? "unknown")", category: "devops-sso")
+                        self.handleDevOpsSsoSuccess(
+                            accessToken: token,
+                            expiry: expiry,
+                            userName: result.userName,
+                            userEmail: result.userEmail
+                        )
+                        return
+                    }
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s poll
+            }
+
+            self.devOpsSsoViewModel = nil
+            hiddenWindow.close()
+            dbg.warn("[DevOps SSO Phase 1.5] Headless SSO FAILED or timed out — triggering interactive Phase 2", category: "devops-sso")
+            self.triggerDevOpsSsoLogin()
+        }
+    }
+
+    /// Phase 2: Show interactive OAuth2 login sheet.
     func triggerDevOpsSsoLogin() {
-        guard !devOpsAzLoginRunning else { return }
-        devOpsAzLoginRunning = true
-        Task {
-            await authManager.loginDevOps(devOpsService: devOpsService)
-            devOpsAzLoginRunning = false
-            invalidateWorkItemsCache()
+        showDevOpsSsoLogin = true
+    }
+
+    /// Handle successful DevOps SSO authentication
+    func handleDevOpsSsoSuccess(accessToken: String, expiry: Date, userName: String?, userEmail: String?) {
+        // Inject token into the REST API service
+        devOpsService.setBearerToken(accessToken, expiry: expiry)
+        devOpsSsoAuthenticated = true
+        devOpsSsoUserName = userName
+        showDevOpsSsoLogin = false
+        authManager.update(.devops, state: .valid(user: userName, expiry: expiry))
+
+        // Invalidate work items cache to reload with new auth
+        invalidateWorkItemsCache()
+    }
+
+    /// Handle SSO authentication failure or cancellation
+    func handleDevOpsSsoFailure(_ error: String?) {
+        showDevOpsSsoLogin = false
+        if let error = error {
+            errorMessage = "DevOps SSO login failed: \(error)"
+            authManager.update(.devops, state: .failed(message: error))
         }
     }
 
-    /// Run `az logout` and reset DevOps auth state.
+    /// Sign out of DevOps SSO
     func signOutDevOpsSso() {
-        Task {
-            await authManager.logoutDevOps(devOpsService: devOpsService)
-            invalidateWorkItemsCache()
-        }
+        devOpsSsoService.clearTokens()
+        devOpsService.clearBearerToken()
+        devOpsSsoAuthenticated = false
+        devOpsSsoUserName = nil
+        authManager.update(.devops, state: .configured)
+        invalidateWorkItemsCache()
     }
 }

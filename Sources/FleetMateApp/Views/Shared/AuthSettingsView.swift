@@ -333,12 +333,11 @@ struct AuthSettingsView: View {
                 Button("Sign Out") { appState.signOutDevOpsSso() }
                     .controlSize(.small)
             } else {
-                Button(appState.devOpsAzLoginRunning ? "Signing in…" : "Sign In") {
+                Button("Sign In") {
                     appState.triggerDevOpsSsoLogin()
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(appState.devOpsAzLoginRunning)
             }
 
         case .github:

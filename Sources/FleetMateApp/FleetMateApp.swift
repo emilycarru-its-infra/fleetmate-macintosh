@@ -67,6 +67,7 @@ class AppState: ObservableObject {
     @Published var showDevOpsSsoLogin = false
     @Published var devOpsSsoAuthenticated = false
     @Published var devOpsSsoUserName: String?
+    @Published var devOpsProjectReady = false
     private var devOpsSsoViewModel: DevOpsSsoLoginViewModel?
     
     // MARK: - Cached Data
@@ -346,8 +347,10 @@ class AppState: ObservableObject {
                 }
             }
             
-            // Preload work items (DevOps)
-            if config.isDevOpsConfigured && !isWorkItemsCacheValid {
+            // Preload work items (DevOps) — only if we already have a valid token.
+            // SSO runs concurrently; if the token isn't ready yet, BoardsView will
+            // load work items on demand once auth completes.
+            if config.isDevOpsConfigured && !isWorkItemsCacheValid && devOpsService.hasValidToken {
                 group.addTask { @MainActor in
                     dbg.info("Preloading work items...", category: "preload")
                     do {
@@ -530,36 +533,35 @@ class AppState: ObservableObject {
         config.isDevOpsConfigured
     }
 
-    /// Phase 1: Attempt silent SSO authentication (refresh token only, no UI).
-    /// If it fails, Phase 1.5 headless WKWebView is tried next.
+    /// Phase 1: Attempt silent SSO authentication (az CLI → MSAL cache → refresh token).
+    /// No Keychain prompts. If it fails, Phase 1.5 headless WKWebView is tried next.
     func attemptSilentDevOpsSso() {
         guard devOpsSsoViewModel == nil else { return }
-        dbg.info("[DevOps SSO Phase 1] Starting silent refresh token attempt", category: "devops-sso")
-
-        let viewModel = DevOpsSsoLoginViewModel(ssoService: devOpsSsoService, config: config)
-        devOpsSsoViewModel = viewModel
+        dbg.info("[DevOps SSO Phase 1] Starting silent token acquisition (az CLI → MSAL cache)", category: "devops-sso")
 
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let silentSuccess = await viewModel.performSilentAuthentication()
-            self.devOpsSsoViewModel = nil
 
-            if silentSuccess,
-               let result = viewModel.authResult,
-               result.success,
-               let token = result.accessToken {
-                let expiry = Date().addingTimeInterval(TimeInterval(result.expiresIn ?? 3600))
-                dbg.info("[DevOps SSO Phase 1] Silent refresh SUCCEEDED — user=\(result.userName ?? "unknown")", category: "devops-sso")
-                self.handleDevOpsSsoSuccess(
-                    accessToken: token,
-                    expiry: expiry,
-                    userName: result.userName,
-                    userEmail: result.userEmail
-                )
-            } else {
-                dbg.warn("[DevOps SSO Phase 1] Silent refresh FAILED — trying headless WKWebView (Phase 1.5)", category: "devops-sso")
-                self.attemptHeadlessDevOpsSso()
+            // Try az CLI + MSAL cache (no UI needed)
+            do {
+                let result = try await self.devOpsSsoService.refreshAccessToken()
+                if result.success, let token = result.accessToken {
+                    let expiry = Date().addingTimeInterval(TimeInterval(result.expiresIn ?? 3600))
+                    dbg.info("[DevOps SSO Phase 1] Silent token acquired — user=\(result.userName ?? "unknown")", category: "devops-sso")
+                    self.handleDevOpsSsoSuccess(
+                        accessToken: token,
+                        expiry: expiry,
+                        userName: result.userName,
+                        userEmail: result.userEmail
+                    )
+                    return
+                }
+            } catch {
+                dbg.warn("[DevOps SSO Phase 1] Token acquisition failed: \(error)", category: "devops-sso")
             }
+
+            dbg.warn("[DevOps SSO Phase 1] Silent acquisition failed — trying headless WKWebView (Phase 1.5)", category: "devops-sso")
+            self.attemptHeadlessDevOpsSso()
         }
     }
 
@@ -640,6 +642,22 @@ class AppState: ObservableObject {
 
         // Invalidate work items cache to reload with new auth
         invalidateWorkItemsCache()
+
+        // Auto-discover a default project (for sprints/boards, which are project-scoped).
+        // Work items use org-level WIQL and don't need this.
+        Task {
+            do {
+                if devOpsService.resolvedProject.isEmpty {
+                    dbg.info("[DevOps] Running project discovery (for sprints/boards context)", category: "devops-sso")
+                    let discovered = try await devOpsService.discoverProject()
+                    dbg.info("[DevOps] Default project: \(discovered ?? "none")", category: "devops-sso")
+                }
+            } catch {
+                dbg.warn("[DevOps] Project discovery failed (non-fatal): \(error)", category: "devops-sso")
+            }
+            // Signal that DevOps is ready — BoardsView observes this to reload
+            await MainActor.run { self.devOpsProjectReady = true }
+        }
     }
 
     /// Handle SSO authentication failure or cancellation

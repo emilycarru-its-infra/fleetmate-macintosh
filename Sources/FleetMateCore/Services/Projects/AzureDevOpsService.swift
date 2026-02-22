@@ -528,17 +528,19 @@ public class AzureDevOpsService {
     // MARK: - Work Item Comments
 
     /// Fetch all comments for a work item using the Comments API.
+    /// Uses project-level URL (orgLevel: false) as required by this endpoint.
     public func getComments(workItemId: Int) async throws -> [WorkItemComment] {
         dbg.info("AzDO getComments(\(workItemId))", category: "azdo")
         let response: WorkItemCommentsResponse = try await request(
             "GET",
             path: "/_apis/wit/workitems/\(workItemId)/comments?api-version=7.0-preview.4",
-            orgLevel: true
+            orgLevel: false
         )
         return response.comments ?? []
     }
 
     /// Add a comment to a work item using the Comments API.
+    /// Uses project-level URL (orgLevel: false) as required by this endpoint.
     @discardableResult
     public func addComment(workItemId: Int, text: String) async throws -> WorkItemComment {
         dbg.info("AzDO addComment(\(workItemId))", category: "azdo")
@@ -547,7 +549,7 @@ public class AzureDevOpsService {
             "POST",
             path: "/_apis/wit/workitems/\(workItemId)/comments?api-version=7.0-preview.4",
             body: body,
-            orgLevel: true
+            orgLevel: false
         )
         return comment
     }

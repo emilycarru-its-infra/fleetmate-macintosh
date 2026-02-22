@@ -177,15 +177,11 @@ struct AuthSettingsView: View {
 
         case .devops:
             detailGrid {
-                detailRow("Auth method", "az CLI (Platform SSO / az login)")
+                detailRow("Auth method", "Platform SSO (OAuth2 PKCE)")
                 if let org  = cfg.devopsOrganization { detailRow("Organization", org) }
                 if let proj = cfg.devopsProject      { detailRow("Project",      proj) }
-                if let user = system.user {
+                if let user = appState.devOpsSsoAuthenticated ? appState.devOpsSsoUserName : system.user {
                     detailRow("Signed in as", user, .green)
-                }
-                if case .servicePrincipal(let name) = system.state {
-                    detailRow("⚠ SP account", name, .orange)
-                    detailRow("Fix", "Run: az login", .orange)
                 }
                 if case .failed(let msg) = system.state {
                     detailRow("Error", msg, .red)

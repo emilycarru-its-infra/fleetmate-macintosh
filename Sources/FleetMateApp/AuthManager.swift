@@ -173,10 +173,9 @@ class AuthManager: ObservableObject {
         }
     }
     
-    // MARK: - az CLI Login / Logout
+    // MARK: - az CLI Login / Logout (legacy — kept for manual escape hatch)
 
     /// Launch `az login` (opens browser), then re-probe DevOps state.
-    /// The blocking waitUntilExit() runs on a detached background thread.
     func loginDevOps(devOpsService: AzureDevOpsService) async {
         guard systems[.devops] != nil else { return }
         update(.devops, state: .authenticating)
@@ -210,29 +209,30 @@ class AuthManager: ObservableObject {
             try? process.run()
             process.waitUntilExit()
         }.value
+        devOpsService.clearBearerToken()
         update(.devops, state: .configured)
     }
 
     // MARK: - Individual Probes
     
     func probeDevOps(devOpsService: AzureDevOpsService) async {
-        // First check if az CLI is logged in as SP
-        do {
-            let spCheck = try await runAzAccountShow()
-            if spCheck.type == "servicePrincipal" {
-                update(.devops, state: .servicePrincipal(name: spCheck.name))
-                return
+        // Check if we have a valid Bearer token (from SSO)
+        if devOpsService.hasValidToken {
+            do {
+                let ok = try await devOpsService.verifyAuth()
+                if ok {
+                    update(.devops, state: .valid(user: "SSO User", expiry: nil))
+                } else {
+                    update(.devops, state: .failed(message: "Azure DevOps: access denied"))
+                }
+            } catch {
+                update(.devops, state: .failed(message: error.localizedDescription))
             }
-            // User identity — try DevOps access
-            let ok = try await devOpsService.verifyAuth()
-            if ok {
-                update(.devops, state: .valid(user: spCheck.name, expiry: nil))
-            } else {
-                update(.devops, state: .failed(message: "az devops: access denied"))
-            }
-        } catch {
-            update(.devops, state: .failed(message: error.localizedDescription))
+            return
         }
+
+        // No token yet — mark as needing SSO login
+        update(.devops, state: .configured)
     }
     
     private func probeGitHub() async {

@@ -118,26 +118,7 @@ struct DashboardView: View {
                     .padding(.horizontal, 16)
                 Spacer()
             } else {
-                // Fill remaining window height
-                HStack(alignment: .top, spacing: 0) {
-                    // Left 50%: KPI cards 2x2 + charts scrollable
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
-                            kpiGrid
-                            chartGrid
-                                .padding(.horizontal, 16)
-                                .padding(.bottom, 16)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    Divider()
-
-                    // Right 50%: activity feed fills height
-                    activityFeedSection
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-                .frame(maxHeight: .infinity)
+                splitLayout
             }
         }
         .frame(maxHeight: .infinity)
@@ -146,6 +127,34 @@ struct DashboardView: View {
         .onChange(of: appState.cachedAssets.count) { _, _ in Task { await loadInventory(); buildActivityFeed() } }
         .onChange(of: appState.cachedTickets.count) { _, _ in Task { await loadTicketsWork(); buildActivityFeed() } }
         .onChange(of: appState.cachedWorkItems.count) { _, _ in Task { await loadTicketsWork(); buildActivityFeed() } }
+    }
+
+    // MARK: - Split Layout (70/30)
+
+    private var splitLayout: some View {
+        GeometryReader { geo in
+            HStack(alignment: .top, spacing: 0) {
+                // Left 70%: KPI cards 2x2 + charts scrollable
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        kpiGrid
+                        chartGrid
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 16)
+                    }
+                }
+                .frame(width: floor(geo.size.width * 0.7))
+                .frame(maxHeight: .infinity)
+
+                Divider()
+
+                // Right 30%: activity feed fills height
+                activityFeedSection
+                    .frame(width: max(ceil(geo.size.width * 0.3) - 1.0, 0))
+                    .frame(maxHeight: .infinity)
+            }
+        }
+        .frame(maxHeight: .infinity)
     }
 
     private func navigate(to tab: String, deviceId: String? = nil, ticketId: Int? = nil) {
@@ -304,7 +313,7 @@ struct DashboardView: View {
                     if osSlices.isEmpty && !isLoadingFleet {
                         emptyState("No device data")
                     } else {
-                        treemapChart(osSlices, height: 160)
+                        TreemapChart(slices: osSlices, height: 160)
                     }
                 }
             }
@@ -550,110 +559,18 @@ struct DashboardView: View {
         .chartForegroundStyleScale(domain: bars.map(\.label), range: bars.map(\.color))
         .chartLegend(.hidden)
         .chartXAxis {
-            AxisMarks { _ in
-                AxisValueLabel(orientation: .vertical)
-                    .font(.caption2)
+            AxisMarks { value in
+                AxisValueLabel {
+                    if let text = value.as(String.self) {
+                        Text(text)
+                            .font(.caption2)
+                            .rotationEffect(.degrees(-40))
+                            .fixedSize()
+                    }
+                }
             }
         }
         .frame(height: height)
-    }
-
-    private func treemapChart(_ slices: [ChartSlice], height: CGFloat) -> some View {
-        let total = slices.reduce(0) { $0 + $1.value }
-        return VStack(spacing: 4) {
-            GeometryReader { geo in
-                let rects = treemapLayout(slices: slices, total: total, bounds: CGRect(origin: .zero, size: geo.size))
-                ZStack {
-                    ForEach(Array(zip(slices, rects)), id: \.0.id) { slice, rect in
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(slice.color)
-                            .frame(width: max(rect.width - 2, 0), height: max(rect.height - 2, 0))
-                            .overlay {
-                                if rect.width > 40 && rect.height > 30 {
-                                    VStack(spacing: 1) {
-                                        Text(slice.label)
-                                            .font(.caption2.bold())
-                                            .lineLimit(1)
-                                            .minimumScaleFactor(0.7)
-                                        Text("\(slice.value)")
-                                            .font(.caption2)
-                                    }
-                                    .foregroundStyle(.white)
-                                }
-                            }
-                            .position(x: rect.midX, y: rect.midY)
-                    }
-                }
-            }
-            .frame(height: height)
-            // Legend below
-            HStack(spacing: 10) {
-                ForEach(slices) { slice in
-                    HStack(spacing: 4) {
-                        Circle().fill(slice.color).frame(width: 7, height: 7)
-                        Text("\(slice.label) (\(slice.value))")
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-    }
-
-    /// Squarified treemap layout — slices into rects within bounds
-    private func treemapLayout(slices: [ChartSlice], total: Int, bounds: CGRect) -> [CGRect] {
-        guard !slices.isEmpty, total > 0 else { return [] }
-        let areas = slices.map { CGFloat($0.value) / CGFloat(total) * bounds.width * bounds.height }
-        var rects = Array(repeating: CGRect.zero, count: slices.count)
-        var remaining = bounds
-        var i = 0
-        while i < slices.count {
-            let isWide = remaining.width >= remaining.height
-            let sideLen = isWide ? remaining.height : remaining.width
-            // Greedily fill one row/col
-            var rowIndices: [Int] = []
-            var rowArea: CGFloat = 0
-            var bestWorst: CGFloat = .infinity
-            for j in i..<slices.count {
-                let candidate = rowArea + areas[j]
-                let strip = candidate / sideLen
-                let ws = (rowIndices + [j]).map { areas[$0] / strip }
-                let worst = max(ws.max()! / ws.min()!, ws.min()! / ws.max()!)
-                // Aspect ratio: max(w/h, h/w) for each rect in strip
-                let aspectWorst = (rowIndices + [j]).map { idx -> CGFloat in
-                    let w = areas[idx] / strip
-                    let h = strip
-                    return max(w / h, h / w)
-                }.max() ?? .infinity
-                if aspectWorst <= bestWorst || rowIndices.isEmpty {
-                    rowIndices.append(j)
-                    rowArea = candidate
-                    bestWorst = aspectWorst
-                } else {
-                    break
-                }
-            }
-            // Lay out row
-            let stripSize = rowArea / sideLen
-            var offset: CGFloat = 0
-            for idx in rowIndices {
-                let itemLen = areas[idx] / stripSize
-                if isWide {
-                    rects[idx] = CGRect(x: remaining.minX, y: remaining.minY + offset, width: stripSize, height: itemLen)
-                } else {
-                    rects[idx] = CGRect(x: remaining.minX + offset, y: remaining.minY, width: itemLen, height: stripSize)
-                }
-                offset += itemLen
-            }
-            if isWide {
-                remaining = CGRect(x: remaining.minX + stripSize, y: remaining.minY,
-                                   width: remaining.width - stripSize, height: remaining.height)
-            } else {
-                remaining = CGRect(x: remaining.minX, y: remaining.minY + stripSize,
-                                   width: remaining.width, height: remaining.height - stripSize)
-            }
-            i += rowIndices.count
-        }
-        return rects
     }
 
     private func emptyState(_ msg: String) -> some View {
@@ -992,6 +909,129 @@ struct DashboardView: View {
         let fmt = DateFormatter()
         fmt.dateFormat = "MMM d"
         return fmt.string(from: date)
+    }
+}
+
+// MARK: - Treemap Chart
+
+struct TreemapChart: View {
+    let slices: [ChartSlice]
+    let height: CGFloat
+
+    @State private var hoveredSlice: ChartSlice? = nil
+    @State private var hoveredRect: CGRect = .zero
+
+    var body: some View {
+        let total = slices.reduce(0) { $0 + $1.value }
+        VStack(spacing: 4) {
+            GeometryReader { geo in
+                let rects = treemapLayout(slices: slices, total: total, bounds: CGRect(origin: .zero, size: geo.size))
+                ZStack {
+                    ForEach(Array(zip(slices, rects)), id: \.0.id) { slice, rect in
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(slice.color.opacity(hoveredSlice?.id == slice.id ? 0.72 : 1.0))
+                            .frame(width: max(rect.width - 2, 0), height: max(rect.height - 2, 0))
+                            .overlay {
+                                if rect.width > 40 && rect.height > 30 {
+                                    VStack(spacing: 1) {
+                                        Text(slice.label)
+                                            .font(.caption2.bold())
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.7)
+                                        Text("\(slice.value)")
+                                            .font(.caption2)
+                                    }
+                                    .foregroundStyle(.white)
+                                }
+                            }
+                            .position(x: rect.midX, y: rect.midY)
+                            .onHover { isHovering in
+                                hoveredSlice = isHovering ? slice : nil
+                                hoveredRect = isHovering ? rect : .zero
+                            }
+                    }
+                    // Hover tooltip
+                    if let slice = hoveredSlice {
+                        let pct = total > 0 ? Int(Double(slice.value) / Double(total) * 100) : 0
+                        let tx = min(max(hoveredRect.midX, 55), geo.size.width - 55)
+                        let ty = hoveredRect.minY > 44 ? hoveredRect.minY - 28 : hoveredRect.maxY + 28
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(slice.label).font(.caption.bold())
+                            Text("\(slice.value)  ·  \(pct)%").font(.caption).foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+                        .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+                        .position(x: tx, y: ty)
+                        .zIndex(100)
+                        .allowsHitTesting(false)
+                    }
+                }
+            }
+            .frame(height: height)
+            // Legend
+            HStack(spacing: 10) {
+                ForEach(slices) { slice in
+                    HStack(spacing: 4) {
+                        Circle().fill(slice.color).frame(width: 7, height: 7)
+                        Text("\(slice.label) (\(slice.value))")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func treemapLayout(slices: [ChartSlice], total: Int, bounds: CGRect) -> [CGRect] {
+        guard !slices.isEmpty, total > 0 else { return [] }
+        let areas = slices.map { CGFloat($0.value) / CGFloat(total) * bounds.width * bounds.height }
+        var rects = Array(repeating: CGRect.zero, count: slices.count)
+        var remaining = bounds
+        var i = 0
+        while i < slices.count {
+            let isWide = remaining.width >= remaining.height
+            let sideLen = isWide ? remaining.height : remaining.width
+            var rowIndices: [Int] = []
+            var rowArea: CGFloat = 0
+            var bestWorst: CGFloat = .infinity
+            for j in i..<slices.count {
+                let candidate = rowArea + areas[j]
+                let strip = candidate / sideLen
+                let aspectWorst = (rowIndices + [j]).map { idx -> CGFloat in
+                    let w = areas[idx] / strip
+                    let h = strip
+                    return max(w / h, h / w)
+                }.max() ?? .infinity
+                if aspectWorst <= bestWorst || rowIndices.isEmpty {
+                    rowIndices.append(j)
+                    rowArea = candidate
+                    bestWorst = aspectWorst
+                } else {
+                    break
+                }
+            }
+            let stripSize = rowArea / sideLen
+            var offset: CGFloat = 0
+            for idx in rowIndices {
+                let itemLen = areas[idx] / stripSize
+                if isWide {
+                    rects[idx] = CGRect(x: remaining.minX, y: remaining.minY + offset, width: stripSize, height: itemLen)
+                } else {
+                    rects[idx] = CGRect(x: remaining.minX + offset, y: remaining.minY, width: itemLen, height: stripSize)
+                }
+                offset += itemLen
+            }
+            if isWide {
+                remaining = CGRect(x: remaining.minX + stripSize, y: remaining.minY,
+                                   width: remaining.width - stripSize, height: remaining.height)
+            } else {
+                remaining = CGRect(x: remaining.minX, y: remaining.minY + stripSize,
+                                   width: remaining.width, height: remaining.height - stripSize)
+            }
+            i += rowIndices.count
+        }
+        return rects
     }
 }
 

@@ -107,10 +107,6 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 10) {
                 headerSection
                 if let error = appState.errorMessage { errorBanner(error) }
-                if hasAnyService {
-                    alertBanner
-                    kpiStrip
-                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 16)
@@ -123,10 +119,14 @@ struct DashboardView: View {
             } else {
                 // Fill remaining window height
                 HStack(alignment: .top, spacing: 0) {
-                    // Left 50%: charts, scrollable
+                    // Left 50%: KPI cards 2x2 + charts scrollable
                     ScrollView {
-                        chartGrid
-                            .padding(16)
+                        VStack(alignment: .leading, spacing: 0) {
+                            kpiGrid
+                            chartGrid
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 16)
+                        }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -268,6 +268,19 @@ struct DashboardView: View {
             kpis.append(KPI(title: "Managed Macs", value: "\(rmDeviceCount)", icon: "desktopcomputer", color: .teal, loading: isLoadingReportMate, tab: "Devices"))
         }
         return kpis
+    }
+
+    // MARK: - KPI Grid (2x2)
+
+    private var kpiGrid: some View {
+        let cols = Array(repeating: GridItem(.flexible(), spacing: 16), count: 2)
+        return LazyVGrid(columns: cols, spacing: 16) {
+            KPICard(kpi: KPI(title: "Managed Devices", value: "\(deviceCount)", icon: "laptopcomputer", color: .blue, loading: isLoadingFleet, tab: "Devices")) { navigate(to: "Devices") }
+            KPICard(kpi: KPI(title: "Assets Inventory", value: "\(assetCount)", icon: "shippingbox", color: .orange, loading: isLoadingInventory, tab: "Inventory")) { navigate(to: "Inventory") }
+            KPICard(kpi: KPI(title: "Active Work Items", value: "\(activeWorkItems)", icon: "list.bullet.rectangle", color: .indigo, loading: isLoadingTickets, tab: "Projects")) { navigate(to: "Projects") }
+            KPICard(kpi: KPI(title: "Open Tickets", value: "\(openTicketCount)", icon: "ticket", color: .purple, loading: isLoadingTickets, tab: "Tickets")) { navigate(to: "Tickets") }
+        }
+        .padding(16)
     }
 
     // MARK: - Chart Grid (flowing, Assets by Category first)

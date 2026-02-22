@@ -49,14 +49,55 @@ struct TicketsView: View {
     // View mode
     @State private var viewMode: TicketViewMode = .table
 
+    // Detail editing state
+    @State private var detailedTicket: TdxTicket? = nil
+    @State private var isLoadingDetail = false
+    @State private var editTitle = ""
+    @State private var editStatusId: Int? = nil
+    @State private var editPriorityId: Int? = nil
+    @State private var editDescription = ""
+    @State private var isSaving = false
+    @State private var hasEdits = false
+    @State private var isEditingDescription = false
+    @State private var saveErrorMessage: String? = nil
+    @State private var saveSucceeded = false
+
+    @FocusState private var descriptionFocused: Bool
+
     var tickets: [TdxTicket] { appState.cachedTickets }
 
     var selectedTicket: TdxTicket? {
         guard let id = selectedTicketIds.first, let unwrappedId = id else { return nil }
-        return tickets.first { $0.id == unwrappedId }
+        return detailedTicket ?? tickets.first { $0.id == unwrappedId }
     }
 
     // MARK: - Filter Options
+
+    /// Unique status (id, name) pairs from loaded tickets — for edit picker
+    var statusIdOptions: [(id: Int, name: String)] {
+        var seen = Set<Int>()
+        var result: [(id: Int, name: String)] = []
+        for t in tickets {
+            if let id = t.statusId, let name = t.statusName, !name.isEmpty, !seen.contains(id) {
+                seen.insert(id)
+                result.append((id: id, name: name))
+            }
+        }
+        return result.sorted { $0.name < $1.name }
+    }
+
+    /// Unique priority (id, name) pairs from loaded tickets — for edit picker
+    var priorityIdOptions: [(id: Int, name: String)] {
+        var seen = Set<Int>()
+        var result: [(id: Int, name: String)] = []
+        for t in tickets {
+            if let id = t.priorityId, let name = t.priorityName, !name.isEmpty, !seen.contains(id) {
+                seen.insert(id)
+                result.append((id: id, name: name))
+            }
+        }
+        return result.sorted { $0.name < $1.name }
+    }
 
     var statusOptions: [String] {
         var opts = Set<String>()
@@ -163,9 +204,12 @@ struct TicketsView: View {
         }
         .onChange(of: selectedTicketIds) { _, newIds in
             if let ticketId = newIds.first, let unwrappedId = ticketId {
+                loadTicketDetail(ticketId: unwrappedId)
                 loadTicketFeed(ticketId: unwrappedId)
             } else {
+                detailedTicket = nil
                 ticketFeed = []
+                hasEdits = false
             }
         }
         .task {
@@ -503,7 +547,14 @@ struct TicketsView: View {
 
     @ViewBuilder
     private var detailSidebarView: some View {
-        if let ticket = selectedTicket {
+        if isLoadingDetail && detailedTicket == nil {
+            VStack {
+                Spacer()
+                ProgressView("Loading ticket...")
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let ticket = selectedTicket {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     detailHeader(ticket: ticket)
@@ -584,23 +635,90 @@ struct TicketsView: View {
                 .help("Open ticket in web browser")
                 
                 Spacer()
-                Button(action: { loadTicketFeed(ticketId: ticket.id ?? 0) }) {
+
+                if hasEdits {
+                    Button(action: { discardEdits(ticket: ticket) }) {
+                        Text("Discard")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+                    .help("Discard changes")
+
+                    Button(action: { saveTicket(ticket: ticket) }) {
+                        if isSaving {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label("Save", systemImage: "checkmark.circle.fill")
+                        }
+                    }
+                    .disabled(isSaving)
+                    .help("Save changes")
+                }
+
+                if saveSucceeded {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                        .help("Saved")
+                }
+
+                Button(action: {
+                    loadTicketDetail(ticketId: ticket.id ?? 0)
+                    loadTicketFeed(ticketId: ticket.id ?? 0)
+                }) {
                     Image(systemName: "arrow.clockwise")
                 }
                 .help("Refresh")
             }
-            Text(ticket.title ?? "Untitled")
+
+            // Editable title
+            TextField("Title", text: $editTitle)
                 .font(.title3)
                 .fontWeight(.semibold)
-                .textSelection(.enabled)
+                .textFieldStyle(.plain)
+                .onChange(of: editTitle) { _, _ in trackEdits(ticket: ticket) }
+
+            if let errMsg = saveErrorMessage {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.red)
+                    Text(errMsg)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                    Spacer()
+                    Button(action: { saveErrorMessage = nil }) {
+                        Image(systemName: "xmark")
+                            .font(.caption2)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(6)
+                .background(Color.red.opacity(0.1))
+                .cornerRadius(6)
+            }
+
             HStack(spacing: 8) {
-                TicketStatusBadge(statusName: ticket.statusName)
-                Text(ticket.priorityName ?? "")
-                    .font(.body)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(Color.yellow.opacity(0.2))
-                    .cornerRadius(4)
+                // Editable status picker
+                Picker("", selection: Binding(
+                    get: { editStatusId ?? ticket.statusId ?? 0 },
+                    set: { editStatusId = $0; hasEdits = true }
+                )) {
+                    ForEach(statusIdOptions, id: \.id) { option in
+                        Text(option.name).tag(option.id)
+                    }
+                }
+                .frame(width: 140)
+
+                // Editable priority picker
+                Picker("", selection: Binding(
+                    get: { editPriorityId ?? ticket.priorityId ?? 0 },
+                    set: { editPriorityId = $0; hasEdits = true }
+                )) {
+                    ForEach(priorityIdOptions, id: \.id) { option in
+                        Text(option.name).tag(option.id)
+                    }
+                }
+                .frame(width: 120)
             }
         }
         .padding(.bottom, 8)
@@ -619,19 +737,55 @@ struct TicketsView: View {
             DetailRow(label: "Created", value: formatDateString(ticket.createdDate))
             DetailRow(label: "Modified", value: formatDateString(ticket.modifiedDate))
 
-            if let description = ticket.description, !description.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+            // Description (read-only by default, editable on demand)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
                     Text("Description")
                         .font(.body)
                         .fontWeight(.medium)
                         .foregroundColor(.secondary)
-                    Text(Self.decodeHtml(description))
+                    Spacer()
+                    Button(action: { isEditingDescription.toggle() }) {
+                        Label(isEditingDescription ? "Done" : "Edit",
+                              systemImage: isEditingDescription ? "checkmark" : "pencil")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(isEditingDescription ? "Finish editing description" : "Edit description")
+                }
+                if isEditingDescription {
+                    TextEditor(text: $editDescription)
                         .font(.body)
-                        .textSelection(.enabled)
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.secondary.opacity(0.06))
-                        .cornerRadius(6)
+                        .frame(minHeight: 80, maxHeight: 300)
+                        .focused($descriptionFocused)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.accentColor.opacity(0.5), lineWidth: 1)
+                        )
+                        .onChange(of: editDescription) { _, _ in trackEdits(ticket: ticket) }
+                        .onChange(of: isEditingDescription) { _, editing in
+                            if editing { descriptionFocused = true }
+                        }
+                } else {
+                    let text = editDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if text.isEmpty {
+                        Text("No description")
+                            .font(.body)
+                            .foregroundColor(.secondary.opacity(0.6))
+                            .italic()
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.06))
+                            .cornerRadius(6)
+                    } else {
+                        Text(text)
+                            .font(.body)
+                            .textSelection(.enabled)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.secondary.opacity(0.06))
+                            .cornerRadius(6)
+                    }
                 }
             }
         }
@@ -745,6 +899,21 @@ struct TicketsView: View {
         }
     }
 
+    private func loadTicketDetail(ticketId: Int) {
+        Task {
+            isLoadingDetail = true
+            defer { isLoadingDetail = false }
+            do {
+                if let full = try await appState.tdxService.getTicket(id: ticketId) {
+                    detailedTicket = full
+                    populateEditFields(from: full)
+                }
+            } catch {
+                print("Failed to load ticket detail: \(error)")
+            }
+        }
+    }
+
     private func loadTicketFeed(ticketId: Int) {
         Task {
             isLoadingFeed = true
@@ -754,6 +923,75 @@ struct TicketsView: View {
             } catch {
                 print("Failed to load ticket feed: \(error)")
                 ticketFeed = []
+            }
+        }
+    }
+
+    private func populateEditFields(from ticket: TdxTicket) {
+        editTitle = ticket.title ?? ""
+        editStatusId = ticket.statusId
+        editPriorityId = ticket.priorityId
+        editDescription = Self.decodeHtml(ticket.description ?? "")
+        hasEdits = false
+        isEditingDescription = false
+    }
+
+    private func trackEdits(ticket: TdxTicket) {
+        let origTitle = ticket.title ?? ""
+        let origDesc = Self.decodeHtml(ticket.description ?? "")
+        hasEdits = editTitle.trimmingCharacters(in: .whitespacesAndNewlines) != origTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            || editStatusId != ticket.statusId
+            || editPriorityId != ticket.priorityId
+            || editDescription.trimmingCharacters(in: .whitespacesAndNewlines) != origDesc.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func discardEdits(ticket: TdxTicket) {
+        populateEditFields(from: ticket)
+    }
+
+    private func saveTicket(ticket: TdxTicket) {
+        guard let ticketId = ticket.id else { return }
+        Task {
+            isSaving = true
+            saveErrorMessage = nil
+            saveSucceeded = false
+            defer { isSaving = false }
+            do {
+                var updates: [String: Any] = [:]
+                let trimmedTitle = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmedTitle != (ticket.title ?? "") {
+                    updates["Title"] = trimmedTitle
+                }
+                if editStatusId != ticket.statusId, let newStatus = editStatusId {
+                    updates["StatusID"] = newStatus
+                }
+                if editPriorityId != ticket.priorityId, let newPriority = editPriorityId {
+                    updates["PriorityID"] = newPriority
+                }
+                let trimmedDesc = editDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                let origDesc = Self.decodeHtml(ticket.description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if trimmedDesc != origDesc {
+                    // TDX stores description as HTML; wrap plain text in a paragraph
+                    let htmlDesc = trimmedDesc.isEmpty ? "" : "<p>\(trimmedDesc.replacingOccurrences(of: "\n", with: "</p><p>"))</p>"
+                    updates["Description"] = htmlDesc
+                }
+                guard !updates.isEmpty else {
+                    hasEdits = false
+                    return
+                }
+                if let updated = try await appState.tdxService.updateTicket(id: ticketId, updates: updates) {
+                    detailedTicket = updated
+                    populateEditFields(from: updated)
+                    saveSucceeded = true
+                    // Fade out the success indicator after 2 seconds
+                    try? await Task.sleep(for: .seconds(2))
+                    saveSucceeded = false
+                    loadTickets()
+                } else {
+                    saveErrorMessage = "Save failed — server returned no data. Check your session."
+                }
+            } catch {
+                saveErrorMessage = error.localizedDescription
             }
         }
     }

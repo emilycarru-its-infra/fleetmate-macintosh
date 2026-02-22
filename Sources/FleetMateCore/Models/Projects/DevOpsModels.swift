@@ -7,6 +7,7 @@ public struct WorkItem: Codable, Identifiable {
     public let rev: Int?
     public let fields: WorkItemFields?
     public let url: String?
+    public let relations: [WorkItemRelation]?
 }
 
 public struct WorkItemFields: Codable {
@@ -21,6 +22,25 @@ public struct WorkItemFields: Codable {
     public let iterationPath: String?
     public let areaPath: String?
     public let tags: String?
+    public let teamProject: String?
+
+    // Extended fields
+    public let reason: String?
+    public let createdBy: IdentityRef?
+    public let changedBy: IdentityRef?
+    public let resolvedBy: IdentityRef?
+    public let resolvedDate: String?
+    public let closedBy: IdentityRef?
+    public let closedDate: String?
+    public let stateChangeDate: String?
+    public let boardColumn: String?
+    public let boardColumnDone: Bool?
+    public let commentCount: Int?
+    public let remainingWork: Double?
+    public let originalEstimate: Double?
+    public let completedWork: Double?
+    public let reproSteps: String?
+    public let acceptanceCriteria: String?
 
     enum CodingKeys: String, CodingKey {
         case title = "System.Title"
@@ -34,6 +54,23 @@ public struct WorkItemFields: Codable {
         case iterationPath = "System.IterationPath"
         case areaPath = "System.AreaPath"
         case tags = "System.Tags"
+        case teamProject = "System.TeamProject"
+        case reason = "System.Reason"
+        case createdBy = "System.CreatedBy"
+        case changedBy = "System.ChangedBy"
+        case resolvedBy = "Microsoft.VSTS.Common.ResolvedBy"
+        case resolvedDate = "Microsoft.VSTS.Common.ResolvedDate"
+        case closedBy = "Microsoft.VSTS.Common.ClosedBy"
+        case closedDate = "Microsoft.VSTS.Common.ClosedDate"
+        case stateChangeDate = "Microsoft.VSTS.Common.StateChangeDate"
+        case boardColumn = "System.BoardColumn"
+        case boardColumnDone = "System.BoardColumnDone"
+        case commentCount = "System.CommentCount"
+        case remainingWork = "Microsoft.VSTS.Scheduling.RemainingWork"
+        case originalEstimate = "Microsoft.VSTS.Scheduling.OriginalEstimate"
+        case completedWork = "Microsoft.VSTS.Scheduling.CompletedWork"
+        case reproSteps = "Microsoft.VSTS.TCM.ReproSteps"
+        case acceptanceCriteria = "Microsoft.VSTS.Common.AcceptanceCriteria"
     }
 }
 
@@ -144,7 +181,15 @@ public struct UpdateWorkItemRequest {
     public var assignedTo: String?
     public var priority: Int?
     public var iterationPath: String?
+    public var areaPath: String?
+    public var description: String?
+    public var tags: String?
     public var comment: String?
+    public var remainingWork: Double?
+    public var originalEstimate: Double?
+    public var completedWork: Double?
+    public var reproSteps: String?
+    public var acceptanceCriteria: String?
     
     public init(
         title: String? = nil,
@@ -152,14 +197,30 @@ public struct UpdateWorkItemRequest {
         assignedTo: String? = nil,
         priority: Int? = nil,
         iterationPath: String? = nil,
-        comment: String? = nil
+        areaPath: String? = nil,
+        description: String? = nil,
+        tags: String? = nil,
+        comment: String? = nil,
+        remainingWork: Double? = nil,
+        originalEstimate: Double? = nil,
+        completedWork: Double? = nil,
+        reproSteps: String? = nil,
+        acceptanceCriteria: String? = nil
     ) {
         self.title = title
         self.state = state
         self.assignedTo = assignedTo
         self.priority = priority
         self.iterationPath = iterationPath
+        self.areaPath = areaPath
+        self.description = description
+        self.tags = tags
         self.comment = comment
+        self.remainingWork = remainingWork
+        self.originalEstimate = originalEstimate
+        self.completedWork = completedWork
+        self.reproSteps = reproSteps
+        self.acceptanceCriteria = acceptanceCriteria
     }
 }
 
@@ -197,4 +258,63 @@ public struct JsonPatchOperation: Codable {
         path = try container.decode(String.self, forKey: .path)
         value = try container.decodeIfPresent(String.self, forKey: .value)
     }
+}
+
+// MARK: - Work Item Relation Models
+
+public struct WorkItemRelation: Codable {
+    public let rel: String?
+    public let url: String?
+    public let attributes: RelationAttributes?
+
+    /// Common relation type constants
+    public var relationType: RelationType {
+        switch rel {
+        case "System.LinkTypes.Hierarchy-Forward": return .child
+        case "System.LinkTypes.Hierarchy-Reverse": return .parent
+        case "System.LinkTypes.Related": return .related
+        case "System.LinkTypes.Dependency-Forward": return .successor
+        case "System.LinkTypes.Dependency-Reverse": return .predecessor
+        case let r where r?.contains("ArtifactLink") == true: return .artifact
+        default: return .other
+        }
+    }
+
+    /// Extract work item ID from the relation URL (e.g., "https://.../_apis/wit/workItems/42" → 42)
+    public var linkedWorkItemId: Int? {
+        guard let url = url else { return nil }
+        let parts = url.components(separatedBy: "/")
+        return parts.last.flatMap(Int.init)
+    }
+
+    public enum RelationType: String {
+        case parent, child, related, successor, predecessor, artifact, other
+    }
+}
+
+public struct RelationAttributes: Codable {
+    public let name: String?
+    public let comment: String?
+    public let isLocked: Bool?
+    public let id: Int?
+}
+
+// MARK: - Work Item Comment Models
+
+public struct WorkItemComment: Codable, Identifiable {
+    public let id: Int
+    public let workItemId: Int?
+    public let text: String?
+    public let renderedText: String?
+    public let createdBy: IdentityRef?
+    public let createdDate: String?
+    public let modifiedBy: IdentityRef?
+    public let modifiedDate: String?
+    public let version: Int?
+}
+
+public struct WorkItemCommentsResponse: Codable {
+    public let totalCount: Int?
+    public let count: Int?
+    public let comments: [WorkItemComment]?
 }

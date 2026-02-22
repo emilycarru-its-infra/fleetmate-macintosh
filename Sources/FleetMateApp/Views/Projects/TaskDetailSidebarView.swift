@@ -12,7 +12,7 @@ struct TaskDetailSidebarView: View {
         switch task.provider {
         case "github":
             GitHubIssueSidebarView(task: task, config: ghConfig, onClose: onClose)
-        case "azdo":
+        case "azdevops":
             if let service = devOpsService {
                 AzDoTaskSidebarView(task: task, service: service, onClose: onClose)
             } else {

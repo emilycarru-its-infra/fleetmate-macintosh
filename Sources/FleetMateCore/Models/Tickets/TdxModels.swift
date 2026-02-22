@@ -10,8 +10,24 @@ public struct TdxTicket: Codable, Identifiable, Sendable, Equatable, Hashable {
     public let statusName: String?
     public let typeId: Int?
     public let typeName: String?
+    public let classification: Int?
+    public let classificationName: String?
     public let priorityId: Int?
     public let priorityName: String?
+    public let urgencyId: Int?
+    public let urgencyName: String?
+    public let impactId: Int?
+    public let impactName: String?
+    public let accountId: Int?
+    public let accountName: String?
+    public let sourceId: Int?
+    public let sourceName: String?
+    public let formId: Int?
+    public let formName: String?
+    public let serviceId: Int?
+    public let serviceName: String?
+    public let serviceOfferingId: Int?
+    public let serviceOfferingName: String?
     public let requestorName: String?
     public let requestorEmail: String?
     public let requestorUid: String?
@@ -26,9 +42,10 @@ public struct TdxTicket: Codable, Identifiable, Sendable, Equatable, Hashable {
     public let respondByDate: String?
     public let slaViolated: Bool?
     public let isOnHold: Bool?
-    public let accountName: String?
-    public let sourceId: Int?
-    public let sourceName: String?
+    public let appId: Int?
+    public let parentId: Int?
+    public let locationId: Int?
+    public let locationRoomId: Int?
     public let uri: String?
 
     enum CodingKeys: String, CodingKey {
@@ -39,8 +56,24 @@ public struct TdxTicket: Codable, Identifiable, Sendable, Equatable, Hashable {
         case statusName = "StatusName"
         case typeId = "TypeID"
         case typeName = "TypeName"
+        case classification = "Classification"
+        case classificationName = "ClassificationName"
         case priorityId = "PriorityID"
         case priorityName = "PriorityName"
+        case urgencyId = "UrgencyID"
+        case urgencyName = "UrgencyName"
+        case impactId = "ImpactID"
+        case impactName = "ImpactName"
+        case accountId = "AccountID"
+        case accountName = "AccountName"
+        case sourceId = "SourceID"
+        case sourceName = "SourceName"
+        case formId = "FormID"
+        case formName = "FormName"
+        case serviceId = "ServiceID"
+        case serviceName = "ServiceName"
+        case serviceOfferingId = "ServiceOfferingID"
+        case serviceOfferingName = "ServiceOfferingName"
         case requestorName = "RequestorName"
         case requestorEmail = "RequestorEmail"
         case requestorUid = "RequestorUid"
@@ -55,9 +88,10 @@ public struct TdxTicket: Codable, Identifiable, Sendable, Equatable, Hashable {
         case respondByDate = "RespondByDate"
         case slaViolated = "SlaViolated"
         case isOnHold = "IsOnHold"
-        case accountName = "AccountName"
-        case sourceId = "SourceID"
-        case sourceName = "SourceName"
+        case appId = "AppID"
+        case parentId = "ParentID"
+        case locationId = "LocationID"
+        case locationRoomId = "LocationRoomID"
         case uri = "Uri"
     }
 }
@@ -178,6 +212,93 @@ public struct CreateTicketRequest: Codable {
     }
 }
 
+/// Full update payload required by TDX POST /api/{appId}/tickets/{id}
+/// TDX treats PATCH as a full replace — any field omitted gets nulled.
+/// This struct echoes back every field from the existing ticket with overrides.
+public struct TicketUpdateRequest: Codable {
+    public var typeId: Int
+    public var classification: Int?
+    public var title: String
+    public var description: String?
+    public var accountId: Int?
+    public var sourceId: Int?
+    public var statusId: Int?
+    public var priorityId: Int?
+    public var urgencyId: Int?
+    public var impactId: Int?
+    public var formId: Int?
+    public var serviceId: Int?
+    public var serviceOfferingId: Int?
+    public var requestorUid: String?
+    public var responsibleUid: String?
+    public var responsibleGroupId: Int?
+    public var parentId: Int?
+    public var locationId: Int?
+    public var locationRoomId: Int?
+    public var isRichHtml: Bool?
+
+    /// Build a full update request echoing back an existing ticket, with optional overrides.
+    /// isRichHtml is always true — TDX stores descriptions as HTML.
+    public init(from ticket: TdxTicket,
+                title: String? = nil,
+                description: String? = nil,
+                statusId: Int? = nil,
+                priorityId: Int? = nil,
+                classification: Int? = nil,
+                requestorUid: String? = nil,
+                responsibleUid: String? = nil,
+                responsibleGroupId: Int? = nil,
+                serviceId: Int? = nil,
+                formId: Int? = nil,
+                parentId: Int? = nil) {
+        self.typeId = ticket.typeId ?? 0
+        self.classification = classification ?? ticket.classification
+        self.title = title ?? ticket.title ?? ""
+        // Always echo back the original HTML description unless explicitly overridden
+        self.description = description ?? ticket.description
+        self.accountId = ticket.accountId
+        self.sourceId = ticket.sourceId
+        self.statusId = statusId ?? ticket.statusId
+        self.priorityId = priorityId ?? ticket.priorityId
+        self.urgencyId = ticket.urgencyId
+        self.impactId = ticket.impactId
+        self.formId = formId ?? ticket.formId
+        self.serviceId = serviceId ?? ticket.serviceId
+        self.serviceOfferingId = ticket.serviceOfferingId
+        self.requestorUid = requestorUid ?? ticket.requestorUid
+        self.responsibleUid = responsibleUid ?? ticket.responsibleUid
+        self.responsibleGroupId = responsibleGroupId ?? ticket.responsibleGroupId
+        self.parentId = parentId ?? ticket.parentId
+        self.locationId = ticket.locationId
+        self.locationRoomId = ticket.locationRoomId
+        // Always true — TDX descriptions are HTML; omitting this corrupts formatting
+        self.isRichHtml = true
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case typeId = "TypeID"
+        case classification = "Classification"
+        case title = "Title"
+        case description = "Description"
+        case accountId = "AccountID"
+        case sourceId = "SourceID"
+        case statusId = "StatusID"
+        case priorityId = "PriorityID"
+        case urgencyId = "UrgencyID"
+        case impactId = "ImpactID"
+        case formId = "FormID"
+        case serviceId = "ServiceID"
+        case serviceOfferingId = "ServiceOfferingID"
+        case requestorUid = "RequestorUid"
+        case responsibleUid = "ResponsibleUid"
+        case responsibleGroupId = "ResponsibleGroupID"
+        case parentId = "ParentID"
+        case locationId = "LocationID"
+        case locationRoomId = "LocationRoomID"
+        case isRichHtml = "IsRichHtml"
+    }
+}
+
 public struct CreateFeedEntryRequest: Codable {
     public var comments: String
     public var isPrivate: Bool = false
@@ -189,6 +310,26 @@ public struct CreateFeedEntryRequest: Codable {
         case isPrivate = "IsPrivate"
         case isRichHtml = "IsRichHtml"
         case notify = "Notify"
+    }
+}
+
+// MARK: - People Models
+
+public struct TdxPerson: Codable, Identifiable, Hashable {
+    public let uid: String?
+    public let fullName: String?
+    public let firstName: String?
+    public let lastName: String?
+    public let primaryEmail: String?
+
+    public var id: String { uid ?? UUID().uuidString }
+
+    enum CodingKeys: String, CodingKey {
+        case uid = "UID"
+        case fullName = "FullName"
+        case firstName = "FirstName"
+        case lastName = "LastName"
+        case primaryEmail = "PrimaryEmail"
     }
 }
 

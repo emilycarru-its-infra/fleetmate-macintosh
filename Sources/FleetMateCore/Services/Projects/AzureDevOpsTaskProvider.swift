@@ -42,7 +42,7 @@ public actor AzureDevOpsTaskProvider: TaskProvider {
         // Build filter conditions
         if let filter = filter {
             if let states = filter.states, !states.isEmpty {
-                let stateConditions = states.map { "[System.State] = '\(mapStateToAdo($0))'" }
+                let stateConditions = states.map { "[System.State] = '\(escapeWiql(mapStateToAdo($0)))'" }
                 conditions.append("(\(stateConditions.joined(separator: " OR ")))")
             } else if !filter.includeClosed {
                 conditions.append("[System.State] <> 'Closed'")
@@ -51,22 +51,22 @@ public actor AzureDevOpsTaskProvider: TaskProvider {
             }
             
             if let assignees = filter.assignees, !assignees.isEmpty {
-                let assigneeConditions = assignees.map { "[System.AssignedTo] = '\($0)'" }
+                let assigneeConditions = assignees.map { "[System.AssignedTo] = '\(escapeWiql($0))'" }
                 conditions.append("(\(assigneeConditions.joined(separator: " OR ")))")
             }
             
             if let labels = filter.labels, !labels.isEmpty {
                 for label in labels {
-                    conditions.append("[System.Tags] CONTAINS '\(label)'")
+                    conditions.append("[System.Tags] CONTAINS '\(escapeWiql(label))'")
                 }
             }
             
             if let bucket = filter.bucket {
-                conditions.append("[System.IterationPath] UNDER '\(bucket)'")
+                conditions.append("[System.IterationPath] UNDER '\(escapeWiql(bucket))'")
             }
             
             if let searchText = filter.searchText {
-                conditions.append("[System.Title] CONTAINS '\(searchText)'")
+                conditions.append("[System.Title] CONTAINS '\(escapeWiql(searchText))'")
             }
         } else {
             // Default: exclude closed
@@ -249,6 +249,11 @@ public actor AzureDevOpsTaskProvider: TaskProvider {
         return tags.components(separatedBy: CharacterSet(charactersIn: ";,"))
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
+    }
+    
+    /// Escape a value for safe inclusion in a WIQL single-quoted string literal.
+    private func escapeWiql(_ value: String) -> String {
+        value.replacingOccurrences(of: "'", with: "''")
     }
 }
 

@@ -20,9 +20,21 @@ public actor AzureDevOpsTaskProvider: TaskProvider {
         self.providerConfig = config.tasks?.providers.azdevops
         self.service = AzureDevOpsService(config: config)
     }
+
+    /// Init with an existing service instance (preserves Bearer token from SSO)
+    public init(service: AzureDevOpsService, config: FleetMateConfig) {
+        self.mainConfig = config
+        self.providerConfig = config.tasks?.providers.azdevops
+        self.service = service
+    }
     
     public func authenticate() async throws -> Bool {
-        dbg.info("AzDO TaskProvider authenticate() starting (enabled=\(isEnabled), org=\(mainConfig.devopsOrganization ?? "nil"), project=\(mainConfig.devopsProject ?? "nil"))", category: "azdo-provider")
+        dbg.info("AzDO TaskProvider authenticate() starting (enabled=\(isEnabled), hasToken=\(service.hasValidToken), org=\(mainConfig.devopsOrganization ?? "nil"), project=\(mainConfig.devopsProject ?? "nil"), baseUrl=\(service.baseUrl))", category: "azdo-provider")
+        guard service.hasValidToken else {
+            dbg.warn("AzDO TaskProvider: no valid Bearer token — skipping auth", category: "azdo-provider")
+            authenticated = false
+            return false
+        }
         do {
             let ok = try await service.verifyAuth()
             authenticated = ok
@@ -36,8 +48,13 @@ public actor AzureDevOpsTaskProvider: TaskProvider {
     }
     
     public func listTasks(filter: TaskFilter?) async throws -> [UnifiedTask] {
-        dbg.info("AzDO TaskProvider listTasks (authenticated=\(authenticated))", category: "azdo-provider")
-        var conditions = ["[System.TeamProject] = @project"]
+        dbg.info("AzDO TaskProvider listTasks (authenticated=\(authenticated), hasToken=\(service.hasValidToken))", category: "azdo-provider")
+        guard service.hasValidToken else {
+            dbg.warn("AzDO TaskProvider listTasks: no token, returning empty", category: "azdo-provider")
+            return []
+        }
+        // Query across ALL projects in the org (org-level WIQL)
+        var conditions: [String] = []
         
         // Build filter conditions
         if let filter = filter {
@@ -75,9 +92,11 @@ public actor AzureDevOpsTaskProvider: TaskProvider {
             conditions.append("[System.State] <> 'Removed'")
         }
         
-        let wiql = "SELECT [System.Id] FROM WorkItems WHERE \(conditions.joined(separator: " AND ")) ORDER BY [System.ChangedDate] DESC"
+        let whereClause = conditions.isEmpty ? "" : " WHERE \(conditions.joined(separator: " AND "))"
+        let wiql = "SELECT [System.Id] FROM WorkItems\(whereClause) ORDER BY [System.ChangedDate] DESC"
         
-        var workItems = try await service.queryWorkItems(wiql)
+        // Use org-level endpoint to query across all projects
+        var workItems = try await service.queryWorkItems(wiql, orgLevel: true)
         
         if let limit = filter?.limit, limit > 0 {
             workItems = Array(workItems.prefix(limit))

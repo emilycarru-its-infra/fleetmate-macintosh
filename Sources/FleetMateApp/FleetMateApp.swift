@@ -504,6 +504,20 @@ class AppState: ObservableObject {
         showTdxSsoLogin = false
         authManager.update(.tdx, state: .valid(user: userName, expiry: expiry))
         
+        // Resolve the actual TDX UID from the email — SSO returns email, not TDX UID
+        if let email = userId, !email.isEmpty {
+            Task {
+                do {
+                    let people = try await tdxService.searchPeople(searchText: email, maxResults: 1)
+                    if let person = people.first, let uid = person.uid {
+                        tdxService.setSsoToken(token, expiry: expiry, userId: uid, userName: userName)
+                    }
+                } catch {
+                    // Non-fatal — keep the email as fallback
+                }
+            }
+        }
+        
         // Invalidate tickets cache to reload with new auth
         invalidateTicketsCache()
     }

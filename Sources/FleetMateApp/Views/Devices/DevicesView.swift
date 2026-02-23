@@ -630,7 +630,7 @@ struct DeviceActionsPanel: View {
             
             Spacer()
         }
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(Color(NSColor.controlBackgroundColor))
     }
     
     private func toggleSection(_ section: String) {

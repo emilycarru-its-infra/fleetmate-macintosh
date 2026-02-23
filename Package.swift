@@ -1,4 +1,4 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.2
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "FleetMate",
     platforms: [
-        .macOS(.v14)
+        .macOS(.v26)
     ],
     products: [
         .library(name: "FleetMateCore", targets: ["FleetMateCore"]),
@@ -66,5 +66,6 @@ let package = Package(
             dependencies: ["FleetMateCore"],
             path: "Tests/FleetMateTests"
         ),
-    ]
+    ],
+    swiftLanguageModes: [.v5]
 )

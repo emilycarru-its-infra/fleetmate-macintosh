@@ -25,11 +25,11 @@ struct TicketBoardView: View {
         case .status:
             return statusColumns
         case .responsible:
-            return stringFieldColumns(keyPath: \.responsibleFullName, fallback: "Unassigned")
+            return stringFieldColumns(keyPath: \.responsibleFullName, fallback: "Unassigned", ordering: .alphabetical)
         case .priority:
-            return stringFieldColumns(keyPath: \.priorityName, fallback: "No Priority")
+            return stringFieldColumns(keyPath: \.priorityName, fallback: "No Priority", ordering: .priority)
         case .group:
-            return stringFieldColumns(keyPath: \.responsibleGroupName, fallback: "No Group")
+            return stringFieldColumns(keyPath: \.responsibleGroupName, fallback: "No Group", ordering: .alphabetical)
         }
     }
 
@@ -40,18 +40,38 @@ struct TicketBoardView: View {
         }
     }
 
-    private func stringFieldColumns(keyPath: KeyPath<TdxTicket, String?>, fallback: String) -> [(key: String, label: String, tickets: [TdxTicket])] {
-        var groups: [String: [TdxTicket]] = [:]
-        var order: [String] = []
-        for ticket in tickets {
-            let val = ticket[keyPath: keyPath] ?? fallback
-            if groups[val] == nil { order.append(val) }
-            groups[val, default: []].append(ticket)
-        }
-        return order.map { key in (key: key, label: key, tickets: groups[key] ?? []) }
+    private enum ColumnOrdering {
+        case alphabetical
+        case priority
     }
 
-    // Define status order for columns (most common workflows)
+    private func stringFieldColumns(keyPath: KeyPath<TdxTicket, String?>, fallback: String, ordering: ColumnOrdering = .alphabetical) -> [(key: String, label: String, tickets: [TdxTicket])] {
+        var groups: [String: [TdxTicket]] = [:]
+        for ticket in tickets {
+            let val = ticket[keyPath: keyPath] ?? fallback
+            groups[val, default: []].append(ticket)
+        }
+        let keys: [String]
+        switch ordering {
+        case .alphabetical:
+            keys = groups.keys.sorted { a, b in
+                // Put fallback last
+                if a == fallback { return false }
+                if b == fallback { return true }
+                return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+            }
+        case .priority:
+            let order = ["low", "medium", "high", "urgent", "critical"]
+            keys = groups.keys.sorted { a, b in
+                let aIdx = order.firstIndex(where: { a.lowercased().contains($0) }) ?? 50
+                let bIdx = order.firstIndex(where: { b.lowercased().contains($0) }) ?? 50
+                return aIdx < bIdx
+            }
+        }
+        return keys.map { key in (key: key, label: key, tickets: groups[key] ?? []) }
+    }
+
+    // Define status order for columns
     private var orderedStatuses: [(id: Int, name: String)] {
         // If statuses dictionary is provided and not empty, use it
         // Otherwise, derive statuses from the tickets themselves
@@ -66,8 +86,8 @@ struct TicketBoardView: View {
             }
         }
         
-        // Order statuses: Closed/Cancelled first (far left), then New -> In Progress/On Hold -> Resolved
-        let order = ["closed", "cancelled", "new", "open", "in progress", "on hold", "pending", "waiting", "resolved", "completed"]
+        // Order statuses: New -> In Progress -> On Hold -> then others -> Closed/Cancelled last
+        let order = ["new", "open", "in progress", "on hold", "pending", "waiting", "resolved", "completed", "closed", "cancelled"]
         
         return statusMap.sorted { a, b in
             let aIndex = order.firstIndex { a.value.lowercased().contains($0) } ?? 50
@@ -152,9 +172,13 @@ struct BoardColumn: View {
                     }
                 }
                 .padding(8)
+                .frame(maxWidth: .infinity)
             }
+            .frame(maxHeight: .infinity)
         }
         .frame(width: 280)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
         .background(isTargeted ? Color.accentColor.opacity(0.1) : Color.secondary.opacity(0.05))
         .cornerRadius(12)
         .overlay(

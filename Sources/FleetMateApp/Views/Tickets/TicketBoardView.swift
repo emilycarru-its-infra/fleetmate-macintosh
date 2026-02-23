@@ -1,13 +1,56 @@
 import SwiftUI
 import FleetMateCore
 
-/// Kanban board view for tickets - drag cards between columns to change status
+/// Grouping options for the Kanban board
+enum BoardGroupBy: String, CaseIterable {
+    case status = "Status"
+    case responsible = "Responsible"
+    case priority = "Priority"
+    case group = "Group"
+}
+
+/// Kanban board view for tickets - drag cards between columns to update the grouped field
 struct TicketBoardView: View {
     let tickets: [TdxTicket]
     let statuses: [Int: String]
-    let onUpdateStatus: (Int, Int) -> Void  // (ticketId, newStatusId)
+    let groupBy: BoardGroupBy
+    /// Called when a card is dropped on a column: (ticketId, targetColumnKey)
+    let onDropTicket: (Int, String) -> Void
     let onSelectTicket: (TdxTicket) -> Void
     
+    // MARK: - Grouped columns based on groupBy
+
+    private var columns: [(key: String, label: String, tickets: [TdxTicket])] {
+        switch groupBy {
+        case .status:
+            return statusColumns
+        case .responsible:
+            return stringFieldColumns(keyPath: \.responsibleFullName, fallback: "Unassigned")
+        case .priority:
+            return stringFieldColumns(keyPath: \.priorityName, fallback: "No Priority")
+        case .group:
+            return stringFieldColumns(keyPath: \.responsibleGroupName, fallback: "No Group")
+        }
+    }
+
+    private var statusColumns: [(key: String, label: String, tickets: [TdxTicket])] {
+        let ordered = orderedStatuses
+        return ordered.map { status in
+            (key: "\(status.id)", label: status.name, tickets: tickets.filter { $0.statusId == status.id })
+        }
+    }
+
+    private func stringFieldColumns(keyPath: KeyPath<TdxTicket, String?>, fallback: String) -> [(key: String, label: String, tickets: [TdxTicket])] {
+        var groups: [String: [TdxTicket]] = [:]
+        var order: [String] = []
+        for ticket in tickets {
+            let val = ticket[keyPath: keyPath] ?? fallback
+            if groups[val] == nil { order.append(val) }
+            groups[val, default: []].append(ticket)
+        }
+        return order.map { key in (key: key, label: key, tickets: groups[key] ?? []) }
+    }
+
     // Define status order for columns (most common workflows)
     private var orderedStatuses: [(id: Int, name: String)] {
         // If statuses dictionary is provided and not empty, use it
@@ -36,13 +79,14 @@ struct TicketBoardView: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: true) {
             HStack(alignment: .top, spacing: 16) {
-                ForEach(orderedStatuses, id: \.id) { status in
-                    StatusColumn(
-                        statusId: status.id,
-                        statusName: status.name,
-                        tickets: tickets.filter { $0.statusId == status.id },
-                        onMoveTicket: { ticketId in
-                            onUpdateStatus(ticketId, status.id)
+                ForEach(columns, id: \.key) { col in
+                    BoardColumn(
+                        columnKey: col.key,
+                        label: col.label,
+                        tickets: col.tickets,
+                        accentColor: groupBy == .status ? statusColor(for: col.label) : nil,
+                        onDropTicket: { ticketId in
+                            onDropTicket(ticketId, col.key)
                         },
                         onSelectTicket: onSelectTicket
                     )
@@ -52,14 +96,26 @@ struct TicketBoardView: View {
         }
         .background(Color.secondary.opacity(0.03))
     }
+
+    private func statusColor(for name: String) -> Color {
+        let n = name.lowercased()
+        if n.contains("new") || n.contains("open") { return .blue }
+        if n.contains("progress") { return .orange }
+        if n.contains("hold") || n.contains("pending") || n.contains("waiting") { return .yellow }
+        if n.contains("resolved") || n.contains("completed") { return .green }
+        if n.contains("closed") { return .gray }
+        if n.contains("cancel") { return .red }
+        return .secondary
+    }
 }
 
-/// A single status column in the Kanban board
-struct StatusColumn: View {
-    let statusId: Int
-    let statusName: String
+/// Unified draggable column for all group-by modes
+struct BoardColumn: View {
+    let columnKey: String
+    let label: String
     let tickets: [TdxTicket]
-    let onMoveTicket: (Int) -> Void
+    let accentColor: Color?
+    let onDropTicket: (Int) -> Void
     let onSelectTicket: (TdxTicket) -> Void
     
     @State private var isTargeted = false
@@ -68,7 +124,7 @@ struct StatusColumn: View {
         VStack(alignment: .leading, spacing: 0) {
             // Column header
             HStack {
-                Text(statusName)
+                Text(label)
                     .font(.headline)
                     .foregroundColor(.primary)
                 Spacer()
@@ -82,14 +138,14 @@ struct StatusColumn: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(statusColor.opacity(0.2))
+            .background((accentColor ?? .secondary).opacity(0.2))
             
             // Cards
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(spacing: 8) {
                     ForEach(tickets, id: \.id) { ticket in
                         TicketCard(ticket: ticket)
-                            .draggable(TicketDragData(ticketId: ticket.id ?? 0, fromStatusId: statusId))
+                            .draggable(TicketDragData(ticketId: ticket.id ?? 0, fromColumnKey: columnKey))
                             .onTapGesture {
                                 onSelectTicket(ticket)
                             }
@@ -107,8 +163,8 @@ struct StatusColumn: View {
         )
         .dropDestination(for: TicketDragData.self) { items, _ in
             for item in items {
-                if item.fromStatusId != statusId {
-                    onMoveTicket(item.ticketId)
+                if item.fromColumnKey != columnKey {
+                    onDropTicket(item.ticketId)
                 }
             }
             return true
@@ -116,30 +172,12 @@ struct StatusColumn: View {
             isTargeted = targeted
         }
     }
-    
-    private var statusColor: Color {
-        let name = statusName.lowercased()
-        if name.contains("new") || name.contains("open") {
-            return .blue
-        } else if name.contains("progress") {
-            return .orange
-        } else if name.contains("hold") || name.contains("pending") || name.contains("waiting") {
-            return .yellow
-        } else if name.contains("resolved") || name.contains("completed") {
-            return .green
-        } else if name.contains("closed") {
-            return .gray
-        } else if name.contains("cancel") {
-            return .red
-        }
-        return .secondary
-    }
 }
 
-/// Draggable ticket data
+/// Draggable ticket data — generic across all group-by modes
 struct TicketDragData: Codable, Transferable {
     let ticketId: Int
-    let fromStatusId: Int
+    let fromColumnKey: String
     
     static var transferRepresentation: some TransferRepresentation {
         CodableRepresentation(for: TicketDragData.self, contentType: .json)
@@ -235,7 +273,8 @@ struct PriorityBadge: View {
     TicketBoardView(
         tickets: [],
         statuses: [1: "New", 2: "In Progress", 3: "Resolved", 4: "Closed"],
-        onUpdateStatus: { _, _ in },
+        groupBy: .status,
+        onDropTicket: { _, _ in },
         onSelectTicket: { _ in }
     )
 }

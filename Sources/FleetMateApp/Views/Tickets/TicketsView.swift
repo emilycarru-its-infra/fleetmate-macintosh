@@ -1634,10 +1634,9 @@ struct TicketsView: View {
                     }
                 }) {
                     Image(systemName: isEditingDescription ? "checkmark.circle" : "pencil")
-                        .font(.caption)
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(.mini)
                 .disabled(isSavingDescription)
                 .help(isEditingDescription ? "Save description" : "Edit description")
 
@@ -1648,10 +1647,9 @@ struct TicketsView: View {
                         NSPasteboard.general.setString(text.isEmpty ? "" : text, forType: .string)
                     }) {
                         Image(systemName: "doc.on.doc")
-                            .font(.caption)
                     }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .controlSize(.mini)
                     .help("Copy description")
                 }
             }
@@ -1770,12 +1768,7 @@ struct TicketsView: View {
                     .padding(.vertical, 8)
             } else {
                 ForEach(filteredFeed, id: \.id) { entry in
-                    FeedEntryRow(
-                        entry: entry,
-                        onReply: { feedEntryId, replyText in
-                            replyToFeedEntry(feedEntryId: feedEntryId, replyText: replyText)
-                        }
-                    )
+                    FeedEntryRow(entry: entry)
                 }
             }
         }
@@ -2338,11 +2331,6 @@ struct DetailRow: View {
 
 struct FeedEntryRow: View {
     let entry: TdxFeedEntry
-    var onReply: ((Int, String) -> Void)? = nil
-
-    @State private var isReplying = false
-    @State private var replyText = ""
-    @State private var isSubmittingReply = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -2380,7 +2368,7 @@ struct FeedEntryRow: View {
                     .textSelection(.enabled)
             }
 
-            // Threaded replies
+            // Threaded replies from API
             if let replies = entry.replies, !replies.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(replies, id: \.id) { reply in
@@ -2420,50 +2408,6 @@ struct FeedEntryRow: View {
                     }
                 }
                 .padding(.top, 4)
-            }
-
-            // Reply button and inline reply field
-            if let onReply = onReply, let entryId = entry.id {
-                if isReplying {
-                    VStack(alignment: .leading, spacing: 4) {
-                        TextEditor(text: $replyText)
-                            .font(.callout)
-                            .frame(minHeight: 40, maxHeight: 100)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                            )
-                        HStack {
-                            Spacer()
-                            Button("Cancel") {
-                                isReplying = false
-                                replyText = ""
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            Button("Reply") {
-                                let text = replyText
-                                isSubmittingReply = true
-                                replyText = ""
-                                isReplying = false
-                                onReply(entryId, text)
-                                isSubmittingReply = false
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSubmittingReply)
-                        }
-                    }
-                    .padding(.top, 4)
-                } else {
-                    Button(action: { isReplying = true }) {
-                        Label("Reply", systemImage: "arrowshape.turn.up.left")
-                            .font(.caption)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundColor(.accentColor)
-                    .padding(.top, 2)
-                }
             }
         }
         .padding(10)

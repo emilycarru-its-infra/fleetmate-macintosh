@@ -931,9 +931,9 @@ public struct GiteaProviderConfig: Codable {
 }
 
 /// Microsoft Planner sync configuration (one-way push)
+/// - Note: Planner sync is deprecated. Use GitHub Projects v2 via the 'projects' command.
 public struct PlannerSyncConfig: Codable {
     /// Whether Planner sync is enabled (deprecated — use GitHub Projects v2 instead)
-    @available(*, deprecated, message: "Planner sync is deprecated. Use GitHub Projects v2 via the 'projects' command.")
     public var enabled: Bool
     
     /// Planner plan ID to sync tasks to

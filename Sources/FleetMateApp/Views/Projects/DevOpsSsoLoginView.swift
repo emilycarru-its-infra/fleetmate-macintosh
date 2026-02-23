@@ -372,7 +372,7 @@ class DevOpsSsoLoginViewModel: NSObject, ObservableObject {
         ssoLog("[SILENT] Attempting token refresh...")
         do {
             let result = try await ssoService.refreshAccessToken()
-            if result.success, let token = result.accessToken {
+            if result.success, result.accessToken != nil {
                 ssoLog("[SILENT] Token refresh succeeded — user=\(result.userName ?? "unknown")")
                 authResult = result
                 return true

@@ -41,6 +41,7 @@ public struct WorkItemFields: Codable {
     public let completedWork: Double?
     public let reproSteps: String?
     public let acceptanceCriteria: String?
+    public let dueDate: String?
 
     enum CodingKeys: String, CodingKey {
         case title = "System.Title"
@@ -71,6 +72,7 @@ public struct WorkItemFields: Codable {
         case completedWork = "Microsoft.VSTS.Scheduling.CompletedWork"
         case reproSteps = "Microsoft.VSTS.TCM.ReproSteps"
         case acceptanceCriteria = "Microsoft.VSTS.Common.AcceptanceCriteria"
+        case dueDate = "Microsoft.VSTS.Scheduling.DueDate"
     }
 }
 
@@ -131,7 +133,7 @@ public struct IterationsResponse: Codable {
 
 // MARK: - Board Models
 
-public struct Board: Codable {
+public struct Board: Codable, Identifiable {
     public let id: String?
     public let name: String?
     public let url: String?
@@ -140,6 +142,21 @@ public struct Board: Codable {
 public struct BoardsResponse: Codable {
     public let count: Int?
     public let value: [Board]?
+}
+
+public struct BoardColumnDefinition: Codable, Identifiable {
+    public let id: String?
+    public let name: String
+    public let itemLimit: Int?
+    public let columnType: String?
+    public let isSplit: Bool?
+    public let description: String?
+    public let stateMappings: [String: String]?
+}
+
+public struct BoardColumnsResponse: Codable {
+    public let count: Int?
+    public let value: [BoardColumnDefinition]?
 }
 
 // MARK: - Request Models
@@ -178,6 +195,7 @@ public struct CreateWorkItemRequest {
 public struct UpdateWorkItemRequest {
     public var title: String?
     public var state: String?
+    public var workItemType: String?
     public var assignedTo: String?
     public var priority: Int?
     public var iterationPath: String?
@@ -190,10 +208,12 @@ public struct UpdateWorkItemRequest {
     public var completedWork: Double?
     public var reproSteps: String?
     public var acceptanceCriteria: String?
+    public var dueDate: String?
     
     public init(
         title: String? = nil,
         state: String? = nil,
+        workItemType: String? = nil,
         assignedTo: String? = nil,
         priority: Int? = nil,
         iterationPath: String? = nil,
@@ -205,10 +225,12 @@ public struct UpdateWorkItemRequest {
         originalEstimate: Double? = nil,
         completedWork: Double? = nil,
         reproSteps: String? = nil,
-        acceptanceCriteria: String? = nil
+        acceptanceCriteria: String? = nil,
+        dueDate: String? = nil
     ) {
         self.title = title
         self.state = state
+        self.workItemType = workItemType
         self.assignedTo = assignedTo
         self.priority = priority
         self.iterationPath = iterationPath
@@ -221,6 +243,7 @@ public struct UpdateWorkItemRequest {
         self.completedWork = completedWork
         self.reproSteps = reproSteps
         self.acceptanceCriteria = acceptanceCriteria
+        self.dueDate = dueDate
     }
 }
 
@@ -311,10 +334,146 @@ public struct WorkItemComment: Codable, Identifiable {
     public let modifiedBy: IdentityRef?
     public let modifiedDate: String?
     public let version: Int?
+    public let reactions: [CommentReaction]?
 }
 
 public struct WorkItemCommentsResponse: Codable {
     public let totalCount: Int?
     public let count: Int?
     public let comments: [WorkItemComment]?
+}
+
+// MARK: - Comment Reaction Models
+
+/// Azure DevOps comment reaction types
+public enum CommentReactionType: String, Codable, CaseIterable {
+    case like
+    case dislike
+    case heart
+    case hooray
+    case confused
+    case thumbsUp
+    case thumbsDown
+
+    public var emoji: String {
+        switch self {
+        case .like, .thumbsUp: return "👍"
+        case .dislike, .thumbsDown: return "👎"
+        case .heart: return "❤️"
+        case .hooray: return "🎉"
+        case .confused: return "😕"
+        }
+    }
+}
+
+public struct CommentReaction: Codable {
+    public let type: String?
+    public let count: Int?
+    public let isCurrentUserEngaged: Bool?
+}
+
+// MARK: - Classification Node Models
+
+public struct ClassificationNode: Codable {
+    public let id: Int?
+    public let name: String?
+    public let structureType: String?
+    public let hasChildren: Bool?
+    public let children: [ClassificationNode]?
+    public let path: String?
+}
+
+// MARK: - Git Repository Models
+
+public struct GitRepository: Codable, Identifiable {
+    public let id: String
+    public let name: String
+    public let url: String?
+    public let defaultBranch: String?
+    public let project: GitRepoProject?
+    public let webUrl: String?
+
+    public struct GitRepoProject: Codable {
+        public let id: String?
+        public let name: String?
+    }
+}
+
+public struct GitRepositoriesResponse: Codable {
+    public let count: Int?
+    public let value: [GitRepository]?
+}
+
+public struct GitRef: Codable, Identifiable {
+    public let name: String
+    public let objectId: String?
+
+    public var id: String { name }
+
+    /// Strips "refs/heads/" prefix to give the short branch name.
+    public var shortName: String {
+        if name.hasPrefix("refs/heads/") {
+            return String(name.dropFirst("refs/heads/".count))
+        }
+        if name.hasPrefix("refs/tags/") {
+            return String(name.dropFirst("refs/tags/".count))
+        }
+        return name
+    }
+}
+
+public struct GitRefsResponse: Codable {
+    public let count: Int?
+    public let value: [GitRef]?
+}
+
+public struct GitCommitRef: Codable, Identifiable {
+    public let commitId: String
+    public let comment: String?
+    public let author: GitUserDate?
+    public let committer: GitUserDate?
+    public let url: String?
+    public let remoteUrl: String?
+
+    public var id: String { commitId }
+
+    /// Short commit hash (first 7 characters).
+    public var shortId: String { String(commitId.prefix(7)) }
+}
+
+public struct GitUserDate: Codable {
+    public let name: String?
+    public let email: String?
+    public let date: String?
+}
+
+public struct GitCommitsResponse: Codable {
+    public let count: Int?
+    public let value: [GitCommitRef]?
+}
+
+public struct GitPullRequest: Codable, Identifiable {
+    public let pullRequestId: Int
+    public let title: String?
+    public let status: String?
+    public let createdBy: IdentityRef?
+    public let creationDate: String?
+    public let sourceRefName: String?
+    public let targetRefName: String?
+    public let url: String?
+    public let repository: GitRepository?
+
+    public var id: Int { pullRequestId }
+
+    /// Short source branch name.
+    public var sourceBranch: String? {
+        sourceRefName.map { ref in
+            ref.hasPrefix("refs/heads/") ? String(ref.dropFirst("refs/heads/".count)) : ref
+        }
+    }
+}
+
+public struct GitPullRequestsResponse: Codable {
+    public let count: Int?
+    public let value: [GitPullRequest]?
 }

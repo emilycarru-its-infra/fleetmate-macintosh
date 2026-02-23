@@ -65,6 +65,9 @@ public struct UnifiedTask: Identifiable, Codable, Sendable {
     /// Priority level (1 = highest, 4 = lowest). Nil if not set.
     public var priority: Int?
     
+    /// Provider-specific metadata (e.g., areaPath, iterationPath, workItemType for Azure DevOps).
+    public var metadata: [String: String]
+    
     /// Creates a composite key for this task across providers.
     public var compositeKey: String {
         "\(provider):\(id)"
@@ -84,7 +87,8 @@ public struct UnifiedTask: Identifiable, Codable, Sendable {
         updatedAt: Date = Date(),
         closedAt: Date? = nil,
         externalUrl: String? = nil,
-        priority: Int? = nil
+        priority: Int? = nil,
+        metadata: [String: String] = [:]
     ) {
         self.id = id
         self.provider = provider
@@ -100,6 +104,7 @@ public struct UnifiedTask: Identifiable, Codable, Sendable {
         self.closedAt = closedAt
         self.externalUrl = externalUrl
         self.priority = priority
+        self.metadata = metadata
     }
 }
 

@@ -50,7 +50,7 @@ class AppState: ObservableObject {
     @Published var secretsConfigured = false
     
     // MARK: - Tab Navigation (set by Dashboard to switch tabs)
-    @Published var navigateToTab: String?
+    @Published var navigateToTab: AppTab?
     @Published var navigateToDeviceId: String?
     @Published var navigateToTicketId: Int?
     

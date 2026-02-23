@@ -3,118 +3,52 @@ import FleetMateCore
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
-    @State private var selectedTab: Tab = .dashboard
-    /// All tabs are created eagerly so .task fires immediately and data preloads in background
-    @State private var createdTabs: Set<Tab> = Set(Tab.allCases)
+    @State private var selectedTab: AppTab = .dashboard
     /// Tracks whether we've already auto-prompted Phase 2 SSO for this session
     @State private var hasAutoPromptedSso = false
     @State private var hasAutoPromptedDevOpsSso = false
 
-    /// Maps raw tab names (from AppState.navigateToTab) to Tab enum
-    private static let tabMap: [String: Tab] = Dictionary(uniqueKeysWithValues: Tab.allCases.map { ($0.rawValue, $0) })
-
-    enum Tab: String, CaseIterable {
-        case dashboard = "Dashboard"
-        case devices = "Devices"
-        case inventory = "Inventory"
-        case tickets = "Tickets"
-        case projects = "Projects"
-        case identity = "Identity"
-
-        var icon: String {
-            switch self {
-            case .dashboard: return "square.grid.2x2"
-            case .devices: return "laptopcomputer"
-            case .inventory: return "shippingbox"
-            case .tickets: return "ticket"
-            case .projects: return "list.clipboard"
-            case .identity: return "person.2"
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            Tab("Dashboard", systemImage: AppTab.dashboard.icon, value: .dashboard) {
+                DashboardView()
+            }
+            Tab("Devices", systemImage: AppTab.devices.icon, value: .devices) {
+                DevicesView()
+            }
+            Tab("Inventory", systemImage: AppTab.inventory.icon, value: .inventory) {
+                AssetsView()
+            }
+            Tab("Tickets", systemImage: AppTab.tickets.icon, value: .tickets) {
+                TicketsView()
+            }
+            Tab("Projects", systemImage: AppTab.projects.icon, value: .projects) {
+                BoardsView()
+            }
+            Tab("Identity", systemImage: AppTab.identity.icon, value: .identity) {
+                IdentityView()
             }
         }
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Top tab bar
-            HStack(spacing: 2) {
-                ForEach(Tab.allCases, id: \.self) { tab in
-                    Button(action: { selectedTab = tab }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: tab.icon)
-                                .font(.system(size: 13))
-                            Text(tab.rawValue)
-                                .font(.system(size: 13))
-                                .fontWeight(selectedTab == tab ? .semibold : .regular)
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(selectedTab == tab ? Color.accentColor.opacity(0.15) : Color.clear)
-                        .foregroundColor(selectedTab == tab ? .accentColor : .secondary)
-                        .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
-                }
-                Spacer()
-                // SP Warning Badge
-                if appState.authManager.hasServicePrincipalWarning {
+        .tabViewStyle(.sidebarAdaptable)
+        .frame(minWidth: 1000, minHeight: 600)
+        .toolbar {
+            if appState.authManager.hasServicePrincipalWarning {
+                ToolbarItem(placement: .automatic) {
                     HStack(spacing: 4) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.orange)
+                            .foregroundStyle(.orange)
                             .font(.system(size: 11))
                         Text("SP")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.orange)
+                            .foregroundStyle(.orange)
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color.orange.opacity(0.12))
-                    .cornerRadius(4)
+                    .background(.orange.opacity(0.12), in: .rect(cornerRadius: 4))
                     .help("One or more systems are logged in as a Service Principal")
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color(NSColor.controlBackgroundColor))
-
-            Divider()
-
-            // Content — lazy keep-alive: views are created on first visit and kept alive
-            ZStack {
-                if createdTabs.contains(.dashboard) {
-                    DashboardView()
-                        .opacity(selectedTab == .dashboard ? 1 : 0)
-                        .allowsHitTesting(selectedTab == .dashboard)
-                }
-                if createdTabs.contains(.devices) {
-                    DevicesView()
-                        .opacity(selectedTab == .devices ? 1 : 0)
-                        .allowsHitTesting(selectedTab == .devices)
-                }
-                if createdTabs.contains(.inventory) {
-                    AssetsView()
-                        .opacity(selectedTab == .inventory ? 1 : 0)
-                        .allowsHitTesting(selectedTab == .inventory)
-                }
-                if createdTabs.contains(.tickets) {
-                    TicketsView()
-                        .opacity(selectedTab == .tickets ? 1 : 0)
-                        .allowsHitTesting(selectedTab == .tickets)
-                }
-                if createdTabs.contains(.projects) {
-                    BoardsView()
-                        .opacity(selectedTab == .projects ? 1 : 0)
-                        .allowsHitTesting(selectedTab == .projects)
-                }
-                if createdTabs.contains(.identity) {
-                    IdentityView()
-                        .opacity(selectedTab == .identity ? 1 : 0)
-                        .allowsHitTesting(selectedTab == .identity)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(Color(NSColor.controlBackgroundColor))
-        .frame(minWidth: 1000, minHeight: 600)
         .onAppear {
             // Phase 1: Attempt silent SSO in the background (no UI).
             // If it fails, Phase 2 interactive login is deferred until the
@@ -147,7 +81,7 @@ struct ContentView: View {
             }
         }
         .onChange(of: appState.navigateToTab) { _, newTab in
-            if let name = newTab, let tab = Self.tabMap[name] {
+            if let tab = newTab {
                 selectedTab = tab
                 appState.navigateToTab = nil
             }

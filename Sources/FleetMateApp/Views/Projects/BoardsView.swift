@@ -543,7 +543,8 @@ struct BoardsView: View {
     }
 
     /// Compute board columns based on group-by selection.
-    /// When grouping by Board Column, uses API-provided column definitions for correct ordering and shows empty columns.
+    /// When grouping by Board Column, uses the board's stateMappings to place tasks into columns
+    /// based on their current state and work item type.
     private var boardColumns: [(title: String, color: Color, tasks: [UnifiedTask])] {
         switch groupBy {
         case .state:
@@ -554,15 +555,36 @@ struct BoardsView: View {
             if showClosed { cols.append(("Closed", .gray, closedTasks)) }
             return cols
         case .column:
-            let grouped = Dictionary(grouping: filteredTasks, by: { $0.metadata["boardColumn"] ?? "No Column" })
-            // Use API column definitions for ordering if available
+            // Build reverse mapping: (workItemType, stateName) → columnName
+            // from the board's column definitions and their stateMappings
             if !boardColumnDefs.isEmpty {
+                var stateToColumn: [String: String] = [:]  // "Type:State" → columnName
+                for colDef in boardColumnDefs {
+                    if let mappings = colDef.stateMappings {
+                        for (wiType, stateName) in mappings {
+                            stateToColumn["\(wiType):\(stateName)"] = colDef.name
+                        }
+                    }
+                }
+
+                func columnForTask(_ task: UnifiedTask) -> String {
+                    let wiType = task.metadata["workItemType"] ?? ""
+                    let state = task.metadata["state"] ?? ""
+                    // Try exact type:state match first
+                    if let col = stateToColumn["\(wiType):\(state)"] { return col }
+                    // Fallback to boardColumn metadata if available
+                    if let bc = task.metadata["boardColumn"], !bc.isEmpty { return bc }
+                    return "No Column"
+                }
+
+                let grouped = Dictionary(grouping: filteredTasks, by: { columnForTask($0) })
                 return boardColumnDefs.map { colDef in
                     let tasks = grouped[colDef.name] ?? []
                     return (colDef.name, boardColumnColor(colDef), tasks)
                 }
             }
-            // Fallback: sorted alphabetically
+            // Fallback: group by boardColumn metadata
+            let grouped = Dictionary(grouping: filteredTasks, by: { $0.metadata["boardColumn"] ?? "No Column" })
             return grouped.keys.sorted().map { key in (key, .blue, grouped[key]!) }
         case .areaPath:
             let grouped = Dictionary(grouping: filteredTasks, by: { $0.metadata["areaPath"] ?? "No Area" })
@@ -734,7 +756,7 @@ struct BoardsView: View {
 
                 var filter = TaskFilter()
                 filter.includeClosed = true
-                filter.limit = 100
+                filter.limit = 500
 
                 if let provider = filterProvider {
                     dbg.info("BoardsView: fetching tasks from provider '\(provider)'", category: "boards")
@@ -938,33 +960,34 @@ struct BoardsView: View {
             isLoadingBoards = true
             defer { isLoadingBoards = false }
             do {
-                // Load boards from all teams in all DevOps projects for full backlog level coverage
-                let projects = try await appState.devOpsService.listProjects()
+                // Load boards from all teams in the resolved project
+                let resolvedProject = appState.devOpsService.resolvedProject
+                guard !resolvedProject.isEmpty else {
+                    dbg.debug("No resolved project yet, skipping board load", category: "boards")
+                    return
+                }
+
                 var allBoards: [Board] = []
                 var projectMap: [String: String] = [:]
                 var teamMap: [String: String] = [:]
-                for project in projects {
+
+                let teams = try await appState.devOpsService.listTeams(project: resolvedProject)
+                for team in teams {
                     do {
-                        let teams = try await appState.devOpsService.listTeams(project: project.name)
-                        for team in teams {
-                            do {
-                                let boards = try await appState.devOpsService.getBoards(team: team.name, project: project.name)
-                                for board in boards {
-                                    if let name = board.name {
-                                        projectMap[name] = project.name
-                                        teamMap[name] = team.name
-                                    }
-                                }
-                                allBoards.append(contentsOf: boards)
-                            } catch {
-                                dbg.debug("Failed to load boards for team '\(team.name)' in project '\(project.name)': \(error)", category: "boards")
+                        let boards = try await appState.devOpsService.getBoards(team: team.name, project: resolvedProject)
+                        for board in boards {
+                            if let name = board.name {
+                                projectMap[name] = resolvedProject
+                                teamMap[name] = team.name
                             }
                         }
+                        allBoards.append(contentsOf: boards)
                     } catch {
-                        dbg.debug("Failed to list teams for project '\(project.name)': \(error)", category: "boards")
+                        dbg.debug("Failed to load boards for team '\(team.name)' in project '\(resolvedProject)': \(error)", category: "boards")
                     }
                 }
-                // Deduplicate by name (boards across projects/teams often share names)
+
+                // Deduplicate by name
                 var seen = Set<String>()
                 var unique: [Board] = []
                 for board in allBoards {
@@ -977,14 +1000,13 @@ struct BoardsView: View {
                 var validated: [Board] = []
                 for board in unique {
                     guard let name = board.name else { continue }
-                    let proj = projectMap[name]
                     let tm = teamMap[name]
                     do {
                         let cols: [BoardColumnDefinition]
                         if let tm = tm {
-                            cols = try await appState.devOpsService.getBoardColumns(boardName: name, team: tm, project: proj)
+                            cols = try await appState.devOpsService.getBoardColumns(boardName: name, team: tm, project: resolvedProject)
                         } else {
-                            cols = try await appState.devOpsService.getBoardColumns(boardName: name, project: proj)
+                            cols = try await appState.devOpsService.getBoardColumns(boardName: name, project: resolvedProject)
                         }
                         let hasStateMappings = cols.contains { ($0.stateMappings?.isEmpty == false) }
                         if hasStateMappings {
@@ -1000,14 +1022,14 @@ struct BoardsView: View {
                 availableBoards = validated
                 boardProjectMap = projectMap
                 boardTeamMap = teamMap
-                dbg.info("Loaded \(validated.count) validated boards from \(projects.count) projects: \(validated.compactMap(\.name).joined(separator: ", "))", category: "boards")
-                // Auto-select the first board if none selected
-                if selectedBoardName == nil, let first = unique.first?.name {
+                dbg.info("Loaded \(validated.count) validated boards from project '\(resolvedProject)': \(validated.compactMap(\.name).joined(separator: ", "))", category: "boards")
+                // Auto-select the first validated board if none selected
+                if selectedBoardName == nil, let first = validated.first?.name {
                     selectedBoardName = first
                     loadBoardColumns()
                 }
             } catch {
-                // Fallback: try just the default project
+                // Fallback: try just the default team
                 do {
                     let boards = try await appState.devOpsService.getBoards()
                     availableBoards = boards

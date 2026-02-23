@@ -237,19 +237,34 @@ struct BoardsView: View {
                 }
                 .pickerStyle(.menu)
                 .frame(width: 140)
-
-                // Board selection (only when grouping by Board Column)
-                if groupBy == .column && !availableBoards.isEmpty {
-                    Picker("Board", selection: $selectedBoardName) {
-                        Text("Board").tag(nil as String?)
-                        ForEach(availableBoards) { board in
-                            Text(board.name ?? "Unknown").tag(board.name as String?)
-                        }
+                .onChange(of: groupBy) { _, newValue in
+                    if newValue == .column && availableBoards.isEmpty {
+                        loadBoards()
                     }
-                    .pickerStyle(.menu)
-                    .frame(width: 150)
-                    .labelsHidden()
-                    .onChange(of: selectedBoardName) { loadBoardColumns() }
+                }
+
+                // Board selection (shown when grouping by Board Column)
+                if groupBy == .column {
+                    if isLoadingBoards {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 20)
+                    } else if availableBoards.isEmpty {
+                        Button("Load Boards") { loadBoards() }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    } else {
+                        Picker("Board", selection: $selectedBoardName) {
+                            Text("Select board…").tag(nil as String?)
+                            ForEach(availableBoards) { board in
+                                Text(board.name ?? "Unknown").tag(board.name as String?)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 180)
+                        .labelsHidden()
+                        .onChange(of: selectedBoardName) { loadBoardColumns() }
+                    }
                 }
 
                 // Show Closed toggle
@@ -887,13 +902,13 @@ struct BoardsView: View {
     // MARK: - Load Azure DevOps Boards
 
     private func loadBoards() {
-        guard appState.devOpsService.hasValidToken else { return }
         Task {
             isLoadingBoards = true
             defer { isLoadingBoards = false }
             do {
                 let boards = try await appState.devOpsService.getBoards()
                 availableBoards = boards
+                dbg.info("Loaded \(boards.count) boards: \(boards.compactMap(\.name).joined(separator: ", "))", category: "boards")
                 // Auto-select the first board if none selected
                 if selectedBoardName == nil, let first = boards.first?.name {
                     selectedBoardName = first

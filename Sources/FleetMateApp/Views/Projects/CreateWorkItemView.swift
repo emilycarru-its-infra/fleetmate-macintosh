@@ -3,6 +3,7 @@ import FleetMateCore
 
 /// Sheet for creating a new Azure DevOps work item.
 struct CreateWorkItemView: View {
+    let service: AzureDevOpsService
     let onCreated: () -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -12,8 +13,15 @@ struct CreateWorkItemView: View {
     @State private var assignedTo = ""
     @State private var priority = 2
     @State private var tags = ""
+    @State private var areaPath = ""
+    @State private var iterationPath = ""
     @State private var isCreating = false
     @State private var errorMessage: String?
+
+    // Picker data
+    @State private var teamMembers: [IdentityRef] = []
+    @State private var areaPaths: [String] = []
+    @State private var iterationPaths: [String] = []
 
     private let workItemTypes = ["Bug", "Task", "User Story", "Feature", "Epic", "Issue"]
 
@@ -45,10 +53,34 @@ struct CreateWorkItemView: View {
                     Text("4 - Low").tag(4)
                 }
 
-                TextField("Assigned To", text: $assignedTo)
-                    .help("Email or display name")
+                if teamMembers.isEmpty {
+                    TextField("Assigned To", text: $assignedTo)
+                        .help("Email or display name")
+                } else {
+                    Picker("Assigned To", selection: $assignedTo) {
+                        Text("Unassigned").tag("")
+                        ForEach(teamMembers.indices, id: \.self) { i in
+                            Text(teamMembers[i].displayName ?? teamMembers[i].uniqueName ?? "Unknown")
+                                .tag(teamMembers[i].uniqueName ?? "")
+                        }
+                    }
+                }
 
-                TextField("Tags (semicolon-separated)", text: $tags)
+                if !areaPaths.isEmpty {
+                    Picker("Area Path", selection: $areaPath) {
+                        Text("Default").tag("")
+                        ForEach(areaPaths, id: \.self) { Text($0).tag($0) }
+                    }
+                }
+
+                if !iterationPaths.isEmpty {
+                    Picker("Iteration", selection: $iterationPath) {
+                        Text("Default").tag("")
+                        ForEach(iterationPaths, id: \.self) { Text($0).tag($0) }
+                    }
+                }
+
+                TextField("Tags", text: $tags)
 
                 Section("Description") {
                     TextEditor(text: $description)
@@ -68,15 +100,37 @@ struct CreateWorkItemView: View {
 
             // Footer
             HStack {
+                Text("⌘Enter to create")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
                 Spacer()
                 Button("Create") { createItem() }
                     .buttonStyle(.borderedProminent)
                     .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty || isCreating)
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(.return, modifiers: .command)
             }
             .padding()
         }
-        .frame(width: 500, height: 500)
+        .frame(width: 500, height: 560)
+        .task { loadPickerData() }
+    }
+
+    private func loadPickerData() {
+        Task {
+            do { teamMembers = try await service.getTeamMembers() } catch {
+                dbg.debug("Create WI: team members load failed: \(error)", category: "azdo")
+            }
+        }
+        Task {
+            do { areaPaths = try await service.getAreaPaths() } catch {
+                dbg.debug("Create WI: area paths load failed: \(error)", category: "azdo")
+            }
+        }
+        Task {
+            do { iterationPaths = try await service.getIterationPaths() } catch {
+                dbg.debug("Create WI: iteration paths load failed: \(error)", category: "azdo")
+            }
+        }
     }
 
     private func createItem() {
@@ -85,11 +139,8 @@ struct CreateWorkItemView: View {
         Task {
             defer { isCreating = false }
             do {
-                let config = try FleetMateConfig.load()
-                let service = AzureDevOpsService(config: config)
-
                 let tagList: [String]? = tags.isEmpty ? nil :
-                    tags.components(separatedBy: ";").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                    tags.components(separatedBy: CharacterSet(charactersIn: ";,")).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
 
                 let request = CreateWorkItemRequest(
                     title: title.trimmingCharacters(in: .whitespaces),
@@ -97,6 +148,8 @@ struct CreateWorkItemView: View {
                     description: description.isEmpty ? nil : description,
                     assignedTo: assignedTo.isEmpty ? nil : assignedTo,
                     priority: priority,
+                    iterationPath: iterationPath.isEmpty ? nil : iterationPath,
+                    areaPath: areaPath.isEmpty ? nil : areaPath,
                     tags: tagList
                 )
                 _ = try await service.createWorkItem(request)

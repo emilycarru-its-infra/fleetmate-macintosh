@@ -10,7 +10,7 @@ enum BoardsViewMode: String, CaseIterable {
 
 enum GroupByOption: String, CaseIterable {
     case state = "State"
-    case column = "Board Column"
+    case column = "Board"
     case areaPath = "Area Path"
     case iteration = "Iteration"
     case type = "Type"
@@ -49,6 +49,7 @@ struct BoardsView: View {
     @State private var selectedBoardName: String? = nil
     @State private var boardColumnDefs: [BoardColumnDefinition] = []
     @State private var isLoadingBoards = false
+    @State private var boardAllowedTypes: Set<String> = []
 
     // GitHub Projects info (for New Issue / New Project)
     @State private var currentProjectId: String? = nil
@@ -114,6 +115,13 @@ struct BoardsView: View {
             result = result.filter {
                 $0.title.lowercased().contains(q) ||
                 ($0.description?.lowercased().contains(q) ?? false)
+            }
+        }
+        // When grouping by board column, only show tasks whose type belongs to the selected board
+        if groupBy == .column && !boardAllowedTypes.isEmpty {
+            result = result.filter { task in
+                guard let wiType = task.metadata["workItemType"] else { return true }
+                return boardAllowedTypes.contains(wiType)
             }
         }
         return result
@@ -184,6 +192,9 @@ struct BoardsView: View {
         .sheet(isPresented: $showCreateWorkItem) {
             CreateWorkItemView(
                 service: appState.devOpsService,
+                boards: availableBoards,
+                boardColumnDefs: boardColumnDefs,
+                preselectedBoard: selectedBoardName,
                 onCreated: { loadTasks() }
             )
         }
@@ -200,231 +211,221 @@ struct BoardsView: View {
     // MARK: - Unified Single-Row Toolbar
 
     private var unifiedToolbar: some View {
-        VStack(spacing: 6) {
-            // Row 1: Main controls
-            HStack(spacing: 8) {
-                // Board / List toggle
-                Picker("", selection: $viewMode) {
-                    Text("Board").tag(BoardsViewMode.board)
-                    Text("List").tag(BoardsViewMode.list)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 120)
+        HStack(spacing: 8) {
+            // Board / List toggle
+            Picker("", selection: $viewMode) {
+                Text("Board").tag(BoardsViewMode.board)
+                Text("List").tag(BoardsViewMode.list)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 120)
 
-                Divider().frame(height: 20)
+            Divider().frame(height: 20)
 
-                // Provider filter
-                Picker("Provider", selection: $filterProvider) {
-                    Text("Backend").tag(nil as String?)
-                    Text("DevOps").tag("azdevops" as String?)
-                    Text("GitHub").tag("github" as String?)
-                    Text("Gitea").tag("gitea" as String?)
-                    Text("TDX").tag("tdx" as String?)
-                }
-                .pickerStyle(.menu)
-                .frame(width: 140)
-                .labelsHidden()
-                .onChange(of: filterProvider) { loadTasks() }
-                .onChange(of: appState.devOpsProjectReady) { _, ready in
-                    if ready { loadTasks(); loadBoards() }
-                }
-
-                // Group by
-                Picker("Group", selection: $groupBy) {
-                    ForEach(GroupByOption.allCases, id: \.self) { opt in
-                        Text(opt.rawValue).tag(opt)
-                    }
-                }
-                .pickerStyle(.menu)
-                .frame(width: 140)
-                .onChange(of: groupBy) { _, newValue in
-                    if newValue == .column && availableBoards.isEmpty {
-                        loadBoards()
-                    }
-                }
-
-                // Board selection (shown when grouping by Board Column)
-                if groupBy == .column {
-                    if isLoadingBoards {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(width: 20)
-                    } else if availableBoards.isEmpty {
-                        Button("Load Boards") { loadBoards() }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                    } else {
-                        Picker("Board", selection: $selectedBoardName) {
-                            Text("Select board…").tag(nil as String?)
-                            ForEach(availableBoards) { board in
-                                Text(board.name ?? "Unknown").tag(board.name as String?)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 180)
-                        .labelsHidden()
-                        .onChange(of: selectedBoardName) { loadBoardColumns() }
-                    }
-                }
-
-                // Show Closed toggle
-                Toggle("Closed", isOn: $showClosed)
-                    .toggleStyle(.checkbox)
-                    .font(.subheadline)
-
-                Divider().frame(height: 20)
-
-                // Sync
-                if syncEnabled {
-                    Button(action: syncTasks) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                    }
-                    .disabled(isSyncing)
-                    .help("Sync tasks to Planner / Markdown")
-                }
-
-                // New item (backend chooser)
-                Menu {
-                    if canCreateWorkItem {
-                        Button(action: { showCreateWorkItem = true }) {
-                            Label("DevOps Work Item", systemImage: "building.2")
-                        }
-                    }
-                    if canCreateIssue {
-                        Button(action: { showCreateIssue = true }) {
-                            Label("GitHub Issue", systemImage: "chevron.left.forwardslash.chevron.right")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .disabled(!canCreateIssue && !canCreateWorkItem)
-                .help("New item")
-
-                // New GitHub Project
-                Button(action: { showCreateProject = true }) {
-                    Image(systemName: "folder.badge.plus")
-                }
-                .disabled(!canCreateProject)
-                .help(canCreateProject ? "New GitHub Project" : "Set organization in GitHub config")
-
-                Spacer()
-
-                devOpsSsoSection
-
-                // Refresh — top right
-                Button(action: { loadTasks(); loadGhProjectInfo(); loadBoards() }) {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .disabled(isLoading || isLoadingGhInfo)
-                .help("Refresh")
-                .keyboardShortcut("r", modifiers: .command)
-
-                // Search field — far right
-                HStack(spacing: 4) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                    TextField("Search...", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .frame(width: 180)
-                    if !searchText.isEmpty {
-                        Button(action: { searchText = "" }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.secondary.opacity(0.1))
-                .cornerRadius(8)
-
-                Text("\(filteredTasks.count)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .monospacedDigit()
-                    .frame(minWidth: 24, alignment: .trailing)
+            // Provider filter
+            Picker("Provider", selection: $filterProvider) {
+                Text("Backend").tag(nil as String?)
+                Text("DevOps").tag("azdevops" as String?)
+                Text("GitHub").tag("github" as String?)
+                Text("Gitea").tag("gitea" as String?)
+                Text("TDX").tag("tdx" as String?)
+            }
+            .pickerStyle(.menu)
+            .frame(width: 140)
+            .labelsHidden()
+            .onChange(of: filterProvider) { loadTasks() }
+            .onChange(of: appState.devOpsProjectReady) { _, ready in
+                if ready { loadTasks(); loadBoards() }
             }
 
-            // Row 2: Advanced filters (only when some data is loaded)
+            // Group by
+            Picker("Group", selection: $groupBy) {
+                ForEach(GroupByOption.allCases, id: \.self) { opt in
+                    Text(opt.rawValue).tag(opt)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 140)
+            .onChange(of: groupBy) { _, newValue in
+                if newValue == .column && availableBoards.isEmpty {
+                    loadBoards()
+                }
+            }
+
+            // Board selection (shown when grouping by Board Column)
+            if groupBy == .column {
+                if isLoadingBoards {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 20)
+                } else if !availableBoards.isEmpty {
+                    Picker("Board", selection: $selectedBoardName) {
+                        Text("Select board…").tag(nil as String?)
+                        ForEach(availableBoards) { board in
+                            Text(board.name ?? "Unknown").tag(board.name as String?)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 180)
+                    .labelsHidden()
+                    .onChange(of: selectedBoardName) { loadBoardColumns() }
+                }
+            }
+
+            // Show Closed toggle
+            Toggle("Closed", isOn: $showClosed)
+                .toggleStyle(.checkbox)
+                .font(.subheadline)
+
+            // Filters
             if !allTasks.isEmpty {
-                HStack(spacing: 8) {
-                    // Bucket / status filter
-                    if !buckets.isEmpty {
-                        Picker("Bucket", selection: $filterBucket) {
-                            Text("Statuses").tag(nil as String?)
-                            ForEach(buckets, id: \.self) { Text($0).tag($0 as String?) }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 150)
-                        .labelsHidden()
-                    }
+                Divider().frame(height: 20)
 
-                    if !availableAreaPaths.isEmpty {
-                        Picker("Area", selection: $filterAreaPath) {
-                            Text("Areas").tag(nil as String?)
-                            ForEach(availableAreaPaths, id: \.self) { Text($0).tag($0 as String?) }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 160)
-                        .labelsHidden()
-                    }
-
-                    if !availableIterations.isEmpty {
-                        Picker("Iteration", selection: $filterIteration) {
-                            Text("Iterations").tag(nil as String?)
-                            ForEach(availableIterations, id: \.self) { Text($0).tag($0 as String?) }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 160)
-                        .labelsHidden()
-                    }
-
-                    if !availableTypes.isEmpty {
-                        Picker("Type", selection: $filterType) {
-                            Text("Types").tag(nil as String?)
-                            ForEach(availableTypes, id: \.self) { Text($0).tag($0 as String?) }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 130)
-                        .labelsHidden()
-                    }
-
-                    Picker("Priority", selection: $filterPriority) {
-                        Text("Priorities").tag(nil as Int?)
-                        Text("1 – Critical").tag(1 as Int?)
-                        Text("2 – High").tag(2 as Int?)
-                        Text("3 – Medium").tag(3 as Int?)
-                        Text("4 – Low").tag(4 as Int?)
+                if !buckets.isEmpty {
+                    Picker("Bucket", selection: $filterBucket) {
+                        Text("Statuses").tag(nil as String?)
+                        ForEach(buckets, id: \.self) { Text($0).tag($0 as String?) }
                     }
                     .pickerStyle(.menu)
                     .frame(width: 130)
                     .labelsHidden()
+                }
 
-                    if !availableAssignees.isEmpty {
-                        Picker("Assignee", selection: $filterAssignee) {
-                            Text("Assignees").tag(nil as String?)
-                            ForEach(availableAssignees, id: \.self) { Text($0).tag($0 as String?) }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 150)
-                        .labelsHidden()
+                if !availableAreaPaths.isEmpty {
+                    Picker("Area", selection: $filterAreaPath) {
+                        Text("Areas").tag(nil as String?)
+                        ForEach(availableAreaPaths, id: \.self) { Text($0).tag($0 as String?) }
                     }
+                    .pickerStyle(.menu)
+                    .frame(width: 130)
+                    .labelsHidden()
+                }
 
-                    Spacer()
-
-                    if hasActiveFilters {
-                        Button(action: clearAllFilters) {
-                            Label("Clear Filters", systemImage: "xmark.circle")
-                                .font(.subheadline)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.yellow)
-                        .controlSize(.small)
+                if !availableIterations.isEmpty {
+                    Picker("Iteration", selection: $filterIteration) {
+                        Text("Iterations").tag(nil as String?)
+                        ForEach(availableIterations, id: \.self) { Text($0).tag($0 as String?) }
                     }
+                    .pickerStyle(.menu)
+                    .frame(width: 130)
+                    .labelsHidden()
+                }
+
+                if !availableTypes.isEmpty {
+                    Picker("Type", selection: $filterType) {
+                        Text("Types").tag(nil as String?)
+                        ForEach(availableTypes, id: \.self) { Text($0).tag($0 as String?) }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 110)
+                    .labelsHidden()
+                }
+
+                Picker("Priority", selection: $filterPriority) {
+                    Text("Priorities").tag(nil as Int?)
+                    Text("1 – Critical").tag(1 as Int?)
+                    Text("2 – High").tag(2 as Int?)
+                    Text("3 – Medium").tag(3 as Int?)
+                    Text("4 – Low").tag(4 as Int?)
+                }
+                .pickerStyle(.menu)
+                .frame(width: 110)
+                .labelsHidden()
+
+                if !availableAssignees.isEmpty {
+                    Picker("Assignee", selection: $filterAssignee) {
+                        Text("Assignees").tag(nil as String?)
+                        ForEach(availableAssignees, id: \.self) { Text($0).tag($0 as String?) }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 130)
+                    .labelsHidden()
+                }
+
+                if hasActiveFilters {
+                    Button(action: clearAllFilters) {
+                        Image(systemName: "xmark.circle")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.yellow)
+                    .controlSize(.small)
+                    .help("Clear filters")
                 }
             }
+
+            Divider().frame(height: 20)
+
+            // Sync
+            if syncEnabled {
+                Button(action: syncTasks) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                }
+                .disabled(isSyncing)
+                .help("Sync tasks to Planner / Markdown")
+            }
+
+            // New GitHub Project
+            Button(action: { showCreateProject = true }) {
+                Image(systemName: "folder.badge.plus")
+            }
+            .disabled(!canCreateProject)
+            .help(canCreateProject ? "New GitHub Project" : "Set organization in GitHub config")
+
+            Spacer()
+
+            devOpsSsoSection
+
+            // Refresh
+            Button(action: { loadTasks(); loadGhProjectInfo(); loadBoards() }) {
+                Image(systemName: "arrow.clockwise")
+            }
+            .disabled(isLoading || isLoadingGhInfo)
+            .help("Refresh")
+            .keyboardShortcut("r", modifiers: .command)
+
+            // Search field
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                TextField("Search...", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .frame(width: 140)
+                if !searchText.isEmpty {
+                    Button(action: { searchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.secondary.opacity(0.1))
+            .cornerRadius(8)
+
+            Text("\(filteredTasks.count)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .monospacedDigit()
+                .frame(minWidth: 24, alignment: .trailing)
+
+            // New item (backend chooser) — last on the right
+            Menu {
+                if canCreateWorkItem {
+                    Button(action: { showCreateWorkItem = true }) {
+                        Label("DevOps Work Item", systemImage: "building.2")
+                    }
+                }
+                if canCreateIssue {
+                    Button(action: { showCreateIssue = true }) {
+                        Label("GitHub Issue", systemImage: "chevron.left.forwardslash.chevron.right")
+                    }
+                }
+            } label: {
+                Image(systemName: "plus")
+            }
+            .disabled(!canCreateIssue && !canCreateWorkItem)
+            .help("New item")
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -906,16 +907,44 @@ struct BoardsView: View {
             isLoadingBoards = true
             defer { isLoadingBoards = false }
             do {
-                let boards = try await appState.devOpsService.getBoards()
-                availableBoards = boards
-                dbg.info("Loaded \(boards.count) boards: \(boards.compactMap(\.name).joined(separator: ", "))", category: "boards")
+                // Load boards from all DevOps projects for full backlog level coverage
+                let projects = try await appState.devOpsService.listProjects()
+                var allBoards: [Board] = []
+                for project in projects {
+                    do {
+                        let boards = try await appState.devOpsService.getBoards(project: project.name)
+                        allBoards.append(contentsOf: boards)
+                    } catch {
+                        dbg.debug("Failed to load boards for project '\(project.name ?? "?")': \(error)", category: "boards")
+                    }
+                }
+                // Deduplicate by name (boards across projects often share names like "Stories", "Bugs")
+                var seen = Set<String>()
+                var unique: [Board] = []
+                for board in allBoards {
+                    guard let name = board.name, !seen.contains(name) else { continue }
+                    seen.insert(name)
+                    unique.append(board)
+                }
+                availableBoards = unique
+                dbg.info("Loaded \(unique.count) unique boards from \(projects.count) projects: \(unique.compactMap(\.name).joined(separator: ", "))", category: "boards")
                 // Auto-select the first board if none selected
-                if selectedBoardName == nil, let first = boards.first?.name {
+                if selectedBoardName == nil, let first = unique.first?.name {
                     selectedBoardName = first
                     loadBoardColumns()
                 }
             } catch {
-                dbg.debug("Failed to load boards: \(error)", category: "boards")
+                // Fallback: try just the default project
+                do {
+                    let boards = try await appState.devOpsService.getBoards()
+                    availableBoards = boards
+                    if selectedBoardName == nil, let first = boards.first?.name {
+                        selectedBoardName = first
+                        loadBoardColumns()
+                    }
+                } catch {
+                    dbg.debug("Failed to load boards: \(error)", category: "boards")
+                }
             }
         }
     }
@@ -928,10 +957,19 @@ struct BoardsView: View {
         Task {
             do {
                 boardColumnDefs = try await appState.devOpsService.getBoardColumns(boardName: boardName)
-                dbg.info("Loaded \(boardColumnDefs.count) columns for board '\(boardName)': \(boardColumnDefs.map(\.name).joined(separator: ", "))", category: "boards")
+                // Extract allowed work item types from column state mappings
+                var types = Set<String>()
+                for col in boardColumnDefs {
+                    if let mappings = col.stateMappings {
+                        types.formUnion(mappings.keys)
+                    }
+                }
+                boardAllowedTypes = types
+                dbg.info("Loaded \(boardColumnDefs.count) columns for board '\(boardName)': \(boardColumnDefs.map(\.name).joined(separator: ", ")), types: \(types.sorted().joined(separator: ", "))", category: "boards")
             } catch {
                 dbg.debug("Failed to load board columns: \(error)", category: "boards")
                 boardColumnDefs = []
+                boardAllowedTypes = []
             }
         }
     }

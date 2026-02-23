@@ -416,7 +416,7 @@ struct DeviceDetailRow: View {
                 Text(label)
                     .font(.caption)
                     .foregroundColor(.secondary)
-                    .frame(width: 140, alignment: .trailing)
+                    .frame(width: 140, alignment: .leading)
                 if monospaced {
                     Text(value)
                         .font(.system(.caption, design: .monospaced))

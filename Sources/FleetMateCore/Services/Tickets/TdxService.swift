@@ -351,16 +351,42 @@ public class TdxService {
         guard let headers = await headers() else { return [] }
 
         let url = config.tdxTicketsUrl("\(ticketId)/feed")
+        dbg.debug("TDX getTicketFeed → GET \(url)", category: "tdx")
 
         return try await withCheckedThrowingContinuation { continuation in
             session.request(url, headers: headers)
                 .validate()
-                .responseDecodable(of: [TdxFeedEntry].self) { response in
-                    switch response.result {
-                    case .success(let feed):
-                        continuation.resume(returning: feed)
-                    case .failure(let error):
+                .responseData { dataResponse in
+                    // Log raw JSON to diagnose threading
+                    if let data = dataResponse.data {
+                        if let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                            for (i, item) in jsonArray.prefix(5).enumerated() {
+                                let hasReplies = item["Replies"] as? [[String: Any]]
+                                let replyCount = hasReplies?.count ?? 0
+                                let body = (item["Body"] as? String)?.prefix(60) ?? "nil"
+                                dbg.debug("TDX feed[\(i)]: id=\(item["ID"] ?? "?") replies=\(replyCount) body=\(body)", category: "tdx")
+                                if replyCount > 0, let replies = hasReplies {
+                                    for (j, reply) in replies.enumerated() {
+                                        let rBody = (reply["Body"] as? String)?.prefix(60) ?? "nil"
+                                        dbg.debug("  reply[\(j)]: id=\(reply["ID"] ?? "?") by=\(reply["CreatedFullName"] ?? "?") body=\(rBody)", category: "tdx")
+                                    }
+                                }
+                            }
+                        }
+                        // Now decode
+                        do {
+                            let feed = try JSONDecoder().decode([TdxFeedEntry].self, from: data)
+                            let withReplies = feed.filter { ($0.replies?.count ?? 0) > 0 }
+                            dbg.debug("TDX feed decoded: \(feed.count) entries, \(withReplies.count) with replies", category: "tdx")
+                            continuation.resume(returning: feed)
+                        } catch {
+                            dbg.error("TDX feed decode error: \(error)", category: "tdx")
+                            continuation.resume(throwing: error)
+                        }
+                    } else if let error = dataResponse.error {
                         continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: [])
                     }
                 }
         }

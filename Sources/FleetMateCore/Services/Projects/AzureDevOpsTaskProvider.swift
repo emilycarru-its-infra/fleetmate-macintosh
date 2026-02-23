@@ -218,6 +218,13 @@ public actor AzureDevOpsTaskProvider: TaskProvider {
             return []
         }()
         
+        // Build provider-specific metadata for filtering
+        var metadata: [String: String] = [:]
+        if let area = fields?.areaPath { metadata["areaPath"] = area }
+        if let iter = fields?.iterationPath { metadata["iterationPath"] = iter }
+        if let wiType = fields?.workItemType { metadata["workItemType"] = wiType }
+        if let board = fields?.boardColumn { metadata["boardColumn"] = board }
+
         return UnifiedTask(
             id: String(workItem.id),
             provider: providerId,
@@ -232,7 +239,8 @@ public actor AzureDevOpsTaskProvider: TaskProvider {
             updatedAt: changedDate,
             closedAt: nil,
             externalUrl: workItem.url?.replacingOccurrences(of: "_apis/wit/workItems", with: "_workitems/edit"),
-            priority: fields?.priority
+            priority: fields?.priority,
+            metadata: metadata
         )
     }
     

@@ -86,13 +86,20 @@ public class AzureDevOpsService {
         path: String,
         body: Data? = nil,
         contentType: String = "application/json",
-        orgLevel: Bool = false
+        orgLevel: Bool = false,
+        forProject: String? = nil
     ) async throws -> T {
         guard let token = bearerToken, !token.isEmpty else {
             throw AzDevOpsError.notLoggedIn
         }
 
-        let basePath = orgLevel ? orgUrl : "\(orgUrl)/\(project)"
+        let basePath: String
+        if orgLevel {
+            basePath = orgUrl
+        } else {
+            let proj = forProject ?? project
+            basePath = "\(orgUrl)/\(proj)"
+        }
         guard let url = URL(string: "\(basePath)\(path)") else {
             throw AzDevOpsError.invalidUrl(path)
         }
@@ -128,12 +135,18 @@ public class AzureDevOpsService {
     }
 
     /// Make an authenticated request without decoding (for status-check calls)
-    private func requestRaw(_ method: String, path: String, orgLevel: Bool = false) async throws -> (Data, HTTPURLResponse) {
+    private func requestRaw(_ method: String, path: String, orgLevel: Bool = false, forProject: String? = nil) async throws -> (Data, HTTPURLResponse) {
         guard let token = bearerToken, !token.isEmpty else {
             throw AzDevOpsError.notLoggedIn
         }
 
-        let basePath = orgLevel ? orgUrl : "\(orgUrl)/\(project)"
+        let basePath: String
+        if orgLevel {
+            basePath = orgUrl
+        } else {
+            let proj = forProject ?? project
+            basePath = "\(orgUrl)/\(proj)"
+        }
         guard let url = URL(string: "\(basePath)\(path)") else {
             throw AzDevOpsError.invalidUrl(path)
         }
@@ -283,7 +296,10 @@ public class AzureDevOpsService {
             ops.append(["op": "replace", "path": "/fields/System.Title", "value": title])
         }
         if let state = request.state {
-            ops.append(["op": "replace", "path": "/fields/System.State", "value": state])
+            ops.append(["op": "add", "path": "/fields/System.State", "value": state])
+        }
+        if let wiType = request.workItemType {
+            ops.append(["op": "add", "path": "/fields/System.WorkItemType", "value": wiType])
         }
         if let assignee = request.assignedTo {
             ops.append(["op": "replace", "path": "/fields/System.AssignedTo", "value": assignee])
@@ -321,6 +337,9 @@ public class AzureDevOpsService {
         if let comment = request.comment {
             ops.append(["op": "add", "path": "/fields/System.History", "value": comment])
         }
+        if let dueDate = request.dueDate {
+            ops.append(["op": "replace", "path": "/fields/Microsoft.VSTS.Scheduling.DueDate", "value": dueDate])
+        }
 
         guard !ops.isEmpty else { return try await getWorkItem(id: id) }
 
@@ -328,7 +347,7 @@ public class AzureDevOpsService {
 
         let item: WorkItem = try await self.request(
             "PATCH",
-            path: "/_apis/wit/workitems/\(id)?api-version=7.0",
+            path: "/_apis/wit/workitems/\(id)?bypassRules=true&api-version=7.0",
             body: body,
             contentType: "application/json-patch+json",
             orgLevel: true
@@ -396,6 +415,36 @@ public class AzureDevOpsService {
             path: "/\(encodedTeam)/_apis/work/boards?api-version=7.0"
         )
         return response.value ?? []
+    }
+
+    /// Get columns for a specific board (returns them in the correct display order).
+    public func getBoardColumns(boardName: String, project: String? = nil) async throws -> [BoardColumnDefinition] {
+        let team = try await getDefaultTeam()
+        let encodedTeam = team.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? team
+        let encodedBoard = boardName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? boardName
+
+        let response: BoardColumnsResponse = try await request(
+            "GET",
+            path: "/\(encodedTeam)/_apis/work/boards/\(encodedBoard)/columns?api-version=7.0",
+            forProject: project
+        )
+        return response.value ?? []
+    }
+
+    /// Move a work item to a specific board column by updating System.BoardColumn.
+    public func moveWorkItemToBoardColumn(id: Int, column: String) async throws -> WorkItem? {
+        let ops: [[String: Any]] = [
+            ["op": "add", "path": "/fields/System.BoardColumn", "value": column]
+        ]
+        let body = try JSONSerialization.data(withJSONObject: ops)
+        let item: WorkItem = try await self.request(
+            "PATCH",
+            path: "/_apis/wit/workitems/\(id)?bypassRules=true&api-version=7.0",
+            body: body,
+            contentType: "application/json-patch+json",
+            orgLevel: true
+        )
+        return item
     }
 
     // MARK: - Projects
@@ -528,30 +577,210 @@ public class AzureDevOpsService {
     // MARK: - Work Item Comments
 
     /// Fetch all comments for a work item using the Comments API.
-    /// Uses project-level URL (orgLevel: false) as required by this endpoint.
-    public func getComments(workItemId: Int) async throws -> [WorkItemComment] {
-        dbg.info("AzDO getComments(\(workItemId))", category: "azdo")
+    /// Pass the work item's `teamProject` to ensure correct project-scoped URL.
+    public func getComments(workItemId: Int, project: String? = nil) async throws -> [WorkItemComment] {
+        dbg.info("AzDO getComments(\(workItemId)) project=\(project ?? self.project)", category: "azdo")
         let response: WorkItemCommentsResponse = try await request(
             "GET",
-            path: "/_apis/wit/workitems/\(workItemId)/comments?api-version=7.0-preview.4",
-            orgLevel: false
+            path: "/_apis/wit/workitems/\(workItemId)/comments?$expand=all&api-version=7.1-preview.3",
+            forProject: project
         )
         return response.comments ?? []
     }
 
     /// Add a comment to a work item using the Comments API.
-    /// Uses project-level URL (orgLevel: false) as required by this endpoint.
+    /// Pass the work item's `teamProject` to ensure correct project-scoped URL.
     @discardableResult
-    public func addComment(workItemId: Int, text: String) async throws -> WorkItemComment {
+    public func addComment(workItemId: Int, text: String, project: String? = nil) async throws -> WorkItemComment {
         dbg.info("AzDO addComment(\(workItemId))", category: "azdo")
         let body = try JSONEncoder().encode(["text": text])
         let comment: WorkItemComment = try await request(
             "POST",
-            path: "/_apis/wit/workitems/\(workItemId)/comments?api-version=7.0-preview.4",
+            path: "/_apis/wit/workitems/\(workItemId)/comments?api-version=7.1-preview.3",
             body: body,
-            orgLevel: false
+            forProject: project
         )
         return comment
+    }
+
+    /// Toggle a reaction on a work item comment.
+    /// Uses PUT to add and DELETE to remove.
+    @discardableResult
+    public func toggleCommentReaction(workItemId: Int, commentId: Int, reactionType: String, add: Bool, project: String? = nil) async throws -> Bool {
+        dbg.info("AzDO \(add ? "add" : "remove") reaction '\(reactionType)' on comment \(commentId)", category: "azdo")
+        let method = add ? "PUT" : "DELETE"
+        let (_, resp) = try await requestRaw(
+            method,
+            path: "/_apis/wit/workitems/\(workItemId)/comments/\(commentId)/reactions/\(reactionType)?api-version=7.1-preview.1",
+            forProject: project
+        )
+        return (200...299).contains(resp.statusCode)
+    }
+
+    // MARK: - Classification Nodes (Area Paths & Iteration Paths)
+
+    /// Fetch all area paths for a project, flattened into path strings.
+    public func getAreaPaths(project: String? = nil) async throws -> [String] {
+        let node: ClassificationNode = try await request(
+            "GET",
+            path: "/_apis/wit/classificationnodes/areas?$depth=10&api-version=7.0",
+            forProject: project
+        )
+        return flattenClassificationNode(node)
+    }
+
+    /// Fetch all iteration paths for a project, flattened into path strings.
+    public func getIterationPaths(project: String? = nil) async throws -> [String] {
+        let node: ClassificationNode = try await request(
+            "GET",
+            path: "/_apis/wit/classificationnodes/iterations?$depth=10&api-version=7.0",
+            forProject: project
+        )
+        return flattenClassificationNode(node)
+    }
+
+    /// Recursively flatten a classification node tree into path strings.
+    private func flattenClassificationNode(_ node: ClassificationNode, prefix: String = "") -> [String] {
+        let currentPath = prefix.isEmpty ? (node.name ?? "") : "\(prefix)\\\(node.name ?? "")"
+        var paths = [currentPath]
+        if let children = node.children {
+            for child in children {
+                paths.append(contentsOf: flattenClassificationNode(child, prefix: currentPath))
+            }
+        }
+        return paths
+    }
+
+    // MARK: - Team Members
+
+    /// Fetch team members for the default team of a project.
+    public func getTeamMembers(project: String? = nil) async throws -> [IdentityRef] {
+        let proj = project ?? self.project
+        let team = try await getDefaultTeam()
+        let encodedTeam = team.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? team
+        let encodedProj = proj.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? proj
+
+        struct TeamMembersResponse: Decodable {
+            let value: [TeamMemberEntry]?
+            let count: Int?
+        }
+        struct TeamMemberEntry: Decodable {
+            let identity: IdentityRef?
+        }
+
+        let response: TeamMembersResponse = try await request(
+            "GET",
+            path: "/_apis/projects/\(encodedProj)/teams/\(encodedTeam)/members?api-version=7.0",
+            orgLevel: true
+        )
+        return (response.value ?? []).compactMap { $0.identity }
+    }
+
+    // MARK: - Git Repositories
+
+    /// List all Git repositories in a project.
+    public func getRepositories(project: String? = nil) async throws -> [GitRepository] {
+        dbg.info("AzDO getRepositories", category: "azdo")
+        let response: GitRepositoriesResponse = try await request(
+            "GET",
+            path: "/_apis/git/repositories?api-version=7.0",
+            forProject: project
+        )
+        return response.value ?? []
+    }
+
+    /// List branches (refs/heads) for a repository.
+    public func getBranches(repositoryId: String, project: String? = nil) async throws -> [GitRef] {
+        dbg.info("AzDO getBranches(\(repositoryId))", category: "azdo")
+        let encodedRepoId = repositoryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repositoryId
+        let response: GitRefsResponse = try await request(
+            "GET",
+            path: "/_apis/git/repositories/\(encodedRepoId)/refs?filter=heads/&api-version=7.0",
+            forProject: project
+        )
+        return response.value ?? []
+    }
+
+    /// List recent commits for a repository (optionally filtered by branch).
+    public func getCommits(repositoryId: String, branch: String? = nil, top: Int = 20, project: String? = nil) async throws -> [GitCommitRef] {
+        dbg.info("AzDO getCommits(\(repositoryId))", category: "azdo")
+        let encodedRepoId = repositoryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repositoryId
+        var path = "/_apis/git/repositories/\(encodedRepoId)/commits?$top=\(top)&api-version=7.0"
+        if let branch = branch {
+            let encodedBranch = branch.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? branch
+            path += "&searchCriteria.itemVersion.version=\(encodedBranch)"
+        }
+        let response: GitCommitsResponse = try await request(
+            "GET",
+            path: path,
+            forProject: project
+        )
+        return response.value ?? []
+    }
+
+    /// List pull requests for a repository.
+    public func getPullRequests(repositoryId: String, status: String = "all", top: Int = 20, project: String? = nil) async throws -> [GitPullRequest] {
+        dbg.info("AzDO getPullRequests(\(repositoryId))", category: "azdo")
+        let encodedRepoId = repositoryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repositoryId
+        let response: GitPullRequestsResponse = try await request(
+            "GET",
+            path: "/_apis/git/repositories/\(encodedRepoId)/pullrequests?searchCriteria.status=\(status)&$top=\(top)&api-version=7.0",
+            forProject: project
+        )
+        return response.value ?? []
+    }
+
+    /// Add an artifact link (commit, branch, PR, etc.) to a work item using JSON Patch.
+    /// - Parameters:
+    ///   - workItemId: The work item ID.
+    ///   - artifactUri: The `vstfs:///` URI for the artifact.
+    ///   - linkName: Display name for the link (e.g., "Fixed in Commit").
+    ///   - comment: Optional comment for the link.
+    public func addWorkItemArtifactLink(workItemId: Int, artifactUri: String, linkName: String, comment: String? = nil) async throws -> WorkItem? {
+        dbg.info("AzDO addWorkItemArtifactLink(\(workItemId)) → \(artifactUri)", category: "azdo")
+
+        var attributes: [String: Any] = ["name": linkName]
+        if let comment = comment {
+            attributes["comment"] = comment
+        }
+
+        let ops: [[String: Any]] = [
+            [
+                "op": "add",
+                "path": "/relations/-",
+                "value": [
+                    "rel": "ArtifactLink",
+                    "url": artifactUri,
+                    "attributes": attributes
+                ] as [String: Any]
+            ]
+        ]
+
+        let body = try JSONSerialization.data(withJSONObject: ops)
+        let item: WorkItem = try await request(
+            "PATCH",
+            path: "/_apis/wit/workitems/\(workItemId)?api-version=7.0",
+            body: body,
+            contentType: "application/json-patch+json",
+            orgLevel: true
+        )
+        return item
+    }
+
+    /// Build an AzDO artifact URI for a Git commit.
+    public static func commitArtifactUri(projectId: String, repositoryId: String, commitId: String) -> String {
+        "vstfs:///Git/Commit/\(projectId)%2F\(repositoryId)%2F\(commitId)"
+    }
+
+    /// Build an AzDO artifact URI for a Git branch (ref).
+    public static func branchArtifactUri(projectId: String, repositoryId: String, branchName: String) -> String {
+        let encodedBranch = "GB\(branchName)".addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? "GB\(branchName)"
+        return "vstfs:///Git/Ref/\(projectId)%2F\(repositoryId)%2F\(encodedBranch)"
+    }
+
+    /// Build an AzDO artifact URI for a Pull Request.
+    public static func pullRequestArtifactUri(projectId: String, repositoryId: String, pullRequestId: Int) -> String {
+        "vstfs:///Git/PullRequestId/\(projectId)%2F\(repositoryId)%2F\(pullRequestId)"
     }
 }
 

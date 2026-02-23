@@ -25,7 +25,7 @@ struct ActivityItem: Identifiable {
     let detail: String
     let time: String
     let timestamp: Date
-    let tab: String
+    let tab: AppTab
     var deviceId: String?
     var ticketId: Int?
 }
@@ -33,7 +33,7 @@ struct ActivityItem: Identifiable {
 struct AlertPill: Hashable {
     let text: String
     let color: Color
-    let tab: String
+    let tab: AppTab
 }
 
 struct KPI: Identifiable {
@@ -43,7 +43,7 @@ struct KPI: Identifiable {
     let icon: String
     let color: Color
     let loading: Bool
-    let tab: String
+    let tab: AppTab
 }
 
 // MARK: - Dashboard View
@@ -85,7 +85,7 @@ struct DashboardView: View {
     @State private var isLoadingTickets = false
     @State private var isLoadingInventory = false
     @State private var showAuthPopover = false
-    @State private var activityFilter: String? = nil
+    @State private var activityFilter: AppTab? = nil
 
     private var isAnyLoading: Bool {
         isLoadingFleet || isLoadingReportMate || isLoadingTickets || isLoadingInventory
@@ -157,7 +157,7 @@ struct DashboardView: View {
         .frame(maxHeight: .infinity)
     }
 
-    private func navigate(to tab: String, deviceId: String? = nil, ticketId: Int? = nil) {
+    private func navigate(to tab: AppTab, deviceId: String? = nil, ticketId: Int? = nil) {
         if let deviceId { appState.navigateToDeviceId = deviceId }
         if let ticketId { appState.navigateToTicketId = ticketId }
         appState.navigateToTab = tab
@@ -233,10 +233,10 @@ struct DashboardView: View {
 
     private func buildAlerts() -> [AlertPill] {
         var pills: [AlertPill] = []
-        if nonCompliantCount > 0 { pills.append(.init(text: "\(nonCompliantCount) non-compliant", color: .red, tab: "Devices")) }
-        if staleCount > 0 { pills.append(.init(text: "\(staleCount) stale (30d+)", color: .orange, tab: "Devices")) }
-        if slaViolatedCount > 0 { pills.append(.init(text: "\(slaViolatedCount) SLA violations", color: .red, tab: "Tickets")) }
-        if unassignedCount > 5 { pills.append(.init(text: "\(unassignedCount) unassigned assets", color: .blue, tab: "Inventory")) }
+        if nonCompliantCount > 0 { pills.append(.init(text: "\(nonCompliantCount) non-compliant", color: .red, tab: .devices)) }
+        if staleCount > 0 { pills.append(.init(text: "\(staleCount) stale (30d+)", color: .orange, tab: .devices)) }
+        if slaViolatedCount > 0 { pills.append(.init(text: "\(slaViolatedCount) SLA violations", color: .red, tab: .tickets)) }
+        if unassignedCount > 5 { pills.append(.init(text: "\(unassignedCount) unassigned assets", color: .blue, tab: .inventory)) }
         return pills
     }
 
@@ -257,25 +257,25 @@ struct DashboardView: View {
     private func buildKPIs() -> [KPI] {
         var kpis: [KPI] = []
         if appState.config.isGraphConfigured {
-            kpis.append(KPI(title: "Devices", value: "\(deviceCount)", icon: "laptopcomputer", color: .blue, loading: isLoadingFleet, tab: "Devices"))
+            kpis.append(KPI(title: "Devices", value: "\(deviceCount)", icon: "laptopcomputer", color: .blue, loading: isLoadingFleet, tab: .devices))
             if nonCompliantCount > 0 {
-                kpis.append(KPI(title: "Non-Compliant", value: "\(nonCompliantCount)", icon: "exclamationmark.triangle", color: .red, loading: false, tab: "Devices"))
+                kpis.append(KPI(title: "Non-Compliant", value: "\(nonCompliantCount)", icon: "exclamationmark.triangle", color: .red, loading: false, tab: .devices))
             }
             if staleCount > 0 {
-                kpis.append(KPI(title: "Stale (30d+)", value: "\(staleCount)", icon: "clock.badge.exclamationmark", color: .orange, loading: false, tab: "Devices"))
+                kpis.append(KPI(title: "Stale (30d+)", value: "\(staleCount)", icon: "clock.badge.exclamationmark", color: .orange, loading: false, tab: .devices))
             }
         }
         if appState.config.isTdxConfigured {
-            kpis.append(KPI(title: "Open Tickets", value: "\(openTicketCount)", icon: "ticket", color: .purple, loading: isLoadingTickets, tab: "Tickets"))
+            kpis.append(KPI(title: "Open Tickets", value: "\(openTicketCount)", icon: "ticket", color: .purple, loading: isLoadingTickets, tab: .tickets))
         }
         if appState.config.isDevOpsConfigured {
-            kpis.append(KPI(title: "Active Work Items", value: "\(activeWorkItems)", icon: "list.bullet.rectangle", color: .indigo, loading: isLoadingTickets, tab: "Projects"))
+            kpis.append(KPI(title: "Active Work Items", value: "\(activeWorkItems)", icon: "list.bullet.rectangle", color: .indigo, loading: isLoadingTickets, tab: .projects))
         }
         if appState.config.isSnipeConfigured {
-            kpis.append(KPI(title: "Assets", value: "\(assetCount)", icon: "shippingbox", color: .orange, loading: isLoadingInventory, tab: "Inventory"))
+            kpis.append(KPI(title: "Assets", value: "\(assetCount)", icon: "shippingbox", color: .orange, loading: isLoadingInventory, tab: .inventory))
         }
         if appState.config.reportMateUrl != nil {
-            kpis.append(KPI(title: "Managed Macs", value: "\(rmDeviceCount)", icon: "desktopcomputer", color: .teal, loading: isLoadingReportMate, tab: "Devices"))
+            kpis.append(KPI(title: "Managed Macs", value: "\(rmDeviceCount)", icon: "desktopcomputer", color: .teal, loading: isLoadingReportMate, tab: .devices))
         }
         return kpis
     }
@@ -285,10 +285,10 @@ struct DashboardView: View {
     private var kpiGrid: some View {
         let cols = Array(repeating: GridItem(.flexible(), spacing: 16), count: 2)
         return LazyVGrid(columns: cols, spacing: 16) {
-            KPICard(kpi: KPI(title: "Managed Devices", value: "\(deviceCount)", icon: "laptopcomputer", color: .blue, loading: isLoadingFleet, tab: "Devices")) { navigate(to: "Devices") }
-            KPICard(kpi: KPI(title: "Assets Inventory", value: "\(assetCount)", icon: "shippingbox", color: .orange, loading: isLoadingInventory, tab: "Inventory")) { navigate(to: "Inventory") }
-            KPICard(kpi: KPI(title: "Active Work Items", value: "\(activeWorkItems)", icon: "list.bullet.rectangle", color: .indigo, loading: isLoadingTickets, tab: "Projects")) { navigate(to: "Projects") }
-            KPICard(kpi: KPI(title: "Open Tickets", value: "\(openTicketCount)", icon: "ticket", color: .purple, loading: isLoadingTickets, tab: "Tickets")) { navigate(to: "Tickets") }
+            KPICard(kpi: KPI(title: "Managed Devices", value: "\(deviceCount)", icon: "laptopcomputer", color: .blue, loading: isLoadingFleet, tab: .devices)) { navigate(to: .devices) }
+            KPICard(kpi: KPI(title: "Assets Inventory", value: "\(assetCount)", icon: "shippingbox", color: .orange, loading: isLoadingInventory, tab: .inventory)) { navigate(to: .inventory) }
+            KPICard(kpi: KPI(title: "Active Work Items", value: "\(activeWorkItems)", icon: "list.bullet.rectangle", color: .indigo, loading: isLoadingTickets, tab: .projects)) { navigate(to: .projects) }
+            KPICard(kpi: KPI(title: "Open Tickets", value: "\(openTicketCount)", icon: "ticket", color: .purple, loading: isLoadingTickets, tab: .tickets)) { navigate(to: .tickets) }
         }
         .padding(16)
     }
@@ -299,7 +299,7 @@ struct DashboardView: View {
         LazyVGrid(columns: adaptiveColumns, spacing: 16) {
             // Assets by Category first
             if appState.config.isSnipeConfigured {
-                chartCard("Assets by Category", tab: "Inventory", isLoading: isLoadingInventory) {
+                chartCard("Assets by Category", tab: .inventory, isLoading: isLoadingInventory) {
                     if assetCategoryBars.isEmpty && !isLoadingInventory {
                         emptyState("No asset data")
                     } else {
@@ -309,7 +309,7 @@ struct DashboardView: View {
             }
 
             if appState.config.isGraphConfigured {
-                chartCard("Platform Distribution", tab: "Devices", isLoading: isLoadingFleet) {
+                chartCard("Platform Distribution", tab: .devices, isLoading: isLoadingFleet) {
                     if osSlices.isEmpty && !isLoadingFleet {
                         emptyState("No device data")
                     } else {
@@ -319,7 +319,7 @@ struct DashboardView: View {
             }
 
             if appState.config.isTdxConfigured {
-                chartCard("Ticket Status", tab: "Tickets", isLoading: isLoadingTickets) {
+                chartCard("Ticket Status", tab: .tickets, isLoading: isLoadingTickets) {
                     if ticketStatusSlices.isEmpty && !isLoadingTickets {
                         emptyState("No ticket data")
                     } else {
@@ -332,7 +332,7 @@ struct DashboardView: View {
                         }
                     }
                 }
-                chartCard("Tickets by Priority", tab: "Tickets", isLoading: isLoadingTickets) {
+                chartCard("Tickets by Priority", tab: .tickets, isLoading: isLoadingTickets) {
                     if ticketPriorityBars.isEmpty && !isLoadingTickets {
                         emptyState("No ticket data")
                     } else {
@@ -342,7 +342,7 @@ struct DashboardView: View {
             }
 
             if appState.config.isDevOpsConfigured {
-                chartCard("Work Items", tab: "Projects", isLoading: isLoadingTickets) {
+                chartCard("Work Items", tab: .projects, isLoading: isLoadingTickets) {
                     if workItemSlices.isEmpty && !isLoadingTickets {
                         emptyState("No work item data")
                     } else {
@@ -357,7 +357,7 @@ struct DashboardView: View {
             }
 
             if appState.config.reportMateUrl != nil {
-                chartCard("Errors by Category", tab: "Devices", isLoading: isLoadingReportMate) {
+                chartCard("Errors by Category", tab: .devices, isLoading: isLoadingReportMate) {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 12) {
                             miniStat("Managed", "\(rmDeviceCount)", color: .blue)
@@ -373,7 +373,7 @@ struct DashboardView: View {
             }
 
             if appState.config.isGraphConfigured {
-                chartCard("Compliance", tab: "Devices", isLoading: isLoadingFleet) {
+                chartCard("Compliance", tab: .devices, isLoading: isLoadingFleet) {
                     if complianceSlices.isEmpty && !isLoadingFleet {
                         emptyState("No device data")
                     } else {
@@ -383,7 +383,7 @@ struct DashboardView: View {
             }
 
             if appState.config.isSnipeConfigured {
-                chartCard("Asset Status", tab: "Inventory", isLoading: isLoadingInventory) {
+                chartCard("Asset Status", tab: .inventory, isLoading: isLoadingInventory) {
                     if assetStatusSlices.isEmpty && !isLoadingInventory {
                         emptyState("No asset data")
                     } else {
@@ -411,8 +411,9 @@ struct DashboardView: View {
             // Filter chips
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(["All", "Devices", "Inventory", "Tickets", "Projects", "Identity"], id: \.self) { label in
-                        activityFilterChip(label)
+                    activityFilterChip("All", tab: nil)
+                    ForEach(AppTab.allCases.filter { $0 != .dashboard }) { tab in
+                        activityFilterChip(tab.rawValue.capitalized, tab: tab)
                     }
                 }
             }
@@ -471,8 +472,7 @@ struct DashboardView: View {
         .padding(16)
     }
 
-    private func activityFilterChip(_ label: String) -> some View {
-        let tab: String? = label == "All" ? nil : label
+    private func activityFilterChip(_ label: String, tab: AppTab?) -> some View {
         let isSelected = activityFilter == tab
         return Button(action: { activityFilter = tab }) {
             Text(label)
@@ -505,7 +505,7 @@ struct DashboardView: View {
 
     // MARK: - Chart Helpers
 
-    private func chartCard<Content: View>(_ title: String, tab: String, isLoading: Bool, @ViewBuilder content: () -> Content) -> some View {
+    private func chartCard<Content: View>(_ title: String, tab: AppTab, isLoading: Bool, @ViewBuilder content: () -> Content) -> some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
@@ -835,7 +835,7 @@ struct DashboardView: View {
             let title = String((t.title ?? "").prefix(50))
             items.append(ActivityItem(icon: "ticket", name: "#\(t.id ?? 0)  \(title)",
                                       detail: t.statusName ?? "",
-                                      time: formatRelative(date), timestamp: date, tab: "Tickets", ticketId: t.id))
+                                      time: formatRelative(date), timestamp: date, tab: .tickets, ticketId: t.id))
         }
 
         // Work items – all changed in last 24h
@@ -848,7 +848,7 @@ struct DashboardView: View {
             let title = String((w.fields?.title ?? "").prefix(50))
             items.append(ActivityItem(icon: "list.bullet.rectangle", name: "#\(w.id)  \(title)",
                                       detail: w.fields?.state ?? "",
-                                      time: formatRelative(date), timestamp: date, tab: "Projects"))
+                                      time: formatRelative(date), timestamp: date, tab: .projects))
         }
 
         // Devices – all synced in last 24h
@@ -860,7 +860,7 @@ struct DashboardView: View {
             .sorted(by: { $0.1 > $1.1 }) {
             items.append(ActivityItem(icon: "laptopcomputer", name: d.deviceName ?? "Device",
                                       detail: "\(d.operatingSystem ?? "") · synced",
-                                      time: formatRelative(date), timestamp: date, tab: "Devices", deviceId: d.id))
+                                      time: formatRelative(date), timestamp: date, tab: .devices, deviceId: d.id))
         }
 
         // Assets – all updated in last 24h
@@ -869,7 +869,7 @@ struct DashboardView: View {
                 let name = a.name ?? a.assetTag ?? "Asset"
                 items.append(ActivityItem(icon: "shippingbox", name: name,
                                           detail: a.statusLabel?.name ?? "",
-                                          time: formatRelative(date), timestamp: date, tab: "Inventory"))
+                                          time: formatRelative(date), timestamp: date, tab: .inventory))
             }
         }
 
@@ -888,7 +888,7 @@ struct DashboardView: View {
                 let admin = entry.admin?.name ?? ""
                 items.append(ActivityItem(icon: "arrow.triangle.2.circlepath", name: "\(admin) \(action)".trimmingCharacters(in: .whitespaces),
                                           detail: itemName,
-                                          time: formatRelative(date), timestamp: date, tab: "Inventory"))
+                                          time: formatRelative(date), timestamp: date, tab: .inventory))
             }
         }
 

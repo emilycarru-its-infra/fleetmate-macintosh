@@ -200,8 +200,9 @@ struct PriorityIndicator: View {
     let priority: Int?
 
     var body: some View {
+        let p = priority ?? 4
         let color: Color = {
-            switch priority {
+            switch p {
             case 1: return .red
             case 2: return .orange
             case 3: return .yellow
@@ -209,11 +210,12 @@ struct PriorityIndicator: View {
             default: return .gray
             }
         }()
+        let filled = max(0, 5 - p) // 1→4 filled, 2→3, 3→2, 4→1
 
         HStack(spacing: 2) {
-            ForEach(0..<(priority ?? 4), id: \.self) { _ in
+            ForEach(0..<4, id: \.self) { i in
                 Circle()
-                    .fill(color)
+                    .fill(i < filled ? color : color.opacity(0.2))
                     .frame(width: 6, height: 6)
             }
         }

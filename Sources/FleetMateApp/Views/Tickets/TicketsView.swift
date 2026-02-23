@@ -135,6 +135,7 @@ struct TicketsView: View {
 
     // Filter states
     @State private var statusFilter = "All"
+    @State private var priorityFilter = "All"
     @State private var groupFilter = "All"
     @State private var responsibleFilter = "All"
     @State private var formFilter = "All"
@@ -295,6 +296,14 @@ struct TicketsView: View {
         return ["All"] + opts.sorted()
     }
 
+    var priorityOptions: [String] {
+        var opts = Set<String>()
+        for t in tickets {
+            if let p = t.priorityName, !p.isEmpty { opts.insert(p) }
+        }
+        return ["All"] + opts.sorted()
+    }
+
     var groupOptions: [String] {
         var opts = Set<String>()
         for t in tickets {
@@ -365,6 +374,11 @@ struct TicketsView: View {
         // Status filter
         if statusFilter != "All" {
             result = result.filter { $0.statusName == statusFilter }
+        }
+
+        // Priority filter
+        if priorityFilter != "All" {
+            result = result.filter { $0.priorityName == priorityFilter }
         }
 
         // Group filter
@@ -450,7 +464,12 @@ struct TicketsView: View {
             "added a task", "completed a task", "created this",
             "attached", "unattached", "merged", "associated",
             "escalated", "de-escalated",
-            "changed priority", "changed responsible"
+            "changed priority", "changed responsible", "changed group",
+            "changed type", "changed classification", "changed form",
+            "changed service", "was modified", "was updated",
+            "was reassigned", "was created", "was attached",
+            "moved to group", "assigned to", "unassigned from",
+            "changed from", "changed to"
         ]
         return phrases.contains { stripped.contains($0) }
     }
@@ -460,14 +479,27 @@ struct TicketsView: View {
         return isStatusChange(body) || isFieldEdit(body)
     }
 
+    /// Check if a feed entry is a user comment (not system-generated)
+    private static func isUserComment(_ entry: TdxFeedEntry) -> Bool {
+        // System entries are never comments
+        if entry.createdFullName == "System" { return false }
+        guard let body = entry.body, !body.isEmpty else { return false }
+        // If it matches known system activity patterns, it's not a comment
+        if isSystemActivity(body) { return false }
+        // TDX itemType: 0 or nil = update/comment, but some system updates also use 0
+        // Additional heuristic: if the body is very short and looks like a field summary, skip it
+        let stripped = body.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Skip entries that look like "FieldName : OldValue → NewValue" patterns
+        if stripped.contains(" : ") && stripped.contains(" → ") { return false }
+        if stripped.contains(" changed from ") && stripped.contains(" to ") { return false }
+        return true
+    }
+
     var filteredFeed: [TdxFeedEntry] {
         switch feedFilter {
         case .comments:
-            return ticketFeed.filter { entry in
-                guard entry.createdFullName != "System" else { return false }
-                guard let body = entry.body, !body.isEmpty else { return false }
-                return !Self.isSystemActivity(body)
-            }
+            return ticketFeed.filter { Self.isUserComment($0) }
         case .edits:
             return ticketFeed.filter { entry in
                 guard let body = entry.body, !body.isEmpty else { return false }
@@ -576,8 +608,10 @@ struct TicketsView: View {
                 .frame(width: 140)
 
                 if viewMode == .board {
+                    Divider().frame(height: 20)
+
                     HStack(spacing: 4) {
-                        Text("Group:").foregroundColor(.secondary).font(.caption)
+                        Text("Columns:").foregroundColor(.secondary).font(.caption)
                         Picker("", selection: $boardGroupBy) {
                             ForEach(BoardGroupBy.allCases, id: \.self) { option in
                                 Text(option.rawValue).tag(option)
@@ -591,46 +625,53 @@ struct TicketsView: View {
                     Text("Status").tag("All")
                     ForEach(statusOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
                 }
-                .frame(width: 120)
+                .frame(minWidth: 100, maxWidth: statusFilter != "All" ? 180 : 120)
+
+                Picker("", selection: $priorityFilter) {
+                    Text("Priority").tag("All")
+                    ForEach(priorityOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
+                }
+                .frame(minWidth: 100, maxWidth: priorityFilter != "All" ? 160 : 110)
 
                 Picker("", selection: $groupFilter) {
                     Text("Group").tag("All")
                     ForEach(groupOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
                 }
-                .frame(width: 140)
+                .frame(minWidth: 110, maxWidth: groupFilter != "All" ? 200 : 140)
 
                 Picker("", selection: $responsibleFilter) {
                     Text("Responsible").tag("All")
                     Text("None").tag("None")
                     ForEach(responsibleOptions.filter { $0 != "All" && $0 != "None" }, id: \.self) { Text($0).tag($0) }
                 }
-                .frame(width: 140)
+                .frame(minWidth: 110, maxWidth: responsibleFilter != "All" ? 200 : 140)
 
                 Picker("", selection: $formFilter) {
                     Text("Form").tag("All")
                     ForEach(formFilterOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
                 }
-                .frame(width: 140)
+                .frame(minWidth: 100, maxWidth: formFilter != "All" ? 200 : 140)
 
                 Picker("", selection: $classificationFilter) {
                     Text("Classification").tag("All")
                     ForEach(classificationFilterOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
                 }
-                .frame(width: 140)
+                .frame(minWidth: 110, maxWidth: classificationFilter != "All" ? 200 : 140)
 
                 Picker("", selection: $typeFilter) {
                     Text("Type").tag("All")
                     ForEach(typeFilterOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
                 }
-                .frame(width: 120)
+                .frame(minWidth: 80, maxWidth: typeFilter != "All" ? 160 : 120)
 
                 Toggle("Closed", isOn: $showClosed)
                     .toggleStyle(.checkbox)
                     .font(.caption)
 
-                if statusFilter != "All" || groupFilter != "All" || responsibleFilter != "All" || formFilter != "All" || classificationFilter != "All" || typeFilter != "All" || showClosed || !isDefaultDatePreset {
+                if statusFilter != "All" || priorityFilter != "All" || groupFilter != "All" || responsibleFilter != "All" || formFilter != "All" || classificationFilter != "All" || typeFilter != "All" || showClosed || !isDefaultDatePreset {
                     Button(action: {
                         statusFilter = "All"
+                        priorityFilter = "All"
                         groupFilter = "All"
                         responsibleFilter = "All"
                         formFilter = "All"
@@ -652,46 +693,15 @@ struct TicketsView: View {
 
             // Row 3: Date range
             HStack(spacing: 8) {
-                Image(systemName: "calendar")
-                    .foregroundColor(.secondary)
-                    .font(.caption)
-
-                // Quick presets
-                ForEach([DateRangePreset.today, .thisWeek, .thisMonth, .lastMonth], id: \.label) { preset in
-                    let isActive = datePreset.label == preset.label
-                    Button(action: {
-                        datePreset = preset
-                        loadTickets()
-                    }) {
-                        Text(preset.label)
-                            .font(.caption)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(isActive ? Color.accentColor.opacity(0.2) : Color.clear)
-                            .cornerRadius(4)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-
-                Divider().frame(height: 16)
-
                 // This Term button
                 Button(action: {
                     resetToCurrentTerm()
                 }) {
-                    let isTerm: Bool = {
-                        if case .term = datePreset { return true }
-                        return false
-                    }()
                     Text("This Term")
                         .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(isTerm ? Color.accentColor.opacity(0.2) : Color.clear)
-                        .cornerRadius(4)
                 }
                 .buttonStyle(.bordered)
+                .tint(isTermPreset ? .accentColor : nil)
                 .controlSize(.small)
 
                 // Academic term picker
@@ -718,11 +728,21 @@ struct TicketsView: View {
                     loadTickets()
                 }
 
-                if case .term = datePreset {} else {
-                    // Highlight which term is selected if it's active
-                }
-
                 Divider().frame(height: 16)
+
+                // Quick presets
+                ForEach([DateRangePreset.today, .thisWeek, .thisMonth], id: \.label) { preset in
+                    Button(action: {
+                        datePreset = preset
+                        loadTickets()
+                    }) {
+                        Text(preset.label)
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(datePreset.label == preset.label ? .accentColor : nil)
+                    .controlSize(.small)
+                }
 
                 // Custom date range
                 Button(action: {
@@ -730,12 +750,9 @@ struct TicketsView: View {
                 }) {
                     Text("Custom")
                         .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(datePreset == .custom ? Color.accentColor.opacity(0.2) : Color.clear)
-                        .cornerRadius(4)
                 }
                 .buttonStyle(.bordered)
+                .tint(datePreset == .custom ? .accentColor : nil)
                 .controlSize(.small)
 
                 if datePreset == .custom {
@@ -1242,22 +1259,22 @@ struct TicketsView: View {
                     .frame(width: 140)
                 }
 
-                // Type
+                // Form
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Type")
+                    Text("Form")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                     Picker("", selection: Binding(
-                        get: { editTypeId ?? ticket.typeId ?? 0 },
-                        set: { editTypeId = $0; trackEdits(ticket: ticket) }
+                        get: { editFormId ?? ticket.formId ?? 0 },
+                        set: { editFormId = $0; trackEdits(ticket: ticket) }
                     )) {
                         Text("None").tag(0)
-                        ForEach(typeIdOptions, id: \.id) { option in
+                        ForEach(formIdOptions, id: \.id) { option in
                             Text(option.name).tag(option.id)
                         }
-                        if let tid = ticket.typeId, let tname = ticket.typeName,
-                           !typeIdOptions.contains(where: { $0.id == tid }) {
-                            Text(tname).tag(tid)
+                        if let fid = ticket.formId, let fname = ticket.formName,
+                           !formIdOptions.contains(where: { $0.id == fid }) {
+                            Text(fname).tag(fid)
                         }
                     }
                     .labelsHidden()
@@ -1351,6 +1368,10 @@ struct TicketsView: View {
                                 ForEach(groupIdOptions, id: \.id) { option in
                                     Text(option.name).tag(option.id)
                                 }
+                                if let gid = ticket.responsibleGroupId, let gname = ticket.responsibleGroupName,
+                                   !groupIdOptions.contains(where: { $0.id == gid }) {
+                                    Text(gname).tag(gid)
+                                }
                             }
                             .labelsHidden()
                         }
@@ -1376,39 +1397,19 @@ struct TicketsView: View {
                         DetailRow(label: "Service", value: service)
                     }
 
-                    // Form picker — always editable
-                    fieldRow(label: "Form") {
+                    // Type picker
+                    fieldRow(label: "Type") {
                         Picker("", selection: Binding(
-                            get: { editFormId ?? ticket.formId ?? 0 },
-                            set: { editFormId = $0; trackEdits(ticket: ticket) }
+                            get: { editTypeId ?? ticket.typeId ?? 0 },
+                            set: { editTypeId = $0; trackEdits(ticket: ticket) }
                         )) {
                             Text("None").tag(0)
-                            ForEach(formIdOptions, id: \.id) { option in
+                            ForEach(typeIdOptions, id: \.id) { option in
                                 Text(option.name).tag(option.id)
                             }
-                            // Ensure current ticket's form is always an option
-                            if let fid = ticket.formId, let fname = ticket.formName,
-                               !formIdOptions.contains(where: { $0.id == fid }) {
-                                Text(fname).tag(fid)
-                            }
-                        }
-                        .labelsHidden()
-                    }
-
-                    // Classification picker — always editable
-                    fieldRow(label: "Classification") {
-                        Picker("", selection: Binding(
-                            get: { editClassification ?? ticket.classification ?? 0 },
-                            set: { editClassification = $0; trackEdits(ticket: ticket) }
-                        )) {
-                            Text("None").tag(0)
-                            ForEach(classificationIdOptions, id: \.id) { option in
-                                Text(option.name).tag(option.id)
-                            }
-                            // Ensure current ticket's classification is always an option
-                            if let cid = ticket.classification, let cname = ticket.classificationName,
-                               !classificationIdOptions.contains(where: { $0.id == cid }) {
-                                Text(cname).tag(cid)
+                            if let tid = ticket.typeId, let tname = ticket.typeName,
+                               !typeIdOptions.contains(where: { $0.id == tid }) {
+                                Text(tname).tag(tid)
                             }
                         }
                         .labelsHidden()
@@ -1728,6 +1729,11 @@ struct TicketsView: View {
         return "\(fmt.string(from: range.from)) – \(fmt.string(from: range.to))"
     }
 
+    private var isTermPreset: Bool {
+        if case .term = datePreset { return true }
+        return false
+    }
+
     private var isDefaultDatePreset: Bool {
         if case .term(let t, let y) = datePreset {
             let cal = Calendar.current
@@ -1828,6 +1834,7 @@ struct TicketsView: View {
         editServiceId = ticket.serviceId
         editFormId = ticket.formId
         editClassification = ticket.classification
+        editTypeId = ticket.typeId
         editRequestorUid = ticket.requestorUid
         editRequestorName = ticket.requestorName ?? ""
         editResponsibleUid = ticket.responsibleUid
@@ -1854,6 +1861,7 @@ struct TicketsView: View {
             || editServiceId != ticket.serviceId
             || editFormId != ticket.formId
             || editClassification != ticket.classification
+            || editTypeId != ticket.typeId
             || editRequestorUid != ticket.requestorUid
             || editResponsibleUid != ticket.responsibleUid
     }
@@ -1905,16 +1913,20 @@ struct TicketsView: View {
             saveSucceeded = false
             defer { isSaving = false }
             do {
+                // Fetch fresh full ticket to avoid stale data in the echoed-back fields
+                let freshTicket = try await appState.tdxService.getTicket(id: ticketId) ?? ticket
+
                 let trimmedTitle = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
 
                 // Build update request — always echoes back original description HTML
                 // isRichHtml is always true inside TicketUpdateRequest
                 let updateRequest = TicketUpdateRequest(
-                    from: ticket,
+                    from: freshTicket,
                     title: trimmedTitle.isEmpty ? nil : trimmedTitle,
                     statusId: editStatusId,
                     priorityId: editPriorityId,
                     classification: editClassification,
+                    typeId: editTypeId,
                     requestorUid: editRequestorUid,
                     responsibleUid: editResponsibleUid,
                     responsibleGroupId: editResponsibleGroupId,
@@ -2020,25 +2032,26 @@ struct TicketsView: View {
 
     /// Handle a card drop on a board column — updates the field corresponding to the current groupBy
     private func handleBoardDrop(ticketId: Int, targetColumnKey: String) {
-        guard let ticket = filteredTickets.first(where: { $0.id == ticketId }) else { return }
         Task {
             do {
+                // Fetch full ticket detail to ensure all fields are echoed back correctly
+                guard let ticket = try await appState.tdxService.getTicket(id: ticketId) else {
+                    print("Board drop: could not fetch ticket \(ticketId)")
+                    return
+                }
                 var req: TicketUpdateRequest
                 switch boardGroupBy {
                 case .status:
                     guard let newStatusId = Int(targetColumnKey) else { return }
                     req = TicketUpdateRequest(from: ticket, statusId: newStatusId)
                 case .priority:
-                    // Resolve priority name → ID from tickets
                     let targetId = filteredTickets.first(where: { $0.priorityName == targetColumnKey })?.priorityId
                     guard let newPriorityId = targetId else { return }
                     req = TicketUpdateRequest(from: ticket, priorityId: newPriorityId)
                 case .responsible:
                     if targetColumnKey == "Unassigned" {
-                        // Clear responsible
                         req = TicketUpdateRequest(from: ticket, responsibleUid: "")
                     } else {
-                        // Resolve responsible name → UID from tickets
                         let targetUid = filteredTickets.first(where: { $0.responsibleFullName == targetColumnKey })?.responsibleUid
                         guard let newUid = targetUid else { return }
                         req = TicketUpdateRequest(from: ticket, responsibleUid: newUid)

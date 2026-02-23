@@ -701,6 +701,36 @@ public class AzureDevOpsService {
         return response.value ?? []
     }
 
+    /// Fetch a single commit by SHA from a repository.
+    public func getCommit(repositoryId: String, commitId: String, project: String? = nil) async throws -> GitCommitRef {
+        let encodedRepoId = repositoryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repositoryId
+        let encodedCommit = commitId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? commitId
+        return try await request(
+            "GET",
+            path: "/_apis/git/repositories/\(encodedRepoId)/commits/\(encodedCommit)?api-version=7.0",
+            forProject: project
+        )
+    }
+
+    /// Fetch a single pull request by ID.
+    public func getPullRequest(repositoryId: String, pullRequestId: Int, project: String? = nil) async throws -> GitPullRequest {
+        let encodedRepoId = repositoryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repositoryId
+        return try await request(
+            "GET",
+            path: "/_apis/git/repositories/\(encodedRepoId)/pullrequests/\(pullRequestId)?api-version=7.0",
+            forProject: project
+        )
+    }
+
+    /// Fetch a single pull request by ID (project-scoped, no repo ID needed).
+    public func getPullRequestById(_ pullRequestId: Int, project: String? = nil) async throws -> GitPullRequest {
+        return try await request(
+            "GET",
+            path: "/_apis/git/pullrequests/\(pullRequestId)?api-version=7.0",
+            forProject: project
+        )
+    }
+
     /// List recent commits for a repository (optionally filtered by branch).
     public func getCommits(repositoryId: String, branch: String? = nil, top: Int = 20, project: String? = nil) async throws -> [GitCommitRef] {
         dbg.info("AzDO getCommits(\(repositoryId))", category: "azdo")

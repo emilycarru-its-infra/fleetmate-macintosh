@@ -253,13 +253,14 @@ public struct TicketUpdateRequest: Codable {
                 statusId: Int? = nil,
                 priorityId: Int? = nil,
                 classification: Int? = nil,
+                typeId: Int? = nil,
                 requestorUid: String? = nil,
                 responsibleUid: String? = nil,
                 responsibleGroupId: Int? = nil,
                 serviceId: Int? = nil,
                 formId: Int? = nil,
                 parentId: Int? = nil) {
-        self.typeId = ticket.typeId ?? 0
+        self.typeId = typeId ?? ticket.typeId ?? 0
         self.classification = classification ?? ticket.classification
         self.title = title ?? ticket.title ?? ""
         // Always echo back the original HTML description unless explicitly overridden

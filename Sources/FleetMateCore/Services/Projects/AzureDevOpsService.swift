@@ -421,7 +421,7 @@ public class AzureDevOpsService {
 
     /// Get columns for a specific board (returns them in the correct display order).
     public func getBoardColumns(boardName: String, project: String? = nil) async throws -> [BoardColumnDefinition] {
-        let team = try await getDefaultTeam()
+        let team = try await getDefaultTeam(project: project)
         let encodedTeam = team.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? team
         let encodedBoard = boardName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? boardName
 
@@ -433,15 +433,17 @@ public class AzureDevOpsService {
         return response.value ?? []
     }
 
-    /// Move a work item to a specific board column by updating System.BoardColumn.
-    public func moveWorkItemToBoardColumn(id: Int, column: String) async throws -> WorkItem? {
+    /// Move a work item to a board column by setting System.State to the column's mapped state.
+    /// Board columns are readonly; the correct way to move items is to update the state
+    /// using the column's stateMappings for the given work item type.
+    public func moveWorkItemToBoardColumn(id: Int, targetState: String) async throws -> WorkItem? {
         let ops: [[String: Any]] = [
-            ["op": "add", "path": "/fields/System.BoardColumn", "value": column]
+            ["op": "add", "path": "/fields/System.State", "value": targetState]
         ]
         let body = try JSONSerialization.data(withJSONObject: ops)
         let item: WorkItem = try await self.request(
             "PATCH",
-            path: "/_apis/wit/workitems/\(id)?bypassRules=true&api-version=7.0",
+            path: "/_apis/wit/workitems/\(id)?api-version=7.0",
             body: body,
             contentType: "application/json-patch+json",
             orgLevel: true

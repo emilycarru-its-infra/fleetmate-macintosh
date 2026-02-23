@@ -97,7 +97,7 @@ struct TicketBoardView: View {
     }
     
     var body: some View {
-        ScrollView([.horizontal, .vertical], showsIndicators: true) {
+        ScrollView(.horizontal, showsIndicators: true) {
             HStack(alignment: .top, spacing: 16) {
                 ForEach(columns, id: \.key) { col in
                     BoardColumn(
@@ -139,54 +139,57 @@ struct BoardColumn: View {
     let onSelectTicket: (TdxTicket) -> Void
     
     @State private var isTargeted = false
+
+    private var columnColor: Color { accentColor ?? .secondary }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Column header
             HStack {
+                Circle().fill(columnColor).frame(width: 10, height: 10)
                 Text(label)
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                Spacer()
-                Text("\(tickets.count)")
-                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Text("(\(tickets.count))")
                     .foregroundColor(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.2))
-                    .cornerRadius(10)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background((accentColor ?? .secondary).opacity(0.2))
+            .padding(.vertical, 8)
 
-            // Cards — no ScrollView so drop targets work across the full column
-            VStack(spacing: 8) {
-                ForEach(tickets, id: \.id) { ticket in
-                    TicketCard(ticket: ticket)
-                        .draggable(TicketDragData(ticketId: ticket.id ?? 0, fromColumnKey: columnKey))
-                        .onTapGesture {
-                            onSelectTicket(ticket)
-                        }
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    ForEach(tickets, id: \.id) { ticket in
+                        TicketCard(ticket: ticket)
+                            .draggable("\(ticket.id ?? 0)_\(columnKey)")
+                            .onTapGesture {
+                                onSelectTicket(ticket)
+                            }
+                    }
+                    // Empty column drop zone
+                    if tickets.isEmpty {
+                        Text("Drop items here")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 60)
+                    }
                 }
-                Spacer(minLength: 40)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 8)
             }
-            .padding(8)
         }
         .frame(width: 280)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(isTargeted ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(isTargeted ? columnColor.opacity(0.15) : Color.secondary.opacity(0.08))
+        .cornerRadius(12)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(isTargeted ? Color.accentColor : Color.secondary.opacity(0.2), lineWidth: isTargeted ? 3 : 1)
+                .stroke(isTargeted ? columnColor : Color.clear, lineWidth: 2)
         )
-        .contentShape(Rectangle())
-        .dropDestination(for: TicketDragData.self) { items, _ in
-            for item in items {
-                if item.fromColumnKey != columnKey {
-                    onDropTicket(item.ticketId)
-                }
+        .dropDestination(for: String.self) { items, _ in
+            guard let payload = items.first else { return false }
+            let parts = payload.split(separator: "_", maxSplits: 1)
+            guard let ticketId = Int(parts.first ?? "") else { return false }
+            let fromColumn = parts.count > 1 ? String(parts[1]) : ""
+            if fromColumn != columnKey {
+                onDropTicket(ticketId)
             }
             return true
         } isTargeted: { targeted in

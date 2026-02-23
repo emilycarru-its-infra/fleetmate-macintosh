@@ -96,7 +96,7 @@ struct CreateIssueView: View {
                                         }
                                     }
                                     .labelsHidden()
-                                    .onChange(of: selectedRepo) { _ in
+                                    .onChange(of: selectedRepo) {
                                         // Reload metadata for newly selected repo
                                         Task { await loadMetadata() }
                                     }

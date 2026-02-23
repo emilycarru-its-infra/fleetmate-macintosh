@@ -99,7 +99,7 @@ struct DashboardView: View {
 
     // Adaptive columns -- flow based on available width
     private let adaptiveColumns = [
-        GridItem(.adaptive(minimum: 260, maximum: 480), spacing: 12)
+        GridItem(.adaptive(minimum: 300, maximum: 520), spacing: 14)
     ]
 
     var body: some View {
@@ -296,14 +296,14 @@ struct DashboardView: View {
     // MARK: - Chart Grid (flowing, Assets by Category first)
 
     private var chartGrid: some View {
-        LazyVGrid(columns: adaptiveColumns, spacing: 12) {
+        LazyVGrid(columns: adaptiveColumns, spacing: 16) {
             // Assets by Category first
             if appState.config.isSnipeConfigured {
                 chartCard("Assets by Category", tab: "Inventory", isLoading: isLoadingInventory) {
                     if assetCategoryBars.isEmpty && !isLoadingInventory {
                         emptyState("No asset data")
                     } else {
-                        barChart(assetCategoryBars, height: 160)
+                        barChart(assetCategoryBars, height: 180)
                     }
                 }
             }
@@ -313,7 +313,7 @@ struct DashboardView: View {
                     if osSlices.isEmpty && !isLoadingFleet {
                         emptyState("No device data")
                     } else {
-                        TreemapChart(slices: osSlices, height: 160)
+                        TreemapChart(slices: osSlices, height: 180)
                     }
                 }
             }
@@ -324,7 +324,7 @@ struct DashboardView: View {
                         emptyState("No ticket data")
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
-                            donutChart(ticketStatusSlices, size: 160)
+                            donutChart(ticketStatusSlices, size: 180)
                             if slaViolatedCount > 0 {
                                 Text("\(slaViolatedCount) SLA violated")
                                     .font(.caption2).foregroundStyle(.red)
@@ -336,7 +336,7 @@ struct DashboardView: View {
                     if ticketPriorityBars.isEmpty && !isLoadingTickets {
                         emptyState("No ticket data")
                     } else {
-                        barChart(ticketPriorityBars, height: 160)
+                        barChart(ticketPriorityBars, height: 120)
                     }
                 }
             }
@@ -347,7 +347,7 @@ struct DashboardView: View {
                         emptyState("No work item data")
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
-                            donutChart(workItemSlices, size: 160)
+                            donutChart(workItemSlices, size: 180)
                             if !sprintInfo.isEmpty {
                                 Text(sprintInfo).font(.caption2).foregroundStyle(.secondary)
                             }
@@ -366,7 +366,7 @@ struct DashboardView: View {
                         if errorCategoryBars.isEmpty && !isLoadingReportMate {
                             emptyState("No errors found")
                         } else {
-                            barChart(errorCategoryBars, height: 140)
+                            barChart(errorCategoryBars, height: 180)
                         }
                     }
                 }
@@ -377,7 +377,7 @@ struct DashboardView: View {
                     if complianceSlices.isEmpty && !isLoadingFleet {
                         emptyState("No device data")
                     } else {
-                        donutChart(complianceSlices, size: 160)
+                        donutChart(complianceSlices, size: 180)
                     }
                 }
             }
@@ -388,7 +388,7 @@ struct DashboardView: View {
                         emptyState("No asset data")
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
-                            donutChart(assetStatusSlices, size: 160)
+                            donutChart(assetStatusSlices, size: 180)
                             Text("\(deployedCount) deployed - \(unassignedCount) unassigned")
                                 .font(.caption2).foregroundStyle(.secondary)
                         }
@@ -454,8 +454,8 @@ struct DashboardView: View {
                                             .foregroundStyle(.tertiary)
                                             .frame(width: 50, alignment: .trailing)
                                     }
-                                    .padding(.vertical, 5)
-                                    .padding(.horizontal, 2)
+                                    .padding(.vertical, 7)
+                                    .padding(.horizontal, 4)
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
@@ -507,7 +507,7 @@ struct DashboardView: View {
 
     private func chartCard<Content: View>(_ title: String, tab: String, isLoading: Bool, @ViewBuilder content: () -> Content) -> some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Button(action: { navigate(to: tab) }) {
                         HStack(spacing: 4) {
@@ -521,7 +521,7 @@ struct DashboardView: View {
                 }
                 content()
             }
-            .padding(2)
+            .padding(4)
         }
     }
 
@@ -548,29 +548,24 @@ struct DashboardView: View {
 
     private func barChart(_ bars: [ChartBar], height: CGFloat) -> some View {
         Chart(bars) { bar in
-            BarMark(x: .value("Label", bar.label), y: .value("Count", bar.value))
-                .foregroundStyle(by: .value("Category", bar.label))
-                .annotation(position: .top) {
-                    if bar.value > 0 {
-                        Text("\(bar.value)").font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-        }
-        .chartForegroundStyleScale(domain: bars.map(\.label), range: bars.map(\.color))
-        .chartLegend(.hidden)
-        .chartXAxis {
-            AxisMarks { value in
-                AxisValueLabel {
-                    if let text = value.as(String.self) {
-                        Text(text)
-                            .font(.caption2)
-                            .rotationEffect(.degrees(-40))
-                            .fixedSize()
-                    }
+            BarMark(
+                x: .value("Count", bar.value),
+                y: .value("Label", bar.label)
+            )
+            .foregroundStyle(by: .value("Category", bar.label))
+            .annotation(position: .trailing, alignment: .leading) {
+                if bar.value > 0 {
+                    Text("\(bar.value)").font(.caption2).foregroundStyle(.secondary)
                 }
             }
         }
-        .frame(height: height)
+        .chartForegroundStyleScale(domain: bars.map(\.label), range: bars.map(\.color))
+        .chartLegend(.hidden)
+        .chartXAxis(.hidden)
+        .chartYAxis {
+            AxisMarks { _ in AxisValueLabel().font(.caption2) }
+        }
+        .frame(height: max(height, CGFloat(bars.count) * 28))
     }
 
     private func emptyState(_ msg: String) -> some View {

@@ -391,6 +391,33 @@ public class TdxService {
         }
     }
 
+    /// Reply to an existing feed entry (threaded comment)
+    public func replyToFeedEntry(ticketId: Int, feedEntryId: Int, comment: String, isPrivate: Bool = false, notify: [String]? = nil) async throws -> Bool {
+        guard let headers = await headers() else { return false }
+
+        let request = CreateFeedEntryRequest(
+            comments: comment,
+            isPrivate: isPrivate,
+            notify: notify
+        )
+
+        let url = config.tdxTicketsUrl("\(ticketId)/feed/\(feedEntryId)")
+        dbg.debug("TDX replyToFeedEntry → POST \(url)", category: "tdx")
+
+        return try await withCheckedThrowingContinuation { continuation in
+            session.request(url, method: .post, parameters: request, encoder: JSONParameterEncoder.default, headers: headers)
+                .validate()
+                .response { response in
+                    switch response.result {
+                    case .success:
+                        continuation.resume(returning: true)
+                    case .failure:
+                        continuation.resume(returning: false)
+                    }
+                }
+        }
+    }
+
     // MARK: - People Search
 
     /// Search for people in TDX by name or email

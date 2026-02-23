@@ -129,6 +129,8 @@ public struct TicketSearchRequest: Codable {
     public var responsibleGroupIds: [Int]?
     public var requestorUids: [String]?
     public var isOnHold: Bool?
+    public var createdDateFrom: String?
+    public var createdDateTo: String?
     public var maxResults: Int = 50
 
     public init(
@@ -140,6 +142,8 @@ public struct TicketSearchRequest: Codable {
         responsibleGroupIds: [Int]? = nil,
         requestorUids: [String]? = nil,
         isOnHold: Bool? = nil,
+        createdDateFrom: String? = nil,
+        createdDateTo: String? = nil,
         maxResults: Int = 50
     ) {
         self.searchText = searchText
@@ -150,6 +154,8 @@ public struct TicketSearchRequest: Codable {
         self.responsibleGroupIds = responsibleGroupIds
         self.requestorUids = requestorUids
         self.isOnHold = isOnHold
+        self.createdDateFrom = createdDateFrom
+        self.createdDateTo = createdDateTo
         self.maxResults = maxResults
     }
 
@@ -162,6 +168,8 @@ public struct TicketSearchRequest: Codable {
         case responsibleGroupIds = "ResponsibleGroupIDs"
         case requestorUids = "RequestorUids"
         case isOnHold = "IsOnHold"
+        case createdDateFrom = "CreatedDateFrom"
+        case createdDateTo = "CreatedDateTo"
         case maxResults = "MaxResults"
     }
 }
@@ -366,5 +374,17 @@ public struct TdxPriorityItem: Codable {
         case id = "ID"
         case name = "Name"
         case order = "Order"
+    }
+}
+
+public struct TdxFormItem: Codable {
+    public let id: Int
+    public let name: String?
+    public let active: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "ID"
+        case name = "Name"
+        case active = "Active"
     }
 }

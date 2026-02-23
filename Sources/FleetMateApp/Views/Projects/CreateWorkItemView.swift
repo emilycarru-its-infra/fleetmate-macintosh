@@ -2,14 +2,18 @@ import SwiftUI
 import FleetMateCore
 
 /// Sheet for creating a new Azure DevOps work item.
+/// Board selection is first — valid work item types are derived from the board's column state mappings.
 struct CreateWorkItemView: View {
     let service: AzureDevOpsService
+    var boards: [Board] = []
+    var boardColumnDefs: [BoardColumnDefinition] = []
+    var preselectedBoard: String? = nil
     let onCreated: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     @State private var title = ""
     @State private var description = ""
-    @State private var workItemType = "Bug"
+    @State private var workItemType = ""
     @State private var assignedTo = ""
     @State private var priority = 2
     @State private var tags = ""
@@ -18,12 +22,19 @@ struct CreateWorkItemView: View {
     @State private var isCreating = false
     @State private var errorMessage: String?
 
+    // Board selection
+    @State private var selectedBoard: String? = nil
+    @State private var localBoards: [Board] = []
+    @State private var localColumnDefs: [BoardColumnDefinition] = []
+    @State private var isLoadingBoards = false
+    @State private var allowedTypes: [String] = []
+
     // Picker data
     @State private var teamMembers: [IdentityRef] = []
     @State private var areaPaths: [String] = []
     @State private var iterationPaths: [String] = []
 
-    private let workItemTypes = ["Bug", "Task", "User Story", "Feature", "Epic", "Issue"]
+    private static let fallbackTypes = ["Bug", "Task", "User Story", "Feature", "Epic", "Issue"]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,10 +51,39 @@ struct CreateWorkItemView: View {
             Divider()
 
             Form {
+                // Board selection — first
+                if isLoadingBoards {
+                    HStack {
+                        Text("Loading boards…")
+                            .foregroundColor(.secondary)
+                        ProgressView().controlSize(.small)
+                    }
+                } else if !localBoards.isEmpty {
+                    Picker("Board", selection: $selectedBoard) {
+                        Text("Select board…").tag(nil as String?)
+                        ForEach(localBoards) { board in
+                            Text(board.name ?? "Unknown").tag(board.name as String?)
+                        }
+                    }
+                    .onChange(of: selectedBoard) { _, newBoard in
+                        loadBoardTypes(boardName: newBoard)
+                    }
+                }
+
+                // Title
                 TextField("Title", text: $title)
 
-                Picker("Type", selection: $workItemType) {
-                    ForEach(workItemTypes, id: \.self) { Text($0) }
+                // Type — derived from board
+                if !allowedTypes.isEmpty {
+                    Picker("Type", selection: $workItemType) {
+                        ForEach(allowedTypes, id: \.self) { Text($0) }
+                    }
+                } else if selectedBoard != nil {
+                    HStack {
+                        Text("Type")
+                        Spacer()
+                        ProgressView().controlSize(.small)
+                    }
                 }
 
                 Picker("Priority", selection: $priority) {
@@ -106,16 +146,47 @@ struct CreateWorkItemView: View {
                 Spacer()
                 Button("Create") { createItem() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty || isCreating)
+                    .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty || workItemType.isEmpty || isCreating)
                     .keyboardShortcut(.return, modifiers: .command)
             }
             .padding()
         }
-        .frame(width: 500, height: 560)
+        .frame(width: 500, height: 620)
         .task { loadPickerData() }
     }
 
     private func loadPickerData() {
+        // Use passed-in boards or load fresh
+        if !boards.isEmpty {
+            localBoards = boards
+            if let pre = preselectedBoard {
+                selectedBoard = pre
+                // Use passed-in column defs if they match the preselected board
+                if !boardColumnDefs.isEmpty {
+                    extractTypesFromColumns(boardColumnDefs)
+                } else {
+                    loadBoardTypes(boardName: pre)
+                }
+            }
+        } else {
+            isLoadingBoards = true
+            Task {
+                defer { isLoadingBoards = false }
+                do {
+                    localBoards = try await service.getBoards()
+                    if let first = localBoards.first?.name {
+                        selectedBoard = first
+                        loadBoardTypes(boardName: first)
+                    }
+                } catch {
+                    // Fallback: show all types without board selection
+                    allowedTypes = Self.fallbackTypes
+                    if workItemType.isEmpty { workItemType = allowedTypes.first ?? "Bug" }
+                    dbg.debug("Create WI: boards load failed: \(error)", category: "azdo")
+                }
+            }
+        }
+
         Task {
             do { teamMembers = try await service.getTeamMembers() } catch {
                 dbg.debug("Create WI: team members load failed: \(error)", category: "azdo")
@@ -130,6 +201,42 @@ struct CreateWorkItemView: View {
             do { iterationPaths = try await service.getIterationPaths() } catch {
                 dbg.debug("Create WI: iteration paths load failed: \(error)", category: "azdo")
             }
+        }
+    }
+
+    private func loadBoardTypes(boardName: String?) {
+        guard let boardName = boardName else {
+            allowedTypes = []
+            workItemType = ""
+            return
+        }
+        Task {
+            do {
+                let columns = try await service.getBoardColumns(boardName: boardName)
+                localColumnDefs = columns
+                extractTypesFromColumns(columns)
+            } catch {
+                // Fallback to all types
+                allowedTypes = Self.fallbackTypes
+                if workItemType.isEmpty { workItemType = allowedTypes.first ?? "Bug" }
+                dbg.debug("Create WI: columns load failed for board '\(boardName)': \(error)", category: "azdo")
+            }
+        }
+    }
+
+    /// Extract unique work item types from column state mappings.
+    private func extractTypesFromColumns(_ columns: [BoardColumnDefinition]) {
+        var types = Set<String>()
+        for col in columns {
+            if let mappings = col.stateMappings {
+                types.formUnion(mappings.keys)
+            }
+        }
+        let sorted = types.sorted()
+        allowedTypes = sorted.isEmpty ? Self.fallbackTypes : sorted
+        // Auto-select first type or keep current if still valid
+        if !allowedTypes.contains(workItemType) {
+            workItemType = allowedTypes.first ?? "Bug"
         }
     }
 

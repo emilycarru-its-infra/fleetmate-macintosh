@@ -384,35 +384,37 @@ public class AzureDevOpsService {
         return sprints.first { $0.isCurrent }
     }
 
-    private func getDefaultTeam() async throws -> String {
-        if let cached = defaultTeamCache { return cached }
+    private func getDefaultTeam(project forProject: String? = nil) async throws -> String {
+        let proj = forProject ?? project
+        if let cached = defaultTeamCache, forProject == nil { return cached }
 
         struct TeamsResponse: Decodable { let value: [TeamInfo]? }
         struct TeamInfo: Decodable { let name: String; let id: String }
 
         let response: TeamsResponse = try await request(
             "GET",
-            path: "/_apis/projects/\(project)/teams?api-version=7.0",
+            path: "/_apis/projects/\(proj)/teams?api-version=7.0",
             orgLevel: true
         )
 
         let teams = response.value ?? []
-        let defaultTeam = teams.first { $0.name == "\(project) Team" } ?? teams.first
-        let name = defaultTeam?.name ?? project
-        defaultTeamCache = name
-        dbg.debug("AzDO default team: \(name)", category: "azdo")
+        let defaultTeam = teams.first { $0.name == "\(proj) Team" } ?? teams.first
+        let name = defaultTeam?.name ?? proj
+        if forProject == nil { defaultTeamCache = name }
+        dbg.debug("AzDO default team for '\(proj)': \(name)", category: "azdo")
         return name
     }
 
     // MARK: - Boards
 
-    public func getBoards() async throws -> [Board] {
-        let team = try await getDefaultTeam()
+    public func getBoards(project: String? = nil) async throws -> [Board] {
+        let team = try await getDefaultTeam(project: project)
         let encodedTeam = team.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? team
 
         let response: BoardsResponse = try await request(
             "GET",
-            path: "/\(encodedTeam)/_apis/work/boards?api-version=7.0"
+            path: "/\(encodedTeam)/_apis/work/boards?api-version=7.0",
+            forProject: project
         )
         return response.value ?? []
     }
@@ -601,6 +603,33 @@ public class AzureDevOpsService {
             forProject: project
         )
         return comment
+    }
+
+    /// Update an existing comment on a work item.
+    @discardableResult
+    public func updateComment(workItemId: Int, commentId: Int, text: String, project: String? = nil) async throws -> WorkItemComment {
+        dbg.info("AzDO updateComment(\(workItemId), comment=\(commentId))", category: "azdo")
+        let body = try JSONEncoder().encode(["text": text])
+        let comment: WorkItemComment = try await request(
+            "PATCH",
+            path: "/_apis/wit/workitems/\(workItemId)/comments/\(commentId)?api-version=7.1-preview.3",
+            body: body,
+            forProject: project
+        )
+        return comment
+    }
+
+    /// Delete a comment from a work item.
+    public func deleteComment(workItemId: Int, commentId: Int, project: String? = nil) async throws {
+        dbg.info("AzDO deleteComment(\(workItemId), comment=\(commentId))", category: "azdo")
+        let (_, resp) = try await requestRaw(
+            "DELETE",
+            path: "/_apis/wit/workitems/\(workItemId)/comments/\(commentId)?api-version=7.1-preview.3",
+            forProject: project
+        )
+        guard (200...299).contains(resp.statusCode) else {
+            throw AzDevOpsError.httpError(code: resp.statusCode, message: "Delete comment failed")
+        }
     }
 
     /// Toggle a reaction on a work item comment.

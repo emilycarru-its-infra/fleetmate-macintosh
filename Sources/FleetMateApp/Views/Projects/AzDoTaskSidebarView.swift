@@ -9,6 +9,7 @@ struct AzDoTaskSidebarView: View {
     let service: AzureDevOpsService
     let onClose: () -> Void
     var onSelectWorkItem: ((Int) -> Void)? = nil
+    @EnvironmentObject private var appState: AppState
 
     // Full detail loaded from API
     @State private var workItem: WorkItem?
@@ -71,6 +72,7 @@ struct AzDoTaskSidebarView: View {
     @State private var isLoadingLinkData = false
     @State private var isLinking = false
     @State private var linkError: String?
+    @State private var linkSearchText = ""
 
     private enum CodeLinkTab: String, CaseIterable {
         case branch = "Branch"
@@ -121,7 +123,7 @@ struct AzDoTaskSidebarView: View {
                         descriptionSection
                         Divider().padding(.vertical, 10)
                         codeLinkSection
-                        if let relations = workItem?.relations, !relations.isEmpty {
+                        if let relations = workItem?.relations, relations.contains(where: { $0.relationType != .artifact }) {
                             Divider().padding(.vertical, 10)
                             relationsSection(relations)
                         }
@@ -501,20 +503,6 @@ struct AzDoTaskSidebarView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-
-        // Board Column (full-width, read-only)
-        if let column = fields?.boardColumn {
-            HStack(spacing: 6) {
-                Text("Board Column").font(.subheadline).fontWeight(.medium).foregroundColor(.secondary)
-                Text(column).font(.body)
-                if fields?.boardColumnDone == true {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                        .font(.subheadline)
-                }
-            }
-            .padding(.top, 8)
-        }
     }
 
     @ViewBuilder
@@ -570,23 +558,22 @@ struct AzDoTaskSidebarView: View {
     @ViewBuilder
     private var addCommentSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Add Comment")
-                    .font(.headline)
-                Spacer()
-                Button(action: submitComment) {
-                    Label("Comment", systemImage: "paperplane")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingComment)
-                .keyboardShortcut(.return, modifiers: .command)
-            }
+            Text("Add Comment")
+                .font(.headline)
 
             MentionTextEditor(text: $newCommentText, members: teamMembers)
 
-            Text("Supports Markdown · ⌘Enter to post")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            HStack {
+                Text("Supports Markdown · ⌘Enter to post")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button("Send") { submitComment() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingComment)
+                    .keyboardShortcut(.return, modifiers: .command)
+            }
         }
     }
 
@@ -605,8 +592,22 @@ struct AzDoTaskSidebarView: View {
                     .italic()
                     .padding(.vertical, 4)
             } else {
-                ForEach(comments) { comment in
-                    DevOpsCommentBubble(comment: comment, service: service, workItemId: workItem?.id, project: workItemProject)
+                ForEach(Array(comments.enumerated()), id: \.element.id) { index, comment in
+                    DevOpsCommentBubble(
+                        comment: comment,
+                        service: service,
+                        workItemId: workItem?.id,
+                        project: workItemProject,
+                        currentUserName: appState.devOpsSsoUserName,
+                        onUpdate: { updatedComment in
+                            if let idx = comments.firstIndex(where: { $0.id == updatedComment.id }) {
+                                comments[idx] = updatedComment
+                            }
+                        },
+                        onDelete: {
+                            comments.removeAll { $0.id == comment.id }
+                        }
+                    )
                 }
             }
         }
@@ -714,12 +715,13 @@ struct AzDoTaskSidebarView: View {
 
     @ViewBuilder
     private func relationsSection(_ relations: [WorkItemRelation]) -> some View {
+        let nonArtifactRelations = relations.filter { $0.relationType != .artifact }
         VStack(alignment: .leading, spacing: 10) {
-            Text("Relations (\(relations.count))")
+            Text("Relations (\(nonArtifactRelations.count))")
                 .font(.headline)
 
-            let grouped = Dictionary(grouping: relations, by: { $0.relationType })
-            let order: [WorkItemRelation.RelationType] = [.parent, .child, .related, .predecessor, .successor, .artifact, .other]
+            let grouped = Dictionary(grouping: nonArtifactRelations, by: { $0.relationType })
+            let order: [WorkItemRelation.RelationType] = [.parent, .child, .related, .predecessor, .successor, .other]
             ForEach(order, id: \.rawValue) { type in
                 if let items = grouped[type], !items.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
@@ -746,7 +748,7 @@ struct AzDoTaskSidebarView: View {
                 .frame(width: 16)
 
             if relation.relationType != .artifact, let id = relation.linkedWorkItemId {
-                // Work item relation — show title, state, and date
+                // Work item relation — show title, state badge, and date
                 Button(action: { onSelectWorkItem?(id) }) {
                     HStack(spacing: 4) {
                         Text("#\(id)")
@@ -759,32 +761,26 @@ struct AzDoTaskSidebarView: View {
                                     .foregroundColor(.accentColor)
                                     .lineLimit(1)
                             }
+                            if let state = info.state {
+                                Text(state)
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(stateColor(state).opacity(0.15))
+                                    .foregroundColor(stateColor(state))
+                                    .clipShape(Capsule())
+                            }
+                            if let dateStr = info.changedDate {
+                                Text(relativeDate(dateStr))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                 }
                 .buttonStyle(.plain)
                 .help("Open in sidebar")
-
-                Spacer()
-
-                // State badge + relative date
-                if let info = linkedWorkItemInfo[id] {
-                    if let state = info.state {
-                        Text(state)
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(stateColor(state).opacity(0.15))
-                            .foregroundColor(stateColor(state))
-                            .clipShape(Capsule())
-                    }
-                    if let dateStr = info.changedDate {
-                        Text(relativeDate(dateStr))
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
             } else if let name = relation.attributes?.name {
                 Text(name)
                     .font(.body)
@@ -887,8 +883,8 @@ struct AzDoTaskSidebarView: View {
     @ViewBuilder
     private func artifactLinkRow(_ relation: WorkItemRelation) -> some View {
         let artifactType = parseArtifactType(relation.url)
+        let linkTypeName = relation.attributes?.name
         let displayName = artifactDisplayNames[relation.url ?? ""]
-            ?? relation.attributes?.name
             ?? artifactLabel(for: relation.url)
         let webUrl = artifactWebUrl(relation.url)
 
@@ -900,7 +896,7 @@ struct AzDoTaskSidebarView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
-                    Text(artifactType)
+                    Text(linkTypeName ?? artifactType)
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundColor(.secondary)
@@ -1021,7 +1017,7 @@ struct AzDoTaskSidebarView: View {
                         Text(repo.name).tag(repo.id)
                     }
                 }
-                .onChange(of: linkSelectedRepoId) { loadLinkDetails() }
+                .onChange(of: linkSelectedRepoId) { linkSearchText = ""; loadLinkDetails() }
 
                 if !linkSelectedRepoId.isEmpty {
                     // Tab picker
@@ -1031,7 +1027,26 @@ struct AzDoTaskSidebarView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .onChange(of: linkTab) { loadLinkDetails() }
+                    .onChange(of: linkTab) { linkSearchText = ""; loadLinkDetails() }
+
+                    // Search field
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.secondary)
+                        TextField("Search \(linkTab.rawValue.lowercased())…", text: $linkSearchText)
+                            .textFieldStyle(.plain)
+                        if !linkSearchText.isEmpty {
+                            Button(action: { linkSearchText = "" }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color.secondary.opacity(0.1))
+                    .cornerRadius(6)
 
                     if isLoadingLinkData {
                         HStack { Spacer(); ProgressView(); Spacer() }
@@ -1053,19 +1068,21 @@ struct AzDoTaskSidebarView: View {
             }
         }
         .padding()
-        .frame(minWidth: 420, maxWidth: 480, minHeight: 600, maxHeight: 800)
+        .frame(minWidth: 500, maxWidth: 500, minHeight: 500, maxHeight: 800)
     }
 
     @ViewBuilder
     private var linkTabContent: some View {
+        let query = linkSearchText.lowercased()
         ScrollView {
             VStack(alignment: .leading, spacing: 4) {
                 switch linkTab {
                 case .branch:
-                    if linkBranches.isEmpty {
-                        Text("No branches found.").font(.body).foregroundColor(.secondary)
+                    let filtered = linkBranches.filter { query.isEmpty || $0.shortName.lowercased().contains(query) }
+                    if filtered.isEmpty {
+                        Text(query.isEmpty ? "No branches found." : "No matching branches.").font(.body).foregroundColor(.secondary)
                     } else {
-                        ForEach(linkBranches) { branch in
+                        ForEach(filtered) { branch in
                             Button(action: { linkBranch(branch) }) {
                                 HStack(spacing: 8) {
                                     Image(systemName: "arrow.triangle.branch")
@@ -1084,10 +1101,17 @@ struct AzDoTaskSidebarView: View {
                         }
                     }
                 case .commit:
-                    if linkCommits.isEmpty {
-                        Text("No commits found.").font(.body).foregroundColor(.secondary)
+                    let filtered = linkCommits.filter { commit in
+                        guard !query.isEmpty else { return true }
+                        let msg = (commit.comment ?? "").lowercased()
+                        let id = commit.shortId.lowercased()
+                        let author = (commit.author?.name ?? "").lowercased()
+                        return msg.contains(query) || id.contains(query) || author.contains(query)
+                    }
+                    if filtered.isEmpty {
+                        Text(query.isEmpty ? "No commits found." : "No matching commits.").font(.body).foregroundColor(.secondary)
                     } else {
-                        ForEach(linkCommits) { commit in
+                        ForEach(filtered) { commit in
                             Button(action: { linkCommit(commit) }) {
                                 HStack(spacing: 8) {
                                     Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
@@ -1119,10 +1143,17 @@ struct AzDoTaskSidebarView: View {
                         }
                     }
                 case .pullRequest:
-                    if linkPullRequests.isEmpty {
-                        Text("No pull requests found.").font(.body).foregroundColor(.secondary)
+                    let filtered = linkPullRequests.filter { pr in
+                        guard !query.isEmpty else { return true }
+                        let title = (pr.title ?? "").lowercased()
+                        let branch = (pr.sourceBranch ?? "").lowercased()
+                        let id = String(pr.pullRequestId)
+                        return title.contains(query) || branch.contains(query) || id.contains(query)
+                    }
+                    if filtered.isEmpty {
+                        Text(query.isEmpty ? "No pull requests found." : "No matching pull requests.").font(.body).foregroundColor(.secondary)
                     } else {
-                        ForEach(linkPullRequests) { pr in
+                        ForEach(filtered) { pr in
                             Button(action: { linkPR(pr) }) {
                                 HStack(spacing: 8) {
                                     Image(systemName: "arrow.triangle.pull")
@@ -1160,7 +1191,6 @@ struct AzDoTaskSidebarView: View {
                 }
             }
         }
-        .frame(maxHeight: 250)
     }
 
     // MARK: - Code Link Actions
@@ -1435,11 +1465,8 @@ struct AzDoTaskSidebarView: View {
 
         for artifact in artifacts {
             guard let url = artifact.url else { continue }
-            // If the API already gave us a name, use it
-            if let name = artifact.attributes?.name, !name.isEmpty {
-                names[url] = name
-                continue
-            }
+            // attributes.name is the link type (e.g. "Fixed in Commit"), not the artifact name
+            // Always fetch the real artifact details
 
             let decoded = url.removingPercentEncoding ?? url
 
@@ -1564,8 +1591,10 @@ struct AzDoTaskSidebarView: View {
 
     private func submitComment() {
         guard let id = workItemId else { return }
-        let text = newCommentText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        let rawText = newCommentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawText.isEmpty else { return }
+        // Convert @mentions to Azure DevOps HTML format
+        let text = convertMentionsToHtml(rawText)
         isAddingComment = true
         actionError = nil
         Task {
@@ -1578,6 +1607,20 @@ struct AzDoTaskSidebarView: View {
                 actionError = error.localizedDescription
             }
         }
+    }
+
+    /// Convert plain-text @DisplayName mentions to the HTML format Azure DevOps expects.
+    private func convertMentionsToHtml(_ text: String) -> String {
+        var result = text
+        for member in teamMembers {
+            guard let displayName = member.displayName else { continue }
+            let email = member.uniqueName ?? ""
+            let plain = "@\(displayName)"
+            guard result.contains(plain) else { continue }
+            let html = "<a href=\"mailto:\(email)\" data-vss-mention=\"version:2.0\">@\(displayName)</a>"
+            result = result.replacingOccurrences(of: plain, with: html)
+        }
+        return result
     }
 
     // MARK: - Helpers
@@ -1618,21 +1661,106 @@ private struct DevOpsCommentBubble: View {
     let service: AzureDevOpsService
     let workItemId: Int?
     let project: String?
+    var currentUserName: String? = nil
+    var onUpdate: ((WorkItemComment) -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
+
     @State private var showReactionPicker = false
+    @State private var isEditing = false
+    @State private var editText = ""
+    @State private var showDeleteConfirm = false
+    @State private var isUpdating = false
+    @State private var linkCopied = false
 
     private let reactionEmojis: [(type: String, emoji: String)] = [
-        ("like", "👍"), ("dislike", "👎"), ("heart", "❤️"), ("hooray", "🎉"), ("confused", "😕")
+        ("like", "👍"), ("dislike", "👎"), ("heart", "❤️"), ("hooray", "🎉"), ("confused", "😕"), ("laugh", "😄")
     ]
+
+    private var isOwnComment: Bool {
+        guard let userName = currentUserName, let author = comment.createdBy?.displayName else { return false }
+        return author.lowercased() == userName.lowercased()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Comment content first
-            let rendered = comment.renderedText
-            let content = (rendered != nil && !rendered!.isEmpty) ? rendered! : (comment.text ?? "")
-            if !content.isEmpty {
-                MarkdownTextView(content: content)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            // Header: author top-left, actions + timestamp top-right
+            HStack(alignment: .top, spacing: 6) {
+                Text(comment.createdBy?.displayName ?? "Unknown")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+
+                Spacer()
+
+                // Copy link
+                if commentPermalink != nil {
+                    Button(action: copyLink) {
+                        Image(systemName: linkCopied ? "checkmark" : "link")
+                            .font(.caption)
+                            .foregroundColor(linkCopied ? .green : .secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy comment link")
+                }
+
+                // Edit / Delete for own comments
+                if isOwnComment {
+                    Button(action: startEditing) {
+                        Image(systemName: "pencil")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Edit comment")
+
+                    Button(action: { showDeleteConfirm = true }) {
+                        Image(systemName: "trash")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Delete comment")
+                    .alert("Delete Comment?", isPresented: $showDeleteConfirm) {
+                        Button("Delete", role: .destructive) { deleteComment() }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("This cannot be undone.")
+                    }
+                }
+
+                if let dateStr = comment.createdDate, let date = parseDate(dateStr) {
+                    Text(date, style: .relative)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
+
+            // Comment content or edit field
+            if isEditing {
+                VStack(alignment: .leading, spacing: 6) {
+                    TextEditor(text: $editText)
+                        .font(.body)
+                        .frame(height: 80)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
+                    HStack {
+                        Button("Cancel") { isEditing = false }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        Spacer()
+                        Button("Save") { saveEdit() }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .disabled(editText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isUpdating)
+                    }
+                }
+            } else {
+                let rendered = comment.renderedText
+                let content = (rendered != nil && !rendered!.isEmpty) ? rendered! : (comment.text ?? "")
+                if !content.isEmpty {
+                    MarkdownTextView(content: content)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
             // Existing reactions + add button
             HStack(spacing: 6) {
                 if let reactions = comment.reactions {
@@ -1653,7 +1781,8 @@ private struct DevOpsCommentBubble: View {
                         .font(.body)
                         .foregroundColor(.secondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 .help("Add reaction")
                 .popover(isPresented: $showReactionPicker) {
                     HStack(spacing: 10) {
@@ -1669,24 +1798,56 @@ private struct DevOpsCommentBubble: View {
                     .padding(10)
                 }
                 Spacer()
-                // Author + time on the right
-                if let dateStr = comment.createdDate, let date = parseDate(dateStr) {
-                    Text(date, style: .relative)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                Text(comment.createdBy?.displayName ?? "Unknown")
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundColor(.secondary)
-                Image(systemName: "person.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundColor(.secondary)
             }
         }
         .padding(12)
         .background(Color.secondary.opacity(0.06))
         .cornerRadius(8)
+    }
+
+    private func copyLink() {
+        guard let url = commentPermalink else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+        linkCopied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { linkCopied = false }
+    }
+
+    private func startEditing() {
+        editText = comment.text ?? ""
+        isEditing = true
+    }
+
+    private func saveEdit() {
+        guard let wiId = workItemId else { return }
+        let trimmed = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        isUpdating = true
+        Task {
+            defer { isUpdating = false }
+            do {
+                let updated = try await service.updateComment(
+                    workItemId: wiId, commentId: comment.id,
+                    text: trimmed, project: project
+                )
+                isEditing = false
+                onUpdate?(updated)
+            } catch {
+                // Stay in editing mode on failure
+            }
+        }
+    }
+
+    private func deleteComment() {
+        guard let wiId = workItemId else { return }
+        Task {
+            do {
+                try await service.deleteComment(workItemId: wiId, commentId: comment.id, project: project)
+                onDelete?()
+            } catch {
+                // Silently fail
+            }
+        }
     }
 
     private func addReaction(type: String) {
@@ -1697,6 +1858,13 @@ private struct DevOpsCommentBubble: View {
                 reactionType: type, add: true, project: project
             )
         }
+    }
+
+    private var commentPermalink: URL? {
+        guard let wiId = workItemId, let proj = project else { return nil }
+        let base = service.baseUrl
+        let encodedProj = proj.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? proj
+        return URL(string: "\(base)/\(encodedProj)/_workitems/edit/\(wiId)#\(comment.id)")
     }
 
     private func parseDate(_ string: String) -> Date? {

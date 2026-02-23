@@ -185,6 +185,7 @@ struct TicketsView: View {
     @State private var isSearchingResponsible = false
     @State private var showResponsibleResults = false
     @State private var isReassigning = false
+    @State private var notifyNewResponsible = true
     // Actions menu
     @State private var showActionsMenu = false
     @State private var showSetParentSheet = false
@@ -484,15 +485,47 @@ struct TicketsView: View {
         // System entries are never comments
         if entry.createdFullName == "System" { return false }
         guard let body = entry.body, !body.isEmpty else { return false }
-        // If it matches known system activity patterns, it's not a comment
-        if isSystemActivity(body) { return false }
-        // TDX itemType: 0 or nil = update/comment, but some system updates also use 0
-        // Additional heuristic: if the body is very short and looks like a field summary, skip it
         let stripped = body.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        // Skip entries that look like "FieldName : OldValue → NewValue" patterns
-        if stripped.contains(" : ") && stripped.contains(" → ") { return false }
-        if stripped.contains(" changed from ") && stripped.contains(" to ") { return false }
+        guard !stripped.isEmpty else { return false }
+
+        // If there are replies, this is a comment thread
+        if let replies = entry.replies, !replies.isEmpty { return true }
+
+        // Check if the body contains ONLY system-generated content.
+        // Some entries have a comment AND a status change — those should be included.
+        // Split by newlines and check if every line is a system pattern.
+        let lines = stripped.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let allLinesAreSystem = lines.allSatisfy { line in
+            let lower = line.lowercased()
+            // Field change pattern: "FieldName : OldValue → NewValue"
+            if line.contains(" : ") && line.contains(" → ") { return true }
+            if lower.contains(" changed from ") && lower.contains(" to ") { return true }
+            // Status change patterns
+            let statusPhrases = ["changed status", "changed the status", "moved from", "status changed"]
+            if statusPhrases.contains(where: { lower.contains($0) }) { return true }
+            // Field edit patterns
+            let editPhrases = [
+                "edited this", "updated this", "changed the", "modified this",
+                "reassigned this", "set the", "cleared the", "removed the",
+                "added a task", "completed a task", "created this",
+                "attached", "unattached", "merged", "associated",
+                "escalated", "de-escalated",
+                "changed priority", "changed responsible", "changed group",
+                "changed type", "changed classification", "changed form",
+                "changed service", "was modified", "was updated",
+                "was reassigned", "was created", "was attached",
+                "moved to group", "assigned to", "unassigned from"
+            ]
+            if editPhrases.contains(where: { lower.contains($0) }) { return true }
+            return false
+        }
+
+        // If all lines are system-generated, it's not a comment
+        if allLinesAreSystem { return false }
+
         return true
     }
 
@@ -701,7 +734,18 @@ struct TicketsView: View {
                         .font(.caption)
                 }
                 .buttonStyle(.bordered)
-                .tint(isTermPreset ? .accentColor : nil)
+                .tint(isDefaultDatePreset ? .accentColor : nil)
+                .controlSize(.small)
+
+                // Last Term button
+                Button(action: {
+                    setLastTerm()
+                }) {
+                    Text("Last Term")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .tint(isLastTermPreset ? .accentColor : nil)
                 .controlSize(.small)
 
                 // Academic term picker
@@ -1131,39 +1175,19 @@ struct TicketsView: View {
                         .help("Saved")
                 }
 
-                // Edit description button
-                Button(action: {
-                    if isEditingDescription {
-                        saveDescriptionOnly(ticket: ticket)
-                    } else {
-                        isEditingDescription = true
-                        descriptionFocused = true
-                    }
-                }) {
-                    Label(isEditingDescription ? "Done" : "Edit", systemImage: isEditingDescription ? "checkmark.circle" : "pencil")
+                Button(action: { showSetParentSheet = true }) {
+                    Label("Set Parent", systemImage: "arrow.up.doc")
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.regular)
-                .disabled(isSavingDescription)
-                .help(isEditingDescription ? "Save description" : "Edit description")
+                .controlSize(.small)
+                .help("Set parent ticket")
 
-                // Actions menu
-                Menu {
-                    Button(action: { showSetParentSheet = true }) {
-                        Label("Set Parent Ticket", systemImage: "arrow.up.doc")
-                    }
-                    Button(action: { createParentTicket(for: ticket) }) {
-                        Label("Create Parent", systemImage: "plus.rectangle.on.rectangle")
-                    }
-                    Button(action: { /* TODO: merge into */ }) {
-                        Label("Merge Into...", systemImage: "arrow.triangle.merge")
-                    }
-                } label: {
-                    Label("Actions", systemImage: "chevron.down")
+                Button(action: { createParentTicket(for: ticket) }) {
+                    Label("Create Parent", systemImage: "plus.rectangle.on.rectangle")
                 }
-                .menuStyle(.borderedButton)
-                .controlSize(.regular)
-                .help("Ticket actions")
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Create parent ticket")
 
                 Button(action: {
                     loadTicketDetail(ticketId: ticket.id ?? 0)
@@ -1172,7 +1196,7 @@ struct TicketsView: View {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.regular)
+                .controlSize(.small)
                 .help("Refresh ticket")
             }
 
@@ -1182,6 +1206,8 @@ struct TicketsView: View {
                 .fontWeight(.semibold)
                 .textFieldStyle(.plain)
                 .onChange(of: editTitle) { _, _ in trackEdits(ticket: ticket) }
+
+            Divider()
 
             if let errMsg = saveErrorMessage {
                 HStack(spacing: 6) {
@@ -1217,7 +1243,7 @@ struct TicketsView: View {
                         }
                     }
                     .labelsHidden()
-                    .frame(width: 140)
+                    .fixedSize()
                 }
 
                 // Priority
@@ -1234,7 +1260,7 @@ struct TicketsView: View {
                         }
                     }
                     .labelsHidden()
-                    .frame(width: 120)
+                    .fixedSize()
                 }
 
                 // Classification
@@ -1256,7 +1282,7 @@ struct TicketsView: View {
                         }
                     }
                     .labelsHidden()
-                    .frame(width: 140)
+                    .fixedSize()
                 }
 
                 // Form
@@ -1278,7 +1304,7 @@ struct TicketsView: View {
                         }
                     }
                     .labelsHidden()
-                    .frame(width: 120)
+                    .fixedSize()
                 }
             }
         }
@@ -1296,10 +1322,6 @@ struct TicketsView: View {
                     // Responsible + ... menu
                     fieldRow(label: "Responsible") {
                         HStack(spacing: 4) {
-                            Text(editResponsibleName.isEmpty ? "-" : editResponsibleName)
-                                .font(.body)
-                                .lineLimit(1)
-                            Spacer()
                             Menu {
                                 if let myName = appState.tdxAuthenticatedUserName,
                                    let myUid = appState.tdxService.authenticatedUserId {
@@ -1329,31 +1351,37 @@ struct TicketsView: View {
                                 }
                             } label: {
                                 Image(systemName: "ellipsis")
-                                    .font(.body)
-                                    .foregroundColor(.accentColor)
-                                    .frame(width: 24, height: 24)
-                                    .contentShape(Rectangle())
+                                    .font(.caption)
                             }
                             .menuStyle(.borderedButton)
                             .controlSize(.small)
+                            Text(editResponsibleName.isEmpty ? "-" : editResponsibleName)
+                                .font(.body)
+                                .lineLimit(1)
+                            Spacer()
                         }
                     }
                     // Search field — only shown when reassigning
                     if isReassigning {
-                        personSearchField(
-                            searchText: $responsibleSearchText,
-                            searchResults: $responsibleSearchResults,
-                            isSearching: $isSearchingResponsible,
-                            showResults: $showResponsibleResults,
-                            onSelect: { person in
-                                editResponsibleUid = person.uid
-                                editResponsibleName = person.fullName ?? ""
-                                responsibleSearchText = ""
-                                showResponsibleResults = false
-                                isReassigning = false
-                                trackEdits(ticket: ticket)
-                            }
-                        )
+                        VStack(alignment: .leading, spacing: 4) {
+                            personSearchField(
+                                searchText: $responsibleSearchText,
+                                searchResults: $responsibleSearchResults,
+                                isSearching: $isSearchingResponsible,
+                                showResults: $showResponsibleResults,
+                                onSelect: { person in
+                                    editResponsibleUid = person.uid
+                                    editResponsibleName = person.fullName ?? ""
+                                    responsibleSearchText = ""
+                                    showResponsibleResults = false
+                                    isReassigning = false
+                                    trackEdits(ticket: ticket)
+                                }
+                            )
+                            Toggle("Notify new responsible", isOn: $notifyNewResponsible)
+                                .toggleStyle(.checkbox)
+                                .font(.caption)
+                        }
                         .padding(.leading, 104)
                     }
 
@@ -1422,10 +1450,6 @@ struct TicketsView: View {
                     // Requestor — with inline search on demand
                     fieldRow(label: "Requestor") {
                         HStack(spacing: 4) {
-                            Text(editRequestorName.isEmpty ? "-" : editRequestorName)
-                                .font(.body)
-                                .lineLimit(1)
-                            Spacer()
                             Button(action: {
                                 isChangingRequestor.toggle()
                                 if isChangingRequestor {
@@ -1438,6 +1462,10 @@ struct TicketsView: View {
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
+                            Text(editRequestorName.isEmpty ? "-" : editRequestorName)
+                                .font(.body)
+                                .lineLimit(1)
+                            Spacer()
                         }
                     }
                     if isChangingRequestor {
@@ -1590,6 +1618,36 @@ struct TicketsView: View {
                 if isSavingDescription {
                     ProgressView().controlSize(.small)
                 }
+                Button(action: {
+                    if isEditingDescription {
+                        saveDescriptionOnly(ticket: ticket)
+                    } else {
+                        isEditingDescription = true
+                        descriptionFocused = true
+                    }
+                }) {
+                    Image(systemName: isEditingDescription ? "checkmark.circle" : "pencil")
+                        .font(.caption)
+                        .foregroundColor(.accentColor)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isSavingDescription)
+                .help(isEditingDescription ? "Save description" : "Edit description")
+
+                if !isEditingDescription {
+                    Button(action: {
+                        let text = editDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(text.isEmpty ? "" : text, forType: .string)
+                    }) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy description")
+                }
             }
             if isEditingDescription {
                 TextEditor(text: $editDescription)
@@ -1638,6 +1696,22 @@ struct TicketsView: View {
                         .stroke(Color.gray.opacity(0.3), lineWidth: 1)
                 )
 
+            HStack {
+                Toggle("Private", isOn: $isCommentPrivate)
+                    .toggleStyle(.checkbox)
+                    .font(.body)
+                Spacer()
+                Button("Post Comment") {
+                    Task {
+                        isAddingComment = true
+                        await addComment(ticket: ticket)
+                        newComment = ""
+                        isAddingComment = false
+                    }
+                }
+                .disabled(newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingComment)
+            }
+
             // Notify options
             VStack(alignment: .leading, spacing: 4) {
                 Text("Notify:")
@@ -1659,22 +1733,6 @@ struct TicketsView: View {
                         .toggleStyle(.checkbox)
                         .font(.body)
                 }
-            }
-
-            HStack {
-                Toggle("Private", isOn: $isCommentPrivate)
-                    .toggleStyle(.checkbox)
-                    .font(.body)
-                Spacer()
-                Button("Post Comment") {
-                    Task {
-                        isAddingComment = true
-                        await addComment(ticket: ticket)
-                        newComment = ""
-                        isAddingComment = false
-                    }
-                }
-                .disabled(newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingComment)
             }
         }
     }
@@ -1734,6 +1792,26 @@ struct TicketsView: View {
         return false
     }
 
+    private var isLastTermPreset: Bool {
+        if case .term(let t, let y) = datePreset {
+            let cal = Calendar.current
+            let now = Date()
+            let month = cal.component(.month, from: now)
+            let year = cal.component(.year, from: now)
+            let lastTerm: AcademicTerm
+            let lastYear: Int
+            if month >= 1 && month <= 4 {
+                lastTerm = .fall; lastYear = year - 1
+            } else if month >= 5 && month <= 8 {
+                lastTerm = .spring; lastYear = year
+            } else {
+                lastTerm = .summer; lastYear = year
+            }
+            return t == lastTerm && y == lastYear
+        }
+        return false
+    }
+
     private var isDefaultDatePreset: Bool {
         if case .term(let t, let y) = datePreset {
             let cal = Calendar.current
@@ -1758,6 +1836,28 @@ struct TicketsView: View {
         else if month >= 5 && month <= 8 { termSeason = .summer }
         else { termSeason = .fall }
         termYear = year
+        datePreset = .term(termSeason, termYear)
+        loadTickets()
+    }
+
+    private func setLastTerm() {
+        let cal = Calendar.current
+        let now = Date()
+        let month = cal.component(.month, from: now)
+        let year = cal.component(.year, from: now)
+        if month >= 1 && month <= 4 {
+            // Current is Spring → last term is Fall of previous year
+            termSeason = .fall
+            termYear = year - 1
+        } else if month >= 5 && month <= 8 {
+            // Current is Summer → last term is Spring same year
+            termSeason = .spring
+            termYear = year
+        } else {
+            // Current is Fall → last term is Summer same year
+            termSeason = .summer
+            termYear = year
+        }
         datePreset = .term(termSeason, termYear)
         loadTickets()
     }
@@ -1847,6 +1947,7 @@ struct TicketsView: View {
         responsibleSearchResults = []
         showResponsibleResults = false
         isReassigning = false
+        notifyNewResponsible = true
         isChangingRequestor = false
         hasEdits = false
         isEditingDescription = false
@@ -1890,9 +1991,12 @@ struct TicketsView: View {
                     .map { "<p>\($0)</p>" }
                     .joined()
 
-                let updateRequest = TicketUpdateRequest(from: ticket, description: htmlDesc)
+                let changes: [String: Any] = [
+                    "Description": htmlDesc,
+                    "IsRichHtml": true
+                ]
 
-                if let updated = try await appState.tdxService.updateTicket(id: ticketId, request: updateRequest) {
+                if let updated = try await appState.tdxService.updateTicket(id: ticketId, updates: changes) {
                     detailedTicket = updated
                     editDescription = Self.decodeHtml(updated.description ?? "")
                     isEditingDescription = false
@@ -1913,28 +2017,53 @@ struct TicketsView: View {
             saveSucceeded = false
             defer { isSaving = false }
             do {
-                // Fetch fresh full ticket to avoid stale data in the echoed-back fields
+                // Fetch fresh ticket to compare against
                 let freshTicket = try await appState.tdxService.getTicket(id: ticketId) ?? ticket
 
+                // Build a dictionary of ONLY the fields that actually changed
+                var changes: [String: Any] = [:]
+
                 let trimmedTitle = editTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                let origTitle = (freshTicket.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmedTitle.isEmpty && trimmedTitle != origTitle {
+                    changes["Title"] = trimmedTitle
+                }
+                if editStatusId != freshTicket.statusId {
+                    changes["StatusID"] = editStatusId as Any
+                }
+                if editPriorityId != freshTicket.priorityId {
+                    changes["PriorityID"] = editPriorityId as Any
+                }
+                if editClassification != freshTicket.classification {
+                    changes["Classification"] = editClassification as Any
+                }
+                if editTypeId != freshTicket.typeId {
+                    changes["TypeID"] = editTypeId as Any
+                }
+                if editRequestorUid != freshTicket.requestorUid {
+                    changes["RequestorUid"] = editRequestorUid as Any
+                }
+                if editResponsibleUid != freshTicket.responsibleUid {
+                    changes["ResponsibleUid"] = editResponsibleUid as Any
+                }
+                if editResponsibleGroupId != freshTicket.responsibleGroupId {
+                    changes["ResponsibleGroupID"] = editResponsibleGroupId as Any
+                }
+                if editServiceId != freshTicket.serviceId {
+                    changes["ServiceID"] = editServiceId as Any
+                }
+                if editFormId != freshTicket.formId {
+                    changes["FormID"] = editFormId as Any
+                }
 
-                // Build update request — always echoes back original description HTML
-                // isRichHtml is always true inside TicketUpdateRequest
-                let updateRequest = TicketUpdateRequest(
-                    from: freshTicket,
-                    title: trimmedTitle.isEmpty ? nil : trimmedTitle,
-                    statusId: editStatusId,
-                    priorityId: editPriorityId,
-                    classification: editClassification,
-                    typeId: editTypeId,
-                    requestorUid: editRequestorUid,
-                    responsibleUid: editResponsibleUid,
-                    responsibleGroupId: editResponsibleGroupId,
-                    serviceId: editServiceId,
-                    formId: editFormId
-                )
+                guard !changes.isEmpty else {
+                    hasEdits = false
+                    return
+                }
 
-                if let updated = try await appState.tdxService.updateTicket(id: ticketId, request: updateRequest) {
+                let shouldNotify = notifyNewResponsible && editResponsibleUid != freshTicket.responsibleUid
+
+                if let updated = try await appState.tdxService.updateTicket(id: ticketId, updates: changes, notifyNewResponsible: shouldNotify) {
                     detailedTicket = updated
                     populateEditFields(from: updated)
                     saveSucceeded = true
@@ -2034,38 +2163,33 @@ struct TicketsView: View {
     private func handleBoardDrop(ticketId: Int, targetColumnKey: String) {
         Task {
             do {
-                // Fetch full ticket detail to ensure all fields are echoed back correctly
-                guard let ticket = try await appState.tdxService.getTicket(id: ticketId) else {
-                    print("Board drop: could not fetch ticket \(ticketId)")
-                    return
-                }
-                var req: TicketUpdateRequest
+                var changes: [String: Any] = [:]
                 switch boardGroupBy {
                 case .status:
                     guard let newStatusId = Int(targetColumnKey) else { return }
-                    req = TicketUpdateRequest(from: ticket, statusId: newStatusId)
+                    changes["StatusID"] = newStatusId
                 case .priority:
                     let targetId = filteredTickets.first(where: { $0.priorityName == targetColumnKey })?.priorityId
                     guard let newPriorityId = targetId else { return }
-                    req = TicketUpdateRequest(from: ticket, priorityId: newPriorityId)
+                    changes["PriorityID"] = newPriorityId
                 case .responsible:
                     if targetColumnKey == "Unassigned" {
-                        req = TicketUpdateRequest(from: ticket, responsibleUid: "")
+                        changes["ResponsibleUid"] = ""
                     } else {
                         let targetUid = filteredTickets.first(where: { $0.responsibleFullName == targetColumnKey })?.responsibleUid
                         guard let newUid = targetUid else { return }
-                        req = TicketUpdateRequest(from: ticket, responsibleUid: newUid)
+                        changes["ResponsibleUid"] = newUid
                     }
                 case .group:
                     if targetColumnKey == "No Group" {
-                        req = TicketUpdateRequest(from: ticket, responsibleGroupId: 0)
+                        changes["ResponsibleGroupID"] = 0
                     } else {
                         let targetId = filteredTickets.first(where: { $0.responsibleGroupName == targetColumnKey })?.responsibleGroupId
                         guard let newGroupId = targetId else { return }
-                        req = TicketUpdateRequest(from: ticket, responsibleGroupId: newGroupId)
+                        changes["ResponsibleGroupID"] = newGroupId
                     }
                 }
-                _ = try await appState.tdxService.updateTicket(id: ticketId, request: req)
+                _ = try await appState.tdxService.updateTicket(id: ticketId, updates: changes)
                 loadTickets()
             } catch {
                 print("Failed to update ticket via board drop: \(error)")
@@ -2189,7 +2313,7 @@ struct FeedEntryRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
+            HStack(alignment: .top) {
                 Text(entry.createdFullName ?? "Unknown")
                     .font(.body)
                     .fontWeight(.semibold)
@@ -2207,6 +2331,13 @@ struct FeedEntryRow: View {
                         .font(.callout)
                         .foregroundColor(.secondary)
                 }
+                Button(action: { copyEntryToClipboard() }) {
+                    Image(systemName: "doc.on.doc")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Copy to clipboard")
             }
 
             if let body = entry.body, !body.isEmpty {
@@ -2214,12 +2345,71 @@ struct FeedEntryRow: View {
                     .font(.body)
                     .foregroundColor(.secondary)
                     .textSelection(.enabled)
-                    .lineLimit(6)
+            }
+
+            // Threaded replies
+            if let replies = entry.replies, !replies.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(replies, id: \.id) { reply in
+                        HStack(alignment: .top, spacing: 8) {
+                            Rectangle()
+                                .fill(Color.accentColor.opacity(0.4))
+                                .frame(width: 2)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack {
+                                    Text(reply.createdFullName ?? "Unknown")
+                                        .font(.callout)
+                                        .fontWeight(.semibold)
+                                    Spacer()
+                                    if let dateStr = reply.createdDate, let date = TicketsView.parseDate(dateStr) {
+                                        Text(formatRelativeDate(date))
+                                            .font(.caption)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    Button(action: { copyReplyToClipboard(reply) }) {
+                                        Image(systemName: "doc.on.doc")
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Copy to clipboard")
+                                }
+                                if let body = reply.body, !body.isEmpty {
+                                    Text(TicketsView.decodeHtml(body))
+                                        .font(.callout)
+                                        .foregroundColor(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        }
+                        .padding(.leading, 8)
+                    }
+                }
+                .padding(.top, 4)
             }
         }
         .padding(10)
         .background(Color.secondary.opacity(0.06))
         .cornerRadius(6)
+    }
+
+    private func copyEntryToClipboard() {
+        let name = entry.createdFullName ?? "Unknown"
+        let date = entry.createdDate ?? ""
+        let body = TicketsView.decodeHtml(entry.body ?? "")
+        let text = "\(name) (\(date)):\n\(body)"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func copyReplyToClipboard(_ reply: TdxFeedEntry) {
+        let name = reply.createdFullName ?? "Unknown"
+        let date = reply.createdDate ?? ""
+        let body = TicketsView.decodeHtml(reply.body ?? "")
+        let text = "\(name) (\(date)):\n\(body)"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     private func formatRelativeDate(_ date: Date) -> String {

@@ -170,18 +170,18 @@ struct DevicesView: View {
                     }
                 } else {
                     Table(filteredDevices, selection: $selectedDeviceIds) {
-                        TableColumn(deviceSortHeader("Serial", field: .serial)) { device in
-                            Text(device.serialNumber ?? "-")
-                                .font(.system(.body, design: .monospaced))
-                                .textSelection(.enabled)
-                        }
-                        .width(min: 100, ideal: 120)
-
                         TableColumn(deviceSortHeader("Name", field: .name)) { device in
                             Text(device.deviceName ?? "-")
                                 .textSelection(.enabled)
                         }
                         .width(min: 150, ideal: 200)
+
+                        TableColumn(deviceSortHeader("Serial", field: .serial)) { device in
+                            Text(device.serialNumber ?? "-")
+                                .font(.system(.body, design: .monospaced))
+                                .textSelection(.enabled)
+                        }
+                        .width(min: 100, ideal: 130)
 
                         TableColumn(deviceSortHeader("Compliance", field: .compliance)) { device in
                             ComplianceBadge(state: device.complianceState)
@@ -207,6 +207,12 @@ struct DevicesView: View {
                         .width(min: 100, ideal: 150)
                     }
                 }
+            }
+            
+            // Detail Panel — shown when exactly one device is selected
+            if selectedDeviceIds.count == 1, let selectedDevice = selectedDevices.first {
+                DeviceDetailView(device: selectedDevice)
+                    .frame(minWidth: 380, idealWidth: 450, maxWidth: 550)
             }
             
             // Actions Panel — always visible when devices are selected

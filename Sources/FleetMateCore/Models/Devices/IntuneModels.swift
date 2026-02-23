@@ -21,6 +21,24 @@ public struct IntuneDevice: Codable, Identifiable, Sendable {
     public let azureADDeviceId: String?
     public let totalStorageSpaceInBytes: Int64?
     public let freeStorageSpaceInBytes: Int64?
+    // Detail fields
+    public let managedDeviceName: String?
+    public let enrollmentProfileName: String?
+    public let isSupervised: Bool?
+    public let deviceCategoryDisplayName: String?
+    public let managementAgent: String?
+    public let notes: String?
+    public let physicalMemoryInBytes: Int64?
+    public let wiFiMacAddress: String?
+    public let ethernetMacAddress: String?
+    public let imei: String?
+    public let meid: String?
+    public let phoneNumber: String?
+    public let subscriberCarrier: String?
+    public let joinType: String?
+    public let skuFamily: String?
+    public let azureADRegistered: Bool?
+    public let deviceRegistrationState: String?
     
     public var id: String { _id ?? serialNumber ?? UUID().uuidString }
     
@@ -31,6 +49,11 @@ public struct IntuneDevice: Codable, Identifiable, Sendable {
         case userPrincipalName, userDisplayName, model, manufacturer
         case deviceEnrollmentType, managedDeviceOwnerType, azureADDeviceId
         case totalStorageSpaceInBytes, freeStorageSpaceInBytes
+        case managedDeviceName, enrollmentProfileName, isSupervised
+        case deviceCategoryDisplayName, managementAgent, notes
+        case physicalMemoryInBytes, wiFiMacAddress, ethernetMacAddress
+        case imei, meid, phoneNumber, subscriberCarrier, joinType, skuFamily
+        case azureADRegistered, deviceRegistrationState
     }
 }
 
@@ -144,6 +167,74 @@ public struct DetectedApp: Codable, Identifiable, Sendable {
 
 public struct DetectedAppsResponse: Codable {
     public let value: [DetectedApp]
+    public let nextLink: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case value
+        case nextLink = "@odata.nextLink"
+    }
+}
+
+// MARK: - Device Detail Models
+
+public struct DeviceGroupMembership: Codable, Identifiable, Sendable {
+    public let id: String?
+    public let displayName: String?
+    public let description: String?
+    public let odataType: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case id, displayName, description
+        case odataType = "@odata.type"
+    }
+    
+    public var isGroup: Bool {
+        odataType?.contains("group") ?? false
+    }
+}
+
+public struct DeviceMemberOfResponse: Codable {
+    public let value: [DeviceGroupMembership]
+    public let nextLink: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case value
+        case nextLink = "@odata.nextLink"
+    }
+}
+
+public struct ManagedAppRegistration: Codable, Identifiable, Sendable {
+    public let id: String?
+    public let appIdentifier: AppIdentifier?
+    public let createdDateTime: String?
+    public let lastSyncDateTime: String?
+    public let version: String?
+    public let deviceName: String?
+    public let deviceTag: String?
+    public let managementSdkVersion: String?
+    public let platformVersion: String?
+    public let userId: String?
+    public let odataType: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case id, appIdentifier, createdDateTime, lastSyncDateTime
+        case version, deviceName, deviceTag, managementSdkVersion
+        case platformVersion, userId
+        case odataType = "@odata.type"
+    }
+}
+
+public struct AppIdentifier: Codable, Sendable {
+    public let bundleId: String?
+    public let packageId: String?
+    
+    public var displayId: String {
+        bundleId ?? packageId ?? "Unknown"
+    }
+}
+
+public struct ManagedAppRegistrationsResponse: Codable {
+    public let value: [ManagedAppRegistration]
     public let nextLink: String?
     
     enum CodingKeys: String, CodingKey {

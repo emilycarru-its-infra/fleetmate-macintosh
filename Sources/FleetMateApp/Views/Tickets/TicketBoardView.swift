@@ -97,7 +97,7 @@ struct TicketBoardView: View {
     }
     
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: true) {
+        ScrollView([.horizontal, .vertical], showsIndicators: true) {
             HStack(alignment: .top, spacing: 16) {
                 ForEach(columns, id: \.key) { col in
                     BoardColumn(
@@ -159,32 +159,29 @@ struct BoardColumn: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background((accentColor ?? .secondary).opacity(0.2))
-            
-            // Cards
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(spacing: 8) {
-                    ForEach(tickets, id: \.id) { ticket in
-                        TicketCard(ticket: ticket)
-                            .draggable(TicketDragData(ticketId: ticket.id ?? 0, fromColumnKey: columnKey))
-                            .onTapGesture {
-                                onSelectTicket(ticket)
-                            }
-                    }
+
+            // Cards — no ScrollView so drop targets work across the full column
+            VStack(spacing: 8) {
+                ForEach(tickets, id: \.id) { ticket in
+                    TicketCard(ticket: ticket)
+                        .draggable(TicketDragData(ticketId: ticket.id ?? 0, fromColumnKey: columnKey))
+                        .onTapGesture {
+                            onSelectTicket(ticket)
+                        }
                 }
-                .padding(8)
-                .frame(maxWidth: .infinity)
+                Spacer(minLength: 40)
             }
-            .frame(maxHeight: .infinity)
+            .padding(8)
         }
         .frame(width: 280)
-        .frame(maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .background(isTargeted ? Color.accentColor.opacity(0.1) : Color.secondary.opacity(0.05))
-        .cornerRadius(12)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(isTargeted ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(isTargeted ? Color.accentColor : Color.clear, lineWidth: 2)
+                .stroke(isTargeted ? Color.accentColor : Color.secondary.opacity(0.2), lineWidth: isTargeted ? 3 : 1)
         )
+        .contentShape(Rectangle())
         .dropDestination(for: TicketDragData.self) { items, _ in
             for item in items {
                 if item.fromColumnKey != columnKey {

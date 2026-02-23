@@ -3,6 +3,19 @@ import MarkdownUI
 import AppKit
 import FleetMateCore
 
+// MARK: - NSColor Hex Helper
+
+private extension NSColor {
+    /// Convert NSColor to CSS hex string, adapting to current appearance.
+    var hexString: String {
+        let c = usingColorSpace(.sRGB) ?? self
+        let r = Int(c.redComponent * 255)
+        let g = Int(c.greenComponent * 255)
+        let b = Int(c.blueComponent * 255)
+        return String(format: "#%02x%02x%02x", r, g, b)
+    }
+}
+
 // MARK: - Shared Markdown / HTML Renderer
 
 /// Renders rich text content — auto-detects HTML vs Markdown.
@@ -55,16 +68,27 @@ private struct HtmlRenderedView: View {
     }
 
     private func htmlToAttributedString(_ html: String) -> AttributedString? {
+        // Use system colors that adapt to light/dark mode
+        let textColor = NSColor.labelColor.hexString
+        let bgColor = NSColor.textBackgroundColor.hexString
+        let codeBg = NSColor.quaternaryLabelColor.hexString
+        let linkColor = NSColor.controlAccentColor.hexString
+        let borderColor = NSColor.separatorColor.hexString
+        let headerBg = NSColor.unemphasizedSelectedContentBackgroundColor.hexString
+        let secondaryText = NSColor.secondaryLabelColor.hexString
+
         let wrapped = """
         <html><head><style>
-        body { font-family: -apple-system, sans-serif; font-size: 14px; }
-        pre, code { font-family: Menlo, monospace; font-size: 13px; background: #f5f5f5; padding: 2px 4px; border-radius: 3px; }
+        body { font-family: -apple-system, sans-serif; font-size: 14px; color: \(textColor); background: \(bgColor); }
+        pre { font-family: Menlo, monospace; font-size: 13px; background: \(codeBg); padding: 8px 12px; border-radius: 6px; overflow-x: auto; }
+        code { font-family: Menlo, monospace; font-size: 13px; background: \(codeBg); padding: 2px 4px; border-radius: 3px; }
+        pre code { background: none; padding: 0; }
         img { max-width: 100%; height: auto; }
-        a { color: #0366d6; }
+        a { color: \(linkColor); }
         table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
-        th { background: #f0f0f0; font-weight: 600; }
-        blockquote { border-left: 3px solid #ddd; padding-left: 12px; color: #555; }
+        th, td { border: 1px solid \(borderColor); padding: 6px 8px; text-align: left; }
+        th { background: \(headerBg); font-weight: 600; }
+        blockquote { border-left: 3px solid \(borderColor); padding-left: 12px; color: \(secondaryText); }
         </style></head><body>\(html)</body></html>
         """
         guard let data = wrapped.data(using: .utf8) else { return nil }
@@ -92,7 +116,7 @@ extension MarkdownUI.Theme {
         .code {
             FontFamilyVariant(.monospaced)
             FontSize(13)
-            BackgroundColor(.secondary.opacity(0.1))
+            BackgroundColor(Color(NSColor.quaternaryLabelColor))
         }
         .codeBlock { configuration in
             CodeBlockWithCopy(configuration: configuration)
@@ -146,11 +170,12 @@ private struct CodeBlockWithCopy: View {
                     .markdownTextStyle {
                         FontFamilyVariant(.monospaced)
                         FontSize(12)
+                        ForegroundColor(Color(NSColor.labelColor))
                     }
                     .padding(12)
                     .padding(.trailing, 28) // make room for copy button
             }
-            .background(Color.secondary.opacity(0.08))
+            .background(Color(NSColor.quaternaryLabelColor))
             .clipShape(RoundedRectangle(cornerRadius: 6))
 
             Button(action: copyCode) {

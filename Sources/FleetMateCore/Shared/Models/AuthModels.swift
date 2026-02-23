@@ -61,7 +61,7 @@ public enum AuthSystemId: String, CaseIterable, Codable, Sendable {
         case .graph:   return "network"
         case .snipe:   return "shippingbox"
         case .tdx:     return "ticket"
-        case .devops:  return "building.2"
+        case .devops:  return "chevron.left.forwardslash.chevron.right"
         case .github:  return "chevron.left.forwardslash.chevron.right"
         case .gitea:   return "arrow.triangle.branch"
         case .entra:   return "person.badge.shield.checkmark"

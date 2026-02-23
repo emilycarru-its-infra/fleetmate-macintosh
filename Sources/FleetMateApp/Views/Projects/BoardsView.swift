@@ -286,16 +286,6 @@ struct BoardsView: View {
             if !allTasks.isEmpty {
                 Divider().frame(height: 20)
 
-                if !buckets.isEmpty {
-                    Picker("Bucket", selection: $filterBucket) {
-                        Text("Statuses").tag(nil as String?)
-                        ForEach(buckets, id: \.self) { Text($0).tag($0 as String?) }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(width: 130)
-                    .labelsHidden()
-                }
-
                 if !availableAreaPaths.isEmpty {
                     Picker("Area", selection: $filterAreaPath) {
                         Text("Areas").tag(nil as String?)
@@ -982,10 +972,35 @@ struct BoardsView: View {
                     seen.insert(name)
                     unique.append(board)
                 }
-                availableBoards = unique
+
+                // Validate: only keep boards that have columns with state mappings
+                var validated: [Board] = []
+                for board in unique {
+                    guard let name = board.name else { continue }
+                    let proj = projectMap[name]
+                    let tm = teamMap[name]
+                    do {
+                        let cols: [BoardColumnDefinition]
+                        if let tm = tm {
+                            cols = try await appState.devOpsService.getBoardColumns(boardName: name, team: tm, project: proj)
+                        } else {
+                            cols = try await appState.devOpsService.getBoardColumns(boardName: name, project: proj)
+                        }
+                        let hasStateMappings = cols.contains { ($0.stateMappings?.isEmpty == false) }
+                        if hasStateMappings {
+                            validated.append(board)
+                        } else {
+                            dbg.debug("Skipping board '\(name)': no state mappings in columns", category: "boards")
+                        }
+                    } catch {
+                        dbg.debug("Skipping board '\(name)': columns failed: \(error)", category: "boards")
+                    }
+                }
+
+                availableBoards = validated
                 boardProjectMap = projectMap
                 boardTeamMap = teamMap
-                dbg.info("Loaded \(unique.count) unique boards from \(projects.count) projects: \(unique.compactMap(\.name).joined(separator: ", "))", category: "boards")
+                dbg.info("Loaded \(validated.count) validated boards from \(projects.count) projects: \(validated.compactMap(\.name).joined(separator: ", "))", category: "boards")
                 // Auto-select the first board if none selected
                 if selectedBoardName == nil, let first = unique.first?.name {
                     selectedBoardName = first

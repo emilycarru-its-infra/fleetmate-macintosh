@@ -1189,6 +1189,13 @@ struct TicketsView: View {
                 .controlSize(.small)
                 .help("Create parent ticket")
 
+                Button(action: { /* TODO: merge into */ }) {
+                    Label("Merge Into", systemImage: "arrow.triangle.merge")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Merge into another ticket")
+
                 Button(action: {
                     loadTicketDetail(ticketId: ticket.id ?? 0)
                     loadTicketFeed(ticketId: ticket.id ?? 0)
@@ -1350,7 +1357,7 @@ struct TicketsView: View {
                                     Label("Unassign", systemImage: "person.fill.xmark")
                                 }
                             } label: {
-                                Image(systemName: "ellipsis")
+                                Image(systemName: "chevron.down")
                                     .font(.caption)
                             }
                             .menuStyle(.borderedButton)
@@ -1628,7 +1635,6 @@ struct TicketsView: View {
                 }) {
                     Image(systemName: isEditingDescription ? "checkmark.circle" : "pencil")
                         .font(.caption)
-                        .foregroundColor(.accentColor)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -1643,9 +1649,9 @@ struct TicketsView: View {
                     }) {
                         Image(systemName: "doc.on.doc")
                             .font(.caption)
-                            .foregroundColor(.secondary)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                     .help("Copy description")
                 }
             }
@@ -1764,7 +1770,12 @@ struct TicketsView: View {
                     .padding(.vertical, 8)
             } else {
                 ForEach(filteredFeed, id: \.id) { entry in
-                    FeedEntryRow(entry: entry)
+                    FeedEntryRow(
+                        entry: entry,
+                        onReply: { feedEntryId, replyText in
+                            replyToFeedEntry(feedEntryId: feedEntryId, replyText: replyText)
+                        }
+                    )
                 }
             }
         }
@@ -2157,6 +2168,23 @@ struct TicketsView: View {
         }
     }
 
+    /// Reply to a specific feed entry (threaded comment)
+    private func replyToFeedEntry(feedEntryId: Int, replyText: String) {
+        guard let ticketId = selectedTicket?.id else { return }
+        Task {
+            do {
+                _ = try await appState.tdxService.replyToFeedEntry(
+                    ticketId: ticketId,
+                    feedEntryId: feedEntryId,
+                    comment: replyText
+                )
+                loadTicketFeed(ticketId: ticketId)
+            } catch {
+                print("Failed to reply to feed entry: \(error)")
+            }
+        }
+    }
+
     // MARK: - Board Drag-and-Drop
 
     /// Handle a card drop on a board column — updates the field corresponding to the current groupBy
@@ -2310,6 +2338,11 @@ struct DetailRow: View {
 
 struct FeedEntryRow: View {
     let entry: TdxFeedEntry
+    var onReply: ((Int, String) -> Void)? = nil
+
+    @State private var isReplying = false
+    @State private var replyText = ""
+    @State private var isSubmittingReply = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -2387,6 +2420,50 @@ struct FeedEntryRow: View {
                     }
                 }
                 .padding(.top, 4)
+            }
+
+            // Reply button and inline reply field
+            if let onReply = onReply, let entryId = entry.id {
+                if isReplying {
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextEditor(text: $replyText)
+                            .font(.callout)
+                            .frame(minHeight: 40, maxHeight: 100)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                            )
+                        HStack {
+                            Spacer()
+                            Button("Cancel") {
+                                isReplying = false
+                                replyText = ""
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            Button("Reply") {
+                                let text = replyText
+                                isSubmittingReply = true
+                                replyText = ""
+                                isReplying = false
+                                onReply(entryId, text)
+                                isSubmittingReply = false
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSubmittingReply)
+                        }
+                    }
+                    .padding(.top, 4)
+                } else {
+                    Button(action: { isReplying = true }) {
+                        Label("Reply", systemImage: "arrowshape.turn.up.left")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.accentColor)
+                    .padding(.top, 2)
+                }
             }
         }
         .padding(10)

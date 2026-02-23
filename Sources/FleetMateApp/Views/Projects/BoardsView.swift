@@ -44,12 +44,16 @@ struct BoardsView: View {
     @State private var syncMessage = ""
     @State private var syncEnabled = false
 
+    // Detail sidebar toggle
+    @State private var showDetailSidebar = true
+
     // Azure DevOps board selection
     @State private var availableBoards: [Board] = []
     @State private var selectedBoardName: String? = nil
     @State private var boardColumnDefs: [BoardColumnDefinition] = []
     @State private var isLoadingBoards = false
     @State private var boardAllowedTypes: Set<String> = []
+    @State private var boardProjectMap: [String: String] = [:]  // board name → project name
 
     // GitHub Projects info (for New Issue / New Project)
     @State private var currentProjectId: String? = nil
@@ -478,11 +482,26 @@ struct BoardsView: View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
                 boardContent
-                    .frame(width: selectedTask != nil ? geometry.size.width * 0.6 : geometry.size.width)
+                    .frame(width: (selectedTask != nil && showDetailSidebar) ? geometry.size.width * 0.6 : geometry.size.width)
                 if selectedTask != nil {
-                    Divider()
-                    taskDetailSidebar
-                        .frame(width: geometry.size.width * 0.4)
+                    // Sidebar toggle
+                    Button(action: { showDetailSidebar.toggle() }) {
+                        ZStack {
+                            Rectangle()
+                                .fill(Color.secondary.opacity(0.08))
+                                .frame(width: 12)
+                            Image(systemName: showDetailSidebar ? "chevron.compact.right" : "chevron.compact.left")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.secondary.opacity(0.6))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help(showDetailSidebar ? "Hide detail" : "Show detail")
+                    .frame(width: 12)
+                    if showDetailSidebar {
+                        taskDetailSidebar
+                            .frame(width: geometry.size.width * 0.4 - 12)
+                    }
                 }
             }
         }
@@ -598,11 +617,26 @@ struct BoardsView: View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
                 listContent
-                    .frame(width: selectedTask != nil ? geometry.size.width * 0.6 : geometry.size.width)
+                    .frame(width: (selectedTask != nil && showDetailSidebar) ? geometry.size.width * 0.6 : geometry.size.width)
                 if selectedTask != nil {
-                    Divider()
-                    taskDetailSidebar
-                        .frame(width: geometry.size.width * 0.4)
+                    // Sidebar toggle
+                    Button(action: { showDetailSidebar.toggle() }) {
+                        ZStack {
+                            Rectangle()
+                                .fill(Color.secondary.opacity(0.08))
+                                .frame(width: 12)
+                            Image(systemName: showDetailSidebar ? "chevron.compact.right" : "chevron.compact.left")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.secondary.opacity(0.6))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help(showDetailSidebar ? "Hide detail" : "Show detail")
+                    .frame(width: 12)
+                    if showDetailSidebar {
+                        taskDetailSidebar
+                            .frame(width: geometry.size.width * 0.4 - 12)
+                    }
                 }
             }
         }
@@ -744,8 +778,14 @@ struct BoardsView: View {
 
                 switch groupBy {
                 case .column:
-                    // Move to board column
-                    _ = try await appState.devOpsService.moveWorkItemToBoardColumn(id: id, column: toColumn)
+                    // Look up the target state from the board column's stateMappings
+                    guard let colDef = boardColumnDefs.first(where: { $0.name == toColumn }),
+                          let wiType = task.metadata["workItemType"],
+                          let targetState = colDef.stateMappings?[wiType] else {
+                        dbg.error("Cannot find state mapping for column '\(toColumn)' and type '\(task.metadata["workItemType"] ?? "?")'", category: "boards")
+                        return
+                    }
+                    _ = try await appState.devOpsService.moveWorkItemToBoardColumn(id: id, targetState: targetState)
                     // Update local state
                     if let idx = allTasks.firstIndex(where: { $0.compositeKey == taskKey }) {
                         allTasks[idx].metadata["boardColumn"] = toColumn
@@ -910,9 +950,15 @@ struct BoardsView: View {
                 // Load boards from all DevOps projects for full backlog level coverage
                 let projects = try await appState.devOpsService.listProjects()
                 var allBoards: [Board] = []
+                var projectMap: [String: String] = [:]
                 for project in projects {
                     do {
                         let boards = try await appState.devOpsService.getBoards(project: project.name)
+                        for board in boards {
+                            if let name = board.name {
+                                projectMap[name] = project.name
+                            }
+                        }
                         allBoards.append(contentsOf: boards)
                     } catch {
                         dbg.debug("Failed to load boards for project '\(project.name ?? "?")': \(error)", category: "boards")
@@ -927,6 +973,7 @@ struct BoardsView: View {
                     unique.append(board)
                 }
                 availableBoards = unique
+                boardProjectMap = projectMap
                 dbg.info("Loaded \(unique.count) unique boards from \(projects.count) projects: \(unique.compactMap(\.name).joined(separator: ", "))", category: "boards")
                 // Auto-select the first board if none selected
                 if selectedBoardName == nil, let first = unique.first?.name {
@@ -954,9 +1001,10 @@ struct BoardsView: View {
             boardColumnDefs = []
             return
         }
+        let project = boardProjectMap[boardName]
         Task {
             do {
-                boardColumnDefs = try await appState.devOpsService.getBoardColumns(boardName: boardName)
+                boardColumnDefs = try await appState.devOpsService.getBoardColumns(boardName: boardName, project: project)
                 // Extract allowed work item types from column state mappings
                 var types = Set<String>()
                 for col in boardColumnDefs {

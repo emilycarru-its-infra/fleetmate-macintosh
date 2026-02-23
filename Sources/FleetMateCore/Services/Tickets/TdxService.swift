@@ -19,6 +19,7 @@ public class TdxService {
     private var statusCache: [Int: String] = [:]
     private var typeCache: [Int: String] = [:]
     private var priorityCache: [Int: String] = [:]
+    private var formCache: [(id: Int, name: String)] = []
     private var refDataExpiry: Date = .distantPast
     private let cacheDuration: TimeInterval
 
@@ -487,5 +488,39 @@ public class TdxService {
         priorityCache = Dictionary(uniqueKeysWithValues: priorities.map { ($0.id, $0.name ?? "Priority \($0.id)") })
 
         return priorityCache
+    }
+
+    public func getForms() async throws -> [(id: Int, name: String)] {
+        if !formCache.isEmpty && Date() < refDataExpiry {
+            return formCache
+        }
+
+        guard let headers = await headers() else { return formCache }
+
+        let appId = config.tdxTicketingAppId ?? config.tdxAppId ?? 0
+        let url = "\(baseUrl)/api/\(appId)/tickets/forms"
+
+        let forms: [TdxFormItem] = try await withCheckedThrowingContinuation { continuation in
+            session.request(url, headers: headers)
+                .validate()
+                .responseDecodable(of: [TdxFormItem].self) { response in
+                    switch response.result {
+                    case .success(let items):
+                        continuation.resume(returning: items)
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
+                }
+        }
+
+        var result: [(id: Int, name: String)] = []
+        for form in forms {
+            if let name = form.name, !name.isEmpty, form.active != false {
+                result.append((id: form.id, name: name))
+            }
+        }
+        formCache = result.sorted { $0.name < $1.name }
+
+        return formCache
     }
 }

@@ -54,6 +54,7 @@ struct BoardsView: View {
     @State private var isLoadingBoards = false
     @State private var boardAllowedTypes: Set<String> = []
     @State private var boardProjectMap: [String: String] = [:]  // board name → project name
+    @State private var boardTeamMap: [String: String] = [:]    // board name → team name
 
     // GitHub Projects info (for New Issue / New Project)
     @State private var currentProjectId: String? = nil
@@ -947,24 +948,33 @@ struct BoardsView: View {
             isLoadingBoards = true
             defer { isLoadingBoards = false }
             do {
-                // Load boards from all DevOps projects for full backlog level coverage
+                // Load boards from all teams in all DevOps projects for full backlog level coverage
                 let projects = try await appState.devOpsService.listProjects()
                 var allBoards: [Board] = []
                 var projectMap: [String: String] = [:]
+                var teamMap: [String: String] = [:]
                 for project in projects {
                     do {
-                        let boards = try await appState.devOpsService.getBoards(project: project.name)
-                        for board in boards {
-                            if let name = board.name {
-                                projectMap[name] = project.name
+                        let teams = try await appState.devOpsService.listTeams(project: project.name)
+                        for team in teams {
+                            do {
+                                let boards = try await appState.devOpsService.getBoards(team: team.name, project: project.name)
+                                for board in boards {
+                                    if let name = board.name {
+                                        projectMap[name] = project.name
+                                        teamMap[name] = team.name
+                                    }
+                                }
+                                allBoards.append(contentsOf: boards)
+                            } catch {
+                                dbg.debug("Failed to load boards for team '\(team.name)' in project '\(project.name)': \(error)", category: "boards")
                             }
                         }
-                        allBoards.append(contentsOf: boards)
                     } catch {
-                        dbg.debug("Failed to load boards for project '\(project.name ?? "?")': \(error)", category: "boards")
+                        dbg.debug("Failed to list teams for project '\(project.name)': \(error)", category: "boards")
                     }
                 }
-                // Deduplicate by name (boards across projects often share names like "Stories", "Bugs")
+                // Deduplicate by name (boards across projects/teams often share names)
                 var seen = Set<String>()
                 var unique: [Board] = []
                 for board in allBoards {
@@ -974,6 +984,7 @@ struct BoardsView: View {
                 }
                 availableBoards = unique
                 boardProjectMap = projectMap
+                boardTeamMap = teamMap
                 dbg.info("Loaded \(unique.count) unique boards from \(projects.count) projects: \(unique.compactMap(\.name).joined(separator: ", "))", category: "boards")
                 // Auto-select the first board if none selected
                 if selectedBoardName == nil, let first = unique.first?.name {
@@ -1002,9 +1013,14 @@ struct BoardsView: View {
             return
         }
         let project = boardProjectMap[boardName]
+        let team = boardTeamMap[boardName]
         Task {
             do {
-                boardColumnDefs = try await appState.devOpsService.getBoardColumns(boardName: boardName, project: project)
+                if let team = team {
+                    boardColumnDefs = try await appState.devOpsService.getBoardColumns(boardName: boardName, team: team, project: project)
+                } else {
+                    boardColumnDefs = try await appState.devOpsService.getBoardColumns(boardName: boardName, project: project)
+                }
                 // Extract allowed work item types from column state mappings
                 var types = Set<String>()
                 for col in boardColumnDefs {

@@ -407,8 +407,28 @@ public class AzureDevOpsService {
 
     // MARK: - Boards
 
+    /// List all teams in a project
+    public func listTeams(project: String? = nil) async throws -> [(name: String, id: String)] {
+        let proj = project ?? self.project
+
+        struct TeamsResponse: Decodable { let value: [TeamInfo]? }
+        struct TeamInfo: Decodable { let name: String; let id: String }
+
+        let response: TeamsResponse = try await request(
+            "GET",
+            path: "/_apis/projects/\(proj)/teams?api-version=7.0",
+            orgLevel: true
+        )
+        return (response.value ?? []).map { ($0.name, $0.id) }
+    }
+
     public func getBoards(project: String? = nil) async throws -> [Board] {
         let team = try await getDefaultTeam(project: project)
+        return try await getBoards(team: team, project: project)
+    }
+
+    /// Get boards for a specific team
+    public func getBoards(team: String, project: String? = nil) async throws -> [Board] {
         let encodedTeam = team.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? team
 
         let response: BoardsResponse = try await request(
@@ -422,6 +442,11 @@ public class AzureDevOpsService {
     /// Get columns for a specific board (returns them in the correct display order).
     public func getBoardColumns(boardName: String, project: String? = nil) async throws -> [BoardColumnDefinition] {
         let team = try await getDefaultTeam(project: project)
+        return try await getBoardColumns(boardName: boardName, team: team, project: project)
+    }
+
+    /// Get columns for a specific board and team
+    public func getBoardColumns(boardName: String, team: String, project: String? = nil) async throws -> [BoardColumnDefinition] {
         let encodedTeam = team.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? team
         let encodedBoard = boardName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? boardName
 

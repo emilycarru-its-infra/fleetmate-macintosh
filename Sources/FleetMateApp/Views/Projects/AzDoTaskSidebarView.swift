@@ -2,70 +2,90 @@ import SwiftUI
 import FleetMateCore
 
 /// Full editable Azure DevOps work item sidebar — mirrors the web UI.
-/// Loads full work item detail, supports inline editing of all fields,
-/// threaded comments, relations display, and state management.
+/// Single Edit mode: one "Edit" button in header toggles all fields editable.
+/// Layout: Header → Title → 2-col metadata → Description → Add Comment → Comment Feed → Effort/Repro/Acceptance/Relations/Dates
 struct AzDoTaskSidebarView: View {
     let task: UnifiedTask
     let service: AzureDevOpsService
     let onClose: () -> Void
+    var onSelectWorkItem: ((Int) -> Void)? = nil
 
     // Full detail loaded from API
     @State private var workItem: WorkItem?
+    @State private var parentWorkItem: WorkItem?
     @State private var comments: [WorkItemComment] = []
     @State private var isLoadingDetail = false
     @State private var loadError: String?
 
-    // Editing state — title
-    @State private var isEditingTitle = false
+    // Single edit mode — all fields toggle together
+    @State private var isEditing = false
     @State private var editedTitle = ""
-
-    // Editing state — description
-    @State private var isEditingDescription = false
-    @State private var editedDescription = ""
-
-    // Editing state — metadata pickers
-    @State private var isEditingState = false
     @State private var editedState = ""
-    @State private var isEditingPriority = false
     @State private var editedPriority = 2
-    @State private var isEditingAssignee = false
     @State private var editedAssignee = ""
-
-    // Editing state — paths & tags
-    @State private var isEditingAreaPath = false
     @State private var editedAreaPath = ""
-    @State private var isEditingIterationPath = false
     @State private var editedIterationPath = ""
-    @State private var isEditingTags = false
     @State private var editedTags = ""
-
-    // Editing state — effort fields
-    @State private var isEditingEffort = false
+    @State private var editedDueDate: Date?
+    @State private var editedType = "Bug"
+    @State private var editedDescription = ""
     @State private var editedRemaining = ""
     @State private var editedOriginal = ""
     @State private var editedCompleted = ""
-
-    // Editing state — repro steps / acceptance criteria
-    @State private var isEditingReproSteps = false
     @State private var editedReproSteps = ""
-    @State private var isEditingAcceptance = false
     @State private var editedAcceptance = ""
+
+    // Description / rich-text preview toggles
+    @State private var showDescriptionPreview = false
+    @State private var showReproPreview = false
+    @State private var showAcceptancePreview = false
+
+    // Pre-loaded picker options
+    @State private var areaPaths: [String] = []
+    @State private var iterationPaths: [String] = []
+    @State private var teamMembers: [IdentityRef] = []
 
     // New comment
     @State private var newCommentText = ""
     @State private var isAddingComment = false
 
+    // Linked work item title cache
+    @State private var linkedWorkItemTitles: [Int: String] = [:]
+
     // Action states
     @State private var isUpdating = false
     @State private var actionError: String?
-    @State private var showDangerZone = false
     @State private var showConfirmRemove = false
+
+    // Code linking
+    @State private var showLinkCodePopover = false
+    @State private var linkRepos: [GitRepository] = []
+    @State private var linkSelectedRepoId = ""
+    @State private var linkTab: CodeLinkTab = .commit
+    @State private var linkBranches: [GitRef] = []
+    @State private var linkCommits: [GitCommitRef] = []
+    @State private var linkPullRequests: [GitPullRequest] = []
+    @State private var isLoadingLinkData = false
+    @State private var isLinking = false
+    @State private var linkError: String?
+
+    private enum CodeLinkTab: String, CaseIterable {
+        case branch = "Branch"
+        case commit = "Commit"
+        case pullRequest = "Pull Request"
+    }
 
     private var fields: WorkItemFields? { workItem?.fields }
     private var workItemId: Int? { Int(task.id) }
+    private var workItemProject: String? { fields?.teamProject }
+
+    private var hasEffortData: Bool {
+        fields?.originalEstimate != nil || fields?.remainingWork != nil || fields?.completedWork != nil
+    }
 
     private let stateOptions = ["New", "Active", "Resolved", "Closed", "Removed",
                                  "To Do", "Doing", "Done", "Planned", "In Progress"]
+    private let workItemTypes = ["Bug", "Task", "User Story", "Feature", "Epic", "Issue"]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -75,46 +95,55 @@ struct AzDoTaskSidebarView: View {
                 VStack { Spacer(); ProgressView("Loading work item…"); Spacer() }
             } else if let error = loadError {
                 VStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle").font(.title).foregroundColor(.orange)
-                    Text(error).font(.caption).foregroundColor(.secondary).multilineTextAlignment(.center)
+                    Image(systemName: "exclamationmark.triangle").font(.largeTitle).foregroundColor(.orange)
+                    Text(error).font(.body).foregroundColor(.secondary).multilineTextAlignment(.center)
                     Button("Retry") { loadDetail() }.buttonStyle(.bordered)
                     Spacer()
                 }.padding()
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
+                        parentSection
                         titleSection
-                        Divider().padding(.vertical, 8)
-                        stateAndTypeSection
-                        Divider().padding(.vertical, 8)
+                        Divider().padding(.vertical, 10)
+                        metadataColumns
+                        Divider().padding(.vertical, 10)
                         descriptionSection
-                        Divider().padding(.vertical, 8)
-                        metadataSection
-                        Divider().padding(.vertical, 8)
-                        effortSection
-                        Divider().padding(.vertical, 8)
-                        reproStepsSection
-                        Divider().padding(.vertical, 8)
-                        acceptanceCriteriaSection
+                        Divider().padding(.vertical, 10)
+                        addCommentSection
+                        Divider().padding(.vertical, 10)
+                        commentsFeedSection
+                        if isEditing || hasEffortData {
+                            Divider().padding(.vertical, 10)
+                            effortSection
+                        }
+                        Divider().padding(.vertical, 10)
+                        codeLinkSection
+                        if fields?.workItemType?.lowercased() == "bug",
+                           let repro = fields?.reproSteps, !repro.isEmpty {
+                            Divider().padding(.vertical, 10)
+                            reproStepsSection
+                        }
+                        if let criteria = fields?.acceptanceCriteria, !criteria.isEmpty {
+                            Divider().padding(.vertical, 10)
+                            acceptanceCriteriaSection
+                        }
                         if let relations = workItem?.relations, !relations.isEmpty {
-                            Divider().padding(.vertical, 8)
+                            Divider().padding(.vertical, 10)
                             relationsSection(relations)
                         }
-                        Divider().padding(.vertical, 8)
+                        Divider().padding(.vertical, 10)
                         datesSection
-                        Divider().padding(.vertical, 8)
-                        commentsSection
-                        Divider().padding(.vertical, 8)
-                        addCommentSection
-                        Divider().padding(.vertical, 8)
-                        dangerZoneSection
                     }
                     .padding()
                 }
             }
         }
         .background(Color(NSColor.controlBackgroundColor))
-        .task { loadDetail() }
+        .task(id: task.id) {
+            resetState()
+            loadDetail()
+        }
         .alert("Remove work item?", isPresented: $showConfirmRemove) {
             Button("Remove", role: .destructive) { removeWorkItem() }
             Button("Cancel", role: .cancel) { }
@@ -129,145 +158,363 @@ struct AzDoTaskSidebarView: View {
         HStack(spacing: 8) {
             Button(action: onClose) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 14, weight: .medium))
             }
             .buttonStyle(.plain)
             .help("Close")
 
             if let id = workItemId {
                 Text("#\(id)")
-                    .font(.headline)
+                    .font(.title3)
                     .fontWeight(.bold)
                     .foregroundColor(.secondary)
                     .textSelection(.enabled)
             }
 
             WorkItemTypeBadge(type: fields?.workItemType ?? task.bucket)
-            StateBadge(state: task.state)
 
             Spacer()
 
             if let error = actionError {
                 Text(error)
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundColor(.red)
                     .lineLimit(1)
             }
 
             if isUpdating {
                 ProgressView()
-                    .scaleEffect(0.6)
+                    .scaleEffect(0.7)
             }
 
             if let url = task.externalUrl, let urlObj = URL(string: url) {
-                Link(destination: urlObj) {
-                    Image(systemName: "arrow.up.right.square")
+                Button(action: {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(url, forType: .string)
+                }) {
+                    Image(systemName: "link")
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Copy link")
+
+                Button(action: { NSWorkspace.shared.open(urlObj) }) {
+                    Image(systemName: "globe")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 .help("Open in Azure DevOps")
             }
+
+            if isEditing {
+                Button("Save All") { saveAll() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(isUpdating)
+                    .keyboardShortcut(.return, modifiers: .command)
+                Button("Cancel") { isEditing = false }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            } else {
+                Button(action: enterEditMode) {
+                    Label("Edit", systemImage: "pencil")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            actionsMenu
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+    }
+
+    // MARK: - Actions Menu (top-right)
+
+    private var actionsMenu: some View {
+        Menu {
+            let currentState = (fields?.state ?? "New").lowercased()
+            if currentState != "resolved" && currentState != "closed" {
+                Button(action: { quickStateChange("Resolved") }) {
+                    Label("Resolve", systemImage: "checkmark.circle")
+                }
+            }
+            if currentState != "closed" {
+                Button(action: { quickStateChange("Closed") }) {
+                    Label("Close", systemImage: "xmark.circle")
+                }
+            }
+            if currentState == "closed" || currentState == "resolved" {
+                Button(action: { quickStateChange("Active") }) {
+                    Label("Reactivate", systemImage: "arrow.counterclockwise.circle")
+                }
+            }
+            Divider()
+            Button(role: .destructive, action: { showConfirmRemove = true }) {
+                Label("Remove Work Item", systemImage: "trash")
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderedButton)
+        .controlSize(.small)
+        .fixedSize()
+        .help("Work item actions")
+    }
+
+    // MARK: - Parent Section (above title)
+
+    @ViewBuilder
+    private var parentSection: some View {
+        if let parent = parentWorkItem, let parentFields = parent.fields {
+            Button(action: { onSelectWorkItem?(parent.id) }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.up")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    if let parentType = parentFields.workItemType {
+                        Text(parentType)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Text("#\(parent.id)")
+                        .font(.caption)
+                        .foregroundColor(.accentColor)
+                    Text(parentFields.title ?? "Parent")
+                        .font(.caption)
+                        .foregroundColor(.accentColor)
+                        .lineLimit(1)
+                    if let board = parentFields.boardColumn {
+                        Text("· \(board)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.bottom, 4)
+        }
     }
 
     // MARK: - Title Section
 
     @ViewBuilder
     private var titleSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if isEditingTitle {
-                TextField("Work item title", text: $editedTitle)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.title3)
-                HStack {
-                    Button("Save") { saveField { UpdateWorkItemRequest(title: editedTitle.azdoTrimmed) } onSuccess: { isEditingTitle = false } }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(editedTitle.azdoTrimmed.isEmpty || isUpdating)
-                    Button("Cancel") { isEditingTitle = false }
-                        .buttonStyle(.bordered)
-                }
-            } else {
-                HStack(alignment: .top) {
-                    Text(fields?.title ?? task.title)
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                    Spacer()
-                    editButton {
-                        editedTitle = fields?.title ?? task.title
-                        isEditingTitle = true
-                    }
-                }
-            }
+        if isEditing {
+            TextField("Work item title", text: $editedTitle)
+                .textFieldStyle(.roundedBorder)
+                .font(.title2)
+        } else {
+            Text(fields?.title ?? task.title)
+                .font(.title2)
+                .fontWeight(.semibold)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
     }
 
-    // MARK: - State & Type Section
+    // MARK: - Two-Column Metadata
 
     @ViewBuilder
-    private var stateAndTypeSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // State
-            azdoMetadataRow(icon: "circle.fill", title: "State") {
-                if isEditingState {
-                    HStack {
+    private var metadataColumns: some View {
+        HStack(alignment: .top, spacing: 24) {
+            // Left column: State, Type, Priority, Due Date
+            VStack(alignment: .leading, spacing: 12) {
+                metadataField(title: "State") {
+                    if isEditing {
                         Picker("", selection: $editedState) {
                             ForEach(stateOptions, id: \.self) { Text($0) }
                         }
-                        .frame(width: 140)
-                        Button("Save") { saveField { UpdateWorkItemRequest(state: editedState) } onSuccess: { isEditingState = false } }
-                            .buttonStyle(.borderedProminent).controlSize(.small)
-                        Button("Cancel") { isEditingState = false }.buttonStyle(.bordered).controlSize(.small)
-                    }
-                } else {
-                    HStack(spacing: 8) {
-                        WorkItemStateBadge(state: fields?.state)
-                        if let reason = fields?.reason {
-                            Text("(\(reason))")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        editButton {
-                            editedState = fields?.state ?? "New"
-                            isEditingState = true
+                        .labelsHidden()
+                        .frame(maxWidth: 160)
+                    } else {
+                        HStack(spacing: 6) {
+                            WorkItemStateBadge(state: fields?.state)
+                            if let reason = fields?.reason {
+                                Text("(\(reason))")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                 }
-            }
 
-            // Type (read-only — Azure DevOps API doesn't support type changes)
-            azdoMetadataRow(icon: "doc", title: "Type") {
-                WorkItemTypeBadge(type: fields?.workItemType)
-            }
+                metadataField(title: "Type") {
+                    if isEditing {
+                        Picker("", selection: $editedType) {
+                            ForEach(workItemTypes, id: \.self) { Text($0) }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 160)
+                    } else {
+                        WorkItemTypeBadge(type: fields?.workItemType)
+                    }
+                }
 
-            // Priority
-            azdoMetadataRow(icon: "flag", title: "Priority") {
-                if isEditingPriority {
-                    HStack {
+                metadataField(title: "Priority") {
+                    if isEditing {
                         Picker("", selection: $editedPriority) {
                             Text("1 – Critical").tag(1)
                             Text("2 – High").tag(2)
                             Text("3 – Medium").tag(3)
                             Text("4 – Low").tag(4)
                         }
-                        .frame(width: 140)
-                        Button("Save") { saveField { UpdateWorkItemRequest(priority: editedPriority) } onSuccess: { isEditingPriority = false } }
-                            .buttonStyle(.borderedProminent).controlSize(.small)
-                        Button("Cancel") { isEditingPriority = false }.buttonStyle(.bordered).controlSize(.small)
+                        .labelsHidden()
+                        .frame(maxWidth: 160)
+                    } else {
+                        HStack(spacing: 6) {
+                            PriorityIndicator(priority: fields?.priority)
+                            Text(priorityLabel(fields?.priority))
+                                .font(.body)
+                        }
                     }
-                } else {
-                    HStack {
-                        PriorityIndicator(priority: fields?.priority)
-                        Text(priorityLabel(fields?.priority))
-                            .font(.subheadline)
-                        editButton {
-                            editedPriority = fields?.priority ?? 2
-                            isEditingPriority = true
+                }
+
+                metadataField(title: "Due Date") {
+                    if isEditing {
+                        DatePicker("",
+                            selection: Binding(
+                                get: { editedDueDate ?? Date() },
+                                set: { editedDueDate = $0 }
+                            ),
+                            displayedComponents: .date
+                        )
+                        .datePickerStyle(.field)
+                        .labelsHidden()
+                        .frame(maxWidth: 160)
+                        if editedDueDate != nil {
+                            Button(action: { editedDueDate = nil }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary)
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Clear due date")
+                        }
+                    } else {
+                        if let dateStr = fields?.dueDate, let date = parseISODate(dateStr) {
+                            Text(date, style: .date)
+                                .font(.body)
+                        } else {
+                            Text("–")
+                                .font(.body)
+                                .foregroundColor(.secondary)
                         }
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Right column: Assigned To, Area Path, Iteration, Tags
+            VStack(alignment: .leading, spacing: 12) {
+                metadataField(title: "Assigned To") {
+                    if isEditing {
+                        if teamMembers.isEmpty {
+                            TextField("Email or display name", text: $editedAssignee)
+                                .textFieldStyle(.roundedBorder)
+                        } else {
+                            Picker("", selection: $editedAssignee) {
+                                Text("Unassigned").tag("")
+                                ForEach(teamMembers.indices, id: \.self) { i in
+                                    Text(teamMembers[i].displayName ?? teamMembers[i].uniqueName ?? "Unknown")
+                                        .tag(teamMembers[i].uniqueName ?? "")
+                                }
+                            }
+                            .labelsHidden()
+                        }
+                    } else {
+                        Text(fields?.assignedTo?.displayName ?? "Unassigned")
+                            .font(.body)
+                            .foregroundColor(fields?.assignedTo != nil ? .primary : .secondary)
+                    }
+                }
+
+                metadataField(title: "Area Path") {
+                    if isEditing {
+                        if areaPaths.isEmpty {
+                            TextField("Area path", text: $editedAreaPath)
+                                .textFieldStyle(.roundedBorder)
+                        } else {
+                            Picker("", selection: $editedAreaPath) {
+                                ForEach(areaPaths, id: \.self) { path in
+                                    Text(path).tag(path)
+                                }
+                            }
+                            .labelsHidden()
+                        }
+                    } else {
+                        Text(fields?.areaPath ?? "–")
+                            .font(.body)
+                    }
+                }
+
+                metadataField(title: "Iteration") {
+                    if isEditing {
+                        if iterationPaths.isEmpty {
+                            TextField("Iteration path", text: $editedIterationPath)
+                                .textFieldStyle(.roundedBorder)
+                        } else {
+                            Picker("", selection: $editedIterationPath) {
+                                ForEach(iterationPaths, id: \.self) { path in
+                                    Text(path).tag(path)
+                                }
+                            }
+                            .labelsHidden()
+                        }
+                    } else {
+                        Text(fields?.iterationPath ?? "–")
+                            .font(.body)
+                    }
+                }
+
+                metadataField(title: "Tags") {
+                    if isEditing {
+                        TextField("Semicolon-separated tags", text: $editedTags)
+                            .textFieldStyle(.roundedBorder)
+                    } else {
+                        let tagList = parseTags(fields?.tags)
+                        if tagList.isEmpty {
+                            Text("No tags").font(.body).foregroundColor(.secondary)
+                        } else {
+                            FlowLayout(spacing: 4) {
+                                ForEach(tagList, id: \.self) { tag in
+                                    Text(tag)
+                                        .font(.subheadline)
+                                        .padding(.horizontal, 8).padding(.vertical, 4)
+                                        .background(Color.blue.opacity(0.12))
+                                        .cornerRadius(10)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        // Board Column (full-width, read-only)
+        if let column = fields?.boardColumn {
+            HStack(spacing: 6) {
+                Text("Board Column").font(.subheadline).fontWeight(.medium).foregroundColor(.secondary)
+                Text(column).font(.body)
+                if fields?.boardColumnDone == true {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.subheadline)
+                }
+            }
+            .padding(.top, 8)
+        }
+    }
+
+    @ViewBuilder
+    private func metadataField<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundColor(.secondary)
+            content()
         }
     }
 
@@ -275,30 +522,24 @@ struct AzDoTaskSidebarView: View {
 
     @ViewBuilder
     private var descriptionSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("Description", systemImage: "text.alignleft")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.secondary)
-                Spacer()
-                if !isEditingDescription {
-                    editButton {
-                        editedDescription = fields?.description ?? ""
-                        isEditingDescription = true
+                Text("Description")
+                    .font(.headline)
+                if isEditing {
+                    Picker("", selection: $showDescriptionPreview) {
+                        Text("Edit").tag(false)
+                        Text("Preview").tag(true)
                     }
+                    .pickerStyle(.segmented)
+                    .frame(width: 130)
+                    .controlSize(.small)
                 }
+                Spacer()
             }
 
-            if isEditingDescription {
-                EditableMarkdownField(label: "Description", text: $editedDescription)
-                HStack {
-                    Button("Save") { saveField { UpdateWorkItemRequest(description: editedDescription) } onSuccess: { isEditingDescription = false } }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(isUpdating)
-                    Button("Cancel") { isEditingDescription = false }
-                        .buttonStyle(.bordered)
-                }
+            if isEditing {
+                EditableMarkdownField(text: $editedDescription, showPreview: showDescriptionPreview, hideToggle: true)
             } else {
                 let desc = fields?.description ?? task.description
                 if let desc = desc, !desc.isEmpty {
@@ -314,128 +555,48 @@ struct AzDoTaskSidebarView: View {
         }
     }
 
-    // MARK: - Metadata Section (Assignee, Paths, Tags)
+    // MARK: - Add Comment Section (above feed)
 
     @ViewBuilder
-    private var metadataSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Assigned To
-            azdoMetadataRow(icon: "person", title: "Assigned To") {
-                if isEditingAssignee {
-                    HStack {
-                        TextField("Email or name", text: $editedAssignee)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 200)
-                        Button("Save") { saveField { UpdateWorkItemRequest(assignedTo: editedAssignee) } onSuccess: { isEditingAssignee = false } }
-                            .buttonStyle(.borderedProminent).controlSize(.small)
-                        Button("Cancel") { isEditingAssignee = false }.buttonStyle(.bordered).controlSize(.small)
-                    }
-                } else {
-                    HStack {
-                        Text(fields?.assignedTo?.displayName ?? "Unassigned")
-                            .font(.subheadline)
-                            .foregroundColor(fields?.assignedTo != nil ? .primary : .secondary)
-                        editButton {
-                            editedAssignee = fields?.assignedTo?.uniqueName ?? fields?.assignedTo?.displayName ?? ""
-                            isEditingAssignee = true
-                        }
-                    }
+    private var addCommentSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Add Comment")
+                    .font(.headline)
+                Spacer()
+                Button(action: submitComment) {
+                    Label("Comment", systemImage: "paperplane")
                 }
+                .buttonStyle(.borderedProminent)
+                .disabled(newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingComment)
+                .keyboardShortcut(.return, modifiers: .command)
             }
 
-            // Area Path
-            azdoMetadataRow(icon: "folder", title: "Area Path") {
-                if isEditingAreaPath {
-                    HStack {
-                        TextField("Area path", text: $editedAreaPath)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 200)
-                        Button("Save") { saveField { UpdateWorkItemRequest(areaPath: editedAreaPath) } onSuccess: { isEditingAreaPath = false } }
-                            .buttonStyle(.borderedProminent).controlSize(.small)
-                        Button("Cancel") { isEditingAreaPath = false }.buttonStyle(.bordered).controlSize(.small)
-                    }
-                } else {
-                    HStack {
-                        Text(fields?.areaPath ?? "–")
-                            .font(.subheadline)
-                        editButton {
-                            editedAreaPath = fields?.areaPath ?? ""
-                            isEditingAreaPath = true
-                        }
-                    }
-                }
-            }
+            MentionTextEditor(text: $newCommentText, members: teamMembers)
 
-            // Iteration Path
-            azdoMetadataRow(icon: "arrow.triangle.2.circlepath", title: "Iteration") {
-                if isEditingIterationPath {
-                    HStack {
-                        TextField("Iteration path", text: $editedIterationPath)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 200)
-                        Button("Save") { saveField { UpdateWorkItemRequest(iterationPath: editedIterationPath) } onSuccess: { isEditingIterationPath = false } }
-                            .buttonStyle(.borderedProminent).controlSize(.small)
-                        Button("Cancel") { isEditingIterationPath = false }.buttonStyle(.bordered).controlSize(.small)
-                    }
-                } else {
-                    HStack {
-                        Text(fields?.iterationPath ?? "–")
-                            .font(.subheadline)
-                        editButton {
-                            editedIterationPath = fields?.iterationPath ?? ""
-                            isEditingIterationPath = true
-                        }
-                    }
-                }
-            }
+            Text("Supports Markdown · ⌘Enter to post")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
 
-            // Tags
-            azdoMetadataRow(icon: "tag", title: "Tags") {
-                if isEditingTags {
-                    VStack(alignment: .leading, spacing: 4) {
-                        TextField("Semicolon-separated tags", text: $editedTags)
-                            .textFieldStyle(.roundedBorder)
-                        HStack {
-                            Button("Save") { saveField { UpdateWorkItemRequest(tags: editedTags) } onSuccess: { isEditingTags = false } }
-                                .buttonStyle(.borderedProminent).controlSize(.small)
-                            Button("Cancel") { isEditingTags = false }.buttonStyle(.bordered).controlSize(.small)
-                        }
-                    }
-                } else {
-                    HStack {
-                        let tagList = parseTags(fields?.tags)
-                        if tagList.isEmpty {
-                            Text("No tags").font(.subheadline).foregroundColor(.secondary)
-                        } else {
-                            FlowLayout(spacing: 4) {
-                                ForEach(tagList, id: \.self) { tag in
-                                    Text(tag)
-                                        .font(.caption)
-                                        .padding(.horizontal, 8).padding(.vertical, 3)
-                                        .background(Color.blue.opacity(0.12))
-                                        .cornerRadius(10)
-                                }
-                            }
-                        }
-                        editButton {
-                            editedTags = fields?.tags ?? ""
-                            isEditingTags = true
-                        }
-                    }
-                }
-            }
+    // MARK: - Comments Feed Section
 
-            // Board Column (read-only)
-            if let column = fields?.boardColumn {
-                azdoMetadataRow(icon: "rectangle.split.3x1", title: "Board Column") {
-                    HStack(spacing: 4) {
-                        Text(column).font(.subheadline)
-                        if fields?.boardColumnDone == true {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.green)
-                                .font(.caption)
-                        }
-                    }
+    @ViewBuilder
+    private var commentsFeedSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Comments (\(comments.count))")
+                .font(.headline)
+
+            if comments.isEmpty {
+                Text("No comments yet.")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                    .italic()
+                    .padding(.vertical, 4)
+            } else {
+                ForEach(comments) { comment in
+                    DevOpsCommentBubble(comment: comment, service: service, workItemId: workItem?.id, project: workItemProject)
                 }
             }
         }
@@ -445,53 +606,27 @@ struct AzDoTaskSidebarView: View {
 
     @ViewBuilder
     private var effortSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label("Effort", systemImage: "clock")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.secondary)
-                Spacer()
-                if !isEditingEffort {
-                    editButton {
-                        editedOriginal = fields?.originalEstimate.map { "\($0)" } ?? ""
-                        editedRemaining = fields?.remainingWork.map { "\($0)" } ?? ""
-                        editedCompleted = fields?.completedWork.map { "\($0)" } ?? ""
-                        isEditingEffort = true
-                    }
-                }
-            }
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Effort")
+                .font(.headline)
 
-            if isEditingEffort {
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading) {
-                        Text("Original").font(.caption).foregroundColor(.secondary)
-                        TextField("hrs", text: $editedOriginal).textFieldStyle(.roundedBorder).frame(width: 60)
+            if isEditing {
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Original").font(.subheadline).foregroundColor(.secondary)
+                        TextField("hrs", text: $editedOriginal).textFieldStyle(.roundedBorder).frame(width: 70)
                     }
-                    VStack(alignment: .leading) {
-                        Text("Remaining").font(.caption).foregroundColor(.secondary)
-                        TextField("hrs", text: $editedRemaining).textFieldStyle(.roundedBorder).frame(width: 60)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Remaining").font(.subheadline).foregroundColor(.secondary)
+                        TextField("hrs", text: $editedRemaining).textFieldStyle(.roundedBorder).frame(width: 70)
                     }
-                    VStack(alignment: .leading) {
-                        Text("Completed").font(.caption).foregroundColor(.secondary)
-                        TextField("hrs", text: $editedCompleted).textFieldStyle(.roundedBorder).frame(width: 60)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Completed").font(.subheadline).foregroundColor(.secondary)
+                        TextField("hrs", text: $editedCompleted).textFieldStyle(.roundedBorder).frame(width: 70)
                     }
-                }
-                HStack {
-                    Button("Save") {
-                        saveField {
-                            UpdateWorkItemRequest(
-                                remainingWork: Double(editedRemaining),
-                                originalEstimate: Double(editedOriginal),
-                                completedWork: Double(editedCompleted)
-                            )
-                        } onSuccess: { isEditingEffort = false }
-                    }
-                    .buttonStyle(.borderedProminent).controlSize(.small)
-                    Button("Cancel") { isEditingEffort = false }.buttonStyle(.bordered).controlSize(.small)
                 }
             } else {
-                HStack(spacing: 16) {
+                HStack(spacing: 20) {
                     effortLabel("Original", value: fields?.originalEstimate)
                     effortLabel("Remaining", value: fields?.remainingWork)
                     effortLabel("Completed", value: fields?.completedWork)
@@ -501,10 +636,10 @@ struct AzDoTaskSidebarView: View {
     }
 
     private func effortLabel(_ label: String, value: Double?) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(label).font(.caption2).foregroundColor(.secondary)
-            Text(value.map { "\($0)h" } ?? "–")
-                .font(.subheadline)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.subheadline).foregroundColor(.secondary)
+            Text(value.map { String(format: "%.1fh", $0) } ?? "–")
+                .font(.body)
                 .monospacedDigit()
         }
     }
@@ -513,32 +648,26 @@ struct AzDoTaskSidebarView: View {
 
     @ViewBuilder
     private var reproStepsSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("Repro Steps", systemImage: "ladybug")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.secondary)
-                Spacer()
-                if !isEditingReproSteps {
-                    editButton {
-                        editedReproSteps = fields?.reproSteps ?? ""
-                        isEditingReproSteps = true
+                Text("Repro Steps")
+                    .font(.headline)
+                if isEditing {
+                    Picker("", selection: $showReproPreview) {
+                        Text("Edit").tag(false)
+                        Text("Preview").tag(true)
                     }
+                    .pickerStyle(.segmented)
+                    .frame(width: 130)
+                    .controlSize(.small)
                 }
+                Spacer()
             }
-            if isEditingReproSteps {
-                EditableMarkdownField(label: "Repro Steps", text: $editedReproSteps)
-                HStack {
-                    Button("Save") { saveField { UpdateWorkItemRequest(reproSteps: editedReproSteps) } onSuccess: { isEditingReproSteps = false } }
-                        .buttonStyle(.borderedProminent).disabled(isUpdating)
-                    Button("Cancel") { isEditingReproSteps = false }.buttonStyle(.bordered)
-                }
+            if isEditing {
+                EditableMarkdownField(text: $editedReproSteps, showPreview: showReproPreview, hideToggle: true)
             } else if let repro = fields?.reproSteps, !repro.isEmpty {
                 MarkdownTextView(content: repro)
                     .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("No repro steps.").font(.body).foregroundColor(.secondary).italic()
             }
         }
     }
@@ -547,32 +676,26 @@ struct AzDoTaskSidebarView: View {
 
     @ViewBuilder
     private var acceptanceCriteriaSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label("Acceptance Criteria", systemImage: "checkmark.seal")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.secondary)
-                Spacer()
-                if !isEditingAcceptance {
-                    editButton {
-                        editedAcceptance = fields?.acceptanceCriteria ?? ""
-                        isEditingAcceptance = true
+                Text("Acceptance Criteria")
+                    .font(.headline)
+                if isEditing {
+                    Picker("", selection: $showAcceptancePreview) {
+                        Text("Edit").tag(false)
+                        Text("Preview").tag(true)
                     }
+                    .pickerStyle(.segmented)
+                    .frame(width: 130)
+                    .controlSize(.small)
                 }
+                Spacer()
             }
-            if isEditingAcceptance {
-                EditableMarkdownField(label: "Acceptance Criteria", text: $editedAcceptance)
-                HStack {
-                    Button("Save") { saveField { UpdateWorkItemRequest(acceptanceCriteria: editedAcceptance) } onSuccess: { isEditingAcceptance = false } }
-                        .buttonStyle(.borderedProminent).disabled(isUpdating)
-                    Button("Cancel") { isEditingAcceptance = false }.buttonStyle(.bordered)
-                }
+            if isEditing {
+                EditableMarkdownField(text: $editedAcceptance, showPreview: showAcceptancePreview, hideToggle: true)
             } else if let criteria = fields?.acceptanceCriteria, !criteria.isEmpty {
                 MarkdownTextView(content: criteria)
                     .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("No acceptance criteria.").font(.body).foregroundColor(.secondary).italic()
             }
         }
     }
@@ -581,11 +704,9 @@ struct AzDoTaskSidebarView: View {
 
     @ViewBuilder
     private func relationsSection(_ relations: [WorkItemRelation]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Relations (\(relations.count))", systemImage: "link")
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundColor(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Relations (\(relations.count))")
+                .font(.headline)
 
             let grouped = Dictionary(grouping: relations, by: { $0.relationType })
             let order: [WorkItemRelation.RelationType] = [.parent, .child, .related, .predecessor, .successor, .artifact, .other]
@@ -593,7 +714,7 @@ struct AzDoTaskSidebarView: View {
                 if let items = grouped[type], !items.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(relationTypeLabel(type))
-                            .font(.caption2)
+                            .font(.subheadline)
                             .fontWeight(.semibold)
                             .foregroundColor(.secondary)
                             .textCase(.uppercase)
@@ -608,38 +729,43 @@ struct AzDoTaskSidebarView: View {
 
     @ViewBuilder
     private func relationRow(_ relation: WorkItemRelation) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Image(systemName: relationIcon(relation.relationType))
-                .font(.caption)
+                .font(.subheadline)
                 .foregroundColor(.secondary)
-                .frame(width: 14)
+                .frame(width: 16)
 
-            if let name = relation.attributes?.name {
+            if relation.relationType != .artifact, let id = relation.linkedWorkItemId {
+                // Work item relation — show title and make clickable
+                Button(action: { onSelectWorkItem?(id) }) {
+                    HStack(spacing: 4) {
+                        Text("#\(id)")
+                            .font(.body)
+                            .foregroundColor(.accentColor)
+                        if let title = linkedWorkItemTitles[id] {
+                            Text(title)
+                                .font(.body)
+                                .foregroundColor(.accentColor)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Open in sidebar")
+            } else if let name = relation.attributes?.name {
                 Text(name)
-                    .font(.subheadline)
+                    .font(.body)
                     .lineLimit(1)
-            } else if let id = relation.linkedWorkItemId {
-                Text("#\(id)")
-                    .font(.subheadline)
-                    .foregroundColor(.accentColor)
             } else if let url = relation.url {
                 Text(url.components(separatedBy: "/").suffix(3).joined(separator: "/"))
-                    .font(.caption)
+                    .font(.subheadline)
                     .foregroundColor(.accentColor)
                     .lineLimit(1)
             }
 
             Spacer()
-
-            if let url = relation.url, let urlObj = URL(string: url.replacingOccurrences(of: "_apis/wit/workItems", with: "_workitems/edit")) {
-                Link(destination: urlObj) {
-                    Image(systemName: "arrow.up.right.square")
-                        .font(.caption)
-                }
-                .help("Open")
-            }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 3)
     }
 
     private func relationTypeLabel(_ type: WorkItemRelation.RelationType) -> String {
@@ -666,17 +792,406 @@ struct AzDoTaskSidebarView: View {
         }
     }
 
+    // MARK: - Code Link Section
+
+    @ViewBuilder
+    private var codeLinkSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Development")
+                    .font(.headline)
+                Spacer()
+                Button(action: { openLinkCodePopover() }) {
+                    Label("Link", systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .popover(isPresented: $showLinkCodePopover, arrowEdge: .trailing) {
+                    linkCodePopoverContent
+                }
+            }
+
+            // Show existing artifact links
+            let artifactLinks = (workItem?.relations ?? []).filter { $0.relationType == .artifact }
+            if artifactLinks.isEmpty {
+                Text("No linked commits, branches, or pull requests.")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                    .italic()
+            } else {
+                ForEach(Array(artifactLinks.enumerated()), id: \.offset) { _, rel in
+                    artifactLinkRow(rel)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func artifactLinkRow(_ relation: WorkItemRelation) -> some View {
+        let artifactType = parseArtifactType(relation.url)
+        let displayName = relation.attributes?.name ?? artifactLabel(for: relation.url)
+        let webUrl = artifactWebUrl(relation.url)
+
+        HStack(spacing: 8) {
+            Image(systemName: artifactIcon(for: relation.url))
+                .font(.subheadline)
+                .foregroundColor(.accentColor)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    Text(artifactType)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+                        .textCase(.uppercase)
+                }
+                if let webUrl = webUrl, let urlObj = URL(string: webUrl) {
+                    Link(displayName, destination: urlObj)
+                        .font(.body)
+                        .lineLimit(1)
+                        .help(webUrl)
+                } else {
+                    Text(displayName)
+                        .font(.body)
+                        .lineLimit(1)
+                }
+                if let comment = relation.attributes?.comment, !comment.isEmpty {
+                    Text(comment)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 3)
+    }
+
+    private func parseArtifactType(_ url: String?) -> String {
+        guard let url = url?.lowercased() else { return "Artifact" }
+        if url.contains("/commit/") || url.contains("git/commit") || url.contains("%2fcommit%2f") { return "Commit" }
+        if url.contains("pullrequestid") || url.contains("/pullrequest/") || url.contains("git/pullrequestid") { return "Pull Request" }
+        if url.contains("/ref/") || url.contains("git/ref") || url.contains("%2fref%2f") { return "Branch" }
+        return "Artifact"
+    }
+
+    /// Convert vstfs:///Git/... URI to a web URL for the Azure DevOps portal.
+    private func artifactWebUrl(_ vstfsUrl: String?) -> String? {
+        guard let url = vstfsUrl else { return nil }
+        let orgBase = service.baseUrl
+
+        // vstfs:///Git/Commit/{projectId}/{repoId}/{commitSha}
+        if url.contains("Git/Commit") || url.contains("Git%2FCommit") {
+            let decoded = url.removingPercentEncoding ?? url
+            let parts = decoded.components(separatedBy: "/")
+            // .../{projectId}/{repoId}/{commitSha}
+            if parts.count >= 3 {
+                let commitSha = parts[parts.count - 1]
+                let repoId = parts[parts.count - 2]
+                let projectId = parts[parts.count - 3]
+                return "\(orgBase)/\(projectId)/_git/\(repoId)/commit/\(commitSha)"
+            }
+        }
+
+        // vstfs:///Git/PullRequestId/{projectId}/{pullRequestId}
+        if url.contains("Git/PullRequestId") || url.contains("Git%2FPullRequestId") {
+            let decoded = url.removingPercentEncoding ?? url
+            let parts = decoded.components(separatedBy: "/")
+            if parts.count >= 2 {
+                let prId = parts[parts.count - 1]
+                let projectId = parts[parts.count - 2]
+                return "\(orgBase)/\(projectId)/_git/pullrequest/\(prId)"
+            }
+        }
+
+        // vstfs:///Git/Ref/{projectId}/{repoId}/{encodedBranch}
+        if url.contains("Git/Ref") || url.contains("Git%2FRef") {
+            let decoded = url.removingPercentEncoding ?? url
+            let parts = decoded.components(separatedBy: "/")
+            if parts.count >= 3 {
+                let repoId = parts[parts.count - 2]
+                let projectId = parts[parts.count - 3]
+                return "\(orgBase)/\(projectId)/_git/\(repoId)"
+            }
+        }
+
+        // Fallback: if it's already an http URL, use it
+        if url.hasPrefix("http") { return url }
+        return nil
+    }
+
+    private func artifactIcon(for url: String?) -> String {
+        guard let url = url?.lowercased() else { return "link" }
+        if url.contains("/commit/") || url.contains("git/commit") { return "point.topleft.down.to.point.bottomright.curvepath" }
+        if url.contains("pullrequestid") || url.contains("/pullrequest/") { return "arrow.triangle.pull" }
+        if url.contains("/ref/") || url.contains("git/ref") { return "arrow.triangle.branch" }
+        return "link"
+    }
+
+    private func artifactLabel(for url: String?) -> String {
+        guard let url = url else { return "Linked Artifact" }
+        if url.contains("Commit") { return "Commit" }
+        if url.contains("PullRequestId") { return "Pull Request" }
+        if url.contains("Ref") { return "Branch" }
+        return "Artifact"
+    }
+
+    // MARK: - Link Code Popover
+
+    @ViewBuilder
+    private var linkCodePopoverContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Link to Code")
+                .font(.headline)
+
+            if linkRepos.isEmpty && isLoadingLinkData {
+                HStack { Spacer(); ProgressView(); Spacer() }
+                    .frame(height: 60)
+            } else if linkRepos.isEmpty {
+                Text("No repositories found.")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+            } else {
+                // Repo picker
+                Picker("Repository", selection: $linkSelectedRepoId) {
+                    Text("Select…").tag("")
+                    ForEach(linkRepos) { repo in
+                        Text(repo.name).tag(repo.id)
+                    }
+                }
+                .onChange(of: linkSelectedRepoId) { loadLinkDetails() }
+
+                if !linkSelectedRepoId.isEmpty {
+                    // Tab picker
+                    Picker("", selection: $linkTab) {
+                        ForEach(CodeLinkTab.allCases, id: \.self) { tab in
+                            Text(tab.rawValue).tag(tab)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: linkTab) { loadLinkDetails() }
+
+                    if isLoadingLinkData {
+                        HStack { Spacer(); ProgressView(); Spacer() }
+                            .frame(height: 40)
+                    } else {
+                        linkTabContent
+                    }
+                }
+
+                if let error = linkError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+
+                if isLinking {
+                    HStack { Spacer(); ProgressView().scaleEffect(0.7); Text("Linking…").font(.caption); Spacer() }
+                }
+            }
+        }
+        .padding()
+        .frame(minWidth: 420, maxWidth: 480, minHeight: 600, maxHeight: 800)
+    }
+
+    @ViewBuilder
+    private var linkTabContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                switch linkTab {
+                case .branch:
+                    if linkBranches.isEmpty {
+                        Text("No branches found.").font(.body).foregroundColor(.secondary)
+                    } else {
+                        ForEach(linkBranches) { branch in
+                            Button(action: { linkBranch(branch) }) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "arrow.triangle.branch")
+                                        .font(.subheadline)
+                                        .foregroundColor(.accentColor)
+                                        .frame(width: 16)
+                                    Text(branch.shortName)
+                                        .font(.body)
+                                        .lineLimit(1)
+                                    Spacer()
+                                }
+                                .padding(.vertical, 4)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                case .commit:
+                    if linkCommits.isEmpty {
+                        Text("No commits found.").font(.body).foregroundColor(.secondary)
+                    } else {
+                        ForEach(linkCommits) { commit in
+                            Button(action: { linkCommit(commit) }) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                                        .font(.subheadline)
+                                        .foregroundColor(.orange)
+                                        .frame(width: 16)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(commit.comment ?? "No message")
+                                            .font(.body)
+                                            .lineLimit(1)
+                                        HStack(spacing: 6) {
+                                            Text(commit.shortId)
+                                                .font(.caption)
+                                                .monospacedDigit()
+                                                .foregroundColor(.secondary)
+                                            if let author = commit.author?.name {
+                                                Text(author)
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                        }
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.vertical, 4)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                case .pullRequest:
+                    if linkPullRequests.isEmpty {
+                        Text("No pull requests found.").font(.body).foregroundColor(.secondary)
+                    } else {
+                        ForEach(linkPullRequests) { pr in
+                            Button(action: { linkPR(pr) }) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "arrow.triangle.pull")
+                                        .font(.subheadline)
+                                        .foregroundColor(pr.status == "completed" ? .purple : .green)
+                                        .frame(width: 16)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(pr.title ?? "Untitled PR")
+                                            .font(.body)
+                                            .lineLimit(1)
+                                        HStack(spacing: 6) {
+                                            Text("#\(pr.pullRequestId)")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                            if let branch = pr.sourceBranch {
+                                                Text(branch)
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            if let status = pr.status {
+                                                Text(status.capitalized)
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                        }
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.vertical, 4)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxHeight: 250)
+    }
+
+    // MARK: - Code Link Actions
+
+    private func openLinkCodePopover() {
+        showLinkCodePopover = true
+        linkError = nil
+        linkSelectedRepoId = ""
+        linkBranches = []
+        linkCommits = []
+        linkPullRequests = []
+        guard linkRepos.isEmpty else { return }
+        isLoadingLinkData = true
+        Task {
+            defer { isLoadingLinkData = false }
+            do {
+                linkRepos = try await service.getRepositories(project: workItemProject)
+            } catch {
+                linkError = "Failed to load repos: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func loadLinkDetails() {
+        guard !linkSelectedRepoId.isEmpty else { return }
+        isLoadingLinkData = true
+        linkError = nil
+        let repoId = linkSelectedRepoId
+        let proj = workItemProject
+        Task {
+            defer { isLoadingLinkData = false }
+            do {
+                switch linkTab {
+                case .branch:
+                    linkBranches = try await service.getBranches(repositoryId: repoId, project: proj)
+                case .commit:
+                    linkCommits = try await service.getCommits(repositoryId: repoId, project: proj)
+                case .pullRequest:
+                    linkPullRequests = try await service.getPullRequests(repositoryId: repoId, project: proj)
+                }
+            } catch {
+                linkError = error.localizedDescription
+            }
+        }
+    }
+
+    private func selectedRepoProjectId() -> String? {
+        linkRepos.first(where: { $0.id == linkSelectedRepoId })?.project?.id
+    }
+
+    private func linkBranch(_ branch: GitRef) {
+        guard let id = workItemId, let projectId = selectedRepoProjectId() else { return }
+        let uri = AzureDevOpsService.branchArtifactUri(projectId: projectId, repositoryId: linkSelectedRepoId, branchName: branch.shortName)
+        performLink(workItemId: id, uri: uri, name: "Branch")
+    }
+
+    private func linkCommit(_ commit: GitCommitRef) {
+        guard let id = workItemId, let projectId = selectedRepoProjectId() else { return }
+        let uri = AzureDevOpsService.commitArtifactUri(projectId: projectId, repositoryId: linkSelectedRepoId, commitId: commit.commitId)
+        performLink(workItemId: id, uri: uri, name: "Fixed in Commit")
+    }
+
+    private func linkPR(_ pr: GitPullRequest) {
+        guard let id = workItemId, let projectId = selectedRepoProjectId() else { return }
+        let uri = AzureDevOpsService.pullRequestArtifactUri(projectId: projectId, repositoryId: linkSelectedRepoId, pullRequestId: pr.pullRequestId)
+        performLink(workItemId: id, uri: uri, name: "Pull Request")
+    }
+
+    private func performLink(workItemId: Int, uri: String, name: String) {
+        isLinking = true
+        linkError = nil
+        Task {
+            defer { isLinking = false }
+            do {
+                workItem = try await service.addWorkItemArtifactLink(workItemId: workItemId, artifactUri: uri, linkName: name)
+                showLinkCodePopover = false
+            } catch {
+                linkError = error.localizedDescription
+            }
+        }
+    }
+
     // MARK: - Dates Section
 
     @ViewBuilder
     private var datesSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label("Dates", systemImage: "calendar")
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundColor(.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Dates")
+                .font(.headline)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 azdoDateRow("Created", date: fields?.createdDate, by: fields?.createdBy)
                 azdoDateRow("Changed", date: fields?.changedDate, by: fields?.changedBy)
                 if let stateDate = fields?.stateChangeDate {
@@ -693,133 +1208,74 @@ struct AzDoTaskSidebarView: View {
     }
 
     private func azdoDateRow(_ label: String, date: String?, by person: IdentityRef?) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             Text(label)
-                .font(.caption)
+                .font(.subheadline)
                 .foregroundColor(.secondary)
-                .frame(width: 90, alignment: .leading)
+                .frame(width: 100, alignment: .leading)
             if let date = date, let parsed = parseISODate(date) {
                 Text(parsed, style: .relative)
-                    .font(.caption)
+                    .font(.subheadline)
                     .foregroundColor(.secondary)
             } else {
-                Text("–").font(.caption).foregroundColor(.secondary)
+                Text("–").font(.subheadline).foregroundColor(.secondary)
             }
             if let name = person?.displayName {
                 Text("by \(name)")
-                    .font(.caption)
+                    .font(.subheadline)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
         }
     }
 
-    // MARK: - Comments Section
+    // MARK: - State Management
 
-    @ViewBuilder
-    private var commentsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Discussion (\(comments.count))", systemImage: "bubble.left.and.bubble.right")
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundColor(.secondary)
-
-            if comments.isEmpty {
-                Text("No comments yet.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .italic()
-            } else {
-                ForEach(comments) { comment in
-                    DevOpsCommentBubble(comment: comment)
-                }
-            }
-        }
+    private func resetState() {
+        workItem = nil
+        parentWorkItem = nil
+        comments = []
+        isEditing = false
+        isLoadingDetail = false
+        loadError = nil
+        newCommentText = ""
+        actionError = nil
+        linkedWorkItemTitles = [:]
+        areaPaths = []
+        iterationPaths = []
+        teamMembers = []
+        linkRepos = []
+        linkSelectedRepoId = ""
+        linkBranches = []
+        linkCommits = []
+        linkPullRequests = []
+        showLinkCodePopover = false
     }
 
-    // MARK: - Add Comment Section
-
-    @ViewBuilder
-    private var addCommentSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("Add Comment", systemImage: "plus.bubble")
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundColor(.secondary)
-
-            TextEditor(text: $newCommentText)
-                .font(.body)
-                .frame(minHeight: 80, maxHeight: 200)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
-
-            HStack {
-                Text("Supports Markdown & HTML")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                Spacer()
-                Button(action: submitComment) {
-                    Label("Comment", systemImage: "paperplane")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(newCommentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingComment)
-            }
+    private func enterEditMode() {
+        editedTitle = fields?.title ?? task.title
+        editedState = fields?.state ?? "New"
+        editedType = fields?.workItemType ?? "Bug"
+        editedPriority = fields?.priority ?? 2
+        editedAssignee = fields?.assignedTo?.uniqueName ?? fields?.assignedTo?.displayName ?? ""
+        editedAreaPath = fields?.areaPath ?? ""
+        editedIterationPath = fields?.iterationPath ?? ""
+        editedTags = fields?.tags ?? ""
+        if let dueDateStr = fields?.dueDate, let parsed = parseISODate(dueDateStr) {
+            editedDueDate = parsed
+        } else {
+            editedDueDate = nil
         }
-    }
-
-    // MARK: - Danger Zone
-
-    @ViewBuilder
-    private var dangerZoneSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button(action: { showDangerZone.toggle() }) {
-                HStack {
-                    Label("Actions", systemImage: "ellipsis.circle")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.secondary)
-                    Image(systemName: showDangerZone ? "chevron.up" : "chevron.down")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-            }
-            .buttonStyle(.plain)
-
-            if showDangerZone {
-                VStack(alignment: .leading, spacing: 8) {
-                    let currentState = (fields?.state ?? "New").lowercased()
-                    if currentState != "resolved" && currentState != "closed" {
-                        Button(action: { quickStateChange("Resolved") }) {
-                            Label("Resolve", systemImage: "checkmark.circle")
-                        }
-                        .buttonStyle(.bordered)
-                        .foregroundColor(.green)
-                    }
-                    if currentState != "closed" {
-                        Button(action: { quickStateChange("Closed") }) {
-                            Label("Close", systemImage: "xmark.circle")
-                        }
-                        .buttonStyle(.bordered)
-                        .foregroundColor(.orange)
-                    }
-                    if currentState == "closed" || currentState == "resolved" {
-                        Button(action: { quickStateChange("Active") }) {
-                            Label("Reactivate", systemImage: "arrow.counterclockwise.circle")
-                        }
-                        .buttonStyle(.bordered)
-                        .foregroundColor(.blue)
-                    }
-
-                    Divider()
-
-                    Button(action: { showConfirmRemove = true }) {
-                        Label("Remove Work Item", systemImage: "trash")
-                    }
-                    .buttonStyle(.bordered)
-                    .foregroundColor(.red)
-                }
-                .padding(.leading, 4)
-            }
-        }
+        editedDescription = fields?.description ?? ""
+        editedRemaining = fields?.remainingWork.map { "\($0)" } ?? ""
+        editedOriginal = fields?.originalEstimate.map { "\($0)" } ?? ""
+        editedCompleted = fields?.completedWork.map { "\($0)" } ?? ""
+        editedReproSteps = fields?.reproSteps ?? ""
+        editedAcceptance = fields?.acceptanceCriteria ?? ""
+        showDescriptionPreview = false
+        showReproPreview = false
+        showAcceptancePreview = false
+        isEditing = true
     }
 
     // MARK: - Load Detail
@@ -831,47 +1287,141 @@ struct AzDoTaskSidebarView: View {
 
         Task {
             defer { isLoadingDetail = false }
+            let loadedItem: WorkItem?
             do {
-                workItem = try await service.getWorkItem(id: id)
+                loadedItem = try await service.getWorkItem(id: id)
+                workItem = loadedItem
             } catch {
                 loadError = error.localizedDescription
                 return
             }
-            // Comments are non-blocking — failures don't prevent detail from showing
+            // Read project directly from loaded item (not from @State) to avoid stale reads
+            let proj = loadedItem?.fields?.teamProject
             Task {
                 do {
-                    comments = try await service.getComments(workItemId: id)
+                    comments = try await service.getComments(workItemId: id, project: proj)
                 } catch {
-                    dbg.warn("AzDO comments load failed (non-fatal): \(error)", category: "azdo")
+                    dbg.warn("AzDO comments load failed: \(error)", category: "azdo")
+                    actionError = "Comments failed to load"
+                }
+            }
+            // Load parent work item if relation exists
+            if let parentRel = loadedItem?.relations?.first(where: { $0.relationType == .parent }),
+               let parentId = parentRel.linkedWorkItemId {
+                Task {
+                    do {
+                        parentWorkItem = try await service.getWorkItem(id: parentId)
+                    } catch {
+                        dbg.debug("Parent load failed: \(error)", category: "azdo")
+                    }
+                }
+            }
+            // Fetch titles for linked work items (non-artifact relations)
+            if let relations = loadedItem?.relations {
+                let workItemIds = relations
+                    .filter { $0.relationType != .artifact }
+                    .compactMap { $0.linkedWorkItemId }
+                if !workItemIds.isEmpty {
+                    Task {
+                        do {
+                            let items = try await service.getWorkItemsByIds(workItemIds)
+                            var titles: [Int: String] = [:]
+                            for item in items {
+                                if let title = item.fields?.title {
+                                    titles[item.id] = title
+                                }
+                            }
+                            linkedWorkItemTitles = titles
+                        } catch {
+                            dbg.debug("Linked work item titles load failed: \(error)", category: "azdo")
+                        }
+                    }
+                }
+            }
+            // Pre-load picker data (non-blocking)
+            let pickerProj = proj
+            Task {
+                do { areaPaths = try await service.getAreaPaths(project: pickerProj) } catch {
+                    dbg.debug("Area paths load failed: \(error)", category: "azdo")
+                }
+            }
+            Task {
+                do { iterationPaths = try await service.getIterationPaths(project: pickerProj) } catch {
+                    dbg.debug("Iteration paths load failed: \(error)", category: "azdo")
+                }
+            }
+            Task {
+                do { teamMembers = try await service.getTeamMembers(project: pickerProj) } catch {
+                    dbg.debug("Team members load failed: \(error)", category: "azdo")
                 }
             }
         }
     }
 
-    // MARK: - Save Helpers
+    // MARK: - Save All
 
-    private func saveField(buildRequest: () -> UpdateWorkItemRequest, onSuccess: @escaping () -> Void) {
+    private func saveAll() {
         guard let id = workItemId else { return }
-        let request = buildRequest()
         isUpdating = true
         actionError = nil
         Task {
             defer { isUpdating = false }
             do {
+                let typeChanged = editedType != (fields?.workItemType ?? "")
+                let request = UpdateWorkItemRequest(
+                    title: editedTitle.azdoTrimmed,
+                    state: editedState,
+                    workItemType: typeChanged ? editedType : nil,
+                    assignedTo: editedAssignee,
+                    priority: editedPriority,
+                    iterationPath: editedIterationPath,
+                    areaPath: editedAreaPath,
+                    description: editedDescription,
+                    tags: editedTags,
+                    remainingWork: Double(editedRemaining),
+                    originalEstimate: Double(editedOriginal),
+                    completedWork: Double(editedCompleted),
+                    reproSteps: editedReproSteps,
+                    acceptanceCriteria: editedAcceptance,
+                    dueDate: editedDueDate.map { formatDateForApi($0) }
+                )
                 workItem = try await service.updateWorkItem(id: id, request: request)
-                onSuccess()
+                isEditing = false
             } catch {
                 actionError = error.localizedDescription
             }
         }
     }
 
+    // MARK: - Quick Actions
+
     private func quickStateChange(_ newState: String) {
-        saveField { UpdateWorkItemRequest(state: newState) } onSuccess: { }
+        guard let id = workItemId else { return }
+        isUpdating = true
+        actionError = nil
+        Task {
+            defer { isUpdating = false }
+            do {
+                workItem = try await service.updateWorkItem(id: id, request: UpdateWorkItemRequest(state: newState))
+            } catch {
+                actionError = error.localizedDescription
+            }
+        }
     }
 
     private func removeWorkItem() {
-        saveField { UpdateWorkItemRequest(state: "Removed") } onSuccess: { onClose() }
+        guard let id = workItemId else { return }
+        isUpdating = true
+        actionError = nil
+        Task {
+            defer { isUpdating = false }
+            do {
+                _ = try await service.updateWorkItem(id: id, request: UpdateWorkItemRequest(state: "Removed"))
+                onClose()
+            } catch {
+                actionError = error.localizedDescription
+            }
+        }
     }
 
     private func submitComment() {
@@ -883,8 +1433,8 @@ struct AzDoTaskSidebarView: View {
         Task {
             defer { isAddingComment = false }
             do {
-                let comment = try await service.addComment(workItemId: id, text: text)
-                comments.append(comment)
+                let comment = try await service.addComment(workItemId: id, text: text, project: workItemProject)
+                comments.insert(comment, at: 0)
                 newCommentText = ""
             } catch {
                 actionError = error.localizedDescription
@@ -893,33 +1443,6 @@ struct AzDoTaskSidebarView: View {
     }
 
     // MARK: - Helpers
-
-    private func editButton(action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 3) {
-                Image(systemName: "pencil")
-                Text("Edit")
-            }
-            .font(.caption)
-            .foregroundColor(.accentColor)
-        }
-        .buttonStyle(.plain)
-        .help("Edit")
-    }
-
-    @ViewBuilder
-    private func azdoMetadataRow<Content: View>(icon: String, title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 12))
-                .foregroundColor(.secondary)
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.caption).foregroundColor(.secondary).fontWeight(.medium)
-                content()
-            }
-        }
-    }
 
     private func parseTags(_ tags: String?) -> [String] {
         guard let tags = tags, !tags.isEmpty else { return [] }
@@ -941,40 +1464,101 @@ struct AzDoTaskSidebarView: View {
         fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return fmt.date(from: string)
     }
+
+    /// Format an ISO date string to YYYY-MM-DD for the edit text field.
+    private func formatDateForApi(_ date: Date) -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        return fmt.string(from: date)
+    }
 }
 
 // MARK: - DevOps Comment Bubble
 
 private struct DevOpsCommentBubble: View {
     let comment: WorkItemComment
+    let service: AzureDevOpsService
+    let workItemId: Int?
+    let project: String?
+    @State private var showReactionPicker = false
+
+    private let reactionEmojis: [(type: String, emoji: String)] = [
+        ("like", "👍"), ("dislike", "👎"), ("heart", "❤️"), ("hooray", "🎉"), ("confused", "😕")
+    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: "person.circle.fill")
-                    .font(.system(size: 20))
-                    .foregroundColor(.secondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(comment.createdBy?.displayName ?? "Unknown")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                    if let dateStr = comment.createdDate, let date = parseDate(dateStr) {
-                        Text(date, style: .relative)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            // Comments API returns HTML in renderedText or plain in text
-            let content = comment.renderedText ?? comment.text ?? ""
+            // Comment content first
+            let rendered = comment.renderedText
+            let content = (rendered != nil && !rendered!.isEmpty) ? rendered! : (comment.text ?? "")
             if !content.isEmpty {
                 MarkdownTextView(content: content)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            // Existing reactions + add button
+            HStack(spacing: 6) {
+                if let reactions = comment.reactions {
+                    ForEach(reactions.filter { ($0.count ?? 0) > 0 }, id: \.type) { reaction in
+                        if let type = reaction.type,
+                           let emoji = reactionEmojis.first(where: { $0.type == type })?.emoji {
+                            Text("\(emoji) \(reaction.count ?? 0)")
+                                .font(.body)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(reaction.isCurrentUserEngaged == true ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.1))
+                                .cornerRadius(12)
+                        }
+                    }
+                }
+                Button(action: { showReactionPicker.toggle() }) {
+                    Image(systemName: "face.smiling")
+                        .font(.body)
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Add reaction")
+                .popover(isPresented: $showReactionPicker) {
+                    HStack(spacing: 10) {
+                        ForEach(reactionEmojis, id: \.type) { item in
+                            Button(item.emoji) {
+                                addReaction(type: item.type)
+                                showReactionPicker = false
+                            }
+                            .buttonStyle(.plain)
+                            .font(.title2)
+                        }
+                    }
+                    .padding(10)
+                }
+                Spacer()
+                // Author + time on the right
+                if let dateStr = comment.createdDate, let date = parseDate(dateStr) {
+                    Text(date, style: .relative)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Text(comment.createdBy?.displayName ?? "Unknown")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundColor(.secondary)
+                Image(systemName: "person.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(.secondary)
             }
         }
-        .padding(10)
+        .padding(12)
         .background(Color.secondary.opacity(0.06))
         .cornerRadius(8)
+    }
+
+    private func addReaction(type: String) {
+        guard let wiId = workItemId else { return }
+        Task {
+            _ = try? await service.toggleCommentReaction(
+                workItemId: wiId, commentId: comment.id,
+                reactionType: type, add: true, project: project
+            )
+        }
     }
 
     private func parseDate(_ string: String) -> Date? {

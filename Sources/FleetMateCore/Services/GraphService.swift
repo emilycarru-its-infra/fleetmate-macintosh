@@ -493,6 +493,38 @@ public class GraphService {
         return try await fetch(url: url, headers: headers)
     }
     
+    /// Get Entra group memberships for a device by its Azure AD device ID
+    public func getDeviceGroupMemberships(_ azureADDeviceId: String) async throws -> [DeviceGroupMembership] {
+        guard let headers = await headers(for: .systems) else { return [] }
+        
+        // First find the Entra device object by its deviceId property
+        let filterUrl = "\(baseUrl)/devices?$filter=deviceId eq '\(azureADDeviceId)'&$select=id"
+        
+        struct DeviceIdResponse: Codable {
+            let value: [DeviceIdEntry]
+            struct DeviceIdEntry: Codable {
+                let id: String?
+            }
+        }
+        
+        let deviceResponse: DeviceIdResponse = try await fetch(url: filterUrl, headers: headers)
+        guard let entraObjectId = deviceResponse.value.first?.id else { return [] }
+        
+        let url = "\(baseUrl)/devices/\(entraObjectId)/memberOf"
+        let response: DeviceMemberOfResponse = try await fetch(url: url, headers: headers)
+        return response.value.filter { $0.isGroup }
+    }
+    
+    /// Get managed app registrations for a user (apps managed by Intune MAM/MDM)
+    public func getUserManagedAppRegistrations(_ userId: String) async throws -> [ManagedAppRegistration] {
+        guard let headers = await headers(for: .devices) else { return [] }
+        
+        let escapedId = userId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? userId
+        let url = "\(baseUrl)/users/\(escapedId)/managedAppRegistrations"
+        let response: ManagedAppRegistrationsResponse = try await fetch(url: url, headers: headers)
+        return response.value
+    }
+    
     /// Wipe a device (factory reset)
     public func wipeDevice(_ deviceId: String, keepEnrollmentData: Bool = false, keepUserData: Bool = false) async throws -> DeviceActionResult {
         guard let headers = await headers(for: .devices) else {

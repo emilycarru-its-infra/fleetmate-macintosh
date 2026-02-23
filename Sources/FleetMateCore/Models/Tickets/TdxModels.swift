@@ -106,6 +106,7 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
     public let createdFullName: String?
     public let createdEmail: String?
     public let itemType: Int?
+    public let replies: [TdxFeedEntry]?
 
     enum CodingKeys: String, CodingKey {
         case id = "ID"
@@ -115,6 +116,7 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
         case createdFullName = "CreatedFullName"
         case createdEmail = "CreatedEmail"
         case itemType = "ItemType"
+        case replies = "Replies"
     }
 }
 

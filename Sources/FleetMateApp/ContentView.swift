@@ -27,7 +27,7 @@ struct ContentView: View {
             case .devices: return "laptopcomputer"
             case .inventory: return "shippingbox"
             case .tickets: return "ticket"
-            case .projects: return "rectangle.split.3x1"
+            case .projects: return "list.clipboard"
             case .identity: return "person.2"
             }
         }
@@ -74,7 +74,7 @@ struct ContentView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color(NSColor.windowBackgroundColor))
+            .background(Color(NSColor.controlBackgroundColor))
 
             Divider()
 
@@ -113,6 +113,7 @@ struct ContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .background(Color(NSColor.controlBackgroundColor))
         .frame(minWidth: 1000, minHeight: 600)
         .onAppear {
             // Phase 1: Attempt silent SSO in the background (no UI).

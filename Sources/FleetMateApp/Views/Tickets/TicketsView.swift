@@ -17,6 +17,98 @@ enum TicketViewMode: String, CaseIterable {
     case board = "Board"
 }
 
+// MARK: - Date Range Preset
+
+enum DateRangePreset: Hashable {
+    case today
+    case thisWeek
+    case thisMonth
+    case lastMonth
+    case term(AcademicTerm, Int)  // term + year
+    case custom
+
+    var label: String {
+        switch self {
+        case .today: return "Today"
+        case .thisWeek: return "This Week"
+        case .thisMonth: return "This Month"
+        case .lastMonth: return "Last Month"
+        case .term(let t, let y): return "\(t.rawValue) \(y)"
+        case .custom: return "Custom"
+        }
+    }
+
+    /// Compute the date range for this preset
+    func dateRange() -> (from: Date, to: Date) {
+        let cal = Calendar.current
+        let now = Date()
+        switch self {
+        case .today:
+            let start = cal.startOfDay(for: now)
+            let end = cal.date(byAdding: .day, value: 1, to: start)!
+            return (start, end)
+        case .thisWeek:
+            let start = cal.dateInterval(of: .weekOfYear, for: now)!.start
+            let end = cal.date(byAdding: .weekOfYear, value: 1, to: start)!
+            return (start, end)
+        case .thisMonth:
+            let start = cal.dateInterval(of: .month, for: now)!.start
+            let end = cal.date(byAdding: .month, value: 1, to: start)!
+            return (start, end)
+        case .lastMonth:
+            let thisMonth = cal.dateInterval(of: .month, for: now)!.start
+            let start = cal.date(byAdding: .month, value: -1, to: thisMonth)!
+            return (start, thisMonth)
+        case .term(let term, let year):
+            return term.dateRange(year: year)
+        case .custom:
+            // Custom uses the bound date pickers directly
+            return (now, now)
+        }
+    }
+
+    /// The current academic term based on today's date
+    static var currentTerm: DateRangePreset {
+        let cal = Calendar.current
+        let now = Date()
+        let month = cal.component(.month, from: now)
+        let year = cal.component(.year, from: now)
+        let term: AcademicTerm
+        if month >= 1 && month <= 4 {
+            term = .spring
+        } else if month >= 5 && month <= 8 {
+            term = .summer
+        } else {
+            term = .fall
+        }
+        return .term(term, year)
+    }
+}
+
+enum AcademicTerm: String, CaseIterable {
+    case spring = "Spring"
+    case summer = "Summer"
+    case fall = "Fall"
+
+    func dateRange(year: Int) -> (from: Date, to: Date) {
+        let cal = Calendar.current
+        switch self {
+        case .spring:
+            let from = cal.date(from: DateComponents(year: year, month: 1, day: 1))!
+            let to = cal.date(from: DateComponents(year: year, month: 5, day: 1))!
+            return (from, to)
+        case .summer:
+            let from = cal.date(from: DateComponents(year: year, month: 5, day: 1))!
+            let to = cal.date(from: DateComponents(year: year, month: 9, day: 1))!
+            return (from, to)
+        case .fall:
+            let from = cal.date(from: DateComponents(year: year, month: 9, day: 1))!
+            let to = cal.date(from: DateComponents(year: year, month: 12, day: 31, hour: 23, minute: 59, second: 59))!
+            return (from, to)
+        }
+    }
+}
+
 struct TicketsView: View {
     @EnvironmentObject var appState: AppState
     @State private var isLoading = false
@@ -28,12 +120,27 @@ struct TicketsView: View {
     @State private var isLoadingFeed = false
     @State private var showClosed = false
     @State private var meModeApplied = false
-    @State private var maxResults = 500
+
+    // Date range
+    @State private var datePreset: DateRangePreset = DateRangePreset.currentTerm
+    @State private var customDateFrom: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date())!
+    @State private var customDateTo: Date = Date()
+    @State private var termSeason: AcademicTerm = {
+        let month = Calendar.current.component(.month, from: Date())
+        if month >= 1 && month <= 4 { return .spring }
+        if month >= 5 && month <= 8 { return .summer }
+        return .fall
+    }()
+    @State private var termYear: Int = Calendar.current.component(.year, from: Date())
 
     // Filter states
     @State private var statusFilter = "All"
     @State private var groupFilter = "All"
     @State private var responsibleFilter = "All"
+    @State private var formFilter = "All"
+    @State private var classificationFilter = "All"
+    @State private var typeFilter = "All"
+    @State private var allForms: [(id: Int, name: String)] = []
 
     // Comment state
     @State private var newComment = ""
@@ -48,6 +155,7 @@ struct TicketsView: View {
 
     // View mode
     @State private var viewMode: TicketViewMode = .table
+    @State private var boardGroupBy: BoardGroupBy = .status
 
     // Detail editing state
     @State private var detailedTicket: TdxTicket? = nil
@@ -64,6 +172,7 @@ struct TicketsView: View {
     @State private var editResponsibleUid: String? = nil
     @State private var editResponsibleName: String = ""
     @State private var editClassification: Int? = nil
+    @State private var editTypeId: Int? = nil
     // People search state
     @State private var requestorSearchText = ""
     @State private var requestorSearchResults: [TdxPerson] = []
@@ -86,6 +195,7 @@ struct TicketsView: View {
     @State private var saveErrorMessage: String? = nil
     @State private var saveSucceeded = false
     @State private var isSavingDescription = false
+    @State private var showBoardDetail = true
 
     @FocusState private var descriptionFocused: Bool
 
@@ -150,8 +260,9 @@ struct TicketsView: View {
         return result.sorted { $0.name < $1.name }
     }
 
-    /// Unique form (id, name) pairs from loaded tickets
+    /// Unique form (id, name) pairs — prefer API-loaded forms, fallback to ticket-derived
     var formIdOptions: [(id: Int, name: String)] {
+        if !allForms.isEmpty { return allForms }
         var seen = Set<Int>()
         var result: [(id: Int, name: String)] = []
         for t in tickets {
@@ -197,6 +308,46 @@ struct TicketsView: View {
         for t in tickets {
             if let r = t.responsibleFullName, !r.isEmpty { opts.insert(r) }
         }
+        return ["All", "None"] + opts.sorted()
+    }
+
+    var formFilterOptions: [String] {
+        if !allForms.isEmpty {
+            return ["All"] + allForms.map { $0.name }
+        }
+        var opts = Set<String>()
+        for t in tickets {
+            if let f = t.formName, !f.isEmpty { opts.insert(f) }
+        }
+        return ["All"] + opts.sorted()
+    }
+
+    var classificationFilterOptions: [String] {
+        var opts = Set<String>()
+        for t in tickets {
+            if let c = t.classificationName, !c.isEmpty { opts.insert(c) }
+        }
+        return ["All"] + opts.sorted()
+    }
+
+    /// Unique type (id, name) pairs from loaded tickets
+    var typeIdOptions: [(id: Int, name: String)] {
+        var seen = Set<Int>()
+        var result: [(id: Int, name: String)] = []
+        for t in tickets {
+            if let id = t.typeId, let name = t.typeName, !name.isEmpty, !seen.contains(id) {
+                seen.insert(id)
+                result.append((id: id, name: name))
+            }
+        }
+        return result.sorted { $0.name < $1.name }
+    }
+
+    var typeFilterOptions: [String] {
+        var opts = Set<String>()
+        for t in tickets {
+            if let tn = t.typeName, !tn.isEmpty { opts.insert(tn) }
+        }
         return ["All"] + opts.sorted()
     }
 
@@ -222,7 +373,9 @@ struct TicketsView: View {
         }
 
         // Responsible filter
-        if responsibleFilter != "All" {
+        if responsibleFilter == "None" {
+            result = result.filter { $0.responsibleFullName == nil || $0.responsibleFullName?.isEmpty == true }
+        } else if responsibleFilter != "All" {
             result = result.filter { $0.responsibleFullName == responsibleFilter }
         }
 
@@ -233,6 +386,21 @@ struct TicketsView: View {
                 ($0.requestorName?.localizedCaseInsensitiveContains(searchText) ?? false) ||
                 "\($0.id ?? 0)".contains(searchText)
             }
+        }
+
+        // Form filter
+        if formFilter != "All" {
+            result = result.filter { $0.formName == formFilter }
+        }
+
+        // Classification filter
+        if classificationFilter != "All" {
+            result = result.filter { $0.classificationName == classificationFilter }
+        }
+
+        // Type filter
+        if typeFilter != "All" {
+            result = result.filter { $0.typeName == typeFilter }
         }
 
         return result.sorted { a, b in
@@ -261,34 +429,55 @@ struct TicketsView: View {
 
     // MARK: - Feed Filtering
 
-    /// Check if a feed entry body looks like a system-generated activity message
-    private static func isSystemActivity(_ body: String) -> Bool {
+    /// Check if a feed entry looks like a status change
+    private static func isStatusChange(_ body: String) -> Bool {
         let stripped = body.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        let activityPhrases = [
+        let phrases = ["changed status", "changed the status", "moved from", "status changed"]
+        return phrases.contains { stripped.contains($0) }
+    }
+
+    /// Check if a feed entry looks like a field edit (not status change)
+    private static func isFieldEdit(_ body: String) -> Bool {
+        if isStatusChange(body) { return false }
+        let stripped = body.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let phrases = [
             "edited this", "updated this", "changed the", "modified this",
             "reassigned this", "set the", "cleared the", "removed the",
             "added a task", "completed a task", "created this",
             "attached", "unattached", "merged", "associated",
             "escalated", "de-escalated",
-            "changed status", "changed priority", "changed responsible",
-            "moved from", "moved to"
+            "changed priority", "changed responsible"
         ]
-        return activityPhrases.contains { stripped.hasPrefix($0) || stripped.contains($0) }
+        return phrases.contains { stripped.contains($0) }
+    }
+
+    /// Check if a feed entry body looks like any system-generated activity
+    private static func isSystemActivity(_ body: String) -> Bool {
+        return isStatusChange(body) || isFieldEdit(body)
     }
 
     var filteredFeed: [TdxFeedEntry] {
         switch feedFilter {
         case .comments:
-            // Real user comments only — exclude System author AND system-generated activity bodies
             return ticketFeed.filter { entry in
                 guard entry.createdFullName != "System" else { return false }
                 guard let body = entry.body, !body.isEmpty else { return false }
                 return !Self.isSystemActivity(body)
             }
-        case .activity:
-            return ticketFeed.filter { $0.createdFullName != "System" }
+        case .edits:
+            return ticketFeed.filter { entry in
+                guard let body = entry.body, !body.isEmpty else { return false }
+                return Self.isFieldEdit(body)
+            }
+        case .statusChanges:
+            return ticketFeed.filter { entry in
+                guard let body = entry.body, !body.isEmpty else { return false }
+                return Self.isStatusChange(body)
+            }
         case .all:
             return ticketFeed
         }
@@ -315,7 +504,7 @@ struct TicketsView: View {
             if !appState.isTicketsCacheValid {
                 loadTickets()
             }
-            // Handle deep link set before view was created
+            await loadForms()
             if let id = appState.navigateToTicketId {
                 selectedTicketIds = [id]
                 appState.navigateToTicketId = nil
@@ -350,14 +539,35 @@ struct TicketsView: View {
                     .padding(.top, 6)
                 Spacer()
                 ssoSection
-                Button(action: loadTickets) {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(isLoading)
             }
 
-            // Row 2: View mode toggle + filters + search — all in one row
+            // Row 2: Search + view mode toggle + filters
             HStack(spacing: 10) {
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                    TextField("Search...", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .frame(width: 140)
+                    if !searchText.isEmpty {
+                        Button(action: { searchText = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                                .font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(5)
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(6)
+
+                Button(action: loadTickets) {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(isLoading)
+                .help("Refresh")
+
                 Picker("", selection: $viewMode) {
                     Text("Table").tag(TicketViewMode.table)
                     Text("Board").tag(TicketViewMode.board)
@@ -365,62 +575,192 @@ struct TicketsView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 140)
 
-                Divider().frame(height: 20)
-
-                HStack(spacing: 4) {
-                    Text("Status:").foregroundColor(.secondary).font(.caption)
-                    Picker("", selection: $statusFilter) {
-                        ForEach(statusOptions, id: \.self) { Text($0).tag($0) }
+                if viewMode == .board {
+                    HStack(spacing: 4) {
+                        Text("Group:").foregroundColor(.secondary).font(.caption)
+                        Picker("", selection: $boardGroupBy) {
+                            ForEach(BoardGroupBy.allCases, id: \.self) { option in
+                                Text(option.rawValue).tag(option)
+                            }
+                        }
+                        .frame(width: 110)
                     }
-                    .frame(width: 120)
                 }
 
-                HStack(spacing: 4) {
-                    Text("Group:").foregroundColor(.secondary).font(.caption)
-                    Picker("", selection: $groupFilter) {
-                        ForEach(groupOptions, id: \.self) { Text($0).tag($0) }
-                    }
-                    .frame(width: 140)
+                Picker("", selection: $statusFilter) {
+                    Text("Status").tag("All")
+                    ForEach(statusOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
                 }
+                .frame(width: 120)
 
-                HStack(spacing: 4) {
-                    Text("Responsible:").foregroundColor(.secondary).font(.caption)
-                    Picker("", selection: $responsibleFilter) {
-                        ForEach(responsibleOptions, id: \.self) { Text($0).tag($0) }
-                    }
-                    .frame(width: 140)
+                Picker("", selection: $groupFilter) {
+                    Text("Group").tag("All")
+                    ForEach(groupOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
                 }
+                .frame(width: 140)
 
-                Toggle("Show Closed", isOn: $showClosed)
+                Picker("", selection: $responsibleFilter) {
+                    Text("Responsible").tag("All")
+                    Text("None").tag("None")
+                    ForEach(responsibleOptions.filter { $0 != "All" && $0 != "None" }, id: \.self) { Text($0).tag($0) }
+                }
+                .frame(width: 140)
+
+                Picker("", selection: $formFilter) {
+                    Text("Form").tag("All")
+                    ForEach(formFilterOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
+                }
+                .frame(width: 140)
+
+                Picker("", selection: $classificationFilter) {
+                    Text("Classification").tag("All")
+                    ForEach(classificationFilterOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
+                }
+                .frame(width: 140)
+
+                Picker("", selection: $typeFilter) {
+                    Text("Type").tag("All")
+                    ForEach(typeFilterOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
+                }
+                .frame(width: 120)
+
+                Toggle("Closed", isOn: $showClosed)
                     .toggleStyle(.checkbox)
                     .font(.caption)
 
-                HStack(spacing: 4) {
-                    Text("Limit:").foregroundColor(.secondary).font(.caption)
-                    Picker("", selection: $maxResults) {
-                        Text("500").tag(500)
-                        Text("1000").tag(1000)
-                        Text("2000").tag(2000)
-                        Text("5000").tag(5000)
+                if statusFilter != "All" || groupFilter != "All" || responsibleFilter != "All" || formFilter != "All" || classificationFilter != "All" || typeFilter != "All" || showClosed || !isDefaultDatePreset {
+                    Button(action: {
+                        statusFilter = "All"
+                        groupFilter = "All"
+                        responsibleFilter = "All"
+                        formFilter = "All"
+                        classificationFilter = "All"
+                        typeFilter = "All"
+                        showClosed = false
+                        resetToCurrentTerm()
+                    }) {
+                        Text("Clear Filters")
+                            .font(.caption)
                     }
-                    .frame(width: 80)
-                    .onChange(of: maxResults) { _, _ in
+                    .buttonStyle(.bordered)
+                    .tint(.yellow)
+                    .controlSize(.small)
+                }
+
+                Spacer()
+            }
+
+            // Row 3: Date range
+            HStack(spacing: 8) {
+                Image(systemName: "calendar")
+                    .foregroundColor(.secondary)
+                    .font(.caption)
+
+                // Quick presets
+                ForEach([DateRangePreset.today, .thisWeek, .thisMonth, .lastMonth], id: \.label) { preset in
+                    let isActive = datePreset.label == preset.label
+                    Button(action: {
+                        datePreset = preset
                         loadTickets()
+                    }) {
+                        Text(preset.label)
+                            .font(.caption)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(isActive ? Color.accentColor.opacity(0.2) : Color.clear)
+                            .cornerRadius(4)
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                Divider().frame(height: 16)
+
+                // This Term button
+                Button(action: {
+                    resetToCurrentTerm()
+                }) {
+                    let isTerm: Bool = {
+                        if case .term = datePreset { return true }
+                        return false
+                    }()
+                    Text("This Term")
+                        .font(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(isTerm ? Color.accentColor.opacity(0.2) : Color.clear)
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                // Academic term picker
+                Picker("", selection: $termSeason) {
+                    ForEach(AcademicTerm.allCases, id: \.self) { t in
+                        Text(t.rawValue).tag(t)
+                    }
+                }
+                .frame(width: 90)
+                .onChange(of: termSeason) { _, _ in
+                    datePreset = .term(termSeason, termYear)
+                    loadTickets()
+                }
+
+                Picker("", selection: $termYear) {
+                    let currentYear = Calendar.current.component(.year, from: Date())
+                    ForEach((currentYear - 5)...currentYear, id: \.self) { year in
+                        Text(String(year)).tag(year)
+                    }
+                }
+                .frame(width: 75)
+                .onChange(of: termYear) { _, _ in
+                    datePreset = .term(termSeason, termYear)
+                    loadTickets()
+                }
+
+                if case .term = datePreset {} else {
+                    // Highlight which term is selected if it's active
+                }
+
+                Divider().frame(height: 16)
+
+                // Custom date range
+                Button(action: {
+                    datePreset = .custom
+                }) {
+                    Text("Custom")
+                        .font(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(datePreset == .custom ? Color.accentColor.opacity(0.2) : Color.clear)
+                        .cornerRadius(4)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                if datePreset == .custom {
+                    DatePicker("", selection: $customDateFrom, displayedComponents: .date)
+                        .labelsHidden()
+                        .frame(width: 100)
+                    Text("to")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    DatePicker("", selection: $customDateTo, displayedComponents: .date)
+                        .labelsHidden()
+                        .frame(width: 100)
+                    Button(action: { loadTickets() }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption)
+                    }
+                    .controlSize(.small)
                 }
 
                 Spacer()
 
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                    TextField("Search...", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .frame(width: 140)
-                }
-                .padding(5)
-                .background(Color.secondary.opacity(0.1))
-                .cornerRadius(6)
+                // Show the active date range label
+                Text(dateRangeLabel)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
         }
         .padding(.horizontal)
@@ -433,7 +773,7 @@ struct TicketsView: View {
         if appState.tdxSsoAuthenticated, let userName = appState.tdxAuthenticatedUserName {
             HStack(spacing: 6) {
                 Image(systemName: "person.circle.fill")
-                    .foregroundColor(.green)
+                    .foregroundColor(.secondary)
                 Text(userName)
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -446,7 +786,7 @@ struct TicketsView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.green.opacity(0.1))
+            .background(Color.secondary.opacity(0.08))
             .cornerRadius(6)
         } else if appState.tdxService.shouldAttemptSso {
             Button(action: { appState.triggerTdxSsoLogin() }) {
@@ -512,11 +852,26 @@ struct TicketsView: View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
                 ticketBoardContent
-                    .frame(width: selectedTicket != nil ? geometry.size.width * 0.6 : geometry.size.width)
+                    .frame(width: (selectedTicket != nil && showBoardDetail) ? geometry.size.width * 0.6 : geometry.size.width)
                 if selectedTicket != nil {
-                    Divider()
-                    detailSidebarView
-                        .frame(width: geometry.size.width * 0.4)
+                    // Sidebar toggle
+                    Button(action: { showBoardDetail.toggle() }) {
+                        ZStack {
+                            Rectangle()
+                                .fill(Color.secondary.opacity(0.08))
+                                .frame(width: 12)
+                            Image(systemName: showBoardDetail ? "chevron.compact.right" : "chevron.compact.left")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.secondary.opacity(0.6))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help(showBoardDetail ? "Hide detail" : "Show detail")
+                    .frame(width: 12)
+                    if showBoardDetail {
+                        detailSidebarView
+                            .frame(width: geometry.size.width * 0.4 - 12)
+                    }
                 }
             }
         }
@@ -536,22 +891,13 @@ struct TicketsView: View {
         return TicketBoardView(
             tickets: filteredTickets,
             statuses: statuses,
-            onUpdateStatus: { ticketId, newStatusId in
-                // Update ticket status via API — use full TicketUpdateRequest to avoid TDX 400
-                Task {
-                    do {
-                        if let base = filteredTickets.first(where: { $0.id == ticketId }) {
-                            let req = TicketUpdateRequest(from: base, statusId: newStatusId)
-                            _ = try await appState.tdxService.updateTicket(id: ticketId, request: req)
-                        }
-                        loadTickets()
-                    } catch {
-                        print("Failed to update ticket status: \(error)")
-                    }
-                }
+            groupBy: boardGroupBy,
+            onDropTicket: { ticketId, targetColumnKey in
+                handleBoardDrop(ticketId: ticketId, targetColumnKey: targetColumnKey)
             },
             onSelectTicket: { ticket in
                 selectedTicketIds = [ticket.id]
+                showBoardDetail = true
             }
         )
     }
@@ -660,6 +1006,7 @@ struct TicketsView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     detailHeader(ticket: ticket)
                     Divider()
+                    Spacer().frame(height: 10)
                     detailFields(ticket: ticket)
                     Divider().padding(.vertical, 8)
                     addCommentSection(ticket: ticket)
@@ -742,8 +1089,9 @@ struct TicketsView: View {
                         Text("Discard")
                             .font(.caption)
                     }
-                    .buttonStyle(.plain)
-                    .foregroundColor(.secondary)
+                    .buttonStyle(.bordered)
+                    .tint(.red.opacity(0.7))
+                    .controlSize(.small)
                     .help("Discard changes")
 
                     Button(action: { saveTicket(ticket: ticket) }) {
@@ -753,6 +1101,9 @@ struct TicketsView: View {
                             Label("Save", systemImage: "checkmark.circle.fill")
                         }
                     }
+                    .buttonStyle(.bordered)
+                    .tint(.green)
+                    .controlSize(.small)
                     .disabled(isSaving)
                     .help("Save changes")
                 }
@@ -762,6 +1113,22 @@ struct TicketsView: View {
                         .foregroundColor(.green)
                         .help("Saved")
                 }
+
+                // Edit description button
+                Button(action: {
+                    if isEditingDescription {
+                        saveDescriptionOnly(ticket: ticket)
+                    } else {
+                        isEditingDescription = true
+                        descriptionFocused = true
+                    }
+                }) {
+                    Label(isEditingDescription ? "Done" : "Edit", systemImage: isEditingDescription ? "checkmark.circle" : "pencil")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .disabled(isSavingDescription)
+                .help(isEditingDescription ? "Save description" : "Edit description")
 
                 // Actions menu
                 Menu {
@@ -775,19 +1142,21 @@ struct TicketsView: View {
                         Label("Merge Into...", systemImage: "arrow.triangle.merge")
                     }
                 } label: {
-                    Label("Actions", systemImage: "ellipsis.circle")
+                    Label("Actions", systemImage: "chevron.down")
                 }
-                .menuStyle(.borderlessButton)
-                .frame(width: 80)
+                .menuStyle(.borderedButton)
+                .controlSize(.regular)
                 .help("Ticket actions")
 
                 Button(action: {
                     loadTicketDetail(ticketId: ticket.id ?? 0)
                     loadTicketFeed(ticketId: ticket.id ?? 0)
                 }) {
-                    Image(systemName: "arrow.clockwise")
+                    Label("Refresh", systemImage: "arrow.clockwise")
                 }
-                .help("Refresh")
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .help("Refresh ticket")
             }
 
             // Editable title
@@ -817,27 +1186,83 @@ struct TicketsView: View {
             }
 
             HStack(spacing: 8) {
-                // Editable status picker
-                Picker("", selection: Binding(
-                    get: { editStatusId ?? ticket.statusId ?? 0 },
-                    set: { editStatusId = $0; hasEdits = true }
-                )) {
-                    ForEach(statusIdOptions, id: \.id) { option in
-                        Text(option.name).tag(option.id)
+                // Status
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Status")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Picker("", selection: Binding(
+                        get: { editStatusId ?? ticket.statusId ?? 0 },
+                        set: { editStatusId = $0; hasEdits = true }
+                    )) {
+                        ForEach(statusIdOptions, id: \.id) { option in
+                            Text(option.name).tag(option.id)
+                        }
                     }
+                    .labelsHidden()
+                    .frame(width: 140)
                 }
-                .frame(width: 140)
 
-                // Editable priority picker
-                Picker("", selection: Binding(
-                    get: { editPriorityId ?? ticket.priorityId ?? 0 },
-                    set: { editPriorityId = $0; hasEdits = true }
-                )) {
-                    ForEach(priorityIdOptions, id: \.id) { option in
-                        Text(option.name).tag(option.id)
+                // Priority
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Priority")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Picker("", selection: Binding(
+                        get: { editPriorityId ?? ticket.priorityId ?? 0 },
+                        set: { editPriorityId = $0; hasEdits = true }
+                    )) {
+                        ForEach(priorityIdOptions, id: \.id) { option in
+                            Text(option.name).tag(option.id)
+                        }
                     }
+                    .labelsHidden()
+                    .frame(width: 120)
                 }
-                .frame(width: 120)
+
+                // Classification
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Classification")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Picker("", selection: Binding(
+                        get: { editClassification ?? ticket.classification ?? 0 },
+                        set: { editClassification = $0; trackEdits(ticket: ticket) }
+                    )) {
+                        Text("None").tag(0)
+                        ForEach(classificationIdOptions, id: \.id) { option in
+                            Text(option.name).tag(option.id)
+                        }
+                        if let cid = ticket.classification, let cname = ticket.classificationName,
+                           !classificationIdOptions.contains(where: { $0.id == cid }) {
+                            Text(cname).tag(cid)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 140)
+                }
+
+                // Type
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Type")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Picker("", selection: Binding(
+                        get: { editTypeId ?? ticket.typeId ?? 0 },
+                        set: { editTypeId = $0; trackEdits(ticket: ticket) }
+                    )) {
+                        Text("None").tag(0)
+                        ForEach(typeIdOptions, id: \.id) { option in
+                            Text(option.name).tag(option.id)
+                        }
+                        if let tid = ticket.typeId, let tname = ticket.typeName,
+                           !typeIdOptions.contains(where: { $0.id == tid }) {
+                            Text(tname).tag(tid)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 120)
+                }
             }
         }
         .padding(.bottom, 8)
@@ -850,7 +1275,7 @@ struct TicketsView: View {
             // Two-column grid: left = editable fields, right = metadata
             HStack(alignment: .top, spacing: 16) {
                 // LEFT COLUMN — editable fields
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 10) {
                     // Responsible + ... menu
                     fieldRow(label: "Responsible") {
                         HStack(spacing: 4) {
@@ -887,11 +1312,13 @@ struct TicketsView: View {
                                 }
                             } label: {
                                 Image(systemName: "ellipsis")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
+                                    .font(.body)
+                                    .foregroundColor(.accentColor)
+                                    .frame(width: 24, height: 24)
+                                    .contentShape(Rectangle())
                             }
-                            .menuStyle(.borderlessButton)
-                            .frame(width: 20)
+                            .menuStyle(.borderedButton)
+                            .controlSize(.small)
                         }
                     }
                     // Search field — only shown when reassigning
@@ -910,7 +1337,7 @@ struct TicketsView: View {
                                 trackEdits(ticket: ticket)
                             }
                         )
-                        .padding(.leading, 84)
+                        .padding(.leading, 104)
                     }
 
                     // Group picker (below Responsible)
@@ -949,46 +1376,48 @@ struct TicketsView: View {
                         DetailRow(label: "Service", value: service)
                     }
 
-                    // Form picker
-                    if !formIdOptions.isEmpty {
-                        fieldRow(label: "Form") {
-                            Picker("", selection: Binding(
-                                get: { editFormId ?? ticket.formId ?? 0 },
-                                set: { editFormId = $0; trackEdits(ticket: ticket) }
-                            )) {
-                                Text("None").tag(0)
-                                ForEach(formIdOptions, id: \.id) { option in
-                                    Text(option.name).tag(option.id)
-                                }
+                    // Form picker — always editable
+                    fieldRow(label: "Form") {
+                        Picker("", selection: Binding(
+                            get: { editFormId ?? ticket.formId ?? 0 },
+                            set: { editFormId = $0; trackEdits(ticket: ticket) }
+                        )) {
+                            Text("None").tag(0)
+                            ForEach(formIdOptions, id: \.id) { option in
+                                Text(option.name).tag(option.id)
                             }
-                            .labelsHidden()
+                            // Ensure current ticket's form is always an option
+                            if let fid = ticket.formId, let fname = ticket.formName,
+                               !formIdOptions.contains(where: { $0.id == fid }) {
+                                Text(fname).tag(fid)
+                            }
                         }
-                    } else if let form = ticket.formName, !form.isEmpty {
-                        DetailRow(label: "Form", value: form)
+                        .labelsHidden()
                     }
 
-                    // Classification picker
-                    if !classificationIdOptions.isEmpty {
-                        fieldRow(label: "Classification") {
-                            Picker("", selection: Binding(
-                                get: { editClassification ?? ticket.classification ?? 0 },
-                                set: { editClassification = $0; trackEdits(ticket: ticket) }
-                            )) {
-                                Text("None").tag(0)
-                                ForEach(classificationIdOptions, id: \.id) { option in
-                                    Text(option.name).tag(option.id)
-                                }
+                    // Classification picker — always editable
+                    fieldRow(label: "Classification") {
+                        Picker("", selection: Binding(
+                            get: { editClassification ?? ticket.classification ?? 0 },
+                            set: { editClassification = $0; trackEdits(ticket: ticket) }
+                        )) {
+                            Text("None").tag(0)
+                            ForEach(classificationIdOptions, id: \.id) { option in
+                                Text(option.name).tag(option.id)
                             }
-                            .labelsHidden()
+                            // Ensure current ticket's classification is always an option
+                            if let cid = ticket.classification, let cname = ticket.classificationName,
+                               !classificationIdOptions.contains(where: { $0.id == cid }) {
+                                Text(cname).tag(cid)
+                            }
                         }
-                    } else if let cls = ticket.classificationName, !cls.isEmpty {
-                        DetailRow(label: "Classification", value: cls)
+                        .labelsHidden()
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 // RIGHT COLUMN — requestor + metadata
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 10) {
                     // Requestor — with inline search on demand
                     fieldRow(label: "Requestor") {
                         HStack(spacing: 4) {
@@ -1005,9 +1434,9 @@ struct TicketsView: View {
                             }) {
                                 Image(systemName: isChangingRequestor ? "xmark" : "pencil")
                                     .font(.caption)
-                                    .foregroundColor(.secondary)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                         }
                     }
                     if isChangingRequestor {
@@ -1025,7 +1454,7 @@ struct TicketsView: View {
                                 trackEdits(ticket: ticket)
                             }
                         )
-                        .padding(.leading, 84)
+                        .padding(.leading, 104)
                     }
 
                     DetailRow(label: "Email", value: ticket.requestorEmail ?? "-")
@@ -1051,7 +1480,7 @@ struct TicketsView: View {
             Text(label)
                 .font(.body)
                 .foregroundColor(.secondary)
-                .frame(width: 80, alignment: .leading)
+                .frame(width: 100, alignment: .leading)
             content()
             Spacer()
         }
@@ -1160,21 +1589,6 @@ struct TicketsView: View {
                 if isSavingDescription {
                     ProgressView().controlSize(.small)
                 }
-                Button(action: {
-                    if isEditingDescription {
-                        saveDescriptionOnly(ticket: ticket)
-                    } else {
-                        isEditingDescription = true
-                        descriptionFocused = true
-                    }
-                }) {
-                    Label(isEditingDescription ? "Done" : "Edit",
-                          systemImage: isEditingDescription ? "checkmark" : "pencil")
-                        .font(.caption)
-                }
-                .buttonStyle(.borderless)
-                .disabled(isSavingDescription)
-                .help(isEditingDescription ? "Save description" : "Edit description")
             }
             if isEditingDescription {
                 TextEditor(text: $editDescription)
@@ -1274,11 +1688,12 @@ struct TicketsView: View {
                 Spacer()
                 Picker("", selection: $feedFilter) {
                     Text("Comments").tag(FeedFilterType.comments)
-                    Text("Activity").tag(FeedFilterType.activity)
+                    Text("Edits").tag(FeedFilterType.edits)
+                    Text("Status").tag(FeedFilterType.statusChanges)
                     Text("All").tag(FeedFilterType.all)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 240)
+                .frame(width: 320)
             }
 
             if isLoadingFeed {
@@ -1296,6 +1711,51 @@ struct TicketsView: View {
         }
     }
 
+    // MARK: - Date Range Helpers
+
+    private var activeDateRange: (from: Date, to: Date) {
+        if datePreset == .custom {
+            return (customDateFrom, customDateTo)
+        }
+        return datePreset.dateRange()
+    }
+
+    private var dateRangeLabel: String {
+        let fmt = DateFormatter()
+        fmt.dateStyle = .medium
+        fmt.timeStyle = .none
+        let range = activeDateRange
+        return "\(fmt.string(from: range.from)) – \(fmt.string(from: range.to))"
+    }
+
+    private var isDefaultDatePreset: Bool {
+        if case .term(let t, let y) = datePreset {
+            let cal = Calendar.current
+            let now = Date()
+            let month = cal.component(.month, from: now)
+            let year = cal.component(.year, from: now)
+            let currentTerm: AcademicTerm
+            if month >= 1 && month <= 4 { currentTerm = .spring }
+            else if month >= 5 && month <= 8 { currentTerm = .summer }
+            else { currentTerm = .fall }
+            return t == currentTerm && y == year
+        }
+        return false
+    }
+
+    private func resetToCurrentTerm() {
+        let cal = Calendar.current
+        let now = Date()
+        let month = cal.component(.month, from: now)
+        let year = cal.component(.year, from: now)
+        if month >= 1 && month <= 4 { termSeason = .spring }
+        else if month >= 5 && month <= 8 { termSeason = .summer }
+        else { termSeason = .fall }
+        termYear = year
+        datePreset = .term(termSeason, termYear)
+        loadTickets()
+    }
+
     // MARK: - Data Loading
 
     private func loadTickets() {
@@ -1304,11 +1764,18 @@ struct TicketsView: View {
             isLoading = true
             defer { isLoading = false }
             do {
-                var searchRequest = TicketSearchRequest(maxResults: maxResults)
+                let range = activeDateRange
+                let formatter = ISO8601DateFormatter()
+                formatter.formatOptions = [.withInternetDateTime]
+                var searchRequest = TicketSearchRequest(
+                    createdDateFrom: formatter.string(from: range.from),
+                    createdDateTo: formatter.string(from: range.to),
+                    maxResults: 5000
+                )
                 if let groupId = appState.config.tdxResponsibleGroupId {
                     searchRequest.responsibleGroupIds = [groupId]
                 }
-                let fetchedTickets = try await appState.tdxService.searchTickets(search: searchRequest, maxResults: maxResults)
+                let fetchedTickets = try await appState.tdxService.searchTickets(search: searchRequest, maxResults: 5000)
                 appState.updateTicketsCache(fetchedTickets)
             } catch {
                 print("Failed to load tickets: \(error)")
@@ -1341,6 +1808,14 @@ struct TicketsView: View {
                 print("Failed to load ticket feed: \(error)")
                 ticketFeed = []
             }
+        }
+    }
+
+    private func loadForms() async {
+        do {
+            allForms = try await appState.tdxService.getForms()
+        } catch {
+            print("Failed to load forms: \(error)")
         }
     }
 
@@ -1439,21 +1914,22 @@ struct TicketsView: View {
                     title: trimmedTitle.isEmpty ? nil : trimmedTitle,
                     statusId: editStatusId,
                     priorityId: editPriorityId,
-                    classification: editClassification != ticket.classification ? editClassification : nil,
-                    requestorUid: editRequestorUid != ticket.requestorUid ? editRequestorUid : nil,
-                    responsibleUid: editResponsibleUid != ticket.responsibleUid ? editResponsibleUid : nil,
+                    classification: editClassification,
+                    requestorUid: editRequestorUid,
+                    responsibleUid: editResponsibleUid,
                     responsibleGroupId: editResponsibleGroupId,
-                    serviceId: editServiceId != ticket.serviceId ? editServiceId : nil,
-                    formId: editFormId != ticket.formId ? editFormId : nil
+                    serviceId: editServiceId,
+                    formId: editFormId
                 )
 
                 if let updated = try await appState.tdxService.updateTicket(id: ticketId, request: updateRequest) {
                     detailedTicket = updated
                     populateEditFields(from: updated)
                     saveSucceeded = true
+                    loadTickets()
+                    loadTicketDetail(ticketId: ticketId)
                     try? await Task.sleep(for: .seconds(2))
                     saveSucceeded = false
-                    loadTickets()
                 } else {
                     saveErrorMessage = "Save failed — server returned no data. Check your session."
                 }
@@ -1540,10 +2016,65 @@ struct TicketsView: View {
         }
     }
 
+    // MARK: - Board Drag-and-Drop
+
+    /// Handle a card drop on a board column — updates the field corresponding to the current groupBy
+    private func handleBoardDrop(ticketId: Int, targetColumnKey: String) {
+        guard let ticket = filteredTickets.first(where: { $0.id == ticketId }) else { return }
+        Task {
+            do {
+                var req: TicketUpdateRequest
+                switch boardGroupBy {
+                case .status:
+                    guard let newStatusId = Int(targetColumnKey) else { return }
+                    req = TicketUpdateRequest(from: ticket, statusId: newStatusId)
+                case .priority:
+                    // Resolve priority name → ID from tickets
+                    let targetId = filteredTickets.first(where: { $0.priorityName == targetColumnKey })?.priorityId
+                    guard let newPriorityId = targetId else { return }
+                    req = TicketUpdateRequest(from: ticket, priorityId: newPriorityId)
+                case .responsible:
+                    if targetColumnKey == "Unassigned" {
+                        // Clear responsible
+                        req = TicketUpdateRequest(from: ticket, responsibleUid: "")
+                    } else {
+                        // Resolve responsible name → UID from tickets
+                        let targetUid = filteredTickets.first(where: { $0.responsibleFullName == targetColumnKey })?.responsibleUid
+                        guard let newUid = targetUid else { return }
+                        req = TicketUpdateRequest(from: ticket, responsibleUid: newUid)
+                    }
+                case .group:
+                    if targetColumnKey == "No Group" {
+                        req = TicketUpdateRequest(from: ticket, responsibleGroupId: 0)
+                    } else {
+                        let targetId = filteredTickets.first(where: { $0.responsibleGroupName == targetColumnKey })?.responsibleGroupId
+                        guard let newGroupId = targetId else { return }
+                        req = TicketUpdateRequest(from: ticket, responsibleGroupId: newGroupId)
+                    }
+                }
+                _ = try await appState.tdxService.updateTicket(id: ticketId, request: req)
+                loadTickets()
+            } catch {
+                print("Failed to update ticket via board drop: \(error)")
+            }
+        }
+    }
+
     // MARK: - Helpers
 
-    /// Apply "me mode" — default the Responsible filter to the authenticated user
+    /// Apply "me mode" — default group filter from config, default Responsible to self when SSO'd
     private func applyMeMode() {
+        // Default group filter (always, regardless of SSO)
+        if groupFilter == "All",
+           let configGroupId = appState.config.tdxResponsibleGroupId,
+           !tickets.isEmpty {
+            let groupMatch = tickets.first(where: { $0.responsibleGroupId == configGroupId })?.responsibleGroupName
+            if let groupMatch = groupMatch {
+                groupFilter = groupMatch
+            }
+        }
+
+        // Default responsible filter to self (SSO only, once)
         guard !meModeApplied,
               appState.tdxSsoAuthenticated,
               let userName = appState.tdxAuthenticatedUserName,
@@ -1551,7 +2082,7 @@ struct TicketsView: View {
         
         // Find a matching responsible name (case-insensitive contains for flexibility)
         let match = responsibleOptions.first { option in
-            option != "All" &&
+            option != "All" && option != "None" &&
             (option.localizedCaseInsensitiveContains(userName) ||
              userName.localizedCaseInsensitiveContains(option))
         }
@@ -1559,15 +2090,6 @@ struct TicketsView: View {
         if let match = match {
             responsibleFilter = match
             meModeApplied = true
-        }
-
-        // Default group filter to the configured responsible group
-        if groupFilter == "All",
-           let configGroupId = appState.config.tdxResponsibleGroupId {
-            let groupMatch = tickets.first(where: { $0.responsibleGroupId == configGroupId })?.responsibleGroupName
-            if let groupMatch = groupMatch {
-                groupFilter = groupMatch
-            }
         }
     }
 
@@ -1622,7 +2144,8 @@ struct TicketsView: View {
 
 enum FeedFilterType: String, CaseIterable {
     case comments = "Comments"
-    case activity = "Activity"
+    case edits = "Edits"
+    case statusChanges = "Status Changes"
     case all = "All"
 }
 

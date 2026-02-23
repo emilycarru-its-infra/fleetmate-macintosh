@@ -223,6 +223,7 @@ public actor AzureDevOpsTaskProvider: TaskProvider {
         if let area = fields?.areaPath { metadata["areaPath"] = area }
         if let iter = fields?.iterationPath { metadata["iterationPath"] = iter }
         if let wiType = fields?.workItemType { metadata["workItemType"] = wiType }
+        if let state = fields?.state { metadata["state"] = state }
         if let board = fields?.boardColumn { metadata["boardColumn"] = board }
 
         return UnifiedTask(

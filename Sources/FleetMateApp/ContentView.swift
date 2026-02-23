@@ -1,18 +1,33 @@
 import SwiftUI
 import FleetMateCore
 
+/// Preference key to relay the content area width up to ContentView.
+private struct WindowWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 1000
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
     @State private var selectedTab: AppTab = .dashboard
     @State private var hasAutoPromptedSso = false
     @State private var hasAutoPromptedDevOpsSso = false
+    @State private var windowWidth: CGFloat = 1000
 
     var body: some View {
         tabContent
-            .frame(minWidth: 1000, minHeight: 600)
+            .frame(minWidth: 500, minHeight: 400)
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: WindowWidthKey.self, value: geo.size.width)
+                }
+            )
+            .onPreferenceChange(WindowWidthKey.self) { windowWidth = $0 }
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    GlassTabBar(selectedTab: $selectedTab)
+                    GlassTabBar(selectedTab: $selectedTab, availableWidth: windowWidth)
                 }
                 if appState.authManager.hasServicePrincipalWarning {
                     ToolbarItem(placement: .automatic) {

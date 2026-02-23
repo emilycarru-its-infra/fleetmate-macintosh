@@ -49,8 +49,11 @@ struct AzDoTaskSidebarView: View {
     @State private var newCommentText = ""
     @State private var isAddingComment = false
 
-    // Linked work item title cache
-    @State private var linkedWorkItemTitles: [Int: String] = [:]
+    // Linked work item info cache (title, state, date)
+    @State private var linkedWorkItemInfo: [Int: LinkedWorkItemInfo] = [:]
+
+    // Artifact display name cache (keyed by relation URL)
+    @State private var artifactDisplayNames: [String: String] = [:]
 
     // Action states
     @State private var isUpdating = false
@@ -73,6 +76,13 @@ struct AzDoTaskSidebarView: View {
         case branch = "Branch"
         case commit = "Commit"
         case pullRequest = "Pull Request"
+    }
+
+    private struct LinkedWorkItemInfo {
+        let title: String?
+        let state: String?
+        let workItemType: String?
+        let changedDate: String?
     }
 
     private var fields: WorkItemFields? { workItem?.fields }
@@ -110,6 +120,12 @@ struct AzDoTaskSidebarView: View {
                         Divider().padding(.vertical, 10)
                         descriptionSection
                         Divider().padding(.vertical, 10)
+                        codeLinkSection
+                        if let relations = workItem?.relations, !relations.isEmpty {
+                            Divider().padding(.vertical, 10)
+                            relationsSection(relations)
+                        }
+                        Divider().padding(.vertical, 10)
                         addCommentSection
                         Divider().padding(.vertical, 10)
                         commentsFeedSection
@@ -117,8 +133,6 @@ struct AzDoTaskSidebarView: View {
                             Divider().padding(.vertical, 10)
                             effortSection
                         }
-                        Divider().padding(.vertical, 10)
-                        codeLinkSection
                         if fields?.workItemType?.lowercased() == "bug",
                            let repro = fields?.reproSteps, !repro.isEmpty {
                             Divider().padding(.vertical, 10)
@@ -127,10 +141,6 @@ struct AzDoTaskSidebarView: View {
                         if let criteria = fields?.acceptanceCriteria, !criteria.isEmpty {
                             Divider().padding(.vertical, 10)
                             acceptanceCriteriaSection
-                        }
-                        if let relations = workItem?.relations, !relations.isEmpty {
-                            Divider().padding(.vertical, 10)
-                            relationsSection(relations)
                         }
                         Divider().padding(.vertical, 10)
                         datesSection
@@ -736,36 +746,84 @@ struct AzDoTaskSidebarView: View {
                 .frame(width: 16)
 
             if relation.relationType != .artifact, let id = relation.linkedWorkItemId {
-                // Work item relation — show title and make clickable
+                // Work item relation — show title, state, and date
                 Button(action: { onSelectWorkItem?(id) }) {
                     HStack(spacing: 4) {
                         Text("#\(id)")
                             .font(.body)
                             .foregroundColor(.accentColor)
-                        if let title = linkedWorkItemTitles[id] {
-                            Text(title)
-                                .font(.body)
-                                .foregroundColor(.accentColor)
-                                .lineLimit(1)
+                        if let info = linkedWorkItemInfo[id] {
+                            if let title = info.title {
+                                Text(title)
+                                    .font(.body)
+                                    .foregroundColor(.accentColor)
+                                    .lineLimit(1)
+                            }
                         }
                     }
                 }
                 .buttonStyle(.plain)
                 .help("Open in sidebar")
+
+                Spacer()
+
+                // State badge + relative date
+                if let info = linkedWorkItemInfo[id] {
+                    if let state = info.state {
+                        Text(state)
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(stateColor(state).opacity(0.15))
+                            .foregroundColor(stateColor(state))
+                            .clipShape(Capsule())
+                    }
+                    if let dateStr = info.changedDate {
+                        Text(relativeDate(dateStr))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
             } else if let name = relation.attributes?.name {
                 Text(name)
                     .font(.body)
                     .lineLimit(1)
+                Spacer()
             } else if let url = relation.url {
                 Text(url.components(separatedBy: "/").suffix(3).joined(separator: "/"))
                     .font(.subheadline)
                     .foregroundColor(.accentColor)
                     .lineLimit(1)
+                Spacer()
+            } else {
+                Spacer()
             }
-
-            Spacer()
         }
         .padding(.vertical, 3)
+    }
+
+    private func stateColor(_ state: String) -> Color {
+        switch state.lowercased() {
+        case "new", "to do", "planned": return .blue
+        case "active", "doing", "in progress", "developing": return .orange
+        case "resolved", "testing": return .purple
+        case "closed", "done": return .green
+        case "removed": return .red
+        default: return .secondary
+        }
+    }
+
+    private func relativeDate(_ dateString: String) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let date = formatter.date(from: dateString) else {
+            // Try without fractional seconds
+            formatter.formatOptions = [.withInternetDateTime]
+            guard let date = formatter.date(from: dateString) else { return "" }
+            return RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
+        }
+        return RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
     }
 
     private func relationTypeLabel(_ type: WorkItemRelation.RelationType) -> String {
@@ -829,7 +887,9 @@ struct AzDoTaskSidebarView: View {
     @ViewBuilder
     private func artifactLinkRow(_ relation: WorkItemRelation) -> some View {
         let artifactType = parseArtifactType(relation.url)
-        let displayName = relation.attributes?.name ?? artifactLabel(for: relation.url)
+        let displayName = artifactDisplayNames[relation.url ?? ""]
+            ?? relation.attributes?.name
+            ?? artifactLabel(for: relation.url)
         let webUrl = artifactWebUrl(relation.url)
 
         HStack(spacing: 8) {
@@ -1240,7 +1300,8 @@ struct AzDoTaskSidebarView: View {
         loadError = nil
         newCommentText = ""
         actionError = nil
-        linkedWorkItemTitles = [:]
+        linkedWorkItemInfo = [:]
+        artifactDisplayNames = [:]
         areaPaths = []
         iterationPaths = []
         teamMembers = []
@@ -1316,7 +1377,7 @@ struct AzDoTaskSidebarView: View {
                     }
                 }
             }
-            // Fetch titles for linked work items (non-artifact relations)
+            // Fetch info for linked work items (non-artifact relations)
             if let relations = loadedItem?.relations {
                 let workItemIds = relations
                     .filter { $0.relationType != .artifact }
@@ -1325,17 +1386,25 @@ struct AzDoTaskSidebarView: View {
                     Task {
                         do {
                             let items = try await service.getWorkItemsByIds(workItemIds)
-                            var titles: [Int: String] = [:]
+                            var info: [Int: LinkedWorkItemInfo] = [:]
                             for item in items {
-                                if let title = item.fields?.title {
-                                    titles[item.id] = title
-                                }
+                                info[item.id] = LinkedWorkItemInfo(
+                                    title: item.fields?.title,
+                                    state: item.fields?.state,
+                                    workItemType: item.fields?.workItemType,
+                                    changedDate: item.fields?.changedDate
+                                )
                             }
-                            linkedWorkItemTitles = titles
+                            linkedWorkItemInfo = info
                         } catch {
-                            dbg.debug("Linked work item titles load failed: \(error)", category: "azdo")
+                            dbg.debug("Linked work item info load failed: \(error)", category: "azdo")
                         }
                     }
+                }
+                // Fetch display names for artifact links (commits, PRs, branches)
+                let artifacts = relations.filter { $0.relationType == .artifact }
+                if !artifacts.isEmpty {
+                    Task { await loadArtifactNames(artifacts) }
                 }
             }
             // Pre-load picker data (non-blocking)
@@ -1356,6 +1425,75 @@ struct AzDoTaskSidebarView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Load Artifact Names
+
+    /// Parse vstfs:// URIs and fetch real names for commits, PRs, and branches.
+    private func loadArtifactNames(_ artifacts: [WorkItemRelation]) async {
+        var names: [String: String] = [:]
+
+        for artifact in artifacts {
+            guard let url = artifact.url else { continue }
+            // If the API already gave us a name, use it
+            if let name = artifact.attributes?.name, !name.isEmpty {
+                names[url] = name
+                continue
+            }
+
+            let decoded = url.removingPercentEncoding ?? url
+
+            // vstfs:///Git/Commit/{projectId}/{repoId}/{commitSha}
+            if decoded.contains("Git/Commit") {
+                let parts = decoded.components(separatedBy: "/")
+                if parts.count >= 3 {
+                    let commitSha = parts[parts.count - 1]
+                    let repoId = parts[parts.count - 2]
+                    do {
+                        let commit = try await service.getCommit(repositoryId: repoId, commitId: commitSha)
+                        let msg = commit.comment?.components(separatedBy: "\n").first ?? commit.shortId
+                        names[url] = "\(commit.shortId) \(msg)"
+                    } catch {
+                        names[url] = String(commitSha.prefix(7))
+                    }
+                }
+            }
+
+            // vstfs:///Git/PullRequestId/{projectId}/{pullRequestId}
+            else if decoded.contains("Git/PullRequestId") {
+                let parts = decoded.components(separatedBy: "/")
+                if parts.count >= 2 {
+                    let prIdStr = parts[parts.count - 1]
+                    if let prId = Int(prIdStr) {
+                        let projectId = parts[parts.count - 2]
+                        do {
+                            let pr = try await service.getPullRequestById(prId, project: projectId)
+                            names[url] = "PR #\(prId) \(pr.title ?? "")"
+                        } catch {
+                            names[url] = "PR #\(prId)"
+                        }
+                    }
+                }
+            }
+
+            // vstfs:///Git/Ref/{projectId}/{repoId}/{encodedRefName}
+            else if decoded.contains("Git/Ref") {
+                let parts = decoded.components(separatedBy: "/")
+                if parts.count >= 3 {
+                    // The last component is the encoded ref name (e.g., "GBrefs%2Fheads%2Fmain" or "refs/heads/feature")
+                    let refEncoded = parts[parts.count - 1]
+                    let refDecoded = refEncoded.removingPercentEncoding ?? refEncoded
+                    // Clean up: remove "GB" prefix and "refs/heads/" prefix
+                    var branchName = refDecoded
+                    if branchName.hasPrefix("GB") { branchName = String(branchName.dropFirst(2)) }
+                    branchName = branchName.removingPercentEncoding ?? branchName
+                    if branchName.hasPrefix("refs/heads/") { branchName = String(branchName.dropFirst("refs/heads/".count)) }
+                    names[url] = branchName
+                }
+            }
+        }
+
+        artifactDisplayNames = names
     }
 
     // MARK: - Save All

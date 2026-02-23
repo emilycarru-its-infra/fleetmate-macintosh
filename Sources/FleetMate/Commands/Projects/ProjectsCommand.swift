@@ -51,7 +51,7 @@ extension ProjectsCommand {
         func run() async throws {
             let (service, ghConfig) = try await createService()
 
-            let resolvedScope = parseScope(scope ?? ghConfig.projectScope ?? "organization")
+            let resolvedScope = parseScope(scope ?? ghConfig.projectScope)
             let resolvedOwner = owner ?? ghConfig.organization ?? ghConfig.owner ?? ""
             let resolvedRepo = repo ?? ghConfig.repo
 
@@ -107,7 +107,7 @@ extension ProjectsCommand {
 
         func run() async throws {
             let (service, ghConfig) = try await createService()
-            let scope = parseScope(ghConfig.projectScope ?? "organization")
+            let scope = parseScope(ghConfig.projectScope)
             let owner = ghConfig.organization ?? ghConfig.owner ?? ""
 
             guard let project = try await service.getProject(
@@ -714,7 +714,7 @@ private func createService() async throws -> (GitHubProjectsService, GitHubProvi
 private func resolveProjectId(
     service: GitHubProjectsService, config: GitHubProviderConfig, projectNumber: Int?
 ) async throws -> String? {
-    let scope = parseScope(config.projectScope ?? "organization")
+    let scope = parseScope(config.projectScope)
     let owner = config.organization ?? config.owner ?? ""
     let num = projectNumber ?? config.projectNumber
 

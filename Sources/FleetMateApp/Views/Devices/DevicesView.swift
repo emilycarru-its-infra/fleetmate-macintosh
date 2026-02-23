@@ -212,7 +212,7 @@ struct DevicesView: View {
             // Detail Panel — shown when exactly one device is selected
             if selectedDeviceIds.count == 1, let selectedDevice = selectedDevices.first {
                 DeviceDetailView(device: selectedDevice)
-                    .frame(minWidth: 530, idealWidth: 630, maxWidth: 770)
+                    .frame(minWidth: 456, idealWidth: 540, maxWidth: 660)
             }
             
             // Actions Panel — always visible when devices are selected

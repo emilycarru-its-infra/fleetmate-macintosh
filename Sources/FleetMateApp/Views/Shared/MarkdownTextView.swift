@@ -1,6 +1,7 @@
 import SwiftUI
 import MarkdownUI
 import AppKit
+import FleetMateCore
 
 // MARK: - Shared Markdown / HTML Renderer
 
@@ -56,8 +57,8 @@ private struct HtmlRenderedView: View {
     private func htmlToAttributedString(_ html: String) -> AttributedString? {
         let wrapped = """
         <html><head><style>
-        body { font-family: -apple-system, sans-serif; font-size: 13px; }
-        pre, code { font-family: Menlo, monospace; font-size: 12px; background: #f5f5f5; padding: 2px 4px; border-radius: 3px; }
+        body { font-family: -apple-system, sans-serif; font-size: 14px; }
+        pre, code { font-family: Menlo, monospace; font-size: 13px; background: #f5f5f5; padding: 2px 4px; border-radius: 3px; }
         img { max-width: 100%; height: auto; }
         a { color: #0366d6; }
         table { border-collapse: collapse; width: 100%; }
@@ -86,24 +87,15 @@ extension MarkdownUI.Theme {
     static let fleetMate = Theme()
         .text {
             ForegroundColor(.primary)
-            FontSize(13)
+            FontSize(14)
         }
         .code {
             FontFamilyVariant(.monospaced)
-            FontSize(12)
+            FontSize(13)
             BackgroundColor(.secondary.opacity(0.1))
         }
         .codeBlock { configuration in
-            ScrollView(.horizontal, showsIndicators: true) {
-                configuration.label
-                    .markdownTextStyle {
-                        FontFamilyVariant(.monospaced)
-                        FontSize(12)
-                    }
-                    .padding(12)
-            }
-            .background(Color.secondary.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            CodeBlockWithCopy(configuration: configuration)
         }
         .blockquote { configuration in
             HStack(spacing: 0) {
@@ -140,30 +132,79 @@ extension MarkdownUI.Theme {
         }
 }
 
+// MARK: - Code Block with Copy Button
+
+/// A code block that overlays a copy button in the top-right corner.
+private struct CodeBlockWithCopy: View {
+    let configuration: CodeBlockConfiguration
+    @State private var copied = false
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            ScrollView(.horizontal, showsIndicators: true) {
+                configuration.label
+                    .markdownTextStyle {
+                        FontFamilyVariant(.monospaced)
+                        FontSize(12)
+                    }
+                    .padding(12)
+                    .padding(.trailing, 28) // make room for copy button
+            }
+            .background(Color.secondary.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            Button(action: copyCode) {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 11))
+                    .foregroundColor(copied ? .green : .secondary)
+                    .padding(6)
+                    .background(.ultraThinMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+            .buttonStyle(.plain)
+            .help("Copy code")
+            .padding(6)
+        }
+    }
+
+    private func copyCode() {
+        let code = configuration.content
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(code, forType: .string)
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+    }
+}
+
 // MARK: - Editable Markdown Field
 
-/// A markdown field with Write/Preview toggle — used for editing descriptions, comments, etc.
+/// A markdown field with Edit/Preview toggle — used for editing descriptions, comments, etc.
+/// Set `hideToggle: true` and pass `showPreview` when the toggle is rendered externally (e.g., in a heading row).
 struct EditableMarkdownField: View {
-    let label: String
+    var label: String? = nil
     @Binding var text: String
-    @State private var showPreview = false
+    var showPreview: Bool = false
+    var hideToggle: Bool = false
+    @State private var internalShowPreview = false
+
+    private var isPreview: Bool { hideToggle ? showPreview : internalShowPreview }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Picker("", selection: $showPreview) {
-                    Text("Write").tag(false)
-                    Text("Preview").tag(true)
+            if !hideToggle {
+                HStack {
+                    Picker("", selection: $internalShowPreview) {
+                        Text("Edit").tag(false)
+                        Text("Preview").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 130)
+                    .controlSize(.small)
+                    Spacer()
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 160)
-                Spacer()
-                Text("Markdown supported")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
             }
 
-            if showPreview {
+            if isPreview {
                 ScrollView {
                     MarkdownTextView(content: text.isEmpty ? "*No content*" : text)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -180,5 +221,105 @@ struct EditableMarkdownField: View {
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
             }
         }
+    }
+}
+
+// MARK: - Mention Text Editor (@ tagging)
+
+/// A TextEditor with `@` mention popup. When user types `@`, shows a filtered list of team members.
+/// Selecting a member inserts `@DisplayName` into the text.
+struct MentionTextEditor: View {
+    @Binding var text: String
+    var members: [IdentityRef]
+    var height: CGFloat = 80
+
+    @State private var showMentionPopup = false
+    @State private var mentionQuery = ""
+    @State private var cursorTriggerIndex: String.Index?
+
+    private var filteredMembers: [IdentityRef] {
+        if mentionQuery.isEmpty {
+            return members
+        }
+        let query = mentionQuery.lowercased()
+        return members.filter {
+            ($0.displayName ?? "").lowercased().contains(query) ||
+            ($0.uniqueName ?? "").lowercased().contains(query)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            TextEditor(text: $text)
+                .font(.body)
+                .frame(height: height)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
+                .onChange(of: text) { _, newValue in
+                    detectMentionTrigger(in: newValue)
+                }
+
+            if showMentionPopup && !filteredMembers.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(filteredMembers.prefix(8), id: \.uniqueName) { member in
+                            Button(action: { insertMention(member) }) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "person.circle.fill")
+                                        .foregroundColor(.secondary)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(member.displayName ?? "Unknown")
+                                            .font(.body)
+                                        if let email = member.uniqueName, email != member.displayName {
+                                            Text(email)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            Divider()
+                        }
+                    }
+                }
+                .frame(maxHeight: 200)
+                .background(Color(NSColor.controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
+                .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
+            }
+        }
+    }
+
+    private func detectMentionTrigger(in value: String) {
+        // Find the last `@` that isn't preceded by a word character
+        guard let atIndex = value.lastIndex(of: "@") else {
+            showMentionPopup = false
+            return
+        }
+        let afterAt = value[value.index(after: atIndex)...]
+        // If there's a space or newline after the query started, close the popup
+        if afterAt.contains(" ") || afterAt.contains("\n") {
+            showMentionPopup = false
+            return
+        }
+        mentionQuery = String(afterAt)
+        cursorTriggerIndex = atIndex
+        showMentionPopup = !members.isEmpty
+    }
+
+    private func insertMention(_ member: IdentityRef) {
+        guard let atIndex = cursorTriggerIndex else { return }
+        let name = member.displayName ?? member.uniqueName ?? "Unknown"
+        // Replace from @ to end-of-query with @Name
+        let before = String(text[text.startIndex..<atIndex])
+        text = before + "@\(name) "
+        showMentionPopup = false
+        mentionQuery = ""
+        cursorTriggerIndex = nil
     }
 }

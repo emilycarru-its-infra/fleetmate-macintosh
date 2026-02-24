@@ -363,17 +363,13 @@ public class TdxService {
                             for (i, item) in jsonArray.prefix(5).enumerated() {
                                 let hasReplies = item["Replies"] as? [[String: Any]]
                                 let replyCount = hasReplies?.count ?? 0
-                                let body = (item["Body"] as? String)?.prefix(60) ?? "nil"
-                                dbg.debug("TDX feed[\(i)]: id=\(item["ID"] ?? "?") replies=\(replyCount) body=\(body)", category: "tdx")
-                                if replyCount > 0, let replies = hasReplies {
-                                    for (j, reply) in replies.enumerated() {
-                                        let rBody = (reply["Body"] as? String)?.prefix(60) ?? "nil"
-                                        dbg.debug("  reply[\(j)]: id=\(reply["ID"] ?? "?") by=\(reply["CreatedFullName"] ?? "?") body=\(rBody)", category: "tdx")
-                                    }
-                                }
+                                let body = (item["Body"] as? String)?.prefix(40) ?? "nil"
+                                // Dump ALL keys to find parent/depth/threading fields
+                                let keys = item.keys.sorted().joined(separator: ", ")
+                                dbg.debug("TDX feed[\(i)] keys: \(keys)", category: "tdx")
+                                dbg.debug("TDX feed[\(i)]: id=\(item["ID"] ?? "?") type=\(item["ItemType"] ?? "?") replies=\(replyCount) parentId=\(item["ParentID"] ?? item["ParentId"] ?? "nil") body=\(body)", category: "tdx")
                             }
                         }
-                        // Now decode
                         do {
                             let feed = try JSONDecoder().decode([TdxFeedEntry].self, from: data)
                             let withReplies = feed.filter { ($0.replies?.count ?? 0) > 0 }

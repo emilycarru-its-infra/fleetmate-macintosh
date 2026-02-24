@@ -64,6 +64,17 @@ public struct SnipeAsset: Codable, Identifiable, Hashable, Sendable {
         }
         return nil
     }
+
+    /// Get custom field by display name (dictionary key)
+    public func customFieldByName(_ displayName: String) -> SnipeCustomField? {
+        return customFields?[displayName]
+    }
+
+    /// Purchase cost (top-level field from Snipe-IT)
+    public var purchaseCost: String? {
+        // Try custom field first, then would need a dedicated field
+        return customFieldByName("Purchase Cost")?.value
+    }
 }
 
 public struct SnipeUser: Codable, Identifiable, Hashable, Sendable {
@@ -365,6 +376,52 @@ public struct SnipeCheckinRequest: Encodable {
         self.note = note
         self.locationId = locationId
         self.status = status
+    }
+}
+
+public struct SnipeAssetUpdateRequest: Encodable {
+    public var name: String?
+    public var assetTag: String?
+    public var serial: String?
+    public var statusId: Int?
+    public var modelId: Int?
+    public var notes: String?
+    public var purchaseDate: String?
+    public var purchaseCost: String?
+    public var orderNumber: String?
+    public var locationId: Int?
+    public var rtdLocationId: Int?
+    public var companyId: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case name, serial, notes
+        case assetTag = "asset_tag"
+        case statusId = "status_id"
+        case modelId = "model_id"
+        case purchaseDate = "purchase_date"
+        case purchaseCost = "purchase_cost"
+        case orderNumber = "order_number"
+        case locationId = "location_id"
+        case rtdLocationId = "rtd_location_id"
+        case companyId = "company_id"
+    }
+
+    public init(name: String? = nil, assetTag: String? = nil, serial: String? = nil,
+         statusId: Int? = nil, modelId: Int? = nil, notes: String? = nil,
+         purchaseDate: String? = nil, purchaseCost: String? = nil, orderNumber: String? = nil,
+         locationId: Int? = nil, rtdLocationId: Int? = nil, companyId: Int? = nil) {
+        self.name = name
+        self.assetTag = assetTag
+        self.serial = serial
+        self.statusId = statusId
+        self.modelId = modelId
+        self.notes = notes
+        self.purchaseDate = purchaseDate
+        self.purchaseCost = purchaseCost
+        self.orderNumber = orderNumber
+        self.locationId = locationId
+        self.rtdLocationId = rtdLocationId
+        self.companyId = companyId
     }
 }
 

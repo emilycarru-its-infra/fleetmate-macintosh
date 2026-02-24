@@ -149,6 +149,10 @@ public class SnipeService {
     public func auditAsset(assetId: Int, request: SnipeAuditRequest? = nil) async throws -> SnipeResponse {
         return try await post("/api/v1/hardware/\(assetId)/audit", body: request ?? SnipeAuditRequest())
     }
+
+    public func updateAsset(assetId: Int, request: SnipeAssetUpdateRequest) async throws -> SnipeResponse {
+        return try await put("/api/v1/hardware/\(assetId)", body: request)
+    }
     
     // MARK: - Private Helpers
     
@@ -201,6 +205,23 @@ public class SnipeService {
         
         return try await withCheckedThrowingContinuation { continuation in
             session.request(url, method: .post, parameters: body, encoder: JSONParameterEncoder.default, headers: headers)
+                .validate()
+                .responseDecodable(of: R.self) { response in
+                    switch response.result {
+                    case .success(let value):
+                        continuation.resume(returning: value)
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
+                }
+        }
+    }
+
+    private func put<T: Encodable, R: Decodable>(_ path: String, body: T) async throws -> R {
+        let url = "\(baseUrl)\(path)"
+
+        return try await withCheckedThrowingContinuation { continuation in
+            session.request(url, method: .put, parameters: body, encoder: JSONParameterEncoder.default, headers: headers)
                 .validate()
                 .responseDecodable(of: R.self) { response in
                     switch response.result {

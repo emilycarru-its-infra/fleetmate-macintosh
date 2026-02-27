@@ -1,0 +1,176 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    // ─── Build ────────────────────────────────────────────────────────────────
+    {
+      "label": "Build: fleetmate CLI (debug)",
+      "type": "shell",
+      "command": "swift build --product fleetmate",
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "shared" }
+    },
+
+    // ─── ARD: Group operations ────────────────────────────────────────────────
+    {
+      "label": "ARD: Scan Group (IP + status table)",
+      "type": "shell",
+      "command": "fleetmate ard group scan \"${input:groupName}\"",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "ARD: List All Groups",
+      "type": "shell",
+      "command": "fleetmate ard group list",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "ARD: Preview CSV Group",
+      "type": "shell",
+      "command": "fleetmate ard group preview \"${input:csvPath}\"",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+
+    // ─── ARD: Custom command ─────────────────────────────────────────────────
+    {
+      "label": "ARD: Run Custom Command (device)",
+      "type": "shell",
+      "command": "fleetmate ard run \"${input:unixCommand}\" --device \"${input:deviceName}\"",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "ARD: Run Custom Command (group)",
+      "type": "shell",
+      "command": "fleetmate ard run \"${input:unixCommand}\" --group \"${input:groupName}\"",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+
+    // ─── ARD: Screen Sharing ─────────────────────────────────────────────────
+    {
+      "label": "ARD: Open VNC / Screen Sharing",
+      "type": "shell",
+      "command": "fleetmate ard vnc \"${input:deviceName}\"",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+
+    // ─── ARD: Inventory ───────────────────────────────────────────────────────
+    {
+      "label": "ARD: Get IP Addresses (group)",
+      "type": "shell",
+      "command": "fleetmate ard inventory ip --group \"${input:groupName}\"",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "ARD: About This Mac (device)",
+      "type": "shell",
+      "command": "fleetmate ard inventory info --device \"${input:deviceName}\"",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+
+    // ─── ARD: Updates ────────────────────────────────────────────────────────
+    {
+      "label": "ARD: Check for Updates (group)",
+      "type": "shell",
+      "command": "fleetmate ard updates check --group \"${input:groupName}\"",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "ARD: Install Updates (group)",
+      "type": "shell",
+      "command": "fleetmate ard updates install --group \"${input:groupName}\"",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+
+    // ─── ARD: Security ───────────────────────────────────────────────────────
+    {
+      "label": "ARD: Check FileVault (group)",
+      "type": "shell",
+      "command": "fleetmate ard security filevault --group \"${input:groupName}\"",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "ARD: Run Defender Scan (group)",
+      "type": "shell",
+      "command": "fleetmate ard security defender --group \"${input:groupName}\"",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+
+    // ─── ARD: Upkeep ─────────────────────────────────────────────────────────
+    {
+      "label": "ARD: Storage Check (group)",
+      "type": "shell",
+      "command": "fleetmate ard upkeep storage --group \"${input:groupName}\"",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "ARD: List Running Apps (device)",
+      "type": "shell",
+      "command": "fleetmate ard upkeep running-apps --device \"${input:deviceName}\"",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "ARD: Reboot (device — with confirm)",
+      "type": "shell",
+      "command": "fleetmate ard upkeep reboot --device \"${input:deviceName}\" --confirm",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+
+    // ─── ARD: Munki ──────────────────────────────────────────────────────────
+    {
+      "label": "ARD: Show Munki Config (device)",
+      "type": "shell",
+      "command": "fleetmate ard munki config --device \"${input:deviceName}\"",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    },
+
+    // ─── ARD: Enrollment ─────────────────────────────────────────────────────
+    {
+      "label": "ARD: Check DEP Enrollment (device)",
+      "type": "shell",
+      "command": "fleetmate ard enrollment dep --device \"${input:deviceName}\"",
+      "presentation": { "reveal": "always", "panel": "new", "close": false },
+      "problemMatcher": []
+    }
+  ],
+
+  "inputs": [
+    {
+      "id": "groupName",
+      "description": "Group name (ReportMate location) or path to a computers.csv",
+      "default": "B1122 Studio Lab",
+      "type": "promptString"
+    },
+    {
+      "id": "deviceName",
+      "description": "Device name, hostname, serial number, or IP address",
+      "type": "promptString"
+    },
+    {
+      "id": "unixCommand",
+      "description": "Shell command to run on remote computer(s)",
+      "default": "uptime",
+      "type": "promptString"
+    },
+    {
+      "id": "csvPath",
+      "description": "Path to CSV file of computer names/IPs",
+      "default": "~/Desktop/computers.csv",
+      "type": "promptString"
+    }
+  ]
+}

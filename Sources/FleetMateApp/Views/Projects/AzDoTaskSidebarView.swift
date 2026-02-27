@@ -8,6 +8,7 @@ struct AzDoTaskSidebarView: View {
     let task: UnifiedTask
     let service: AzureDevOpsService
     let onClose: () -> Void
+    var onDelete: (() -> Void)? = nil
     var onSelectWorkItem: ((Int) -> Void)? = nil
     @EnvironmentObject private var appState: AppState
 
@@ -45,6 +46,7 @@ struct AzDoTaskSidebarView: View {
     @State private var areaPaths: [String] = []
     @State private var iterationPaths: [String] = []
     @State private var teamMembers: [IdentityRef] = []
+    @State private var validStates: [String] = []
 
     // New comment
     @State private var newCommentText = ""
@@ -60,6 +62,7 @@ struct AzDoTaskSidebarView: View {
     @State private var isUpdating = false
     @State private var actionError: String?
     @State private var showConfirmRemove = false
+    @State private var isFollowing = false
 
     // Code linking
     @State private var showLinkCodePopover = false
@@ -95,8 +98,11 @@ struct AzDoTaskSidebarView: View {
         fields?.originalEstimate != nil || fields?.remainingWork != nil || fields?.completedWork != nil
     }
 
-    private let stateOptions = ["New", "Active", "Resolved", "Closed", "Removed",
+    private let fallbackStateOptions = ["New", "Active", "Resolved", "Closed", "Removed",
                                  "To Do", "Doing", "Done", "Planned", "In Progress"]
+    private var stateOptions: [String] {
+        validStates.isEmpty ? fallbackStateOptions : validStates
+    }
     private let workItemTypes = ["Bug", "Task", "User Story", "Feature", "Epic", "Issue"]
 
     var body: some View {
@@ -156,8 +162,8 @@ struct AzDoTaskSidebarView: View {
             resetState()
             loadDetail()
         }
-        .alert("Remove work item?", isPresented: $showConfirmRemove) {
-            Button("Remove", role: .destructive) { removeWorkItem() }
+        .alert("Delete work item?", isPresented: $showConfirmRemove) {
+            Button("Delete", role: .destructive) { removeWorkItem() }
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("This will set the work item state to Removed.")
@@ -235,6 +241,7 @@ struct AzDoTaskSidebarView: View {
                 .controlSize(.small)
             }
 
+            stateActionButtons
             actionsMenu
         }
         .padding(.horizontal, 14)
@@ -243,27 +250,65 @@ struct AzDoTaskSidebarView: View {
 
     // MARK: - Actions Menu (top-right)
 
+    /// Standalone state-change buttons (outside the dropdown).
+    /// Uses dynamically loaded states — shows contextual transitions.
+    @ViewBuilder
+    private var stateActionButtons: some View {
+        let currentState = (fields?.state ?? "New").lowercased()
+        let states = stateOptions
+
+        // Terminal states — pick Closed/Done/Resolved if available
+        let terminalStates = states.filter {
+            ["closed", "done", "resolved", "completed"].contains($0.lowercased())
+        }
+        let closedState = terminalStates.first(where: { $0.lowercased() == "closed" })
+            ?? terminalStates.first(where: { $0.lowercased() == "done" })
+            ?? terminalStates.first
+
+        // Reactivate states — pick Active/New/To Do if available
+        let activeStates = states.filter {
+            ["active", "new", "to do", "doing", "in progress", "open"].contains($0.lowercased())
+        }
+        let reactivateState = activeStates.first(where: { $0.lowercased() == "active" })
+            ?? activeStates.first(where: { $0.lowercased() == "new" })
+            ?? activeStates.first
+
+        // Show a "complete" button if not already terminal
+        if let done = closedState, !terminalStates.contains(where: { $0.lowercased() == currentState }) {
+            Button(action: { quickStateChange(done) }) {
+                Image(systemName: "checkmark.circle")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help(done)
+        }
+
+        // Show a "reactivate" button if in a terminal state
+        if let reopen = reactivateState,
+           terminalStates.contains(where: { $0.lowercased() == currentState }) {
+            Button(action: { quickStateChange(reopen) }) {
+                Image(systemName: "arrow.counterclockwise.circle")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Reactivate (\(reopen))")
+        }
+
+        Button(role: .destructive, action: { showConfirmRemove = true }) {
+            Image(systemName: "trash")
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .help("Delete")
+    }
+
     private var actionsMenu: some View {
         Menu {
-            let currentState = (fields?.state ?? "New").lowercased()
-            if currentState != "resolved" && currentState != "closed" {
-                Button(action: { quickStateChange("Resolved") }) {
-                    Label("Resolve", systemImage: "checkmark.circle")
-                }
+            Button(action: { toggleFollow() }) {
+                Label(isFollowing ? "Unfollow" : "Follow", systemImage: isFollowing ? "bell.slash" : "bell")
             }
-            if currentState != "closed" {
-                Button(action: { quickStateChange("Closed") }) {
-                    Label("Close", systemImage: "xmark.circle")
-                }
-            }
-            if currentState == "closed" || currentState == "resolved" {
-                Button(action: { quickStateChange("Active") }) {
-                    Label("Reactivate", systemImage: "arrow.counterclockwise.circle")
-                }
-            }
-            Divider()
-            Button(role: .destructive, action: { showConfirmRemove = true }) {
-                Label("Remove Work Item", systemImage: "trash")
+            Button(action: { openNotificationSettings() }) {
+                Label("Notification Settings…", systemImage: "bell.badge")
             }
         } label: {
             Image(systemName: "ellipsis.circle")
@@ -271,7 +316,7 @@ struct AzDoTaskSidebarView: View {
         .menuStyle(.borderedButton)
         .controlSize(.small)
         .fixedSize()
-        .help("Work item actions")
+        .help("More actions")
     }
 
     // MARK: - Parent Section (above title)
@@ -1035,6 +1080,7 @@ struct AzDoTaskSidebarView: View {
                             .foregroundColor(.secondary)
                         TextField("Search \(linkTab.rawValue.lowercased())…", text: $linkSearchText)
                             .textFieldStyle(.plain)
+                            .onSubmit { searchCommitBySHA() }
                         if !linkSearchText.isEmpty {
                             Button(action: { linkSearchText = "" }) {
                                 Image(systemName: "xmark.circle.fill")
@@ -1104,9 +1150,9 @@ struct AzDoTaskSidebarView: View {
                     let filtered = linkCommits.filter { commit in
                         guard !query.isEmpty else { return true }
                         let msg = (commit.comment ?? "").lowercased()
-                        let id = commit.shortId.lowercased()
+                        let fullId = commit.commitId.lowercased()
                         let author = (commit.author?.name ?? "").lowercased()
-                        return msg.contains(query) || id.contains(query) || author.contains(query)
+                        return msg.contains(query) || fullId.contains(query) || query.contains(fullId.prefix(7)) || author.contains(query)
                     }
                     if filtered.isEmpty {
                         Text(query.isEmpty ? "No commits found." : "No matching commits.").font(.body).foregroundColor(.secondary)
@@ -1227,7 +1273,7 @@ struct AzDoTaskSidebarView: View {
                 case .branch:
                     linkBranches = try await service.getBranches(repositoryId: repoId, project: proj)
                 case .commit:
-                    linkCommits = try await service.getCommits(repositoryId: repoId, project: proj)
+                    linkCommits = try await service.getCommits(repositoryId: repoId, top: 200, project: proj)
                 case .pullRequest:
                     linkPullRequests = try await service.getPullRequests(repositoryId: repoId, project: proj)
                 }
@@ -1239,6 +1285,36 @@ struct AzDoTaskSidebarView: View {
 
     private func selectedRepoProjectId() -> String? {
         linkRepos.first(where: { $0.id == linkSelectedRepoId })?.project?.id
+    }
+
+    /// When the user presses Enter in the commit search field, try to fetch a specific commit by SHA.
+    private func searchCommitBySHA() {
+        guard linkTab == .commit, !linkSelectedRepoId.isEmpty else { return }
+        // Extract potential SHA — strip URL prefix if pasted, trim whitespace
+        var sha = linkSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let range = sha.range(of: "/commit/") {
+            sha = String(sha[range.upperBound...])
+        }
+        // Must be a hex string of at least 7 characters
+        let hexChars = CharacterSet(charactersIn: "0123456789abcdefABCDEF")
+        guard sha.count >= 7, sha.unicodeScalars.allSatisfy({ hexChars.contains($0) }) else { return }
+        // Skip if we already have this commit
+        guard !linkCommits.contains(where: { $0.commitId.lowercased().hasPrefix(sha.lowercased()) }) else { return }
+        isLoadingLinkData = true
+        let repoId = linkSelectedRepoId
+        let proj = workItemProject
+        Task {
+            defer { isLoadingLinkData = false }
+            do {
+                let commit = try await service.getCommit(repositoryId: repoId, commitId: sha, project: proj)
+                if !linkCommits.contains(where: { $0.commitId == commit.commitId }) {
+                    linkCommits.insert(commit, at: 0)
+                }
+                linkSearchText = sha
+            } catch {
+                linkError = "Commit not found for \(String(sha.prefix(12)))"
+            }
+        }
     }
 
     private func linkBranch(_ branch: GitRef) {
@@ -1454,6 +1530,17 @@ struct AzDoTaskSidebarView: View {
                     dbg.debug("Team members load failed: \(error)", category: "azdo")
                 }
             }
+            // Load valid states for this work item type
+            if let wiType = workItem?.fields?.workItemType {
+                Task {
+                    do {
+                        let states = try await service.getWorkItemTypeStates(type: wiType, project: pickerProj)
+                        validStates = states.map(\.name)
+                    } catch {
+                        dbg.debug("Work item type states load failed: \(error)", category: "azdo")
+                    }
+                }
+            }
         }
     }
 
@@ -1582,10 +1669,34 @@ struct AzDoTaskSidebarView: View {
             defer { isUpdating = false }
             do {
                 _ = try await service.updateWorkItem(id: id, request: UpdateWorkItemRequest(state: "Removed"))
-                onClose()
+                if let onDelete = onDelete {
+                    onDelete()
+                } else {
+                    onClose()
+                }
             } catch {
                 actionError = error.localizedDescription
             }
+        }
+    }
+
+    private func toggleFollow() {
+        isFollowing.toggle()
+        // Follow/unfollow is best-effort — Azure DevOps subscriptions API
+        // For now, open the notification settings page where the user can manage subscriptions
+        if let id = workItemId, let url = task.externalUrl, let baseUrl = URL(string: url) {
+            // Toggle is local; full subscription management requires the web UI
+            _ = (id, baseUrl) // suppress unused warnings
+        }
+    }
+
+    private func openNotificationSettings() {
+        // Open the Azure DevOps notification settings page for this work item in the browser
+        if let urlStr = task.externalUrl, let url = URL(string: urlStr) {
+            // Navigate to the org notification settings page
+            let orgUrl = url.deletingLastPathComponent().deletingLastPathComponent()
+            let notifUrl = orgUrl.appendingPathComponent("_notifications")
+            NSWorkspace.shared.open(notifUrl)
         }
     }
 

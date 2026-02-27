@@ -7,6 +7,7 @@ struct TaskDetailSidebarView: View {
     let ghConfig: GitHubProviderConfig?
     let devOpsService: AzureDevOpsService?
     let onClose: () -> Void
+    var onDelete: (() -> Void)? = nil
     var onSelectWorkItem: ((Int) -> Void)? = nil
 
     var body: some View {
@@ -15,7 +16,7 @@ struct TaskDetailSidebarView: View {
             GitHubIssueSidebarView(task: task, config: ghConfig, onClose: onClose)
         case "azdevops":
             if let service = devOpsService {
-                AzDoTaskSidebarView(task: task, service: service, onClose: onClose, onSelectWorkItem: onSelectWorkItem)
+                AzDoTaskSidebarView(task: task, service: service, onClose: onClose, onDelete: onDelete, onSelectWorkItem: onSelectWorkItem)
             } else {
                 GenericTaskSidebarView(task: task, onClose: onClose)
             }

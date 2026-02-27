@@ -458,6 +458,27 @@ public class AzureDevOpsService {
         return response.value ?? []
     }
 
+    /// Get all valid work item types for the project's process template.
+    public func getWorkItemTypes(project: String? = nil) async throws -> [WorkItemTypeDefinition] {
+        let response: WorkItemTypesResponse = try await request(
+            "GET",
+            path: "/_apis/wit/workitemtypes?api-version=7.0",
+            forProject: project
+        )
+        return (response.value ?? []).filter { !($0.isDisabled ?? false) }
+    }
+
+    /// Get valid states for a specific work item type.
+    public func getWorkItemTypeStates(type: String, project: String? = nil) async throws -> [WorkItemTypeState] {
+        let encodedType = type.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? type
+        let response: WorkItemTypeStatesResponse = try await request(
+            "GET",
+            path: "/_apis/wit/workitemtypes/\(encodedType)/states?api-version=7.0",
+            forProject: project
+        )
+        return response.value ?? []
+    }
+
     /// Move a work item to a board column by setting System.State to the column's mapped state.
     /// Board columns are readonly; the correct way to move items is to update the state
     /// using the column's stateMappings for the given work item type.
@@ -755,6 +776,34 @@ public class AzureDevOpsService {
             forProject: project
         )
         return response.value ?? []
+    }
+
+    /// Create a new branch in a repository from a source branch's latest commit.
+    /// - Parameters:
+    ///   - repositoryId: The Git repository ID.
+    ///   - branchName: Short name for the new branch (without refs/heads/ prefix).
+    ///   - sourceObjectId: The commit SHA to branch from.
+    ///   - project: Optional project override.
+    /// - Returns: The created GitRef, or nil if creation failed.
+    public func createBranch(repositoryId: String, branchName: String, sourceObjectId: String, project: String? = nil) async throws -> GitRef? {
+        dbg.info("AzDO createBranch(\(branchName)) in \(repositoryId)", category: "azdo")
+        let encodedRepoId = repositoryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repositoryId
+        let zeroId = String(repeating: "0", count: 40)
+        let refUpdates: [[String: String]] = [
+            [
+                "name": "refs/heads/\(branchName)",
+                "oldObjectId": zeroId,
+                "newObjectId": sourceObjectId
+            ]
+        ]
+        let body = try JSONSerialization.data(withJSONObject: refUpdates)
+        let response: GitRefsResponse = try await request(
+            "POST",
+            path: "/_apis/git/repositories/\(encodedRepoId)/refs?api-version=7.0",
+            body: body,
+            forProject: project
+        )
+        return response.value?.first
     }
 
     /// Fetch a single commit by SHA from a repository.

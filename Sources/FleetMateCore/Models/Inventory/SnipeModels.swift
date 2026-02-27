@@ -11,6 +11,25 @@ public struct SnipeResponse: Decodable {
     public let status: String
     public let messages: String?
     public let payload: SnipeAsset?
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        status = try container.decode(String.self, forKey: .status)
+        payload = try? container.decodeIfPresent(SnipeAsset.self, forKey: .payload)
+        // Snipe-IT returns messages as a String on success/simple errors,
+        // or as a [String: [String]] dictionary for validation errors (e.g. 422)
+        if let s = try? container.decodeIfPresent(String.self, forKey: .messages) {
+            messages = s
+        } else if let dict = try? container.decodeIfPresent([String: [String]].self, forKey: .messages) {
+            messages = dict.values.flatMap { $0 }.joined(separator: "; ")
+        } else {
+            messages = nil
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case status, messages, payload
+    }
 }
 
 // MARK: - Core Models
@@ -334,6 +353,7 @@ public struct SnipeCheckoutRequest: Encodable {
     public let assignedUser: Int?
     public let assignedAsset: Int?
     public let assignedLocation: Int?
+    public let checkoutToType: String?
     public let expectedCheckin: String?
     public let checkoutAt: String?
     public let name: String?
@@ -344,15 +364,18 @@ public struct SnipeCheckoutRequest: Encodable {
         case assignedUser = "assigned_user"
         case assignedAsset = "assigned_asset"
         case assignedLocation = "assigned_location"
+        case checkoutToType = "checkout_to_type"
         case expectedCheckin = "expected_checkin"
         case checkoutAt = "checkout_at"
     }
     
     public init(assignedUser: Int? = nil, assignedAsset: Int? = nil, assignedLocation: Int? = nil,
-         expectedCheckin: String? = nil, checkoutAt: String? = nil, name: String? = nil, note: String? = nil) {
+         checkoutToType: String? = nil, expectedCheckin: String? = nil, checkoutAt: String? = nil,
+         name: String? = nil, note: String? = nil) {
         self.assignedUser = assignedUser
         self.assignedAsset = assignedAsset
         self.assignedLocation = assignedLocation
+        self.checkoutToType = checkoutToType
         self.expectedCheckin = expectedCheckin
         self.checkoutAt = checkoutAt
         self.name = name

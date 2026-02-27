@@ -42,7 +42,7 @@ struct SetSubcommand: AsyncParsableCommand {
         let keychain = KeychainService.shared
         
         guard let keychainKey = KeychainService.Key(rawValue: key) else {
-            print("❌ Unknown key: \(key)".red)
+            print("[ERROR] Unknown key: \(key)".red)
             print("\nAvailable keys:")
             for k in KeychainService.Key.allCases {
                 print("  - \(k.rawValue)")
@@ -68,7 +68,7 @@ struct SetSubcommand: AsyncParsableCommand {
             guard let input = readLine() else {
                 term.c_lflag = originalFlags
                 tcsetattr(STDIN_FILENO, TCSANOW, &term)
-                print("\n❌ No input provided".red)
+                print("\n[ERROR] No input provided".red)
                 throw ExitCode.failure
             }
             
@@ -82,9 +82,9 @@ struct SetSubcommand: AsyncParsableCommand {
         
         do {
             try keychain.save(finalValue, for: keychainKey)
-            print("✅ Saved \(key) to Keychain".green)
+            print("[ok] Saved \(key) to Keychain".green)
         } catch {
-            print("❌ Failed to save: \(error.localizedDescription)".red)
+            print("[ERROR] Failed to save: \(error.localizedDescription)".red)
             throw ExitCode.failure
         }
     }
@@ -108,12 +108,12 @@ struct GetSubcommand: AsyncParsableCommand {
         let keychain = KeychainService.shared
         
         guard let keychainKey = KeychainService.Key(rawValue: key) else {
-            print("❌ Unknown key: \(key)".red)
+            print("[ERROR] Unknown key: \(key)".red)
             throw ExitCode.failure
         }
         
         guard let value = keychain.get(keychainKey) else {
-            print("❌ No value found for \(key)".yellow)
+            print("[ERROR] No value found for \(key)".yellow)
             throw ExitCode.failure
         }
         
@@ -157,7 +157,7 @@ struct ListSubcommand: AsyncParsableCommand {
             var allConfigured = true
             for key in keys {
                 let hasValue = keychain.exists(key)
-                let indicator = hasValue ? "✅".green : "❌".red
+                let indicator = hasValue ? "yes".green : "no".red
                 print("  \(indicator) \(key.rawValue)")
                 if !hasValue { allConfigured = false }
             }
@@ -189,11 +189,11 @@ struct ListSubcommand: AsyncParsableCommand {
             ]
             
             for (name, configured) in checks {
-                let status = configured ? "✅ Ready".green : "❌ Not configured".red
+                let status = configured ? "[ok] Ready".green : "[ERROR] Not configured".red
                 print("  \(name): \(status)")
             }
         } catch {
-            print("  ⚠️ Could not load config: \(error.localizedDescription)".yellow)
+            print("  [WARNING] Could not load config: \(error.localizedDescription)".yellow)
         }
         
         print("")
@@ -265,14 +265,14 @@ struct ImportSubcommand: AsyncParsableCommand {
             
             if dryRun {
                 let preview = String(value.prefix(4)) + "****"
-                print("📝 \(envVar) → \(key.rawValue) = \(preview)")
+                print("\(envVar) → \(key.rawValue) = \(preview)")
             } else {
                 do {
                     try keychain.save(value, for: key)
-                    print("✅ \(envVar) → \(key.rawValue)".green)
+                    print("[ok] \(envVar) → \(key.rawValue)".green)
                     imported += 1
                 } catch {
-                    print("❌ Failed to save \(key.rawValue): \(error)".red)
+                    print("[ERROR] Failed to save \(key.rawValue): \(error)".red)
                 }
             }
         }
@@ -306,7 +306,7 @@ struct ClearSubcommand: AsyncParsableCommand {
         if let keyName = key, keyName.lowercased() != "all" {
             // Clear specific key
             guard let keychainKey = KeychainService.Key(rawValue: keyName) else {
-                print("❌ Unknown key: \(keyName)".red)
+                print("[ERROR] Unknown key: \(keyName)".red)
                 throw ExitCode.failure
             }
             
@@ -319,11 +319,11 @@ struct ClearSubcommand: AsyncParsableCommand {
             }
             
             try keychain.delete(keychainKey)
-            print("✅ Cleared \(keyName) from Keychain".green)
+            print("[ok] Cleared \(keyName) from Keychain".green)
         } else {
             // Clear all
             if !force {
-                print("⚠️  This will clear ALL FleetMate credentials from Keychain!".yellow.bold)
+                print("[WARNING] This will clear ALL FleetMate credentials from Keychain!".yellow.bold)
                 print("Are you sure? (type 'yes' to confirm): ", terminator: "")
                 guard let confirm = readLine()?.lowercased(), confirm == "yes" else {
                     print("Cancelled.")
@@ -332,7 +332,7 @@ struct ClearSubcommand: AsyncParsableCommand {
             }
             
             try keychain.clearAll()
-            print("✅ All FleetMate credentials cleared from Keychain".green)
+            print("[ok] All FleetMate credentials cleared from Keychain".green)
         }
     }
 }
@@ -372,7 +372,7 @@ struct ValidateSubcommand: AsyncParsableCommand {
             case "tdx":
                 await validateTdx(config: config)
             default:
-                print("⚠️  Unknown service: \(svc)".yellow)
+                print("[WARNING] Unknown service: \(svc)".yellow)
             }
         }
         
@@ -383,16 +383,16 @@ struct ValidateSubcommand: AsyncParsableCommand {
         print("ReportMate: ", terminator: "")
         
         guard config.isReportMateConfigured else {
-            print("❌ Not configured".red)
+            print("[ERROR] Not configured".red)
             return
         }
         
         let service = ReportMateService(config: config)
         do {
             let devices = try await service.getDevices()
-            print("✅ Connected (\(devices.count) devices)".green)
+            print("[ok] Connected (\(devices.count) devices)".green)
         } catch {
-            print("❌ Failed: \(error.localizedDescription)".red)
+            print("[ERROR] Failed: \(error.localizedDescription)".red)
         }
     }
     
@@ -400,16 +400,16 @@ struct ValidateSubcommand: AsyncParsableCommand {
         print("Snipe-IT: ", terminator: "")
         
         guard config.snipeApiKey != nil else {
-            print("❌ Not configured".red)
+            print("[ERROR] Not configured".red)
             return
         }
         
         let service = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey, cacheMinutes: config.cacheMinutes)
         do {
             let assets = try await service.getAssets()
-            print("✅ Connected (\(assets.count) assets)".green)
+            print("[ok] Connected (\(assets.count) assets)".green)
         } catch {
-            print("❌ Failed: \(error.localizedDescription)".red)
+            print("[ERROR] Failed: \(error.localizedDescription)".red)
         }
     }
     
@@ -417,15 +417,15 @@ struct ValidateSubcommand: AsyncParsableCommand {
         print("Microsoft Graph: ", terminator: "")
         
         guard config.graphTenantId != nil else {
-            print("❌ Not configured".red)
+            print("[ERROR] Not configured".red)
             return
         }
         
         let service = GraphService(config: config)
         if service.isConfigured {
-            print("✅ Configured (test connection during device queries)".green)
+            print("[ok] Configured (test connection during device queries)".green)
         } else {
-            print("⚠️ Credentials set but not validated".yellow)
+            print("[WARNING] Credentials set but not validated".yellow)
         }
     }
     
@@ -433,15 +433,15 @@ struct ValidateSubcommand: AsyncParsableCommand {
         print("Azure DevOps: ", terminator: "")
         // NO PAT — Azure DevOps uses SSO only (browser OAuth2 or Azure CLI with Platform SSO)
         guard config.isDevOpsConfigured else {
-            print("❌ Not configured (need organization + project)".red)
+            print("[ERROR] Not configured (need organization + project)".red)
             return
         }
         
         let service = AzureDevOpsService(config: config)
         if service.isConfigured {
-            print("✅ Configured (SSO auth, test connection during work item queries)".green)
+            print("[ok] Configured (SSO auth, test connection during work item queries)".green)
         } else {
-            print("⚠️ Organization/project set but not validated".yellow)
+            print("[WARNING] Organization/project set but not validated".yellow)
         }
     }
     
@@ -449,15 +449,15 @@ struct ValidateSubcommand: AsyncParsableCommand {
         print("TeamDynamix: ", terminator: "")
         
         guard config.tdxUsername != nil || config.tdxBeid != nil else {
-            print("❌ Not configured".red)
+            print("[ERROR] Not configured".red)
             return
         }
         
         let service = TdxService(config: config)
         if service.isConfigured {
-            print("✅ Configured (test connection during ticket queries)".green)
+            print("[ok] Configured (test connection during ticket queries)".green)
         } else {
-            print("⚠️ Credentials set but not validated".yellow)
+            print("[WARNING] Credentials set but not validated".yellow)
         }
     }
 }

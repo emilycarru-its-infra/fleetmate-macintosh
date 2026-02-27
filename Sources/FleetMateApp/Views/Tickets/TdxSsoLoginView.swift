@@ -844,7 +844,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                     .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
                 
                 if cleanToken.hasPrefix("eyJ") && cleanToken.count > 20 {
-                    let successLog = "[SAML] ✓ Got JWT directly from SAML redirect chain (\(cleanToken.prefix(20))...)"
+                    let successLog = "[SAML] Got JWT directly from SAML redirect chain (\(cleanToken.prefix(20))...)"
                     dbg.info(successLog, category: "tdx-sso")
                     
                     let userInfo = Self.extractUserInfoFromJwt(cleanToken)
@@ -936,7 +936,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                     
                     // Validate it's a JWT (starts with eyJ), not an HTML page
                     if cleanToken.hasPrefix("eyJ") && cleanToken.count > 20 {
-                        let successLog = "[JWT] ✓ Got bearer token (\(cleanToken.prefix(20))...)"
+                        let successLog = "[JWT] Got bearer token (\(cleanToken.prefix(20))...)"
                         dbg.info(successLog, category: "tdx-sso")
                         
                         // Try to extract user info from JWT payload
@@ -1123,7 +1123,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             
             let (data, response) = try await session.data(for: req)
             if let jwt = Self.extractJwtFromResponse(data: data, response: response) {
-                let logMsg = "[SILENT] ✓ JWT from existing session"
+                let logMsg = "[SILENT] JWT from existing session"
                 dbg.info(logMsg, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(logMsg) }
                 await handleSilentJwt(jwt)
@@ -1171,7 +1171,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             
             // Did the SSO Extension complete auth and we got a SAMLResponse?
             if let saml = Self.parseSamlForm(html: html) {
-                let samlLog = "[SILENT] ✓ SAMLResponse captured — posting to \(saml.actionUrl.host ?? "")"
+                let samlLog = "[SILENT] SAMLResponse captured — posting to \(saml.actionUrl.host ?? "")"
                 dbg.info(samlLog, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(samlLog) }
                 return await postSamlAndFetchJwt(session: session, saml: saml, loginSsoUrl: loginSsoUrl, userAgent: userAgent)
@@ -1232,7 +1232,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             
             // Check if the POST response itself returned a JWT (redirect chain ended at loginSSO)
             if let jwt = Self.extractJwtFromResponse(data: data, response: response) {
-                let jwtLog = "[SILENT] ✓ JWT from SAML POST redirect chain"
+                let jwtLog = "[SILENT] JWT from SAML POST redirect chain"
                 dbg.info(jwtLog, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(jwtLog) }
                 await handleSilentJwt(jwt)
@@ -1260,7 +1260,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         do {
             let (data, response) = try await session.data(for: req)
             if let jwt = Self.extractJwtFromResponse(data: data, response: response) {
-                let logMsg = "[SILENT] ✓ JWT from loginSSO"
+                let logMsg = "[SILENT] JWT from loginSSO"
                 dbg.info(logMsg, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(logMsg) }
                 await handleSilentJwt(jwt)
@@ -1335,7 +1335,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     /// Handle a JWT obtained silently — set authResult.
     private func handleSilentJwt(_ jwt: String) async {
         let userInfo = Self.extractUserInfoFromJwt(jwt)
-        let successLog = "[SILENT] ✓ Authenticated: \(userInfo.name ?? "unknown") (\(userInfo.email ?? ""))"
+        let successLog = "[SILENT] Authenticated: \(userInfo.name ?? "unknown") (\(userInfo.email ?? ""))"
         dbg.info(successLog, category: "tdx-sso")
         await MainActor.run {
             navigationLog.append(successLog)
@@ -1356,7 +1356,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                 .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
             
             if cleanToken.hasPrefix("eyJ") && cleanToken.count > 20 {
-                let successLog = "[JWT] ✓ Got JWT from page content (\(cleanToken.prefix(20))...)"
+                let successLog = "[JWT] Got JWT from page content (\(cleanToken.prefix(20))...)"
                 dbg.info(successLog, category: "tdx-sso")
                 
                 let userInfo = Self.extractUserInfoFromJwt(cleanToken)
@@ -1443,7 +1443,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                         
                         // Validate it's actually a JWT (starts with eyJ), not an HTML page
                         if cleanToken.hasPrefix("eyJ") && cleanToken.count > 20 {
-                            let successLog = "[JWT] ✓ Got bearer token (\(cleanToken.prefix(20))...)"
+                            let successLog = "[JWT] Got bearer token (\(cleanToken.prefix(20))...)"
                             dbg.info(successLog, category: "tdx-sso")
                             
                             let userInfo = Self.extractUserInfoFromJwt(cleanToken)

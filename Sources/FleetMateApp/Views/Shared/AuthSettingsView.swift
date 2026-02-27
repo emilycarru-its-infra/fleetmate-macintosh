@@ -117,7 +117,7 @@ struct AuthSettingsView: View {
                 detailRow("Auth method", "Service Principal (client credentials)")
                 if let t  = cfg.graphTenantId   { detailRow("Tenant ID",  shortId(t)) }
                 if let id = cfg.devicesGraphId  { detailRow("App (client) ID", shortId(id)) }
-                detailRow("Client secret", cfg.devicesGraphSecret != nil ? "● configured" : "✗ missing",
+                detailRow("Client secret", cfg.devicesGraphSecret != nil ? "● configured" : "missing",
                           cfg.devicesGraphSecret != nil ? .green : .red)
                 if let user = system.user { detailRow("Probed as", user) }
                 checkedRow(system.lastChecked)
@@ -137,7 +137,7 @@ struct AuthSettingsView: View {
                 detailRow("Auth method", "Service Principal (client credentials)")
                 if let t  = cfg.graphTenantId   { detailRow("Tenant ID",  shortId(t)) }
                 if let id = cfg.systemsGraphId  { detailRow("App (client) ID", shortId(id)) }
-                detailRow("Client secret", cfg.systemsGraphSecret != nil ? "● configured" : "✗ missing",
+                detailRow("Client secret", cfg.systemsGraphSecret != nil ? "● configured" : "missing",
                           cfg.systemsGraphSecret != nil ? .green : .red)
                 if let user = system.user { detailRow("Probed as", user) }
                 checkedRow(system.lastChecked)
@@ -152,7 +152,7 @@ struct AuthSettingsView: View {
                 if let key = cfg.snipeApiKey {
                     detailRow("API key", maskedToken(key))
                 } else {
-                    detailRow("API key", "✗ missing", .red)
+                    detailRow("API key", "missing", .red)
                 }
                 checkedRow(system.lastChecked)
             }
@@ -210,7 +210,7 @@ struct AuthSettingsView: View {
                 if let tok   = cfg.tasks?.providers.gitea?.token {
                     detailRow("Token", maskedToken(tok))
                 } else {
-                    detailRow("Token", "✗ missing", .red)
+                    detailRow("Token", "missing", .red)
                 }
                 checkedRow(system.lastChecked)
             }

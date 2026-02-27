@@ -454,7 +454,7 @@ struct DevOpsTestSubcommand: AsyncParsableCommand {
         print("   Tenant ID:    \(tenantId ?? "organizations (default)")")
 
         guard !org.isEmpty else {
-            print("\n" + "✘ No organization configured. Set azdevops.organization in config.yaml".red)
+            print("\n" + "No organization configured. Set azdevops.organization in config.yaml".red)
             throw ExitCode.failure
         }
 
@@ -464,11 +464,11 @@ struct DevOpsTestSubcommand: AsyncParsableCommand {
 
         let result = try await sso.refreshAccessToken()
         guard result.success, let accessToken = result.accessToken else {
-            print("   ✘ Token acquisition failed: \(result.error ?? "unknown")".red)
+            print("   [ERROR] Token acquisition failed: \(result.error ?? "unknown")".red)
             print("   Run 'az login' to authenticate via Platform SSO".yellow)
             throw ExitCode.failure
         }
-        print("   ✓ Access token acquired (via az CLI / MSAL cache)".green)
+        print("   + Access token acquired (via az CLI / MSAL cache)".green)
         print("   User:       \(result.userName ?? "unknown")")
         print("   Expires in: \(result.expiresIn ?? 0)s")
 
@@ -478,14 +478,14 @@ struct DevOpsTestSubcommand: AsyncParsableCommand {
         service.setBearerToken(accessToken, expiry: Date().addingTimeInterval(TimeInterval(result.expiresIn ?? 3600)))
 
         let authOk = try await service.verifyAuth()
-        print("   Auth status: \(authOk ? "✓ OK".green : "✘ FAILED".red)")
+        print("   Auth status: \(authOk ? "OK".green : "FAILED".red)")
         guard authOk else { throw ExitCode.failure }
 
         // 4. Project discovery / listing
         print("\n" + "4. Projects".cyan.bold)
         let projects = try await service.listProjects()
         if projects.isEmpty {
-            print("   ✘ No projects found in org '\(org)'".red)
+            print("   [ERROR] No projects found in org '\(org)'".red)
             throw ExitCode.failure
         }
         for p in projects {
@@ -496,11 +496,11 @@ struct DevOpsTestSubcommand: AsyncParsableCommand {
         if configProject.isEmpty {
             print("   Auto-discovering project...")
             guard let discovered = try await service.discoverProject() else {
-                print("   ✘ Discovery failed".red)
+                print("   [ERROR] Discovery failed".red)
                 throw ExitCode.failure
             }
             resolvedProject = discovered
-            print("   ✓ Using discovered project: '\(resolvedProject)'".green)
+            print("   + Using discovered project: '\(resolvedProject)'".green)
         } else {
             service.setProject(configProject)
             resolvedProject = configProject
@@ -566,12 +566,12 @@ struct DevOpsTestSubcommand: AsyncParsableCommand {
                 }
             }
         } catch {
-            print("   ⚠ Could not load sprints: \(error.localizedDescription)".yellow)
+            print("   [WARNING] Could not load sprints: \(error.localizedDescription)".yellow)
         }
 
         // Summary
         print("\n" + String(repeating: "─", count: 40))
-        print("✓ All checks passed!".green.bold)
+        print("+ All checks passed!".green.bold)
         print("  Org:      \(org)")
         print("  Project:  \(resolvedProject)")
         print("  Projects: \(projects.map { $0.name }.joined(separator: ", "))")

@@ -67,7 +67,7 @@ struct DeviceCommand: AsyncParsableCommand {
         
         // Check if we found anything
         if deviceInfo.reportMate == nil && deviceInfo.snipeAsset == nil {
-            print("\n" + "❌ Device not found: ".red + query.bold + "\n")
+            print("\n" + "[ERROR] Device not found: ".red + query.bold + "\n")
             print("Searched in:")
             if reportMate != nil {
                 print("  • ReportMate: No device matching '\(query)'")
@@ -111,7 +111,7 @@ struct DeviceCommand: AsyncParsableCommand {
         
         // ReportMate info
         if let rm = info.reportMate {
-            print("📊 " + "ReportMate".bold.cyan)
+            print("" + "ReportMate".bold.cyan)
             print("   Serial:".lightBlue + "       \(rm.serialNumber)")
             print("   Hostname:".lightBlue + "     \(rm.hostname.isEmpty ? "N/A" : rm.hostname)")
             print("   Device Name:".lightBlue + "  \(rm.deviceName.isEmpty ? "N/A" : rm.deviceName)")
@@ -133,7 +133,7 @@ struct DeviceCommand: AsyncParsableCommand {
         
         // Snipe-IT info
         if let snipe = info.snipeAsset {
-            print("📦 " + "Snipe-IT".bold.cyan)
+            print("" + "Snipe-IT".bold.cyan)
             print("   Asset Tag:".lightBlue + "    \(snipe.assetTag ?? "N/A")")
             print("   Name:".lightBlue + "         \(snipe.name ?? "N/A")")
             print("   Serial:".lightBlue + "       \(snipe.serial ?? "N/A")")
@@ -157,13 +157,13 @@ struct DeviceCommand: AsyncParsableCommand {
                 let statusColor: String
                 
                 if install.isError {
-                    statusIcon = "❌"
+                    statusIcon = "[error]"
                     statusColor = install.itemName.red
                 } else if install.installedVersion.isEmpty {
                     statusIcon = "⏳"
                     statusColor = install.itemName.yellow
                 } else {
-                    statusIcon = "✅"
+                    statusIcon = "[ok]"
                     statusColor = install.itemName.green
                 }
                 

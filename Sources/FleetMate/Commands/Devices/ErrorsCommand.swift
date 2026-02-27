@@ -46,7 +46,7 @@ struct ListErrorsSubcommand: AsyncParsableCommand {
         let config = try FleetMateConfig.load()
         
         guard config.isReportMateConfigured else {
-            print("❌ ReportMate not configured. Set REPORTMATE_URL and REPORTMATE_PASSPHRASE.".red)
+            print("[ERROR] ReportMate not configured. Set REPORTMATE_URL and REPORTMATE_PASSPHRASE.".red)
             throw ExitCode.failure
         }
         
@@ -84,7 +84,7 @@ struct ListErrorsSubcommand: AsyncParsableCommand {
     
     private func printErrors(_ errors: [InstallRecord]) {
         if errors.isEmpty {
-            print("\n" + "✅ No errors found!".green + "\n")
+            print("\n" + "[ok] No errors found!".green + "\n")
             return
         }
         
@@ -124,7 +124,7 @@ struct ByItemSubcommand: AsyncParsableCommand {
         let config = try FleetMateConfig.load()
         
         guard config.isReportMateConfigured else {
-            print("❌ ReportMate not configured.".red)
+            print("[ERROR] ReportMate not configured.".red)
             throw ExitCode.failure
         }
         
@@ -147,7 +147,7 @@ struct ByItemSubcommand: AsyncParsableCommand {
     
     private func printErrorsByItem(_ summaries: [ErrorSummary]) {
         if summaries.isEmpty {
-            print("\n" + "✅ No errors found!".green + "\n")
+            print("\n" + "[ok] No errors found!".green + "\n")
             return
         }
         
@@ -191,7 +191,7 @@ struct ByDeviceSubcommand: AsyncParsableCommand {
         let config = try FleetMateConfig.load()
         
         guard config.isReportMateConfigured else {
-            print("❌ ReportMate not configured.".red)
+            print("[ERROR] ReportMate not configured.".red)
             throw ExitCode.failure
         }
         
@@ -214,7 +214,7 @@ struct ByDeviceSubcommand: AsyncParsableCommand {
     
     private func printErrorsByDevice(_ summaries: [DeviceErrorSummary]) {
         if summaries.isEmpty {
-            print("\n" + "✅ No devices with errors!".green + "\n")
+            print("\n" + "[ok] No devices with errors!".green + "\n")
             return
         }
         
@@ -256,7 +256,7 @@ struct ByCategorySubcommand: AsyncParsableCommand {
         let config = try FleetMateConfig.load()
         
         guard config.isReportMateConfigured else {
-            print("❌ ReportMate not configured.".red)
+            print("[ERROR] ReportMate not configured.".red)
             throw ExitCode.failure
         }
         
@@ -289,7 +289,7 @@ struct ByCategorySubcommand: AsyncParsableCommand {
     
     private func printErrorsByCategory(_ summaries: [CategorySummary]) {
         if summaries.isEmpty {
-            print("\n" + "✅ No errors found!".green + "\n")
+            print("\n" + "[ok] No errors found!".green + "\n")
             return
         }
         

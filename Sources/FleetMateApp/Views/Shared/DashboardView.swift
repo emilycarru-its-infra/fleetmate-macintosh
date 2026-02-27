@@ -87,6 +87,10 @@ struct DashboardView: View {
     @State private var showAuthPopover = false
     @State private var activityFilter: AppTab? = nil
 
+    // Draggable split
+    @State private var splitFraction: CGFloat = 0.7
+    @State private var splitFractionDragStart: CGFloat = 0.7
+
     private var isAnyLoading: Bool {
         isLoadingFleet || isLoadingReportMate || isLoadingTickets || isLoadingInventory
     }
@@ -129,12 +133,12 @@ struct DashboardView: View {
         .onChange(of: appState.cachedWorkItems.count) { _, _ in Task { await loadTicketsWork(); buildActivityFeed() } }
     }
 
-    // MARK: - Split Layout (70/30)
+    // MARK: - Split Layout (draggable)
 
     private var splitLayout: some View {
         GeometryReader { geo in
             HStack(alignment: .top, spacing: 0) {
-                // Left 70%: KPI cards 2x2 + charts scrollable
+                // Left panel: widgets
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         kpiGrid
@@ -143,14 +147,19 @@ struct DashboardView: View {
                             .padding(.bottom, 16)
                     }
                 }
-                .frame(width: floor(geo.size.width * 0.7))
+                .frame(width: floor(geo.size.width * splitFraction))
                 .frame(maxHeight: .infinity)
 
-                Divider()
+                // Draggable divider
+                DashboardSplitHandle(
+                    splitFraction: $splitFraction,
+                    splitFractionDragStart: $splitFractionDragStart,
+                    totalWidth: geo.size.width
+                )
 
-                // Right 30%: activity feed fills height
+                // Right panel: activity feed
                 activityFeedSection
-                    .frame(width: max(ceil(geo.size.width * 0.3) - 1.0, 0))
+                    .frame(width: max(geo.size.width * (1 - splitFraction) - 8, 0))
                     .frame(maxHeight: .infinity)
             }
         }
@@ -1088,6 +1097,56 @@ struct DashboardFlowLayout: Layout {
             sv.place(at: CGPoint(x: x, y: y), proposal: .unspecified)
             x += s.width + spacing; rowH = max(rowH, s.height)
         }
+    }
+}
+
+// MARK: - Draggable Split Handle
+
+struct DashboardSplitHandle: View {
+    @Binding var splitFraction: CGFloat
+    @Binding var splitFractionDragStart: CGFloat
+    let totalWidth: CGFloat
+
+    @State private var isHovering = false
+
+    var body: some View {
+        ZStack {
+            // Visible divider line
+            Rectangle()
+                .fill(isHovering ? Color.accentColor.opacity(0.6) : Color.secondary.opacity(0.2))
+                .frame(width: isHovering ? 2 : 1)
+            // Grab indicator dots
+            if isHovering {
+                VStack(spacing: 3) {
+                    ForEach(0..<4, id: \.self) { _ in
+                        Circle()
+                            .fill(Color.accentColor.opacity(0.8))
+                            .frame(width: 4, height: 4)
+                    }
+                }
+            }
+        }
+        // Wide invisible hit-area
+        .frame(width: 8)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onHover { inside in
+            isHovering = inside
+            if inside { NSCursor.resizeLeftRight.push() }
+            else { NSCursor.pop() }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    let newFraction = splitFractionDragStart + value.translation.width / totalWidth
+                    splitFraction = min(0.8, max(0.2, newFraction))
+                }
+                .onEnded { value in
+                    let newFraction = splitFractionDragStart + value.translation.width / totalWidth
+                    splitFraction = min(0.8, max(0.2, newFraction))
+                    splitFractionDragStart = splitFraction
+                }
+        )
     }
 }
 

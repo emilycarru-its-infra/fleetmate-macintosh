@@ -1,6 +1,16 @@
 import SwiftUI
 import AppKit
 
+private extension NSColor {
+    var hexString: String {
+        let c = usingColorSpace(.sRGB) ?? self
+        let r = Int(c.redComponent * 255)
+        let g = Int(c.greenComponent * 255)
+        let b = Int(c.blueComponent * 255)
+        return String(format: "#%02x%02x%02x", r, g, b)
+    }
+}
+
 /// Renders HTML (e.g. Azure DevOps descriptions) as styled text using NSAttributedString.
 /// Falls back to plain text if HTML parsing fails.
 struct HtmlTextView: View {
@@ -18,11 +28,14 @@ struct HtmlTextView: View {
     }
 
     private func htmlToAttributedString(_ html: String) -> AttributedString? {
-        // Wrap in a basic HTML doc with system font styling
+        let textColor = NSColor.labelColor.hexString
+        let bgColor = NSColor.textBackgroundColor.hexString
+        let codeFg = NSColor.secondaryLabelColor.hexString
+
         let wrapped = """
         <html><head><style>
-        body { font-family: -apple-system, sans-serif; font-size: 13px; color: #333; }
-        pre, code { font-family: Menlo, monospace; font-size: 12px; background: #f5f5f5; padding: 2px 4px; border-radius: 3px; }
+        body { font-family: -apple-system, sans-serif; font-size: 13px; color: \(textColor); background: \(bgColor); }
+        pre, code { font-family: Menlo, monospace; font-size: 12px; color: \(codeFg); }
         img { max-width: 100%; height: auto; }
         </style></head><body>\(html)</body></html>
         """

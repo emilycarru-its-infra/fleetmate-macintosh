@@ -357,23 +357,22 @@ public class TdxService {
             session.request(url, headers: headers)
                 .validate()
                 .responseData { dataResponse in
-                    // Log raw JSON to diagnose threading
                     if let data = dataResponse.data {
                         if let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-                            for (i, item) in jsonArray.prefix(5).enumerated() {
-                                let hasReplies = item["Replies"] as? [[String: Any]]
-                                let replyCount = hasReplies?.count ?? 0
-                                let body = (item["Body"] as? String)?.prefix(40) ?? "nil"
-                                // Dump ALL keys to find parent/depth/threading fields
-                                let keys = item.keys.sorted().joined(separator: ", ")
-                                dbg.debug("TDX feed[\(i)] keys: \(keys)", category: "tdx")
-                                dbg.debug("TDX feed[\(i)]: id=\(item["ID"] ?? "?") type=\(item["ItemType"] ?? "?") replies=\(replyCount) parentId=\(item["ParentID"] ?? item["ParentId"] ?? "nil") body=\(body)", category: "tdx")
+                            // Log first entry's full keys to understand structure
+                            if let first = jsonArray.first {
+                                let keys = first.keys.sorted().joined(separator: ", ")
+                                dbg.debug("TDX feed entry keys: \(keys)", category: "tdx")
+                                // Log every field value to find threading clues
+                                for key in first.keys.sorted() {
+                                    let val = first[key]
+                                    dbg.debug("  [\(key)] = \(val ?? "nil")", category: "tdx")
+                                }
                             }
                         }
                         do {
                             let feed = try JSONDecoder().decode([TdxFeedEntry].self, from: data)
-                            let withReplies = feed.filter { ($0.replies?.count ?? 0) > 0 }
-                            dbg.debug("TDX feed decoded: \(feed.count) entries, \(withReplies.count) with replies", category: "tdx")
+                            dbg.debug("TDX feed decoded: \(feed.count) entries", category: "tdx")
                             continuation.resume(returning: feed)
                         } catch {
                             dbg.error("TDX feed decode error: \(error)", category: "tdx")

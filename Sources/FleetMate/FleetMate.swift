@@ -14,6 +14,9 @@ struct FleetMate: AsyncParsableCommand {
             ErrorsCommand.self,
             TroubleshootCommand.self,
             
+            // ARD UNIX commands (group scan, inventory, security, updates, munki, etc.)
+            ArdCommand.self,
+
             // Remote access
             SecureShellCommand.self,
             

@@ -159,6 +159,30 @@ public struct BoardColumnsResponse: Codable {
     public let value: [BoardColumnDefinition]?
 }
 
+// MARK: - Work Item Type Models
+
+public struct WorkItemTypeDefinition: Codable {
+    public let name: String
+    public let description: String?
+    public let isDisabled: Bool?
+}
+
+public struct WorkItemTypesResponse: Codable {
+    public let count: Int?
+    public let value: [WorkItemTypeDefinition]?
+}
+
+public struct WorkItemTypeState: Codable {
+    public let name: String
+    public let color: String?
+    public let category: String?
+}
+
+public struct WorkItemTypeStatesResponse: Codable {
+    public let count: Int?
+    public let value: [WorkItemTypeState]?
+}
+
 // MARK: - Request Models
 
 public struct CreateWorkItemRequest {

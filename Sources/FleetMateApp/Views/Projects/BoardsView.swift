@@ -66,6 +66,17 @@ struct BoardsView: View {
     @State private var showCreateIssue = false
     @State private var showCreateProject = false
     @State private var showCreateWorkItem = false
+    @State private var createAlikeSource: UnifiedTask? = nil
+
+    // Cached team members for context menu "Assign To" submenu
+    @State private var cachedTeamMembers: [IdentityRef] = []
+
+    // Cached context menu data
+    @State private var cachedAreaPaths: [String] = []
+    @State private var cachedIterationPaths: [String] = []
+    @State private var cachedWorkItemTypes: [WorkItemTypeDefinition] = []
+    @State private var cachedRepositories: [GitRepository] = []
+    @State private var cachedStatesPerType: [String: [String]] = [:]  // workItemType → valid states
 
     // Computed: can we create GitHub issues? (need owner + repo)
     private var canCreateIssue: Bool {
@@ -177,6 +188,8 @@ struct BoardsView: View {
                 loadTasks()
                 loadGhProjectInfo()
                 loadBoards()
+                loadTeamMembersForMenu()
+                loadContextMenuData()
             }
         }
         .alert("Sync Complete", isPresented: $showSyncAlert) {
@@ -200,7 +213,19 @@ struct BoardsView: View {
                 boards: availableBoards,
                 boardColumnDefs: boardColumnDefs,
                 preselectedBoard: selectedBoardName,
-                onCreated: { loadTasks() }
+                boardProjectMap: boardProjectMap,
+                boardTeamMap: boardTeamMap,
+                prefillType: createAlikeSource?.metadata["workItemType"],
+                prefillAssignedTo: createAlikeSource?.assignees.first,
+                prefillPriority: createAlikeSource?.priority,
+                prefillAreaPath: createAlikeSource?.metadata["areaPath"],
+                prefillIterationPath: createAlikeSource?.metadata["iterationPath"] ?? createAlikeSource?.bucket,
+                prefillTags: createAlikeSource?.labels.joined(separator: "; "),
+                prefillDescription: createAlikeSource?.description,
+                onCreated: {
+                    createAlikeSource = nil
+                    loadTasks()
+                }
             )
         }
         .sheet(isPresented: $showCreateProject) {
@@ -530,7 +555,8 @@ struct BoardsView: View {
                                     title: col.title, color: col.color,
                                     tasks: col.tasks, selectedTask: selectedTask,
                                     onSelect: { selectedTask = $0 },
-                                    onDrop: { taskKey in handleDrop(taskKey: taskKey, toColumn: col.title) }
+                                    onDrop: { taskKey in handleDrop(taskKey: taskKey, toColumn: col.title) },
+                                    contextMenuBuilder: { task in taskContextMenu(for: task) }
                                 )
                                 .frame(width: columnWidth)
                             }
@@ -548,12 +574,28 @@ struct BoardsView: View {
     private var boardColumns: [(title: String, color: Color, tasks: [UnifiedTask])] {
         switch groupBy {
         case .state:
-            var cols: [(String, Color, [UnifiedTask])] = [
-                ("Open", .green, openTasks),
-                ("In Progress", .blue, inProgressTasks)
-            ]
-            if showClosed { cols.append(("Closed", .gray, closedTasks)) }
-            return cols
+            // Group by actual state values (not abstract open/in-progress/closed)
+            let grouped = Dictionary(grouping: filteredTasks, by: { $0.metadata["state"] ?? "New" })
+            // Order states: gather all unique states, attempt a sensible order
+            let allStates = Array(Set(filteredTasks.compactMap { $0.metadata["state"] })).sorted()
+            // Append any states from cache that might not have tasks yet
+            var seen = Set(allStates)
+            var ordered = allStates
+            for (_, states) in cachedStatesPerType {
+                for s in states where !seen.contains(s) {
+                    seen.insert(s)
+                    ordered.append(s)
+                }
+            }
+            // Filter out closed/removed states unless showClosed is on
+            let closedNames: Set<String> = ["closed", "done", "removed", "completed"]
+            if !showClosed {
+                ordered = ordered.filter { !closedNames.contains($0.lowercased()) }
+            }
+            return ordered.map { state in
+                let color = stateColumnColor(state)
+                return (state, color, grouped[state] ?? [])
+            }
         case .column:
             // Build reverse mapping: (workItemType, stateName) → columnName
             // from the board's column definitions and their stateMappings
@@ -624,6 +666,23 @@ struct BoardsView: View {
         }
     }
 
+    private func stateColumnColor(_ state: String) -> Color {
+        switch state.lowercased() {
+        case "new", "to do", "proposed", "open":
+            return .green
+        case "active", "in progress", "doing", "committed":
+            return .blue
+        case "resolved", "done", "completed":
+            return .purple
+        case "closed":
+            return .gray
+        case "removed":
+            return .red
+        default:
+            return .blue
+        }
+    }
+
     // MARK: - List (All Providers + Inline Sidebar 60/40)
 
     private var listWithSidebar: some View {
@@ -685,6 +744,7 @@ struct BoardsView: View {
                                 isSelected: selectedTask?.compositeKey == task.compositeKey
                             )
                             .contentShape(Rectangle())
+                            .contextMenu { taskContextMenu(for: task) }
                             .onTapGesture { selectedTask = task }
                             Divider().padding(.leading, 60)
                         }
@@ -704,6 +764,27 @@ struct BoardsView: View {
                 ghConfig: currentGhConfig,
                 devOpsService: appState.devOpsService,
                 onClose: { selectedTask = nil },
+                onDelete: {
+                    // Navigate to the next task below instead of closing sidebar
+                    let tasks = filteredTasks
+                    if let idx = tasks.firstIndex(where: { $0.compositeKey == task.compositeKey }) {
+                        // Remove from local list
+                        if let allIdx = allTasks.firstIndex(where: { $0.compositeKey == task.compositeKey }) {
+                            allTasks.remove(at: allIdx)
+                        }
+                        // Select next task (or previous if at end)
+                        let remaining = filteredTasks
+                        if idx < remaining.count {
+                            selectedTask = remaining[idx]
+                        } else if !remaining.isEmpty {
+                            selectedTask = remaining[remaining.count - 1]
+                        } else {
+                            selectedTask = nil
+                        }
+                    } else {
+                        selectedTask = nil
+                    }
+                },
                 onSelectWorkItem: { workItemId in
                     // Navigate to the selected work item in-app
                     if let match = allTasks.first(where: { $0.id == String(workItemId) && $0.provider == "azdevops" }) {
@@ -805,14 +886,8 @@ struct BoardsView: View {
                     }
                     return
                 case .state:
-                    let newState: String
-                    switch toColumn {
-                    case "Open": newState = "New"
-                    case "In Progress": newState = "Active"
-                    case "Closed": newState = "Closed"
-                    default: return
-                    }
-                    request = UpdateWorkItemRequest(state: newState)
+                    // Column name IS the target state — set it directly
+                    request = UpdateWorkItemRequest(state: toColumn)
                 case .priority:
                     let priorityMap = ["Critical": 1, "High": 2, "Medium": 3, "Low": 4, "None": 0]
                     guard let p = priorityMap[toColumn], p > 0 else { return }
@@ -861,6 +936,374 @@ struct BoardsView: View {
             } catch {
                 dbg.error("Drag-drop update failed: \(error)", category: "boards")
                 appState.errorMessage = "Failed to move item: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    // MARK: - Context Menu
+
+    @ViewBuilder
+    private func taskContextMenu(for task: UnifiedTask) -> some View {
+        // Open in Browser
+        if let urlStr = task.externalUrl, let url = URL(string: urlStr) {
+            Button {
+                NSWorkspace.shared.open(url)
+            } label: {
+                Label("Open in Browser", systemImage: "safari")
+            }
+        }
+
+        // Copy actions
+        if let urlStr = task.externalUrl {
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(urlStr, forType: .string)
+            } label: {
+                Label("Copy Link", systemImage: "link")
+            }
+        }
+
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString("#\(task.id)", forType: .string)
+        } label: {
+            Label("Copy ID", systemImage: "number")
+        }
+
+        Divider()
+
+        // Set State submenu (DevOps only)
+        if task.provider == "azdevops" {
+            let wiType = task.metadata["workItemType"] ?? ""
+            let taskStates = cachedStatesPerType[wiType] ?? ["New", "Active", "Closed"]
+            Menu("Set State") {
+                ForEach(taskStates, id: \.self) { state in
+                    Button(state) {
+                        setTaskState(task: task, state: state)
+                    }
+                    .disabled(task.metadata["state"] == state)
+                }
+            }
+
+            // Set Priority submenu
+            Menu("Set Priority") {
+                ForEach([(1, "1 - Critical"), (2, "2 - High"), (3, "3 - Medium"), (4, "4 - Low")], id: \.0) { value, label in
+                    Button(label) {
+                        setTaskPriority(task: task, priority: value)
+                    }
+                    .disabled(task.priority == value)
+                }
+            }
+
+            // Assign To submenu
+            if !cachedTeamMembers.isEmpty {
+                Menu("Assign To") {
+                    Button("Unassigned") {
+                        assignTask(task: task, to: "")
+                    }
+                    Divider()
+                    ForEach(cachedTeamMembers.indices, id: \.self) { i in
+                        let member = cachedTeamMembers[i]
+                        let displayName = member.displayName ?? member.uniqueName ?? "Unknown"
+                        let uniqueName = member.uniqueName ?? ""
+                        Button(displayName) {
+                            assignTask(task: task, to: uniqueName)
+                        }
+                        .disabled(task.assignees.contains(displayName))
+                    }
+                }
+            }
+
+            // Set Area Path submenu
+            if !cachedAreaPaths.isEmpty {
+                Menu("Set Area Path") {
+                    ForEach(cachedAreaPaths, id: \.self) { path in
+                        Button(path) {
+                            setTaskAreaPath(task: task, areaPath: path)
+                        }
+                        .disabled(task.metadata["areaPath"] == path)
+                    }
+                }
+            }
+
+            // Set Iteration submenu
+            if !cachedIterationPaths.isEmpty {
+                Menu("Set Iteration") {
+                    ForEach(cachedIterationPaths, id: \.self) { path in
+                        Button(path) {
+                            setTaskIteration(task: task, iterationPath: path)
+                        }
+                        .disabled(task.metadata["iterationPath"] == path)
+                    }
+                }
+            }
+
+            // Set Type submenu
+            if !cachedWorkItemTypes.isEmpty {
+                Menu("Set Type") {
+                    ForEach(cachedWorkItemTypes, id: \.name) { typeDef in
+                        Button(typeDef.name) {
+                            setTaskType(task: task, type: typeDef.name)
+                        }
+                        .disabled(task.metadata["workItemType"] == typeDef.name)
+                    }
+                }
+            }
+
+            // Reschedule Due Date submenu
+            Menu("Reschedule") {
+                Button("Tomorrow") {
+                    rescheduleTask(task: task, date: Calendar.current.date(byAdding: .day, value: 1, to: Date())!)
+                }
+                Button("Next Monday") {
+                    rescheduleTask(task: task, date: nextMonday())
+                }
+                Button("End of Month") {
+                    rescheduleTask(task: task, date: endOfMonth())
+                }
+            }
+
+            Divider()
+
+            // Create Branch from Work Item
+            if !cachedRepositories.isEmpty {
+                Menu("Create Branch…") {
+                    ForEach(cachedRepositories) { repo in
+                        Button(repo.name) {
+                            createBranchForTask(task: task, repository: repo)
+                        }
+                    }
+                }
+            }
+
+            // Create New Alike
+            Button {
+                createAlikeSource = task
+                showCreateWorkItem = true
+            } label: {
+                Label("Create New Alike…", systemImage: "plus.square.on.square")
+            }
+        }
+    }
+
+    // MARK: - Context Menu Actions
+
+    private func setTaskState(task: UnifiedTask, state: String) {
+        guard task.provider == "azdevops", let id = Int(task.id) else { return }
+        Task {
+            do {
+                _ = try await appState.devOpsService.updateWorkItem(id: id, request: UpdateWorkItemRequest(state: state))
+                refreshLocalTask(id: id, compositeKey: task.compositeKey)
+            } catch {
+                appState.errorMessage = "Failed to set state: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func setTaskPriority(task: UnifiedTask, priority: Int) {
+        guard task.provider == "azdevops", let id = Int(task.id) else { return }
+        Task {
+            do {
+                _ = try await appState.devOpsService.updateWorkItem(id: id, request: UpdateWorkItemRequest(priority: priority))
+                refreshLocalTask(id: id, compositeKey: task.compositeKey)
+            } catch {
+                appState.errorMessage = "Failed to set priority: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func assignTask(task: UnifiedTask, to assignee: String) {
+        guard task.provider == "azdevops", let id = Int(task.id) else { return }
+        Task {
+            do {
+                _ = try await appState.devOpsService.updateWorkItem(id: id, request: UpdateWorkItemRequest(assignedTo: assignee))
+                refreshLocalTask(id: id, compositeKey: task.compositeKey)
+            } catch {
+                appState.errorMessage = "Failed to assign: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func refreshLocalTask(id: Int, compositeKey: String) {
+        Task {
+            guard let updated = try? await appState.devOpsService.getWorkItem(id: id) else { return }
+            if let idx = allTasks.firstIndex(where: { $0.compositeKey == compositeKey }) {
+                let fields = updated.fields
+                allTasks[idx].metadata["boardColumn"] = fields?.boardColumn ?? ""
+                allTasks[idx].metadata["areaPath"] = fields?.areaPath ?? ""
+                allTasks[idx].metadata["iterationPath"] = fields?.iterationPath ?? ""
+                allTasks[idx].metadata["workItemType"] = fields?.workItemType ?? ""
+                allTasks[idx].metadata["state"] = fields?.state ?? ""
+                allTasks[idx].priority = fields?.priority
+                allTasks[idx].title = fields?.title ?? allTasks[idx].title
+                if let assignee = fields?.assignedTo?.displayName ?? fields?.assignedTo?.uniqueName {
+                    allTasks[idx].assignees = [assignee]
+                } else {
+                    allTasks[idx].assignees = []
+                }
+                if let tags = fields?.tags {
+                    allTasks[idx].labels = tags.components(separatedBy: "; ").filter { !$0.isEmpty }
+                }
+                let stateStr = fields?.state ?? "New"
+                switch stateStr.lowercased() {
+                case "new", "to do", "proposed":
+                    allTasks[idx].state = .open
+                case "active", "in progress", "doing", "committed":
+                    allTasks[idx].state = .inProgress
+                default:
+                    allTasks[idx].state = .closed
+                }
+            }
+        }
+    }
+
+    private func loadTeamMembersForMenu() {
+        Task {
+            do {
+                cachedTeamMembers = try await appState.devOpsService.getTeamMembers()
+            } catch {
+                dbg.debug("Context menu: team members load failed: \(error)", category: "boards")
+            }
+        }
+    }
+
+    private func loadContextMenuData() {
+        Task {
+            async let areas = try? appState.devOpsService.getAreaPaths()
+            async let iterations = try? appState.devOpsService.getIterationPaths()
+            async let types = try? appState.devOpsService.getWorkItemTypes()
+            async let repos = try? appState.devOpsService.getRepositories()
+            cachedAreaPaths = await areas ?? []
+            cachedIterationPaths = await iterations ?? []
+            let loadedTypes = await types ?? []
+            cachedWorkItemTypes = loadedTypes
+            cachedRepositories = await repos ?? []
+            // Load valid states for each work item type
+            for typeDef in loadedTypes {
+                Task {
+                    if let states = try? await appState.devOpsService.getWorkItemTypeStates(type: typeDef.name) {
+                        cachedStatesPerType[typeDef.name] = states.map(\.name)
+                    }
+                }
+            }
+        }
+    }
+
+    private func setTaskAreaPath(task: UnifiedTask, areaPath: String) {
+        guard task.provider == "azdevops", let id = Int(task.id) else { return }
+        Task {
+            do {
+                _ = try await appState.devOpsService.updateWorkItem(id: id, request: UpdateWorkItemRequest(areaPath: areaPath))
+                refreshLocalTask(id: id, compositeKey: task.compositeKey)
+            } catch {
+                appState.errorMessage = "Failed to set area path: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func setTaskIteration(task: UnifiedTask, iterationPath: String) {
+        guard task.provider == "azdevops", let id = Int(task.id) else { return }
+        Task {
+            do {
+                _ = try await appState.devOpsService.updateWorkItem(id: id, request: UpdateWorkItemRequest(iterationPath: iterationPath))
+                refreshLocalTask(id: id, compositeKey: task.compositeKey)
+            } catch {
+                appState.errorMessage = "Failed to set iteration: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func setTaskType(task: UnifiedTask, type: String) {
+        guard task.provider == "azdevops", let id = Int(task.id) else { return }
+        Task {
+            do {
+                _ = try await appState.devOpsService.updateWorkItem(id: id, request: UpdateWorkItemRequest(workItemType: type))
+                refreshLocalTask(id: id, compositeKey: task.compositeKey)
+            } catch {
+                appState.errorMessage = "Failed to set type: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func rescheduleTask(task: UnifiedTask, date: Date) {
+        guard task.provider == "azdevops", let id = Int(task.id) else { return }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withFullDate]
+        let dateStr = formatter.string(from: date)
+        Task {
+            do {
+                _ = try await appState.devOpsService.updateWorkItem(id: id, request: UpdateWorkItemRequest(dueDate: dateStr))
+                refreshLocalTask(id: id, compositeKey: task.compositeKey)
+            } catch {
+                appState.errorMessage = "Failed to reschedule: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func nextMonday() -> Date {
+        let cal = Calendar.current
+        let today = Date()
+        let weekday = cal.component(.weekday, from: today)
+        // Sunday=1, Monday=2, ..., Saturday=7
+        let daysUntilMonday = weekday == 1 ? 1 : (9 - weekday)
+        return cal.date(byAdding: .day, value: daysUntilMonday, to: today)!
+    }
+
+    private func endOfMonth() -> Date {
+        let cal = Calendar.current
+        let today = Date()
+        let range = cal.range(of: .day, in: .month, for: today)!
+        let lastDay = range.upperBound - 1
+        let currentDay = cal.component(.day, from: today)
+        return cal.date(byAdding: .day, value: lastDay - currentDay, to: today)!
+    }
+
+    private func createBranchForTask(task: UnifiedTask, repository: GitRepository) {
+        guard task.provider == "azdevops", let id = Int(task.id) else { return }
+        let slug = task.title
+            .lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+            .prefix(50)
+        let branchName = "\(id)-\(slug)"
+        Task {
+            do {
+                // Get the default branch's objectId
+                let branches = try await appState.devOpsService.getBranches(repositoryId: repository.id)
+                let defaultBranchName = repository.defaultBranch?.replacingOccurrences(of: "refs/heads/", with: "") ?? "main"
+                guard let sourceBranch = branches.first(where: { $0.shortName == defaultBranchName }),
+                      let sourceOid = sourceBranch.objectId else {
+                    appState.errorMessage = "Could not find default branch '\(defaultBranchName)' in \(repository.name)"
+                    return
+                }
+                // Create the branch
+                let ref = try await appState.devOpsService.createBranch(
+                    repositoryId: repository.id,
+                    branchName: branchName,
+                    sourceObjectId: sourceOid
+                )
+                guard ref != nil else {
+                    appState.errorMessage = "Branch creation returned empty result"
+                    return
+                }
+                // Link branch to work item
+                if let projectId = repository.project?.id {
+                    let uri = AzureDevOpsService.branchArtifactUri(
+                        projectId: projectId,
+                        repositoryId: repository.id,
+                        branchName: branchName
+                    )
+                    _ = try await appState.devOpsService.addWorkItemArtifactLink(
+                        workItemId: id,
+                        artifactUri: uri,
+                        linkName: "Branch",
+                        comment: "Created from FleetMate"
+                    )
+                }
+                appState.errorMessage = nil
+                dbg.info("Created branch '\(branchName)' and linked to #\(id)", category: "boards")
+            } catch {
+                appState.errorMessage = "Failed to create branch: \(error.localizedDescription)"
             }
         }
     }
@@ -1182,13 +1625,14 @@ struct TaskListRow: View {
 
 // MARK: - Kanban Column (with drag-and-drop)
 
-struct KanbanColumn: View {
+struct KanbanColumn<MenuContent: View>: View {
     let title: String
     let color: Color
     let tasks: [UnifiedTask]
     let selectedTask: UnifiedTask?
     let onSelect: (UnifiedTask) -> Void
     var onDrop: ((String) -> Void)? = nil
+    @ViewBuilder var contextMenuBuilder: (UnifiedTask) -> MenuContent
 
     @State private var isTargeted = false
 
@@ -1228,6 +1672,7 @@ struct KanbanColumn: View {
                                     task: task,
                                     isSelected: selectedTask?.compositeKey == task.compositeKey
                                 )
+                                .contextMenu { contextMenuBuilder(task) }
                                 .draggable(task.compositeKey)
                                 .onTapGesture { onSelect(task) }
                             }
@@ -1239,6 +1684,7 @@ struct KanbanColumn: View {
                                 task: task,
                                 isSelected: selectedTask?.compositeKey == task.compositeKey
                             )
+                            .contextMenu { contextMenuBuilder(task) }
                             .draggable(task.compositeKey)
                             .onTapGesture { onSelect(task) }
                         }

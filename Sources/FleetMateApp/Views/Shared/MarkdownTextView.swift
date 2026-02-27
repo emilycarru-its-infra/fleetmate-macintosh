@@ -71,7 +71,7 @@ private struct HtmlRenderedView: View {
         // Use system colors that adapt to light/dark mode
         let textColor = NSColor.labelColor.hexString
         let bgColor = NSColor.textBackgroundColor.hexString
-        let codeBg = NSColor.quaternaryLabelColor.hexString
+        let codeFg = NSColor.secondaryLabelColor.hexString
         let linkColor = NSColor.controlAccentColor.hexString
         let borderColor = NSColor.separatorColor.hexString
         let headerBg = NSColor.unemphasizedSelectedContentBackgroundColor.hexString
@@ -80,9 +80,9 @@ private struct HtmlRenderedView: View {
         let wrapped = """
         <html><head><style>
         body { font-family: -apple-system, sans-serif; font-size: 14px; color: \(textColor); background: \(bgColor); }
-        pre { font-family: Menlo, monospace; font-size: 13px; background: \(codeBg); padding: 8px 12px; border-radius: 6px; overflow-x: auto; }
-        code { font-family: Menlo, monospace; font-size: 13px; background: \(codeBg); padding: 2px 4px; border-radius: 3px; }
-        pre code { background: none; padding: 0; }
+        pre { font-family: Menlo, monospace; font-size: 13px; color: \(codeFg); padding: 8px 12px; overflow-x: auto; }
+        code { font-family: Menlo, monospace; font-size: 13px; color: \(codeFg); }
+        pre code { padding: 0; }
         img { max-width: 100%; height: auto; }
         a { color: \(linkColor); }
         table { border-collapse: collapse; width: 100%; }

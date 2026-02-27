@@ -8,6 +8,18 @@ struct CreateWorkItemView: View {
     var boards: [Board] = []
     var boardColumnDefs: [BoardColumnDefinition] = []
     var preselectedBoard: String? = nil
+    var boardProjectMap: [String: String] = [:]
+    var boardTeamMap: [String: String] = [:]
+
+    // Prefill values (for "Create New Alike")
+    var prefillType: String? = nil
+    var prefillAssignedTo: String? = nil
+    var prefillPriority: Int? = nil
+    var prefillAreaPath: String? = nil
+    var prefillIterationPath: String? = nil
+    var prefillTags: String? = nil
+    var prefillDescription: String? = nil
+
     let onCreated: () -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -34,7 +46,7 @@ struct CreateWorkItemView: View {
     @State private var areaPaths: [String] = []
     @State private var iterationPaths: [String] = []
 
-    private static let fallbackTypes = ["Bug", "Task", "User Story", "Feature", "Epic", "Issue"]
+    private static let fallbackTypes: [String] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -156,6 +168,14 @@ struct CreateWorkItemView: View {
     }
 
     private func loadPickerData() {
+        // Apply prefill values
+        if let p = prefillPriority { priority = p }
+        if let p = prefillAssignedTo { assignedTo = p }
+        if let p = prefillAreaPath { areaPath = p }
+        if let p = prefillIterationPath { iterationPath = p }
+        if let p = prefillTags { tags = p }
+        if let p = prefillDescription { description = p }
+
         // Use passed-in boards or load fresh
         if !boards.isEmpty {
             localBoards = boards
@@ -179,9 +199,7 @@ struct CreateWorkItemView: View {
                         loadBoardTypes(boardName: first)
                     }
                 } catch {
-                    // Fallback: show all types without board selection
-                    allowedTypes = Self.fallbackTypes
-                    if workItemType.isEmpty { workItemType = allowedTypes.first ?? "Bug" }
+                    await loadWorkItemTypesAsFallback()
                     dbg.debug("Create WI: boards load failed: \(error)", category: "azdo")
                 }
             }
@@ -212,13 +230,18 @@ struct CreateWorkItemView: View {
         }
         Task {
             do {
-                let columns = try await service.getBoardColumns(boardName: boardName)
+                let team = boardTeamMap[boardName]
+                let project = boardProjectMap[boardName]
+                let columns: [BoardColumnDefinition]
+                if let team = team {
+                    columns = try await service.getBoardColumns(boardName: boardName, team: team, project: project)
+                } else {
+                    columns = try await service.getBoardColumns(boardName: boardName, project: project)
+                }
                 localColumnDefs = columns
                 extractTypesFromColumns(columns)
             } catch {
-                // Fallback to all types
-                allowedTypes = Self.fallbackTypes
-                if workItemType.isEmpty { workItemType = allowedTypes.first ?? "Bug" }
+                await loadWorkItemTypesAsFallback()
                 dbg.debug("Create WI: columns load failed for board '\(boardName)': \(error)", category: "azdo")
             }
         }
@@ -233,10 +256,27 @@ struct CreateWorkItemView: View {
             }
         }
         let sorted = types.sorted()
-        allowedTypes = sorted.isEmpty ? Self.fallbackTypes : sorted
-        // Auto-select first type or keep current if still valid
-        if !allowedTypes.contains(workItemType) {
-            workItemType = allowedTypes.first ?? "Bug"
+        allowedTypes = sorted
+        // Apply prefill type if valid, otherwise auto-select first
+        if let prefill = prefillType, allowedTypes.contains(prefill) {
+            workItemType = prefill
+        } else if !allowedTypes.contains(workItemType), let first = allowedTypes.first {
+            workItemType = first
+        }
+    }
+
+    /// Query the project’s process template for valid work item types when board columns aren’t available.
+    private func loadWorkItemTypesAsFallback() async {
+        do {
+            let types = try await service.getWorkItemTypes()
+            allowedTypes = types.map(\.name).sorted()
+        } catch {
+            dbg.debug("Create WI: work item types fallback failed: \(error)", category: "azdo")
+        }
+        if let prefill = prefillType, allowedTypes.contains(prefill) {
+            workItemType = prefill
+        } else if !allowedTypes.contains(workItemType), let first = allowedTypes.first {
+            workItemType = first
         }
     }
 

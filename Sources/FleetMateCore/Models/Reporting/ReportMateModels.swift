@@ -320,13 +320,13 @@ public enum ErrorCategory: String, Codable, CaseIterable {
         case .notFound: return "🔍"
         case .hashMismatch: return "🔐"
         case .downloadFailed: return "⬇️"
-        case .pkgFailure: return "📦"
+        case .pkgFailure: return ""
         case .signatureRequired: return "✍️"
         case .catalogMissing: return "📋"
-        case .installVerificationFailed: return "❌"
+        case .installVerificationFailed: return "[error]"
         case .missingInstallerLocation: return "📂"
         case .diskFull: return "💾"
-        case .other: return "⚠️"
+        case .other: return "[WARNING]"
         }
     }
 }

@@ -233,9 +233,9 @@ struct InstallsSubcommand: AsyncParsableCommand {
                 let status = install.status
                 let statusColor: String
                 switch status.lowercased() {
-                case "installed": statusColor = "✓ installed".green
+                case "installed": statusColor = "+ installed".green
                 case "": statusColor = "-"
-                default: statusColor = "✗ \(status)".red
+                default: statusColor = "- \(status)".red
                 }
                 
                 let row = String(format: "%-35s %-20s %-10s",

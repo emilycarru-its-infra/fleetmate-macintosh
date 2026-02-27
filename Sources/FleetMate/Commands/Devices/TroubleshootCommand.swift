@@ -30,7 +30,7 @@ struct TroubleshootCommand: AsyncParsableCommand {
         let config = try FleetMateConfig.load()
         
         guard config.isReportMateConfigured else {
-            print("❌ ReportMate not configured.".red)
+            print("[ERROR] ReportMate not configured.".red)
             throw ExitCode.failure
         }
         
@@ -73,7 +73,7 @@ struct TroubleshootCommand: AsyncParsableCommand {
         let errorsByDevice = try await reportMate.getErrorsByDevice()
         
         if errorsByItem.isEmpty && errorsByDevice.isEmpty {
-            print("✅ No errors found in the fleet!".green.bold)
+            print("[ok] No errors found in the fleet!".green.bold)
             return
         }
         
@@ -192,7 +192,7 @@ struct TroubleshootCommand: AsyncParsableCommand {
         }
         
         if itemErrors.isEmpty {
-            print("✅ No errors found for '\(itemName)'".green)
+            print("[ok] No errors found for '\(itemName)'".green)
             return
         }
         
@@ -313,7 +313,7 @@ struct TroubleshootCommand: AsyncParsableCommand {
     }
     
     private func attemptItemRemediation(diagnosis: ItemDiagnosis, config: FleetMateConfig) async throws {
-        print("\n" + "🔧 Attempting Automatic Remediation...".bold.yellow + "\n")
+        print("\n" + "Attempting Automatic Remediation...".bold.yellow + "\n")
         
         let primaryCategory = diagnosis.categories.max(by: { $0.value < $1.value })?.key ?? .unknown
         let sshService = SecureShellService(fleetConfig: config)
@@ -327,7 +327,7 @@ struct TroubleshootCommand: AsyncParsableCommand {
                     host: serial,
                     command: "sudo rm -rf /Library/Managed\\ Installs/Cache/*"
                 )
-                let status = result.exitCode == 0 ? "✅" : "❌"
+                let status = result.exitCode == 0 ? "yes" : "no"
                 print("  \(status) \(serial)")
             }
             
@@ -338,12 +338,12 @@ struct TroubleshootCommand: AsyncParsableCommand {
                     host: serial,
                     command: "defaults read /Library/Preferences/ManagedInstalls SoftwareRepoURL | xargs curl -sI"
                 )
-                let status = result.exitCode == 0 ? "✅" : "❌"
+                let status = result.exitCode == 0 ? "yes" : "no"
                 print("  \(status) \(serial)")
             }
             
         default:
-            print("⚠️  Automatic remediation not available for \(primaryCategory.rawValue) errors.".yellow)
+            print("[WARNING] Automatic remediation not available for \(primaryCategory.rawValue) errors.".yellow)
             print("   Please follow the manual steps above.")
         }
     }
@@ -372,7 +372,7 @@ struct TroubleshootCommand: AsyncParsableCommand {
         }
         
         if deviceErrors.isEmpty {
-            print("✅ No errors found for this device".green)
+            print("[ok] No errors found for this device".green)
             return
         }
         
@@ -398,14 +398,14 @@ struct TroubleshootCommand: AsyncParsableCommand {
         print("     fleetmate ssh exec \(serial) -- sudo rm -rf /Library/Managed\\ Installs/Cache/*".lightBlack)
         
         if fix && config.isSecureShellConfigured {
-            print("\n" + "🔧 Running automated diagnostics...".bold.yellow + "\n")
+            print("\n" + "Running automated diagnostics...".bold.yellow + "\n")
             
             let sshService = SecureShellService(fleetConfig: config)
             
             // Test connectivity
             print("Testing SSH connectivity... ", terminator: "")
             let testResult = try await sshService.testConnection(host: serial)
-            print(testResult.success ? "✅" : "❌")
+            print(testResult.success ? "yes" : "no")
             
             if testResult.success {
                 // Get disk space

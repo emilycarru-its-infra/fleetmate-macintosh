@@ -113,9 +113,9 @@ public struct ManagedInstall: Codable {
     
     public var statusEmoji: String {
         switch status.lowercased() {
-        case "installed": return "✓"
+        case "installed": return "ok"
         case "": return "-"
-        default: return "✗"
+        default: return "--"
         }
     }
 }

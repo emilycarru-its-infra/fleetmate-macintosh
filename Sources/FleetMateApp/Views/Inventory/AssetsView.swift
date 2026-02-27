@@ -25,6 +25,15 @@ struct AssetsView: View {
     @State private var selectedAsset: SnipeAsset?
     @State private var showReAllocateSheet = false
 
+    // Column state
+    @State private var columnWidths: [AssetSortField: CGFloat] = [
+        .assetTag: 90, .serial: 110, .name: 160, .status: 110,
+        .category: 110, .platform: 100, .manufacturer: 120, .model: 120,
+        .usage: 100, .catalog: 100, .area: 100, .location: 120
+    ]
+    @State private var visibleColumns: Set<AssetSortField> = Set(AssetSortField.allCases)
+    @State private var showColumnPicker = false
+
     // Filter states
     @State private var statusFilter = "All"
     @State private var categoryFilter = "All"
@@ -180,46 +189,42 @@ struct AssetsView: View {
                     Text("Assets inventory")
                         .foregroundColor(.secondary)
                 }
-                Spacer()
-                Button(action: { loadAllAssets() }) {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(isLoading)
             }
             .padding()
 
-            // Search bar (constrained width)
-            HStack {
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                    TextField("Filter by serial, asset tag, or name...", text: $searchText)
-                        .textFieldStyle(.plain)
-                    if !searchText.isEmpty {
-                        Button(action: { searchText = "" }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(8)
-                .background(Color.secondary.opacity(0.1))
-                .cornerRadius(8)
-                .frame(maxWidth: 400)
-
-                if !assets.isEmpty {
-                    Text("\(filteredAssets.count) of \(assets.count)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-            }
-            .padding(.horizontal)
-
-            // Filter dropdowns row
+            // Search + filters + refresh — all in one scrollable row
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    // Search box
+                    HStack(spacing: 4) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.secondary)
+                        TextField("Search...", text: $searchText)
+                            .textFieldStyle(.plain)
+                            .frame(minWidth: 160)
+                        if !searchText.isEmpty {
+                            Button(action: { searchText = "" }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color.secondary.opacity(0.1))
+                    .cornerRadius(8)
+                    .frame(minWidth: 200, maxWidth: 280)
+
+                    if !assets.isEmpty {
+                        Text("\(filteredAssets.count)/\(assets.count)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .fixedSize()
+                    }
+
+                    Divider().frame(height: 22)
+
                     Picker("", selection: $statusFilter) {
                         Text("Status").tag("All")
                         ForEach(statusOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
@@ -279,7 +284,7 @@ struct AssetsView: View {
                             catalogFilter = "All"
                             areaFilter = "All"
                         }) {
-                            Text("Clear Filters")
+                            Text("Clear")
                                 .font(.caption)
                         }
                         .buttonStyle(.bordered)
@@ -287,7 +292,40 @@ struct AssetsView: View {
                         .controlSize(.small)
                     }
 
-                    Spacer()
+                    Divider().frame(height: 22)
+
+                    Button(action: { loadAllAssets() }) {
+                        Image(systemName: isLoading ? "arrow.clockwise" : "arrow.clockwise")
+                            .rotationEffect(isLoading ? .degrees(360) : .zero)
+                    }
+                    .disabled(isLoading)
+                    .help("Refresh")
+
+                    Divider().frame(height: 22)
+
+                    Button(action: { showColumnPicker.toggle() }) {
+                        Image(systemName: "tablecells.badge.ellipsis")
+                    }
+                    .help("Show/Hide Columns")
+                    .popover(isPresented: $showColumnPicker, arrowEdge: .bottom) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Columns")
+                                .font(.headline)
+                                .padding(.bottom, 4)
+                            ForEach(AssetSortField.allCases, id: \.self) { field in
+                                Toggle(field.rawValue, isOn: Binding(
+                                    get: { visibleColumns.contains(field) },
+                                    set: { on in
+                                        if on { visibleColumns.insert(field) }
+                                        else if visibleColumns.count > 1 { visibleColumns.remove(field) }
+                                    }
+                                ))
+                                .toggleStyle(.checkbox)
+                            }
+                        }
+                        .padding()
+                        .frame(minWidth: 180)
+                    }
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 6)
@@ -372,105 +410,126 @@ struct AssetsView: View {
         }
     }
 
+    // Ordered list of visible columns with their current widths
+    private var visibleColumnList: [(field: AssetSortField, width: CGFloat)] {
+        AssetSortField.allCases
+            .filter { visibleColumns.contains($0) }
+            .map { ($0, columnWidths[$0] ?? 90) }
+    }
+
     private var assetTableView: some View {
-        VStack(spacing: 0) {
-            // Sortable column headers
+        GeometryReader { geo in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 0) {
-                    assetSortableHeader("Asset Tag", field: .assetTag, width: 90)
-                    assetSortableHeader("Serial", field: .serial, width: 100)
-                    assetSortableHeader("Name", field: .name, width: 150)
-                    assetSortableHeader("Status", field: .status, width: 100)
-                    assetSortableHeader("Category", field: .category, width: 100)
-                    assetSortableHeader("Platform", field: .platform, width: 90)
-                    assetSortableHeader("Manufacturer", field: .manufacturer, width: 110)
-                    assetSortableHeader("Model", field: .model, width: 110)
-                    assetSortableHeader("Usage", field: .usage, width: 90)
-                    assetSortableHeader("Catalog", field: .catalog, width: 90)
-                    assetSortableHeader("Area", field: .area, width: 90)
-                    assetSortableHeader("Location", field: .location, width: 110)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-            }
-            .background(Color.secondary.opacity(0.08))
-
-            Divider()
-
-            List(filteredAssets, selection: $selectedAsset) { asset in
-                ScrollView(.horizontal, showsIndicators: false) {
+                let cols = visibleColumnList
+                let totalW = cols.reduce(0) { $0 + $1.width }
+                VStack(spacing: 0) {
+                    // Synchronized column headers
                     HStack(spacing: 0) {
-                        Text(asset.assetTag ?? "-")
-                            .font(.system(.body, design: .monospaced))
-                            .frame(width: 90, alignment: .leading)
-                        Text(asset.serial ?? "-")
-                            .font(.system(.body, design: .monospaced))
-                            .frame(width: 100, alignment: .leading)
-                            .lineLimit(1)
-                        Text(asset.name ?? "-")
-                            .frame(width: 150, alignment: .leading)
-                            .lineLimit(1)
-                        StatusBadge(status: asset.statusLabel)
-                            .frame(width: 100, alignment: .leading)
-                        Text(asset.category?.name ?? "-")
-                            .frame(width: 100, alignment: .leading)
-                            .lineLimit(1)
-                        Text(asset.customFieldByName("Platform")?.value ?? "-")
-                            .frame(width: 90, alignment: .leading)
-                            .lineLimit(1)
-                        Text(asset.manufacturer?.name ?? "-")
-                            .frame(width: 110, alignment: .leading)
-                            .lineLimit(1)
-                        Text(asset.model?.name ?? "-")
-                            .frame(width: 110, alignment: .leading)
-                            .lineLimit(1)
-                        Text(asset.customFieldByName("Usage")?.value ?? "-")
-                            .frame(width: 90, alignment: .leading)
-                            .lineLimit(1)
-                        Text(asset.customFieldByName("Catalog")?.value ?? "-")
-                            .frame(width: 90, alignment: .leading)
-                            .lineLimit(1)
-                        Text(asset.customFieldByName("Area")?.value ?? "-")
-                            .frame(width: 90, alignment: .leading)
-                            .lineLimit(1)
-                        Text(asset.location?.name ?? "-")
-                            .frame(width: 110, alignment: .leading)
-                            .lineLimit(1)
+                        ForEach(cols, id: \.field) { col in
+                            assetColumnHeader(col.field, width: col.width)
+                        }
+                        Spacer(minLength: 0)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
+                    .frame(minWidth: max(totalW, geo.size.width))
+                    .frame(height: 32)
+                    .background(Color.secondary.opacity(0.08))
+
+                    Divider()
+
+                    // Data rows — vertical scroll inside the horizontal scroll so both axes sync
+                    ScrollView(.vertical, showsIndicators: true) {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(filteredAssets.enumerated()), id: \.element.id) { idx, asset in
+                                HStack(spacing: 0) {
+                                    ForEach(cols, id: \.field) { col in
+                                        assetCell(for: col.field, asset: asset)
+                                            .frame(width: col.width - 12, alignment: .leading)
+                                            .padding(.horizontal, 6)
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                .frame(minWidth: max(totalW, geo.size.width))
+                                .frame(height: 28)
+                                .background(
+                                    selectedAsset?.id == asset.id
+                                        ? Color.accentColor.opacity(0.2)
+                                        : (idx % 2 == 1 ? Color.secondary.opacity(0.04) : Color.clear)
+                                )
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    selectedAsset = selectedAsset?.id == asset.id ? nil : asset
+                                }
+                                Divider().padding(.leading, 8)
+                            }
+                        }
+                    }
+                    .frame(height: max(100, geo.size.height - 33))
+                    .frame(minWidth: max(totalW, geo.size.width))
                 }
-                .contentShape(Rectangle())
-                .tag(asset)
             }
-            .listStyle(.plain)
         }
     }
 
-    /// Clickable sortable column header for assets
-    private func assetSortableHeader(_ title: String, field: AssetSortField, width: CGFloat?) -> some View {
-        Button(action: {
-            if sortField == field {
-                sortAscending.toggle()
-            } else {
-                sortField = field
-                sortAscending = true
-            }
-        }) {
-            HStack(spacing: 4) {
-                Text(title)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.primary)
-                if sortField == field {
-                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                        .font(.caption2)
-                        .foregroundColor(.accentColor)
+    @ViewBuilder
+    private func assetColumnHeader(_ field: AssetSortField, width: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            Button(action: {
+                if sortField == field { sortAscending.toggle() }
+                else { sortField = field; sortAscending = true }
+            }) {
+                HStack(spacing: 3) {
+                    Text(field.rawValue)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    if sortField == field {
+                        Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                            .font(.caption2)
+                            .foregroundColor(.accentColor)
+                    }
+                    Spacer(minLength: 0)
                 }
+                .frame(width: width - 10)
+                .padding(.horizontal, 4)
             }
+            .buttonStyle(.plain)
+            ColumnResizeHandle(field: field, columnWidths: $columnWidths)
         }
-        .buttonStyle(.plain)
-        .frame(width: width, alignment: .leading)
-        .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+        .frame(width: width)
+    }
+
+    @ViewBuilder
+    private func assetCell(for field: AssetSortField, asset: SnipeAsset) -> some View {
+        switch field {
+        case .assetTag:
+            Text(asset.assetTag ?? "-")
+                .font(.system(.body, design: .monospaced))
+                .lineLimit(1)
+        case .serial:
+            Text(asset.serial ?? "-")
+                .font(.system(.body, design: .monospaced))
+                .lineLimit(1)
+        case .name:
+            Text(asset.name ?? "-").lineLimit(1)
+        case .status:
+            StatusBadge(status: asset.statusLabel)
+        case .category:
+            Text(asset.category?.name ?? "-").lineLimit(1)
+        case .platform:
+            Text(asset.customFieldByName("Platform")?.value ?? "-").lineLimit(1)
+        case .manufacturer:
+            Text(asset.manufacturer?.name ?? "-").lineLimit(1)
+        case .model:
+            Text(asset.model?.name ?? "-").lineLimit(1)
+        case .usage:
+            Text(asset.customFieldByName("Usage")?.value ?? "-").lineLimit(1)
+        case .catalog:
+            Text(asset.customFieldByName("Catalog")?.value ?? "-").lineLimit(1)
+        case .area:
+            Text(asset.customFieldByName("Area")?.value ?? "-").lineLimit(1)
+        case .location:
+            Text(asset.location?.name ?? "-").lineLimit(1)
+        }
     }
 
     private func loadAllAssets() {
@@ -982,21 +1041,38 @@ struct ReAllocateSheet: View {
             defer { isProcessing = false }
 
             do {
-                // Step 1: Check in the asset (silent)
-                let checkinReq = SnipeCheckinRequest(
-                    note: "Re-allocated via FleetMate\(note.isEmpty ? "" : ": \(note)")"
-                )
-                _ = try await snipeService.checkinAsset(assetId: asset.id, request: checkinReq)
+                let noteText = "Re-allocated via FleetMate\(note.isEmpty ? "" : ": \(note)")"
+                print("[ReAllocate] Starting: asset=\(asset.id) → user=\(targetUser.id) (\(targetUser.username ?? "?"))")
 
-                // Step 2: Check out to new user
+                // Step 1: Check in the asset only if it is currently assigned to someone
+                if asset.assignedTo != nil {
+                    print("[ReAllocate] Checking in asset \(asset.id)...")
+                    let checkinReq = SnipeCheckinRequest(note: noteText)
+                    let checkinResult = try await snipeService.checkinAsset(assetId: asset.id, request: checkinReq)
+                    print("[ReAllocate] Checkin: status=\(checkinResult.status) msg=\(checkinResult.messages ?? "nil")")
+                    if checkinResult.status == "error" {
+                        errorMessage = "Check-in failed: \(checkinResult.messages ?? "Unknown error")"
+                        return
+                    }
+                }
+
+                // Step 2: Check out to new user (checkout_to_type required by Snipe-IT)
+                print("[ReAllocate] Checking out asset \(asset.id) to user \(targetUser.id)...")
                 let checkoutReq = SnipeCheckoutRequest(
                     assignedUser: targetUser.id,
-                    note: "Re-allocated via FleetMate\(note.isEmpty ? "" : ": \(note)")"
+                    checkoutToType: "user",
+                    note: noteText
                 )
                 let result = try await snipeService.checkoutAsset(assetId: asset.id, request: checkoutReq)
+                print("[ReAllocate] Checkout: status=\(result.status) msg=\(result.messages ?? "nil")")
 
-                onComplete(result.payload)
+                if result.status == "error" {
+                    errorMessage = "Checkout failed: \(result.messages ?? "Unknown error")"
+                } else {
+                    onComplete(result.payload)
+                }
             } catch {
+                print("[ReAllocate] Error: \(error)")
                 errorMessage = "Re-allocation failed: \(error.localizedDescription)"
             }
         }
@@ -1026,6 +1102,44 @@ struct StatusBadge: View {
             Text(status?.name ?? "Unknown")
                 .font(.callout)
         }
+    }
+}
+
+// MARK: - Column Resize Handle
+
+struct ColumnResizeHandle: View {
+    let field: AssetSortField
+    @Binding var columnWidths: [AssetSortField: CGFloat]
+    @State private var isDragging = false
+    @State private var startWidth: CGFloat = 0
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(isDragging ? Color.accentColor : Color.secondary.opacity(0.25))
+                .frame(width: isDragging ? 2 : 1)
+                .frame(maxHeight: .infinity)
+            // Wide invisible hit-area so the handle is easy to grab
+            Color.clear
+                .frame(width: 10)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 1)
+                        .onChanged { value in
+                            if !isDragging {
+                                isDragging = true
+                                startWidth = columnWidths[field] ?? 90
+                            }
+                            columnWidths[field] = max(40, startWidth + value.translation.width)
+                        }
+                        .onEnded { _ in isDragging = false }
+                )
+                .onHover { inside in
+                    if inside { NSCursor.resizeLeftRight.push() }
+                    else { NSCursor.pop() }
+                }
+        }
+        .frame(width: 10)
     }
 }
 

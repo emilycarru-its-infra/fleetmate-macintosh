@@ -205,12 +205,15 @@ public class SnipeService {
         
         return try await withCheckedThrowingContinuation { continuation in
             session.request(url, method: .post, parameters: body, encoder: JSONParameterEncoder.default, headers: headers)
-                .validate()
+                .validate(statusCode: 200..<500)  // allow 4xx so we can decode Snipe-IT error bodies
                 .responseDecodable(of: R.self) { response in
                     switch response.result {
                     case .success(let value):
                         continuation.resume(returning: value)
                     case .failure(let error):
+                        if let data = response.data, let body = String(data: data, encoding: .utf8) {
+                            print("[SnipeService POST] Decode failure body: \(body.prefix(400))")
+                        }
                         continuation.resume(throwing: error)
                     }
                 }
@@ -222,12 +225,15 @@ public class SnipeService {
 
         return try await withCheckedThrowingContinuation { continuation in
             session.request(url, method: .put, parameters: body, encoder: JSONParameterEncoder.default, headers: headers)
-                .validate()
+                .validate(statusCode: 200..<500)
                 .responseDecodable(of: R.self) { response in
                     switch response.result {
                     case .success(let value):
                         continuation.resume(returning: value)
                     case .failure(let error):
+                        if let data = response.data, let body = String(data: data, encoding: .utf8) {
+                            print("[SnipeService PUT] Decode failure body: \(body.prefix(400))")
+                        }
                         continuation.resume(throwing: error)
                     }
                 }

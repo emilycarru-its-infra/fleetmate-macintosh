@@ -66,3 +66,6 @@ codecov/
 
 # IDE specific files
 .vscode/launch.json
+
+# AI assistant project files
+.claude/

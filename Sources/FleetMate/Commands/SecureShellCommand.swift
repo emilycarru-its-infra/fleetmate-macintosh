@@ -50,14 +50,14 @@ struct ExecSubcommand: AsyncParsableCommand {
         let config = try FleetMateConfig.load()
         
         guard config.isSecureShellConfigured else {
-            print("❌ SecureShell not configured. Set SECURE_SHELL_PRIVATE_KEY_PATH or Key Vault settings.".red)
+            print("[ERROR] SecureShell not configured. Set SECURE_SHELL_PRIVATE_KEY_PATH or Key Vault settings.".red)
             throw ExitCode.failure
         }
         
         let sshService = SecureShellService(fleetConfig: config)
         let commandString = command.joined(separator: " ")
         
-        print("🔗 Connecting to \(device)...".cyan)
+        print("Connecting to \(device)...".cyan)
         
         let result = try await sshService.execute(
             host: device,
@@ -80,9 +80,9 @@ struct ExecSubcommand: AsyncParsableCommand {
             print(String(data: data, encoding: .utf8) ?? "{}")
         } else {
             if result.exitCode == 0 {
-                print("\n" + "✅ Command succeeded".green + " (exit code 0)\n")
+                print("\n" + "Command succeeded".green + " (exit code 0)\n")
             } else {
-                print("\n" + "❌ Command failed".red + " (exit code \(result.exitCode))\n")
+                print("\n" + "Command failed".red + " (exit code \(result.exitCode))\n")
             }
             
             if !result.stdout.isEmpty {
@@ -134,18 +134,18 @@ struct BatchSubcommand: AsyncParsableCommand {
         let config = try FleetMateConfig.load()
         
         guard config.isSecureShellConfigured else {
-            print("❌ SecureShell not configured.".red)
+            print("[ERROR] SecureShell not configured.".red)
             throw ExitCode.failure
         }
         
         guard !devices.isEmpty else {
-            print("❌ No devices specified.".red)
+            print("[ERROR] No devices specified.".red)
             throw ExitCode.failure
         }
         
         let sshService = SecureShellService(fleetConfig: config)
         
-        print("🔗 Executing on \(devices.count) devices...".cyan)
+        print("Executing on \(devices.count) devices...".cyan)
         
         let batchResult = try await sshService.executeBatch(
             hosts: devices,
@@ -177,7 +177,7 @@ struct BatchSubcommand: AsyncParsableCommand {
         print("")
         
         for cmdResult in result.results {
-            let statusIcon = cmdResult.exitCode == 0 ? "✅" : "❌"
+            let statusIcon = cmdResult.exitCode == 0 ? "yes" : "no"
             let hostDisplay = cmdResult.exitCode == 0 ? cmdResult.host.green : cmdResult.host.red
             print("\(statusIcon) \(hostDisplay)")
             
@@ -213,13 +213,13 @@ struct TestSubcommand: AsyncParsableCommand {
         let config = try FleetMateConfig.load()
         
         guard config.isSecureShellConfigured else {
-            print("❌ SecureShell not configured.".red)
+            print("[ERROR] SecureShell not configured.".red)
             throw ExitCode.failure
         }
         
         let sshService = SecureShellService(fleetConfig: config)
         
-        print("🔗 Testing connection to \(device)...".cyan)
+        print("Testing connection to \(device)...".cyan)
         
         let result = try await sshService.testConnection(host: device, username: user)
         
@@ -230,14 +230,14 @@ struct TestSubcommand: AsyncParsableCommand {
             print(String(data: data, encoding: .utf8) ?? "{}")
         } else {
             if result.success {
-                print("\n✅ " + "Connection successful!".green.bold)
+                print("\n[ok] " + "Connection successful!".green.bold)
                 print("   Host: \(result.host)")
                 print("   Duration: \(String(format: "%.0fms", result.durationSeconds * 1000))")
                 if let version = result.serverVersion {
                     print("   SecureShell: \(version)")
                 }
             } else {
-                print("\n❌ " + "Connection failed!".red.bold)
+                print("\n[error] " + "Connection failed!".red.bold)
                 print("   Host: \(result.host)")
                 if let error = result.errorMessage {
                     print("   Error: \(error)")
@@ -275,7 +275,7 @@ struct LogsSubcommand: AsyncParsableCommand {
         let config = try FleetMateConfig.load()
         
         guard config.isSecureShellConfigured else {
-            print("❌ SecureShell not configured.".red)
+            print("[ERROR] SecureShell not configured.".red)
             throw ExitCode.failure
         }
         
@@ -293,7 +293,7 @@ struct LogsSubcommand: AsyncParsableCommand {
             print("\n" + "Log output from \(device):".bold + "\n")
             print(result.stdout)
         } else {
-            print("❌ Failed to retrieve logs: \(result.stderr)".red)
+            print("[ERROR] Failed to retrieve logs: \(result.stderr)".red)
             throw ExitCode.failure
         }
     }
@@ -330,7 +330,7 @@ struct MunkiCheckSubcommand: AsyncParsableCommand {
         let config = try FleetMateConfig.load()
         
         guard config.isSecureShellConfigured else {
-            print("❌ SecureShell not configured.".red)
+            print("[ERROR] SecureShell not configured.".red)
             throw ExitCode.failure
         }
         
@@ -342,13 +342,13 @@ struct MunkiCheckSubcommand: AsyncParsableCommand {
         let result = try await sshService.runMunkiCheck(host: device, autoInstall: install)
         
         if result.exitCode == 0 {
-            print("\n✅ " + "Munki check completed successfully".green)
+            print("\n[ok] " + "Munki check completed successfully".green)
             if !result.stdout.isEmpty {
                 print("\nOutput:".bold)
                 print(result.stdout)
             }
         } else {
-            print("\n❌ " + "Munki check failed".red)
+            print("\n[error] " + "Munki check failed".red)
             print("Exit code: \(result.exitCode)")
             if !result.stderr.isEmpty {
                 print("Error: \(result.stderr)")
@@ -374,7 +374,7 @@ struct MunkiPrefsSubcommand: AsyncParsableCommand {
         let config = try FleetMateConfig.load()
         
         guard config.isSecureShellConfigured else {
-            print("❌ SecureShell not configured.".red)
+            print("[ERROR] SecureShell not configured.".red)
             throw ExitCode.failure
         }
         
@@ -385,7 +385,7 @@ struct MunkiPrefsSubcommand: AsyncParsableCommand {
         let result = try await sshService.getMunkiPrefs(host: device)
         
         if result.exitCode != 0 {
-            print("❌ Failed to get Munki preferences: \(result.stderr)".red)
+            print("[ERROR] Failed to get Munki preferences: \(result.stderr)".red)
             throw ExitCode.failure
         }
         
@@ -455,13 +455,13 @@ struct MunkiInstallSubcommand: AsyncParsableCommand {
         let config = try FleetMateConfig.load()
         
         guard config.isSecureShellConfigured else {
-            print("❌ SecureShell not configured.".red)
+            print("[ERROR] SecureShell not configured.".red)
             throw ExitCode.failure
         }
         
         let sshService = SecureShellService(fleetConfig: config)
         
-        print("📦 Installing \(item) on \(device)...".cyan)
+        print("Installing \(item) on \(device)...".cyan)
         
         // First add to SelfServe manifest, then run check
         let installCmd = """
@@ -472,9 +472,9 @@ struct MunkiInstallSubcommand: AsyncParsableCommand {
         let result = try await sshService.execute(host: device, command: installCmd)
         
         if result.exitCode == 0 {
-            print("\n✅ " + "Installation triggered successfully".green)
+            print("\n[ok] " + "Installation triggered successfully".green)
         } else {
-            print("\n❌ " + "Installation failed".red)
+            print("\n[error] " + "Installation failed".red)
             print("Exit code: \(result.exitCode)")
             if !result.stderr.isEmpty {
                 print("Error: \(result.stderr)")

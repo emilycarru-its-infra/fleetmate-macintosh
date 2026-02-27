@@ -120,7 +120,7 @@ struct StatusCommand: AsyncParsableCommand {
         
         // ReportMate Section
         let reportTitle = status.reportMate?.isLegacy == true ? "MunkiReport (Legacy)" : "ReportMate"
-        print("📊 " + reportTitle.bold.cyan)
+        print("" + reportTitle.bold.cyan)
         if let rm = status.reportMate {
             if rm.connected {
                 print("   Status:".lightBlue + "        " + "Connected".green)
@@ -129,7 +129,7 @@ struct StatusCommand: AsyncParsableCommand {
                 print("   Errors:".lightBlue + "        " + formatCount(rm.totalErrors, warning: 1, critical: 10))
                 print("   Pending:".lightBlue + "       " + formatCount(rm.pendingInstalls, warning: 10, critical: 50))
                 if rm.isLegacy {
-                    print("   ⚠️  " + "Consider migrating to ReportMate".yellow)
+                    print("   [WARNING] " + "Consider migrating to ReportMate".yellow)
                 }
             } else {
                 print("   Status:".lightBlue + "        " + "Disconnected".red)
@@ -145,7 +145,7 @@ struct StatusCommand: AsyncParsableCommand {
         print("")
         
         // Snipe-IT Section
-        print("📦 " + "Snipe-IT".bold.cyan)
+        print("" + "Snipe-IT".bold.cyan)
         if let snipe = status.snipeIT {
             if snipe.connected {
                 print("   Status:".lightBlue + "        " + "Connected".green)
@@ -167,12 +167,12 @@ struct StatusCommand: AsyncParsableCommand {
         // Configuration hint
         if verbose {
             print("")
-            print("🔧 " + "Configuration".bold.cyan)
+            print("" + "Configuration".bold.cyan)
             let config = try? FleetMateConfig.load()
-            print("   ReportMate:".lightBlue + "    " + (config?.isReportMateConfigured == true ? "✅" : "❌"))
-            print("   Snipe-IT:".lightBlue + "      " + (config?.snipeApiKey != nil ? "✅" : "❌"))
-            print("   Graph/Entra:".lightBlue + "   " + (config?.graphTenantId != nil ? "✅" : "❌"))
-            print("   SecureShell:".lightBlue + "   " + (config?.isSecureShellConfigured == true ? "✅" : "❌"))
+            print("   ReportMate:".lightBlue + "    " + (config?.isReportMateConfigured == true ? "yes" : "no"))
+            print("   Snipe-IT:".lightBlue + "      " + (config?.snipeApiKey != nil ? "yes" : "no"))
+            print("   Graph/Entra:".lightBlue + "   " + (config?.graphTenantId != nil ? "yes" : "no"))
+            print("   SecureShell:".lightBlue + "   " + (config?.isSecureShellConfigured == true ? "yes" : "no"))
         }
         
         print("\n" + "═══════════════════════════════════════════════════════".bold + "\n")

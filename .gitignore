@@ -53,6 +53,7 @@ logs/
 
 # Build artifacts
 *.app
+build/*.zip
 *.framework
 *.dylib
 *.a

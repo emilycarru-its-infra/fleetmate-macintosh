@@ -560,12 +560,7 @@ struct TicketsView: View {
         .searchable(text: $searchText, prompt: "Search tickets...")
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
-                Picker("View", selection: $viewMode) {
-                    Text("Table").tag(TicketViewMode.table)
-                    Text("Board").tag(TicketViewMode.board)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 160)
+                ViewModePill(selection: $viewMode)
 
                 if filters.hasActiveFilters || showClosed || !isDefaultDatePreset {
                     Button(action: {
@@ -700,13 +695,14 @@ struct TicketsView: View {
 
     private var ticketsTableView: some View {
         GeometryReader { geometry in
+            let sidebarWidth = min(geometry.size.width * 0.4, 420.0)
             HStack(spacing: 0) {
                 ticketTableContent
-                    .frame(width: selectedTicket != nil ? geometry.size.width * 0.6 : geometry.size.width)
+                    .frame(maxWidth: .infinity)
                 if selectedTicket != nil {
                     Divider()
                     detailSidebarView
-                        .frame(width: geometry.size.width * 0.4)
+                        .frame(width: sidebarWidth)
                 }
             }
         }
@@ -716,19 +712,17 @@ struct TicketsView: View {
 
     private var ticketsBoardView: some View {
         GeometryReader { geometry in
+            let sidebarWidth = min(geometry.size.width * 0.4, 420.0)
             HStack(spacing: 0) {
                 ticketBoardContent
-                    .frame(width: showBoardDetail && selectedTicket != nil
-                           ? geometry.size.width * 0.6
-                           : geometry.size.width)
+                    .frame(maxWidth: .infinity)
 
                 if selectedTicket != nil {
-                    // Hoverable divider that collapses/expands sidebar
                     BoardSidebarDivider(isExpanded: $showBoardDetail)
 
                     if showBoardDetail {
                         detailSidebarView
-                            .frame(width: geometry.size.width * 0.4 - 8)
+                            .frame(width: sidebarWidth - 8)
                     }
                 }
             }
@@ -2263,6 +2257,41 @@ struct TicketStatusBadge: View {
 }
 
 // MARK: - Board Sidebar Divider
+
+// MARK: - View Mode Pill Toggle
+
+struct ViewModePill: View {
+    @Binding var selection: TicketViewMode
+    @Namespace private var pillNS
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach([TicketViewMode.table, .board], id: \.self) { mode in
+                Button {
+                    withAnimation(.smooth(duration: 0.2)) {
+                        selection = mode
+                    }
+                } label: {
+                    Text(mode == .table ? "Table" : "Board")
+                        .font(.system(size: 12, weight: selection == mode ? .semibold : .regular))
+                        .foregroundStyle(selection == mode ? .primary : .secondary)
+                        .frame(width: 60)
+                        .padding(.vertical, 5)
+                        .background {
+                            if selection == mode {
+                                Capsule()
+                                    .fill(.primary.opacity(0.12))
+                                    .matchedGeometryEffect(id: "pill", in: pillNS)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(.secondary.opacity(0.08), in: Capsule())
+    }
+}
 
 struct BoardSidebarDivider: View {
     @Binding var isExpanded: Bool

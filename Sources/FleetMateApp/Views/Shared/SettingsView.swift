@@ -7,108 +7,147 @@ struct SettingsView: View {
 
     var body: some View {
         TabView(selection: $selectedTabIndex) {
-            generalTab
-                .tabItem {
-                    Label("General", systemImage: "gear")
-                }
+            GeneralSettingsTab()
+                .environmentObject(appState)
+                .tabItem { Label("General", systemImage: "gear") }
                 .tag(0)
 
             AuthSettingsView()
                 .environmentObject(appState)
-                .tabItem {
-                    Label("Authentication", systemImage: "lock.shield")
-                }
+                .tabItem { Label("Authentication", systemImage: "lock.shield") }
                 .tag(1)
         }
-        .frame(minWidth: 560, maxWidth: 560, minHeight: 400, idealHeight: 620, maxHeight: 900)
-    }
-
-    private var generalTab: some View {
-        Form {
-            Section("Configuration") {
-                LabeledContent("Config File") {
-                    Text("~/.fleetmate/config.yaml")
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundColor(.secondary)
-                }
-
-                Button("Reload Configuration") {
-                    appState.reloadConfig()
-                }
-            }
-
-            Section("Microsoft Graph") {
-                ConfigRow(label: "Tenant ID", value: appState.config.graphTenantId, isSecret: false)
-                ConfigRow(label: "Client ID", value: appState.config.graphClientId, isSecret: false)
-                ConfigRow(label: "Client Secret", value: appState.config.graphClientSecret, isSecret: true)
-            }
-
-            Section("Azure DevOps") {
-                ConfigRow(label: "Organization", value: appState.config.devopsOrganization, isSecret: false)
-                ConfigRow(label: "Project", value: appState.config.devopsProject, isSecret: false)
-            }
-
-            Section("TeamDynamix") {
-                ConfigRow(label: "Base URL", value: appState.config.tdxBaseUrl, isSecret: false)
-                ConfigRow(label: "App ID", value: appState.config.tdxAppId.map { String($0) }, isSecret: false)
-                ConfigRow(label: "Username", value: appState.config.tdxUsername, isSecret: false)
-                ConfigRow(label: "Password", value: appState.config.tdxPassword, isSecret: true)
-                ConfigRow(label: "BEID", value: appState.config.tdxBeid, isSecret: true)
-            }
-
-            Section("Snipe-IT") {
-                ConfigRow(label: "URL", value: appState.config.snipeUrl, isSecret: false)
-                ConfigRow(label: "API Key", value: appState.config.snipeApiKey, isSecret: true)
-            }
-
-            Section("About") {
-                LabeledContent("Version") {
-                    Text("1.0.0")
-                }
-                LabeledContent("Platform") {
-                    Text("macOS")
-                }
-            }
-        }
-        .formStyle(.grouped)
+        .frame(minWidth: 600, maxWidth: 700, minHeight: 700, idealHeight: 900, maxHeight: 1100)
     }
 }
 
-struct ConfigRow: View {
-    let label: String
-    let value: String?
-    let isSecret: Bool
+// MARK: - General Settings Tab (Module Toggles)
 
-    @State private var showSecret = false
+private struct GeneralSettingsTab: View {
+    @EnvironmentObject var appState: AppState
+    @AppStorage("settings.selectedTab") private var selectedTabIndex: Int = 0
+    @State private var isLoading = true
+
+    private var enableGraph: Bool { appState.config.isGraphConfigured || appState.config.graphTenantId != nil }
+    private var enableSnipe: Bool { appState.config.isSnipeConfigured }
+    private var enableTdx: Bool { appState.config.isTdxConfigured }
+    private var enableDevOps: Bool { appState.config.isDevOpsConfigured }
 
     var body: some View {
-        LabeledContent(label) {
+        VStack(spacing: 0) {
             HStack {
-                if let value = value, !value.isEmpty {
-                    if isSecret && !showSecret {
-                        Text(String(repeating: "•", count: min(value.count, 20)))
-                            .font(.system(.body, design: .monospaced))
-                            .foregroundColor(.secondary)
-                    } else {
-                        Text(value)
-                            .font(.system(.body, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
+                Button("Setup Wizard") {
+                    appState.showOnboardingWizard = true
+                    NSApp.keyWindow?.close()
+                }
+                .help("Run the guided setup wizard")
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
 
-                    if isSecret {
-                        Button(action: { showSecret.toggle() }) {
-                            Image(systemName: showSecret ? "eye.slash" : "eye")
+            Divider()
+
+            Form {
+                Section {
+                    moduleRow(
+                        enabled: enableGraph,
+                        icon: "shield.checkered",
+                        title: "Devices & Identity",
+                        subtitle: "Microsoft Intune devices, Entra ID users and groups",
+                        systemId: .graph,
+                        onEnable: { /* Graph needs tenant ID — open Auth edit */ },
+                        onDisable: {
+                            var c = appState.config
+                            c.graphTenantId = nil
+                            c.devicesGraphId = nil; c.devicesGraphSecret = nil
+                            c.systemsGraphId = nil; c.systemsGraphSecret = nil
+                            appState.saveConfig(c)
                         }
-                        .buttonStyle(.borderless)
+                    )
+                    moduleRow(
+                        enabled: enableSnipe,
+                        icon: "tag",
+                        title: "Inventory",
+                        subtitle: "Snipe-IT asset management",
+                        systemId: .snipe,
+                        onEnable: { /* Snipe needs URL — open Auth edit */ },
+                        onDisable: {
+                            var c = appState.config
+                            c.snipeUrl = nil; c.snipeApiKey = nil
+                            c.snipeSsoEnabled = false
+                            appState.saveConfig(c)
+                        }
+                    )
+                    moduleRow(
+                        enabled: enableTdx,
+                        icon: "ticket",
+                        title: "Tickets",
+                        subtitle: "TeamDynamix service desk",
+                        systemId: .tdx,
+                        onEnable: { /* TDX needs URL — open Auth edit */ },
+                        onDisable: {
+                            var c = appState.config
+                            c.tdxBaseUrl = nil
+                            appState.saveConfig(c)
+                        }
+                    )
+                    moduleRow(
+                        enabled: enableDevOps,
+                        icon: "square.stack.3d.up",
+                        title: "Projects",
+                        subtitle: "Azure DevOps boards and work items",
+                        systemId: .devops,
+                        onEnable: { /* DevOps needs org — open Auth edit */ },
+                        onDisable: {
+                            var c = appState.config
+                            c.devopsOrganization = nil
+                            appState.saveConfig(c)
+                        }
+                    )
+                } header: {
+                    Text("Enabled Modules")
+                } footer: {
+                    Text("Disabled modules are hidden from the tab bar. Configure credentials in the Authentication tab.")
+                }
+            }
+            .formStyle(.grouped)
+        }
+    }
+
+    private func moduleRow(enabled: Bool, icon: String, title: String, subtitle: String, systemId: AuthSystemId, onEnable: @escaping () -> Void, onDisable: @escaping () -> Void) -> some View {
+        Toggle(isOn: Binding(
+            get: { enabled },
+            set: { newValue in
+                if newValue {
+                    onEnable()
+                    // Switch to Auth tab and trigger edit for this system
+                    selectedTabIndex = 1
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        NotificationCenter.default.post(name: .editAuthSystem, object: systemId)
                     }
                 } else {
-                    Text("Not configured")
-                        .foregroundColor(.red)
+                    onDisable()
+                }
+            }
+        )) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundStyle(.tint)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.body.weight(.medium))
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
+        .toggleStyle(.switch)
     }
+}
+
+extension Notification.Name {
+    static let editAuthSystem = Notification.Name("editAuthSystem")
 }
 
 #Preview {

@@ -1,11 +1,24 @@
 import SwiftUI
 
+/// Applies Liquid Glass on macOS 26+, falls back to a translucent capsule on older systems.
+private struct GlassEffectModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.glassEffect(in: .capsule)
+        } else {
+            content
+                .background(.ultraThinMaterial, in: Capsule())
+        }
+    }
+}
+
 /// Liquid Glass tab bar that adapts to available width.
 /// - **Full**: icon + text labels (wide windows, ≥ 850 pt)
 /// - **Compact**: icon only (medium windows, ≥ 500 pt)
 /// - **Overflow**: visible icon tabs + "…" menu (narrow windows)
 struct GlassTabBar: View {
     @Binding var selectedTab: AppTab
+    let tabs: [AppTab]
     let availableWidth: CGFloat
     @Namespace private var selectionNS
 
@@ -30,9 +43,9 @@ struct GlassTabBar: View {
         HStack(spacing: 0) {
             switch layoutMode {
             case .full:
-                tabButtons(tabs: Array(AppTab.allCases), showLabels: true)
+                tabButtons(tabs: tabs, showLabels: true)
             case .compact:
-                tabButtons(tabs: Array(AppTab.allCases), showLabels: false)
+                tabButtons(tabs: tabs, showLabels: false)
             case .overflow(let maxVisible):
                 let split = splitTabs(maxVisible: maxVisible)
                 tabButtons(tabs: split.visible, showLabels: false)
@@ -40,7 +53,7 @@ struct GlassTabBar: View {
             }
         }
         .padding(3)
-        .glassEffect(in: .capsule)
+        .modifier(GlassEffectModifier())
     }
 
     // MARK: - Tab buttons
@@ -116,7 +129,7 @@ struct GlassTabBar: View {
 
     /// Selected tab always stays in the visible set; bumped tab moves to overflow.
     private func splitTabs(maxVisible: Int) -> (visible: [AppTab], overflow: [AppTab]) {
-        let all = Array(AppTab.allCases)
+        let all = tabs
         guard maxVisible < all.count else { return (all, []) }
 
         var visible = Array(all.prefix(maxVisible))

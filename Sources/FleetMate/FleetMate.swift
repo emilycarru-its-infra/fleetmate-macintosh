@@ -8,38 +8,14 @@ struct FleetMate: AsyncParsableCommand {
         abstract: "FleetMate - Fleet orchestration, inventory, deployment monitoring, and troubleshooting",
         version: "1.0.0",
         subcommands: [
-            // Core commands
             StatusCommand.self,
-            DeviceCommand.self,
-            ErrorsCommand.self,
-            TroubleshootCommand.self,
-            
-            // ARD UNIX commands (group scan, inventory, security, updates, munki, etc.)
-            ArdCommand.self,
-
-            // Remote access
-            SecureShellCommand.self,
-            
-            // Configuration
-            ConfigureCommand.self,
-            
-            // Validation
-            LintCommand.self,
             ValidateCommand.self,
-            
-            // Service integrations
             SnipeCommand.self,
-            MunkiReportCommand.self,  // Legacy - use ReportMate via DeviceCommand
+            MunkiReportCommand.self,
             IntuneCommand.self,
             EntraCommand.self,
             DevOpsCommand.self,
             TdxCommand.self,
-            
-            // Unified task management (FleetMate Boards)
-            TasksCommand.self,
-
-            // GitHub Projects v2 board and management
-            ProjectsCommand.self,
         ],
         defaultSubcommand: StatusCommand.self
     )

@@ -15,10 +15,10 @@ struct DevicesView: View {
     @State private var isLoading = false
     @State private var searchText = ""
     @State private var selectedDeviceIds: Set<String> = []
-    @State private var showOnlyNonCompliant = false
     @State private var sortField: DeviceSortField = .serial
     @State private var sortAscending = true
-    @State private var platformFilter = "All"
+    @State private var filters = FilterState<DeviceFilterCategory>()
+    @State private var showFilters = false
     
     // Action states
     @State private var isPerformingAction = false
@@ -39,15 +39,8 @@ struct DevicesView: View {
     var filteredDevices: [IntuneDevice] {
         var result = devices
 
-        if showOnlyNonCompliant {
-            result = result.filter { $0.complianceState?.lowercased() == "noncompliant" }
-        }
-
-        // Platform filter
-        if platformFilter != "All" {
-            result = result.filter {
-                ($0.operatingSystem ?? "").localizedCaseInsensitiveContains(platformFilter)
-            }
+        if filters.hasActiveFilters {
+            result = result.filter { filters.matches($0) }
         }
 
         if !searchText.isEmpty {
@@ -77,14 +70,6 @@ struct DevicesView: View {
         devices.filter { selectedDeviceIds.contains($0.id) }
     }
 
-    var platformOptions: [String] {
-        var opts = Set<String>()
-        for d in devices {
-            if let os = d.operatingSystem, !os.isEmpty { opts.insert(os) }
-        }
-        return ["All"] + opts.sorted()
-    }
-
     var body: some View {
         HSplitView {
             // Main device list
@@ -106,15 +91,24 @@ struct DevicesView: View {
                         }
                     }
                     Spacer()
-                    Toggle("Non-Compliant Only", isOn: $showOnlyNonCompliant)
-                        .toggleStyle(.switch)
-                    HStack(spacing: 4) {
-                        Text("Platform:").foregroundColor(.secondary)
-                        Picker("", selection: $platformFilter) {
-                            ForEach(platformOptions, id: \.self) { Text($0).tag($0) }
-                        }
-                        .frame(width: 120)
+
+                    Button(action: { showFilters.toggle() }) {
+                        Image(systemName: filters.hasActiveFilters
+                            ? "line.3.horizontal.decrease.circle.fill"
+                            : "line.3.horizontal.decrease.circle")
                     }
+                    .help("Filters")
+                    .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+                        FilterPanelView(filters: filters)
+                    }
+
+                    if filters.hasActiveFilters {
+                        Button(action: { filters.clearAll() }) {
+                            Image(systemName: "xmark.circle")
+                        }
+                        .help("Clear filters")
+                    }
+
                     Button(action: loadDevices) {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
@@ -241,11 +235,14 @@ struct DevicesView: View {
             if !appState.isDevicesCacheValid {
                 loadDevices()
             }
-            // Handle deep link set before view was created
+            if !devices.isEmpty { filters.buildFromDevices(devices) }
             if let id = appState.navigateToDeviceId {
                 selectedDeviceIds = [id]
                 appState.navigateToDeviceId = nil
             }
+        }
+        .onChange(of: appState.cachedDevices.count) { _, _ in
+            filters.buildFromDevices(appState.cachedDevices)
         }
         .onChange(of: appState.navigateToDeviceId) { _, newId in
             if let id = newId {

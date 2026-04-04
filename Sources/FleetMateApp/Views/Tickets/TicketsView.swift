@@ -133,14 +133,9 @@ struct TicketsView: View {
     }()
     @State private var termYear: Int = Calendar.current.component(.year, from: Date())
 
-    // Filter states
-    @State private var statusFilter = "All"
-    @State private var priorityFilter = "All"
-    @State private var groupFilter = "All"
-    @State private var responsibleFilter = "All"
-    @State private var formFilter = "All"
-    @State private var classificationFilter = "All"
-    @State private var typeFilter = "All"
+    // Filter system
+    @State private var filters = FilterState<TicketFilterCategory>()
+    @State private var showFilters = false
     @State private var allForms: [(id: Int, name: String)] = []
 
     // Comment state
@@ -372,50 +367,18 @@ struct TicketsView: View {
             }
         }
 
-        // Status filter
-        if statusFilter != "All" {
-            result = result.filter { $0.statusName == statusFilter }
+        // Filter panel selections
+        if filters.hasActiveFilters {
+            result = result.filter { filters.matches($0) }
         }
 
-        // Priority filter
-        if priorityFilter != "All" {
-            result = result.filter { $0.priorityName == priorityFilter }
-        }
-
-        // Group filter
-        if groupFilter != "All" {
-            result = result.filter { $0.responsibleGroupName == groupFilter }
-        }
-
-        // Responsible filter
-        if responsibleFilter == "None" {
-            result = result.filter { $0.responsibleFullName == nil || $0.responsibleFullName?.isEmpty == true }
-        } else if responsibleFilter != "All" {
-            result = result.filter { $0.responsibleFullName == responsibleFilter }
-        }
-
-        // Search
+        // Text search
         if !searchText.isEmpty {
             result = result.filter {
                 ($0.title?.localizedCaseInsensitiveContains(searchText) ?? false) ||
                 ($0.requestorName?.localizedCaseInsensitiveContains(searchText) ?? false) ||
                 "\($0.id ?? 0)".contains(searchText)
             }
-        }
-
-        // Form filter
-        if formFilter != "All" {
-            result = result.filter { $0.formName == formFilter }
-        }
-
-        // Classification filter
-        if classificationFilter != "All" {
-            result = result.filter { $0.classificationName == classificationFilter }
-        }
-
-        // Type filter
-        if typeFilter != "All" {
-            result = result.filter { $0.typeName == typeFilter }
         }
 
         return result.sorted { a, b in
@@ -581,11 +544,13 @@ struct TicketsView: View {
                 appState.navigateToTicketId = nil
             }
         }
-        .onChange(of: appState.cachedTickets) { _, _ in
+        .onChange(of: appState.cachedTickets) { _, newTickets in
             applyMeMode()
+            filters.buildFromTickets(newTickets)
         }
         .onAppear {
             applyMeMode()
+            if !tickets.isEmpty { filters.buildFromTickets(tickets) }
         }
         .onChange(of: viewMode) { _, newMode in
             if newMode == .board {
@@ -659,71 +624,33 @@ struct TicketsView: View {
                     }
                 }
 
-                Picker("", selection: $statusFilter) {
-                    Text("Status").tag("All")
-                    ForEach(statusOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
+                // Filter button + popover
+                Button(action: { showFilters.toggle() }) {
+                    Image(systemName: filters.hasActiveFilters
+                        ? "line.3.horizontal.decrease.circle.fill"
+                        : "line.3.horizontal.decrease.circle")
                 }
-                .frame(minWidth: 100, maxWidth: statusFilter != "All" ? 180 : 120)
-
-                Picker("", selection: $priorityFilter) {
-                    Text("Priority").tag("All")
-                    ForEach(priorityOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
+                .help("Filters")
+                .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+                    FilterPanelView(filters: filters)
                 }
-                .frame(minWidth: 100, maxWidth: priorityFilter != "All" ? 160 : 110)
-
-                Picker("", selection: $groupFilter) {
-                    Text("Group").tag("All")
-                    ForEach(groupOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
-                }
-                .frame(minWidth: 110, maxWidth: groupFilter != "All" ? 200 : 140)
-
-                Picker("", selection: $responsibleFilter) {
-                    Text("Responsible").tag("All")
-                    Text("None").tag("None")
-                    ForEach(responsibleOptions.filter { $0 != "All" && $0 != "None" }, id: \.self) { Text($0).tag($0) }
-                }
-                .frame(minWidth: 110, maxWidth: responsibleFilter != "All" ? 200 : 140)
-
-                Picker("", selection: $formFilter) {
-                    Text("Form").tag("All")
-                    ForEach(formFilterOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
-                }
-                .frame(minWidth: 100, maxWidth: formFilter != "All" ? 200 : 140)
-
-                Picker("", selection: $classificationFilter) {
-                    Text("Classification").tag("All")
-                    ForEach(classificationFilterOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
-                }
-                .frame(minWidth: 110, maxWidth: classificationFilter != "All" ? 200 : 140)
-
-                Picker("", selection: $typeFilter) {
-                    Text("Type").tag("All")
-                    ForEach(typeFilterOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
-                }
-                .frame(minWidth: 80, maxWidth: typeFilter != "All" ? 160 : 120)
 
                 Toggle("Closed", isOn: $showClosed)
                     .toggleStyle(.checkbox)
                     .font(.caption)
 
-                if statusFilter != "All" || priorityFilter != "All" || groupFilter != "All" || responsibleFilter != "All" || formFilter != "All" || classificationFilter != "All" || typeFilter != "All" || showClosed || !isDefaultDatePreset {
+                if filters.hasActiveFilters || showClosed || !isDefaultDatePreset {
                     Button(action: {
-                        statusFilter = "All"
-                        priorityFilter = "All"
-                        groupFilter = "All"
-                        responsibleFilter = "All"
-                        formFilter = "All"
-                        classificationFilter = "All"
-                        typeFilter = "All"
+                        filters.clearAll()
                         showClosed = false
                         resetToCurrentTerm()
                     }) {
-                        Text("Clear Filters")
-                            .font(.caption)
+                        Image(systemName: "xmark.circle")
                     }
                     .buttonStyle(.bordered)
                     .tint(.yellow)
                     .controlSize(.small)
+                    .help("Clear all filters")
                 }
 
                 Spacer()
@@ -2230,12 +2157,12 @@ struct TicketsView: View {
     /// Apply "me mode" — default group filter from config, default Responsible to self when SSO'd
     private func applyMeMode() {
         // Default group filter (always, regardless of SSO)
-        if groupFilter == "All",
+        if !filters.isActive(.group),
            let configGroupId = appState.config.tdxResponsibleGroupId,
            !tickets.isEmpty {
             let groupMatch = tickets.first(where: { $0.responsibleGroupId == configGroupId })?.responsibleGroupName
             if let groupMatch = groupMatch {
-                groupFilter = groupMatch
+                filters.selectedValues[.group] = [groupMatch]
             }
         }
 
@@ -2244,16 +2171,15 @@ struct TicketsView: View {
               appState.tdxSsoAuthenticated,
               let userName = appState.tdxAuthenticatedUserName,
               !tickets.isEmpty else { return }
-        
-        // Find a matching responsible name (case-insensitive contains for flexibility)
-        let match = responsibleOptions.first { option in
-            option != "All" && option != "None" &&
-            (option.localizedCaseInsensitiveContains(userName) ||
-             userName.localizedCaseInsensitiveContains(option))
+
+        let allResponsible = filters.availableValues[.responsible] ?? []
+        let match = allResponsible.first { option in
+            option.localizedCaseInsensitiveContains(userName) ||
+            userName.localizedCaseInsensitiveContains(option)
         }
-        
+
         if let match = match {
-            responsibleFilter = match
+            filters.selectedValues[.responsible] = [match]
             meModeApplied = true
         }
     }

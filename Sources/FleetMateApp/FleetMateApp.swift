@@ -49,10 +49,14 @@ class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published var secretsConfigured = false
     
+    // MARK: - Onboarding
+    @Published var showOnboardingWizard = false
+
     // MARK: - Tab Navigation (set by Dashboard to switch tabs)
     @Published var navigateToTab: AppTab?
     @Published var navigateToDeviceId: String?
     @Published var navigateToTicketId: Int?
+    @Published var navigateToFilter: String?
     
     // MARK: - Auth Manager
     @Published var authManager: AuthManager
@@ -63,6 +67,11 @@ class AppState: ObservableObject {
     @Published var tdxAuthenticatedUserName: String?
     private var ssoViewModel: TdxSsoLoginViewModel?
     
+    // MARK: - Snipe-IT SSO State
+    @Published var snipeSsoAuthenticated = false
+    @Published var snipeAuthenticatedUserName: String?
+    private var snipeSsoService: SnipeSsoService?
+
     // MARK: - Azure DevOps SSO State
     @Published var showDevOpsSsoLogin = false
     @Published var devOpsSsoAuthenticated = false
@@ -143,8 +152,26 @@ class AppState: ObservableObject {
         secretsConfigured = config.isGraphConfigured || 
                            config.isSnipeConfigured || 
                            config.isTdxConfigured
+        if !secretsConfigured {
+            showOnboardingWizard = true
+        }
         dbg.info("secretsConfigured = \(secretsConfigured)", category: "startup")
         dbg.info("Log file: \(dbg.logFilePath)", category: "startup")
+    }
+
+    /// Save credential fields to Keychain and reload services.
+    func saveConfig(_ updated: FleetMateConfig) {
+        do {
+            dbg.info("[SaveConfig] Saving to keychain...", category: "config")
+            try FleetMateConfig.saveToKeychain(updated)
+            dbg.info("[SaveConfig] Keychain save OK, reloading...", category: "config")
+            reloadConfig()
+            dbg.info("[SaveConfig] Reload complete. TDX configured: \(config.isTdxConfigured), Snipe configured: \(config.isSnipeConfigured)", category: "config")
+        } catch {
+            let msg = "Failed to save config: \(error.localizedDescription)"
+            dbg.error("[SaveConfig] \(msg)", category: "config")
+            errorMessage = msg
+        }
     }
 
     func reloadConfig() {
@@ -152,9 +179,10 @@ class AppState: ObservableObject {
             config = try FleetMateConfig.load()
             
             // Check if secrets are configured
-            secretsConfigured = config.isGraphConfigured || 
-                               config.isSnipeConfigured || 
-                               config.isTdxConfigured
+            secretsConfigured = config.isGraphConfigured ||
+                               config.isSnipeConfigured ||
+                               config.isTdxConfigured ||
+                               config.isDevOpsConfigured
             
             // Reinitialize services
             graphService = GraphService(config: config)
@@ -165,8 +193,8 @@ class AppState: ObservableObject {
             reportMateService = ReportMateService(config: config)
             errorMessage = nil
             
-            // Re-bootstrap auth manager
-            authManager.bootstrapFromConfig()
+            // Re-bootstrap auth manager with updated config
+            authManager.bootstrapFromConfig(with: config)
             
             // Clear caches on config reload
             invalidateAllCaches()
@@ -451,11 +479,8 @@ class AppState: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
 
-            // Wait up to 40 seconds for headless SSO to complete.
-            // NOTE: startAuthentication() runs tryFullSilentSamlFlow() first (~4–10 s) before
-            // the WebView begins loading. After that, the autologon/Kerberos flow takes
-            // ~8 s and FIDO fallback needs up to ~15 s — so 40 s is the safe minimum.
-            let deadline = Date().addingTimeInterval(40)
+            // Wait up to 25 seconds for headless SSO to complete.
+            let deadline = Date().addingTimeInterval(25)
             while Date() < deadline {
                 if let result = viewModel.authResult {
                     self.ssoViewModel = nil
@@ -478,9 +503,8 @@ class AppState: ObservableObject {
 
             self.ssoViewModel = nil
             hiddenWindow.close()
-            dbg.warn("[SSO Phase 1.5] Headless WKWebView SSO FAILED or timed out — triggering interactive Phase 2", category: "tdx-sso")
-            // Phase 2: Fall back to interactive sheet
-            self.triggerTdxSsoLogin()
+            dbg.warn("[SSO Phase 1.5] Headless WKWebView SSO FAILED or timed out — auth unavailable (no interactive fallback)", category: "tdx-sso")
+            self.authManager.update(.tdx, state: .failed(message: "Silent SSO failed"))
         }
     }
 
@@ -498,7 +522,22 @@ class AppState: ObservableObject {
     
     /// Handle successful SSO authentication
     func handleTdxSsoSuccess(token: String, expiry: Date, userId: String?, userName: String?) {
-        tdxService.setSsoToken(token, expiry: expiry, userId: userId, userName: userName)
+        // If token isn't a real JWT, use cookie-based auth instead
+        if !token.hasPrefix("eyJ") {
+            // Extract cookies from shared storage for the TDX domain
+            if let baseUrl = config.tdxBaseUrl, let url = URL(string: baseUrl) {
+                let cookies = HTTPCookieStorage.shared.cookies(for: url) ?? []
+                if !cookies.isEmpty {
+                    tdxService.setSsoCookies(cookies, userName: userName)
+                } else {
+                    tdxService.setSsoToken(token, expiry: expiry, userId: userId, userName: userName)
+                }
+            } else {
+                tdxService.setSsoToken(token, expiry: expiry, userId: userId, userName: userName)
+            }
+        } else {
+            tdxService.setSsoToken(token, expiry: expiry, userId: userId, userName: userName)
+        }
         tdxSsoAuthenticated = true
         tdxAuthenticatedUserName = userName
         showTdxSsoLogin = false
@@ -518,8 +557,11 @@ class AppState: ObservableObject {
             }
         }
         
-        // Invalidate tickets cache to reload with new auth
+        // Invalidate tickets cache and reload data
         invalidateTicketsCache()
+        Task {
+            await preloadAllData()
+        }
     }
     
     /// Handle SSO authentication failure or cancellation
@@ -635,8 +677,8 @@ class AppState: ObservableObject {
 
             self.devOpsSsoViewModel = nil
             hiddenWindow.close()
-            dbg.warn("[DevOps SSO Phase 1.5] Headless SSO FAILED or timed out — triggering interactive Phase 2", category: "devops-sso")
-            self.triggerDevOpsSsoLogin()
+            dbg.warn("[DevOps SSO Phase 1.5] Headless SSO FAILED or timed out — auth unavailable (no interactive fallback)", category: "devops-sso")
+            self.authManager.update(.devops, state: .failed(message: "Silent SSO failed"))
         }
     }
 
@@ -691,5 +733,94 @@ class AppState: ObservableObject {
         devOpsSsoUserName = nil
         authManager.update(.devops, state: .configured)
         invalidateWorkItemsCache()
+    }
+
+    // MARK: - Snipe-IT SSO Authentication
+
+    /// Phase 1: Attempt silent SSO via URLSession (cached cookies).
+    func attemptSilentSnipeSso() {
+        guard let url = config.snipeUrl, !url.isEmpty else { return }
+        dbg.info("[Snipe SSO Phase 1] Starting silent cookie check", category: "snipe-sso")
+
+        let service = SnipeSsoService(snipeUrl: url)
+        snipeSsoService = service
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result = await service.attemptSilentAuth()
+            self.snipeSsoService = nil
+
+            if result.success {
+                dbg.info("[Snipe SSO Phase 1] Silent SSO SUCCEEDED — user=\(result.userName ?? "unknown")", category: "snipe-sso")
+                self.handleSnipeSsoSuccess(cookies: result.cookies, userName: result.userName)
+            } else {
+                dbg.warn("[Snipe SSO Phase 1] Silent SSO FAILED — trying headless WKWebView (Phase 1.5)", category: "snipe-sso")
+                self.attemptHeadlessSnipeSso()
+            }
+        }
+    }
+
+    /// Phase 1.5: Attempt SSO using a hidden WKWebView.
+    func attemptHeadlessSnipeSso() {
+        guard let url = config.snipeUrl, !url.isEmpty else { return }
+        dbg.info("[Snipe SSO Phase 1.5] Starting headless WKWebView SSO", category: "snipe-sso")
+
+        let service = SnipeSsoService(snipeUrl: url)
+        snipeSsoService = service
+
+        let hiddenWindow = NSWindow(
+            contentRect: NSRect(x: -9999, y: -9999, width: 1, height: 1),
+            styleMask: [],
+            backing: .buffered,
+            defer: true
+        )
+        hiddenWindow.isReleasedWhenClosed = false
+        hiddenWindow.orderOut(nil)
+
+        let webView = service.createWebView()
+        hiddenWindow.contentView = webView
+        webView.frame = NSRect(x: 0, y: 0, width: 1, height: 1)
+
+        service.startAuthentication()
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            let deadline = Date().addingTimeInterval(40)
+            while Date() < deadline {
+                if let result = service.authResult {
+                    self.snipeSsoService = nil
+                    hiddenWindow.close()
+                    if result.success {
+                        dbg.info("[Snipe SSO Phase 1.5] Headless SSO SUCCEEDED — user=\(result.userName ?? "unknown")", category: "snipe-sso")
+                        self.handleSnipeSsoSuccess(cookies: result.cookies, userName: result.userName)
+                        return
+                    }
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+
+            self.snipeSsoService = nil
+            hiddenWindow.close()
+            dbg.warn("[Snipe SSO Phase 1.5] Headless SSO FAILED or timed out", category: "snipe-sso")
+            self.authManager.update(.snipe, state: .failed(message: "Silent SSO failed"))
+        }
+    }
+
+    func handleSnipeSsoSuccess(cookies: [HTTPCookie], userName: String?) {
+        snipeService.setSsoCookies(cookies, userName: userName)
+        snipeSsoAuthenticated = true
+        snipeAuthenticatedUserName = userName
+        authManager.update(.snipe, state: .valid(user: userName, expiry: nil))
+        invalidateAssetsCache()
+    }
+
+    func signOutSnipeSso() {
+        snipeService.clearSsoCookies()
+        snipeSsoAuthenticated = false
+        snipeAuthenticatedUserName = nil
+        authManager.update(.snipe, state: .configured)
+        invalidateAssetsCache()
     }
 }

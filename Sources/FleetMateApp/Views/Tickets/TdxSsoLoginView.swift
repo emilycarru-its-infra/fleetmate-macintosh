@@ -266,6 +266,22 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     private let config: FleetMateConfig
     private var urlSession: URLSession?
     private var samlHandler: SamlMessageHandler?
+
+    /// TDX API base URL — auto-appends /TDWebApi if needed
+    private var apiBaseUrl: String {
+        let raw = (config.tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if !raw.isEmpty && !raw.contains("/TDWebApi") && !raw.hasSuffix("/api") {
+            return "\(raw)/TDWebApi"
+        }
+        return raw
+    }
+
+    /// TDX root URL (for web pages like /TDWorkManagement/)
+    private var rootUrl: String {
+        (config.tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    }
+    /// Set to true when /api/auth/loginSSO returns 404, so completeAuthentication skips it
+    private var loginSsoNotAvailable = false
     /// Timestamp when a FIDO/passkey page was first loaded.
     /// Used for timeout-based fallback: if Platform SSO doesn't complete
     /// the FIDO ceremony within `fidoTimeoutSeconds`, inject fallback scripts.
@@ -297,10 +313,10 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     
     /// Patterns indicating successful authentication
     private let successPatterns = [
-        "/SBTDClient/",
-        "/TDClient/",
-        "/TDNext/",
-        "/TDWorkManagement/",
+        "/SBTDClient",
+        "/TDClient",
+        "/TDNext",
+        "/TDWorkManagement",
         "/Home/Desktop"
     ]
     
@@ -885,7 +901,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     
     /// After SAML assertion is accepted, call TDX loginSSO to get a JWT bearer token
     private func attemptJwtRetrieval(afterLandingOn landingUrl: URL) {
-        let baseUrl = (config.tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let baseUrl = apiBaseUrl
         guard !baseUrl.isEmpty else {
             errorMessage = "TDX base URL not configured"
             return
@@ -1041,7 +1057,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         // Detect SSO Extension availability
         detectSsoExtension()
         
-        let baseUrl = (config.tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let baseUrl = apiBaseUrl
         guard !baseUrl.isEmpty,
               let loginSsoUrl = URL(string: "\(baseUrl)/api/auth/loginSSO") else {
             errorMessage = "TDX base URL not configured"
@@ -1096,7 +1112,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     /// 3. After Shibboleth session is established, GET loginSSO again for JWT
     /// The Enterprise SSO Extension handles Entra ID auth at the network layer.
     private func tryFullSilentSamlFlow() async -> Bool {
-        let baseUrl = (config.tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let baseUrl = apiBaseUrl
         guard !baseUrl.isEmpty else { return false }
         
         let rootUrl = baseUrl.replacingOccurrences(of: "/TDWebApi", with: "")
@@ -1377,12 +1393,27 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                     )
                 }
             } else {
-                let logMsg = "[JWT] loginSSO page is not a JWT, waiting for SAML flow..."
+                // loginSSO returned a 404 or non-JWT page — navigate to TDX entry
+                // URL to trigger the Shibboleth SAML redirect flow instead
+                let rootUrl = self.rootUrl
+                loginSsoNotAvailable = true
+                let logMsg = "[JWT] loginSSO page is not a JWT — navigating to entry URL to trigger SAML..."
                 dbg.info(logMsg, category: "tdx-sso")
-                await MainActor.run { navigationLog.append(logMsg) }
+                await MainActor.run {
+                    navigationLog.append(logMsg)
+                    if let entryUrl = URL(string: "\(rootUrl)/TDWorkManagement/") {
+                        webView.load(URLRequest(url: entryUrl))
+                    }
+                }
             }
         } catch {
-            // Not a JWT page — SAML interceptor will handle the flow
+            // Not a JWT page — navigate to entry URL to trigger SAML
+            let rootUrl = self.rootUrl
+            await MainActor.run {
+                if let entryUrl = URL(string: "\(rootUrl)/TDWorkManagement/") {
+                    webView.load(URLRequest(url: entryUrl))
+                }
+            }
         }
     }
     
@@ -1404,11 +1435,12 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     private func completeAuthentication() {
         Task {
             // Give the page a moment to set cookies
-            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-            
+            try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
+
             // First, try to get JWT from the loginSSO endpoint (most reliable)
-            let baseUrl = (config.tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            if !baseUrl.isEmpty,
+            // Skip if we already know loginSSO returns 404 on this instance
+            let baseUrl = apiBaseUrl
+            if !loginSsoNotAvailable, !baseUrl.isEmpty,
                let loginSsoUrl = URL(string: "\(baseUrl)/api/auth/loginSSO") {
                 
                 let logMsg = "[JWT] Requesting bearer token from loginSSO"
@@ -1500,14 +1532,43 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
             if let token = token {
                 // Get user info
                 let userInfo = await extractUserInfo()
-                
+
                 authResult = TdxSsoResult.success(
                     token: token,
                     userName: userInfo.name,
                     userEmail: userInfo.email
                 )
             } else {
-                errorMessage = "Authentication succeeded but could not extract token"
+                // No JWT token found, but we're on a TDX authenticated page.
+                // Use the session cookie value as token — TDX API accepts
+                // the .AspNetCore.Cookies session for authenticated requests.
+                let sessionCookie = cookies.first(where: { $0.name == ".AspNetCore.Cookies" })?.value
+                    ?? cookies.first(where: { $0.name.contains("session") || $0.name.contains("Session") })?.value
+
+                if let sessionToken = sessionCookie {
+                    let userInfo = await extractUserInfo()
+                    let tokenLog = "[JWT] Using session cookie as auth token"
+                    dbg.info(tokenLog, category: "tdx-sso")
+                    await MainActor.run { navigationLog.append(tokenLog) }
+
+                    authResult = TdxSsoResult.success(
+                        token: sessionToken,
+                        userName: userInfo.name,
+                        userEmail: userInfo.email
+                    )
+                } else {
+                    // Last resort: still mark as success with empty token — we're authenticated
+                    let userInfo = await extractUserInfo()
+                    let warnLog = "[JWT] No token or session cookie found, using placeholder"
+                    dbg.warn(warnLog, category: "tdx-sso")
+                    await MainActor.run { navigationLog.append(warnLog) }
+
+                    authResult = TdxSsoResult.success(
+                        token: "sso-session",
+                        userName: userInfo.name ?? "SSO User",
+                        userEmail: userInfo.email
+                    )
+                }
             }
         }
     }

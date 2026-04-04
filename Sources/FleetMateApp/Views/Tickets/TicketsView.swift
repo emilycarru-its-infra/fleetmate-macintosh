@@ -138,6 +138,12 @@ struct TicketsView: View {
     @State private var showFilters = false
     @State private var allForms: [(id: Int, name: String)] = []
 
+    // Column widths
+    @State private var columnWidths: [TicketSortField: CGFloat] = [
+        .id: 100, .title: 250, .status: 110, .priority: 90,
+        .requestor: 130, .responsible: 130, .modified: 120, .created: 120,
+    ]
+
     // Comment state
     @State private var newComment = ""
     @State private var isCommentPrivate = false
@@ -695,30 +701,30 @@ struct TicketsView: View {
 
     private var ticketsTableView: some View {
         GeometryReader { geometry in
-            let sidebarW = min(geometry.size.width * 0.4, 420.0)
-            let contentW = selectedTicket != nil ? geometry.size.width - sidebarW - 1 : geometry.size.width
+            let hasSidebar = selectedTicket != nil
+            let sidebarW: CGFloat = 700
+            let contentW: CGFloat = hasSidebar ? geometry.size.width - sidebarW - 1 : geometry.size.width
             HStack(spacing: 0) {
                 ticketTableContent
                     .frame(width: contentW)
                     .clipped()
-                if selectedTicket != nil {
+                if hasSidebar {
                     Divider()
                     detailSidebarView
                         .frame(width: sidebarW)
-                        .clipped()
                 }
             }
         }
     }
 
-    // MARK: - Board + Detail (60/40)
+    // MARK: - Board + Detail
 
     private var ticketsBoardView: some View {
         GeometryReader { geometry in
-            let sidebarW = min(geometry.size.width * 0.4, 420.0)
-            let contentW = selectedTicket != nil && showBoardDetail
-                ? geometry.size.width - sidebarW - 8
-                : geometry.size.width
+            let hasSidebar = selectedTicket != nil && showBoardDetail
+            let sidebarW: CGFloat = 700
+            let dividerW: CGFloat = selectedTicket != nil ? 8 : 0
+            let contentW: CGFloat = hasSidebar ? geometry.size.width - sidebarW - dividerW : geometry.size.width - dividerW
             HStack(spacing: 0) {
                 ticketBoardContent
                     .frame(width: contentW)
@@ -730,7 +736,6 @@ struct TicketsView: View {
                     if showBoardDetail {
                         detailSidebarView
                             .frame(width: sidebarW)
-                            .clipped()
                     }
                 }
             }
@@ -762,67 +767,128 @@ struct TicketsView: View {
         )
     }
 
+    /// Column definitions for the ticket table
+    private var ticketColumns: [(title: String, field: TicketSortField)] {
+        [
+            ("ID", .id), ("Title", .title), ("Status", .status), ("Priority", .priority),
+            ("Requestor", .requestor), ("Responsible", .responsible),
+            ("Modified", .modified), ("Created", .created),
+        ]
+    }
+
+    private func colW(_ field: TicketSortField) -> CGFloat {
+        columnWidths[field] ?? 100
+    }
+
     private var ticketTableContent: some View {
-        VStack(spacing: 0) {
-            // Sortable column headers
-            HStack(spacing: 0) {
-                sortableColumnHeader("ID", field: .id, width: 100)
-                sortableColumnHeader("Title", field: .title, width: nil)
-                sortableColumnHeader("Status", field: .status, width: 110)
-                sortableColumnHeader("Priority", field: .priority, width: 90)
-                sortableColumnHeader("Requestor", field: .requestor, width: 130)
-                sortableColumnHeader("Responsible", field: .responsible, width: 130)
-                sortableColumnHeader("Modified", field: .modified, width: 120)
-                sortableColumnHeader("Created", field: .created, width: 120)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(Color.secondary.opacity(0.08))
-            
-            Divider()
-            
-            // Ticket rows
-            List(filteredTickets, id: \.id, selection: $selectedTicketIds) { ticket in
-                HStack(spacing: 0) {
-                    Text(verbatim: "#\(ticket.id ?? 0)")
-                        .font(.system(.body, design: .monospaced))
-                        .frame(width: 100, alignment: .leading)
-                        .textSelection(.enabled)
-                    Text(ticket.title ?? "-")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .lineLimit(1)
-                        .textSelection(.enabled)
-                    TicketStatusBadge(statusName: ticket.statusName)
-                        .frame(width: 110, alignment: .leading)
-                    Text(ticket.priorityName ?? "-")
-                        .frame(width: 90, alignment: .leading)
-                        .textSelection(.enabled)
-                    Text(ticket.requestorName ?? "-")
-                        .frame(width: 130, alignment: .leading)
-                        .lineLimit(1)
-                        .textSelection(.enabled)
-                    Text(ticket.responsibleFullName ?? "-")
-                        .frame(width: 130, alignment: .leading)
-                        .lineLimit(1)
-                        .textSelection(.enabled)
-                    Text(formatDateString(ticket.modifiedDate))
-                        .frame(width: 120, alignment: .leading)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(formatDateString(ticket.createdDate))
-                        .frame(width: 120, alignment: .leading)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+        GeometryReader { geo in
+            let totalW = ticketColumns.reduce(CGFloat(0)) { $0 + colW($1.field) }
+            let minW = max(totalW, geo.size.width)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    // Sortable column headers with resize handles
+                    HStack(spacing: 0) {
+                        ForEach(ticketColumns, id: \.field) { col in
+                            HStack(spacing: 0) {
+                                sortableColumnHeader(col.title, field: col.field, width: colW(col.field))
+                                TicketColumnResizeHandle(field: col.field, columnWidths: $columnWidths)
+                            }
+                            .frame(width: colW(col.field))
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .frame(minWidth: minW)
+                    .padding(.leading, 8)
+                    .padding(.vertical, 6)
+                    .background(Color.secondary.opacity(0.08))
+
+                    Divider()
+
+                    // Ticket rows
+                    ScrollView(.vertical, showsIndicators: true) {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(filteredTickets.enumerated()), id: \.element.id) { idx, ticket in
+                                HStack(spacing: 0) {
+                                    Text(verbatim: "#\(ticket.id ?? 0)")
+                                        .font(.system(.body, design: .monospaced))
+                                        .frame(width: colW(.id) - 12, alignment: .leading)
+                                        .padding(.leading, 10).padding(.trailing, 2)
+                                        .textSelection(.enabled)
+                                    Text(ticket.title ?? "-")
+                                        .frame(width: colW(.title) - 12, alignment: .leading)
+                                        .padding(.leading, 10).padding(.trailing, 2)
+                                        .lineLimit(1)
+                                        .textSelection(.enabled)
+                                    TicketStatusBadge(statusName: ticket.statusName)
+                                        .frame(width: colW(.status) - 12, alignment: .leading)
+                                        .padding(.leading, 10).padding(.trailing, 2)
+                                    Text(ticket.priorityName ?? "-")
+                                        .frame(width: colW(.priority) - 12, alignment: .leading)
+                                        .padding(.leading, 10).padding(.trailing, 2)
+                                        .textSelection(.enabled)
+                                    Text(ticket.requestorName ?? "-")
+                                        .frame(width: colW(.requestor) - 12, alignment: .leading)
+                                        .padding(.leading, 10).padding(.trailing, 2)
+                                        .lineLimit(1)
+                                        .textSelection(.enabled)
+                                    Text(ticket.responsibleFullName ?? "-")
+                                        .frame(width: colW(.responsible) - 12, alignment: .leading)
+                                        .padding(.leading, 10).padding(.trailing, 2)
+                                        .lineLimit(1)
+                                        .textSelection(.enabled)
+                                    Text(formatDateString(ticket.modifiedDate))
+                                        .frame(width: colW(.modified) - 12, alignment: .leading)
+                                        .padding(.leading, 10).padding(.trailing, 2)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    Text(formatDateString(ticket.createdDate))
+                                        .frame(width: colW(.created) - 12, alignment: .leading)
+                                        .padding(.leading, 10).padding(.trailing, 2)
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                    Spacer(minLength: 0)
+                                }
+                                .frame(minWidth: minW)
+                                .padding(.vertical, 4)
+                                .background(
+                                    selectedTicket?.id == ticket.id
+                                        ? Color.accentColor.opacity(0.2)
+                                        : (idx % 2 == 1 ? Color.secondary.opacity(0.04) : Color.clear)
+                                )
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    if let id = ticket.id {
+                                        selectedTicketIds = [id]
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
             }
-            .listStyle(.plain)
+            .focusable()
+            .onKeyPress(.upArrow) { moveTicketSelection(by: -1); return .handled }
+            .onKeyPress(.downArrow) { moveTicketSelection(by: 1); return .handled }
+        }
+    }
+
+    private func moveTicketSelection(by offset: Int) {
+        let list = filteredTickets
+        guard !list.isEmpty else { return }
+        guard let currentId = selectedTicketIds.first ?? nil,
+              let currentIndex = list.firstIndex(where: { $0.id == currentId }) else {
+            if let firstId = list.first?.id { selectedTicketIds = [firstId] }
+            return
+        }
+        let newIndex = min(max(currentIndex + offset, 0), list.count - 1)
+        if let newId = list[newIndex].id {
+            selectedTicketIds = [newId]
         }
     }
 
     /// Build a clickable sortable column header
-    private func sortableColumnHeader(_ title: String, field: TicketSortField, width: CGFloat?) -> some View {
+    private func sortableColumnHeader(_ title: String, field: TicketSortField, width: CGFloat) -> some View {
         Button(action: { toggleSort(field) }) {
             HStack(spacing: 4) {
                 Text(title)
@@ -833,11 +899,13 @@ struct TicketsView: View {
                         .font(.caption2)
                         .foregroundColor(.accentColor)
                 }
+                Spacer(minLength: 0)
             }
+            .frame(width: width - 12, alignment: .leading)
+            .padding(.leading, 10)
+            .padding(.trailing, 2)
         }
         .buttonStyle(.plain)
-        .frame(width: width, alignment: .leading)
-        .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
     }
 
     /// Toggle sort on a column
@@ -2275,27 +2343,23 @@ struct ViewModePill: View {
     var body: some View {
         HStack(spacing: 0) {
             ForEach([TicketViewMode.table, .board], id: \.self) { mode in
-                Button {
-                    withAnimation(.smooth(duration: 0.2)) {
-                        selection = mode
-                    }
-                } label: {
-                    Text(mode == .table ? "List" : "Board")
-                        .font(.system(size: 12, weight: selection == mode ? .semibold : .regular))
-                        .foregroundStyle(selection == mode ? .primary : .secondary)
-                        .frame(width: 60)
-                        .padding(.vertical, 5)
-                        .contentShape(Capsule())
-                        .background {
-                            if selection == mode {
-                                Capsule()
-                                    .fill(.primary.opacity(0.12))
-                                    .matchedGeometryEffect(id: "pill", in: pillNS)
-                            }
+                Text(mode == .table ? "List" : "Board")
+                    .font(.system(size: 12, weight: selection == mode ? .semibold : .regular))
+                    .foregroundStyle(selection == mode ? .primary : .secondary)
+                    .frame(width: 56, height: 24)
+                    .background {
+                        if selection == mode {
+                            Capsule()
+                                .fill(.primary.opacity(0.15))
+                                .matchedGeometryEffect(id: "pill", in: pillNS)
                         }
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.smooth(duration: 0.2)) {
+                            selection = mode
+                        }
+                    }
             }
         }
         .padding(3)
@@ -2332,6 +2396,46 @@ struct BoardSidebarDivider: View {
                 isExpanded.toggle()
             }
         }
+    }
+}
+
+// MARK: - Column Resize Handle
+
+struct TicketColumnResizeHandle: View {
+    let field: TicketSortField
+    @Binding var columnWidths: [TicketSortField: CGFloat]
+    @State private var isHovering = false
+    @State private var isDragging = false
+    @State private var startWidth: CGFloat = 0
+
+    var body: some View {
+        Rectangle()
+            .fill(isDragging ? Color.accentColor : Color.secondary.opacity(isHovering ? 0.5 : 0.25))
+            .frame(width: isDragging ? 2 : 1)
+            .frame(maxHeight: .infinity)
+            .padding(.horizontal, 4.5)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged { _ in
+                        if !isDragging {
+                            isDragging = true
+                            startWidth = columnWidths[field] ?? 100
+                        }
+                    }
+                    .onEnded { value in
+                        let newWidth = max(40, startWidth + value.translation.width)
+                        columnWidths[field] = newWidth
+                        isDragging = false
+                        startWidth = 0
+                    }
+            )
+            .onHover { inside in
+                isHovering = inside
+                if inside { NSCursor.resizeLeftRight.push() }
+                else { NSCursor.pop() }
+            }
+            .frame(width: 10)
     }
 }
 

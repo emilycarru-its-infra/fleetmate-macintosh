@@ -4,6 +4,24 @@ import FleetMateCore
 /// Authentication settings tab — PSSO-style per-system cards with full credential detail.
 struct AuthSettingsView: View {
     @EnvironmentObject var appState: AppState
+    @State private var editingSystem: AuthSystemId?
+
+    // Editable fields (populated when editing starts)
+    @State private var editGraphTenantId = ""
+    @State private var editDevicesGraphId = ""
+    @State private var editDevicesGraphSecret = ""
+    @State private var editSystemsGraphId = ""
+    @State private var editSystemsGraphSecret = ""
+    @State private var editSnipeUrl = ""
+    @State private var editSnipeApiKey = ""
+    @State private var editTdxBaseUrl = ""
+    @State private var editTdxAppId = ""
+    @State private var editTdxBeid = ""
+    @State private var editTdxWebServicesKey = ""
+    @State private var editDevopsOrg = ""
+    @State private var editDevopsProject = ""
+    @State private var editDevopsClientId = ""
+    @State private var editDevopsTenantId = ""
 
     var body: some View {
         ScrollView {
@@ -32,6 +50,11 @@ struct AuthSettingsView: View {
                 .padding(.top, 8)
             }
             .padding(20)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .editAuthSystem)) { notification in
+            if let systemId = notification.object as? AuthSystemId {
+                startEditing(systemId)
+            }
         }
     }
 
@@ -97,6 +120,12 @@ struct AuthSettingsView: View {
 
                 // System-specific detail rows
                 systemDetail(for: system)
+
+                // Inline edit form
+                if editingSystem == system.systemId {
+                    Divider().padding(.vertical, 4)
+                    inlineEditForm(for: system.systemId)
+                }
             }
         }
         .padding(14)
@@ -145,14 +174,21 @@ struct AuthSettingsView: View {
 
         case .snipe:
             detailGrid {
-                detailRow("Auth method", "API key (Bearer token)")
+                let isSso = cfg.snipeSsoEnabled || cfg.snipeAuthMethod == .browserSSO
+                detailRow("Auth method", isSso ? "Platform SSO (Browser)" : "API key (Bearer token)")
                 if let url = cfg.snipeUrl {
                     detailRow("Instance URL", url)
                 }
-                if let key = cfg.snipeApiKey {
-                    detailRow("API key", maskedToken(key))
+                if isSso {
+                    if let user = appState.snipeSsoAuthenticated ? appState.snipeAuthenticatedUserName : system.user {
+                        detailRow("SSO signed in as", user, .green)
+                    }
                 } else {
-                    detailRow("API key", "missing", .red)
+                    if let key = cfg.snipeApiKey {
+                        detailRow("API key", maskedToken(key))
+                    } else {
+                        detailRow("API key", "missing", .red)
+                    }
                 }
                 checkedRow(system.lastChecked)
             }
@@ -313,41 +349,73 @@ struct AuthSettingsView: View {
 
     @ViewBuilder
     private func actionButtons(for system: AuthSystemStatus) -> some View {
-        switch system.systemId {
-        case .tdx:
-            if case .valid = system.state {
-                Button("Sign Out") { appState.signOutTdxSso() }
-                    .controlSize(.small)
-            } else {
-                Button("Sign In") { appState.triggerTdxSsoLogin() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-            }
-
-        case .devops:
-            if case .valid = system.state {
-                Button("Sign Out") { appState.signOutDevOpsSso() }
-                    .controlSize(.small)
-            } else {
-                Button("Sign In") {
-                    appState.triggerDevOpsSsoLogin()
+        HStack(spacing: 6) {
+            // Edit button for systems with editable credentials
+            if [.graph, .intune, .snipe, .tdx, .devops].contains(system.systemId) {
+                Button {
+                    if editingSystem == system.systemId {
+                        editingSystem = nil
+                    } else {
+                        startEditing(system.systemId)
+                    }
+                } label: {
+                    Image(systemName: editingSystem == system.systemId ? "xmark" : "pencil")
                 }
-                .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .help(editingSystem == system.systemId ? "Cancel editing" : "Edit credentials")
             }
 
-        case .github:
-            if case .valid = system.state {
+            // SSO / auth action buttons
+            switch system.systemId {
+            case .snipe:
+                if case .valid = system.state {
+                    Button("Sign Out") { appState.signOutSnipeSso() }
+                        .controlSize(.small)
+                } else if case .authenticating = system.state {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Retry SSO") { appState.attemptSilentSnipeSso() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                }
+
+            case .tdx:
+                if case .valid = system.state {
+                    Button("Sign Out") { appState.signOutTdxSso() }
+                        .controlSize(.small)
+                } else if case .authenticating = system.state {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Retry SSO") { appState.attemptSilentTdxSso() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                }
+
+            case .devops:
+                if case .valid = system.state {
+                    Button("Sign Out") { appState.signOutDevOpsSso() }
+                        .controlSize(.small)
+                } else if case .authenticating = system.state {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Retry SSO") { appState.attemptSilentDevOpsSso() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                }
+
+            case .github:
+                if case .valid = system.state {
+                    EmptyView()
+                } else {
+                    Text("gh auth login")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .fontDesign(.monospaced)
+                }
+
+            default:
                 EmptyView()
-            } else {
-                Text("gh auth login")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .fontDesign(.monospaced)
             }
-
-        case .graph, .intune, .entra, .snipe, .gitea:
-            EmptyView()
         }
     }
 
@@ -369,6 +437,131 @@ struct AuthSettingsView: View {
         colorForState(state).opacity(0.3)
     }
 
+    // MARK: - Inline Edit
+
+    private func startEditing(_ systemId: AuthSystemId) {
+        let c = appState.config
+        switch systemId {
+        case .graph:
+            editGraphTenantId = c.graphTenantId ?? ""
+            editDevicesGraphId = c.devicesGraphId ?? ""
+            editDevicesGraphSecret = c.devicesGraphSecret ?? ""
+            editSystemsGraphId = c.systemsGraphId ?? ""
+            editSystemsGraphSecret = c.systemsGraphSecret ?? ""
+        case .snipe:
+            editSnipeUrl = c.snipeUrl ?? ""
+            editSnipeApiKey = c.snipeApiKey ?? ""
+        case .tdx:
+            editTdxBaseUrl = c.tdxBaseUrl ?? ""
+            editTdxAppId = (c.tdxTicketingAppId ?? c.tdxAppId).map(String.init) ?? ""
+            editTdxBeid = c.tdxBeid ?? ""
+            editTdxWebServicesKey = c.tdxWebServicesKey ?? ""
+        case .devops:
+            editDevopsOrg = c.devopsOrganization ?? ""
+            editDevopsProject = c.devopsProject ?? ""
+            editDevopsClientId = c.devopsClientId ?? ""
+            editDevopsTenantId = c.devopsTenantId ?? ""
+        default: break
+        }
+        editingSystem = systemId
+    }
+
+    @ViewBuilder
+    private func inlineEditForm(for systemId: AuthSystemId) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch systemId {
+            case .graph:
+                editField("Tenant ID", text: $editGraphTenantId)
+                editField("Devices Client ID", text: $editDevicesGraphId)
+                editSecureField("Devices Client Secret", text: $editDevicesGraphSecret)
+                editField("Systems Client ID", text: $editSystemsGraphId)
+                editSecureField("Systems Client Secret", text: $editSystemsGraphSecret)
+
+            case .snipe:
+                editField("Instance URL", text: $editSnipeUrl)
+                editSecureField("API Key", text: $editSnipeApiKey)
+
+            case .tdx:
+                editField("Base URL", text: $editTdxBaseUrl)
+                editField("Ticketing App ID", text: $editTdxAppId)
+                editSecureField("BEID", text: $editTdxBeid)
+                editSecureField("Web Services Key", text: $editTdxWebServicesKey)
+
+            case .devops:
+                editField("Organization", text: $editDevopsOrg)
+                editField("Project", text: $editDevopsProject)
+                editField("OAuth Client ID", text: $editDevopsClientId)
+                editField("Tenant ID", text: $editDevopsTenantId)
+
+            default:
+                EmptyView()
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { editingSystem = nil }
+                    .controlSize(.small)
+                Button("Save") { saveEdit(systemId) }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private func editField(_ label: String, text: Binding<String>) -> some View {
+        HStack(spacing: 0) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(Color(NSColor.tertiaryLabelColor))
+                .frame(width: 130, alignment: .leading)
+            TextField("", text: text)
+                .textFieldStyle(.roundedBorder)
+                .font(.caption)
+        }
+    }
+
+    private func editSecureField(_ label: String, text: Binding<String>) -> some View {
+        HStack(spacing: 0) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(Color(NSColor.tertiaryLabelColor))
+                .frame(width: 130, alignment: .leading)
+            SecureField("", text: text)
+                .textFieldStyle(.roundedBorder)
+                .font(.caption)
+        }
+    }
+
+    private func saveEdit(_ systemId: AuthSystemId) {
+        var c = appState.config
+        switch systemId {
+        case .graph:
+            c.graphTenantId = editGraphTenantId.nilIfEmpty
+            c.devicesGraphId = editDevicesGraphId.nilIfEmpty
+            c.devicesGraphSecret = editDevicesGraphSecret.nilIfEmpty
+            c.systemsGraphId = editSystemsGraphId.nilIfEmpty
+            c.systemsGraphSecret = editSystemsGraphSecret.nilIfEmpty
+        case .snipe:
+            c.snipeUrl = editSnipeUrl.nilIfEmpty?.ensureHttps
+            c.snipeApiKey = editSnipeApiKey.nilIfEmpty
+        case .tdx:
+            c.tdxBaseUrl = editTdxBaseUrl.nilIfEmpty?.ensureHttps
+            c.tdxAppId = Int(editTdxAppId)
+            c.tdxTicketingAppId = Int(editTdxAppId)
+            c.tdxBeid = editTdxBeid.nilIfEmpty
+            c.tdxWebServicesKey = editTdxWebServicesKey.nilIfEmpty
+        case .devops:
+            c.devopsOrganization = editDevopsOrg.nilIfEmpty
+            c.devopsProject = editDevopsProject.nilIfEmpty
+            c.devopsClientId = editDevopsClientId.nilIfEmpty
+            c.devopsTenantId = editDevopsTenantId.nilIfEmpty
+        default: break
+        }
+        appState.saveConfig(c)
+        editingSystem = nil
+    }
+
     // MARK: - Refresh All
 
     private func refreshAll() {
@@ -380,5 +573,15 @@ struct AuthSettingsView: View {
                 devOpsService: appState.devOpsService
             )
         }
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+
+    var ensureHttps: String {
+        let trimmed = trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("https://") || trimmed.hasPrefix("http://") { return trimmed }
+        return "https://\(trimmed)"
     }
 }

@@ -182,12 +182,34 @@ release-app:
 	sips -z 512 512   "$(APP_ICON_PNG)" --out "$$ICONSET_DIR/icon_256x256@2x.png" > /dev/null 2>&1; \
 	sips -z 512 512   "$(APP_ICON_PNG)" --out "$$ICONSET_DIR/icon_512x512.png"    > /dev/null 2>&1; \
 	sips -z 1024 1024 "$(APP_ICON_PNG)" --out "$$ICONSET_DIR/icon_512x512@2x.png" > /dev/null 2>&1; \
-	iconutil -c icns "$$ICONSET_DIR" -o "$(APP_BUNDLE)/Contents/Resources/AppIcon.icns"; \
-	rm -rf "$$(dirname $$ICONSET_DIR)"; \
-	echo "$(BLUE)Copying .icon for macOS 26+ dark mode support...$(NC)"; \
 	if [ -d "build/resources/FleetMate.icon" ]; then \
-		cp -R "build/resources/FleetMate.icon" "$(APP_BUNDLE)/Contents/Resources/AppIcon.icon"; \
-	fi
+		echo "$(BLUE)Compiling .icon with actool (Liquid Glass + dark mode)...$(NC)"; \
+		ACTOOL_OUT=$$(mktemp -d); \
+		xcrun actool \
+			--compile "$$ACTOOL_OUT" \
+			--platform macosx \
+			--minimum-deployment-target 14.0 \
+			--app-icon "FleetMate" \
+			--output-partial-info-plist "$$ACTOOL_OUT/partial-info.plist" \
+			--warnings --errors \
+			"build/resources/FleetMate.icon" 2>&1 || true; \
+		if [ -f "$$ACTOOL_OUT/Assets.car" ]; then \
+			cp "$$ACTOOL_OUT/Assets.car" "$(APP_BUNDLE)/Contents/Resources/Assets.car"; \
+			echo "$(GREEN)✓ Icon compiled: Assets.car (Liquid Glass)$(NC)"; \
+		fi; \
+		if [ -f "$$ACTOOL_OUT/FleetMate.icns" ]; then \
+			cp "$$ACTOOL_OUT/FleetMate.icns" "$(APP_BUNDLE)/Contents/Resources/AppIcon.icns"; \
+			echo "$(GREEN)✓ Icon compiled: FleetMate.icns (legacy fallback)$(NC)"; \
+		else \
+			iconutil -c icns "$$ICONSET_DIR" -o "$(APP_BUNDLE)/Contents/Resources/AppIcon.icns"; \
+			echo "$(GREEN)✓ Icon generated: AppIcon.icns (from PNG)$(NC)"; \
+		fi; \
+		rm -rf "$$ACTOOL_OUT"; \
+	else \
+		iconutil -c icns "$$ICONSET_DIR" -o "$(APP_BUNDLE)/Contents/Resources/AppIcon.icns"; \
+		echo "$(GREEN)✓ Icon generated: AppIcon.icns (from PNG)$(NC)"; \
+	fi; \
+	rm -rf "$$(dirname $$ICONSET_DIR)"
 	@echo "$(GREEN)✓ App bundle assembled: $(APP_BUNDLE)$(NC)"
 
 # Sign the .app bundle

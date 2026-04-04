@@ -91,52 +91,23 @@ struct DevicesView: View {
                         }
                     }
                     Spacer()
-
-                    Button(action: { showFilters.toggle() }) {
-                        Image(systemName: filters.hasActiveFilters
-                            ? "line.3.horizontal.decrease.circle.fill"
-                            : "line.3.horizontal.decrease.circle")
-                    }
-                    .help("Filters")
-                    .popover(isPresented: $showFilters, arrowEdge: .bottom) {
-                        FilterPanelView(filters: filters)
-                    }
-
-                    if filters.hasActiveFilters {
-                        Button(action: { filters.clearAll() }) {
-                            Image(systemName: "xmark.circle")
-                        }
-                        .help("Clear filters")
-                    }
-
-                    Button(action: loadDevices) {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(isLoading)
                 }
                 .padding()
 
-                // Search & Select All
+                // Selection controls
                 HStack {
-                    HStack {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.secondary)
-                        TextField("Search devices...", text: $searchText)
-                            .textFieldStyle(.plain)
+                    if !selectedDeviceIds.isEmpty || !filteredDevices.isEmpty {
+                        Button("Select All") { selectAllVisible() }
+                            .disabled(filteredDevices.isEmpty)
+                            .controlSize(.small)
+                        Button("Clear") { selectedDeviceIds.removeAll() }
+                            .disabled(selectedDeviceIds.isEmpty)
+                            .controlSize(.small)
                     }
-                    .padding(8)
-                    .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(8)
-                    
-                    Button(action: selectAllVisible) {
-                        Text("Select All")
-                    }
-                    .disabled(filteredDevices.isEmpty)
-                    
-                    Button(action: { selectedDeviceIds.removeAll() }) {
-                        Text("Clear")
-                    }
-                    .disabled(selectedDeviceIds.isEmpty)
+                    Spacer()
+                    Text("\(filteredDevices.count) of \(devices.count)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
                 .padding(.horizontal)
 
@@ -266,8 +237,38 @@ struct DevicesView: View {
         } message: {
             Text("Are you sure you want to lock \(selectedDeviceIds.count) device(s)?")
         }
+        .searchable(text: $searchText, prompt: "Search devices...")
+        .toolbar { devicesToolbar }
     }
-    
+
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var devicesToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .automatic) {
+            Button(action: { showFilters.toggle() }) {
+                Label("Filters", systemImage: filters.hasActiveFilters
+                    ? "line.3.horizontal.decrease.circle.fill"
+                    : "line.3.horizontal.decrease.circle")
+            }
+            .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+                FilterPanelView(filters: filters)
+            }
+
+            if filters.hasActiveFilters {
+                Button(action: { filters.clearAll() }) {
+                    Label("Clear Filters", systemImage: "xmark.circle")
+                }
+            }
+
+            Button(action: loadDevices) {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .disabled(isLoading)
+            .keyboardShortcut("r", modifiers: .command)
+        }
+    }
+
     private func selectAllVisible() {
         for device in filteredDevices {
             selectedDeviceIds.insert(device.id)

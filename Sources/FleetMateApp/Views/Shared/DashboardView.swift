@@ -127,20 +127,16 @@ struct DashboardView: View {
             }
         }
         .frame(maxHeight: .infinity)
+        .toolbar { dashboardToolbar }
         .task { await loadAllSections() }
-        .onChange(of: appState.cachedDevices.count) { _, _ in Task { await loadFleetHealth(); buildActivityFeed() } }
-        .onChange(of: appState.cachedAssets.count) { _, _ in Task { await loadInventory(); buildActivityFeed() } }
-        .onChange(of: appState.cachedTickets.count) { _, _ in Task { await loadTicketsWork(); buildActivityFeed() } }
-        .onChange(of: appState.cachedWorkItems.count) { _, _ in Task { await loadTicketsWork(); buildActivityFeed() } }
-        .onChange(of: appState.showOnboardingWizard) { _, showing in
-            if !showing { Task { await loadAllSections() } }
-        }
-        .onChange(of: appState.snipeSsoAuthenticated) { _, authenticated in
-            if authenticated { Task { await loadInventory(); buildActivityFeed() } }
-        }
-        .onChange(of: appState.secretsConfigured) { _, _ in
-            Task { await loadAllSections() }
-        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in }
+        .onChange(of: appState.cachedDevices.count) { _, _ in refreshSection(.devices) }
+        .onChange(of: appState.cachedAssets.count) { _, _ in refreshSection(.assets) }
+        .onChange(of: appState.cachedTickets.count) { _, _ in refreshSection(.tickets) }
+        .onChange(of: appState.cachedWorkItems.count) { _, _ in refreshSection(.tickets) }
+        .onChange(of: appState.showOnboardingWizard) { _, s in if !s { refreshSection(.all) } }
+        .onChange(of: appState.snipeSsoAuthenticated) { _, a in if a { refreshSection(.assets) } }
+        .onChange(of: appState.secretsConfigured) { _, _ in refreshSection(.all) }
     }
 
     // MARK: - Split Layout (draggable)
@@ -183,6 +179,42 @@ struct DashboardView: View {
         appState.navigateToTab = tab
     }
 
+    private enum RefreshSection { case all, devices, assets, tickets }
+
+    private func refreshSection(_ section: RefreshSection) {
+        Task {
+            switch section {
+            case .all:     await loadAllSections()
+            case .devices: await loadFleetHealth(); buildActivityFeed()
+            case .assets:  await loadInventory(); buildActivityFeed()
+            case .tickets: await loadTicketsWork(); buildActivityFeed()
+            }
+        }
+    }
+
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var dashboardToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .automatic) {
+            Button(action: { Task { await refreshAll() } }) {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .disabled(isAnyLoading)
+            .keyboardShortcut("r", modifiers: .command)
+
+            Button(action: { showAuthPopover.toggle() }) {
+                Label("Authentication", systemImage: "lock.shield")
+            }
+            .popover(isPresented: $showAuthPopover, arrowEdge: .bottom) {
+                AuthSettingsView()
+                    .environmentObject(appState)
+                    .frame(width: 480)
+                    .frame(minHeight: 300, idealHeight: 560, maxHeight: 640)
+            }
+        }
+    }
+
     // MARK: - Header
 
     private var headerSection: some View {
@@ -195,20 +227,7 @@ struct DashboardView: View {
             }
             Spacer()
             if isAnyLoading {
-                ProgressView().controlSize(.small).padding(.trailing, 4)
-            }
-            Button(action: { Task { await refreshAll() } }) {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .disabled(isAnyLoading)
-            Button(action: { showAuthPopover.toggle() }) {
-                Label("Authentication", systemImage: "lock.shield")
-            }
-            .popover(isPresented: $showAuthPopover, arrowEdge: .bottom) {
-                AuthSettingsView()
-                    .environmentObject(appState)
-                    .frame(width: 480)
-                    .frame(minHeight: 300, idealHeight: 560, maxHeight: 640)
+                ProgressView().controlSize(.small)
             }
         }
     }

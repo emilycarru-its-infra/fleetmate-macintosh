@@ -147,97 +147,20 @@ struct AssetsView: View {
             }
             .padding()
 
-            // Search + filters + refresh — all in one scrollable row
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    // Search box
-                    HStack(spacing: 4) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.secondary)
-                        TextField("Search...", text: $searchText)
-                            .textFieldStyle(.plain)
-                            .frame(minWidth: 160)
-                        if !searchText.isEmpty {
-                            Button(action: { searchText = "" }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundColor(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(8)
-                    .frame(minWidth: 200, maxWidth: 280)
-
-                    if !assets.isEmpty {
-                        Text("\(filteredAssets.count)/\(assets.count)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .fixedSize()
-                    }
-
-                    Divider().frame(height: 22)
-
-                    // Filter button + popover
-                    Button(action: { showFilters.toggle() }) {
-                        Image(systemName: filters.hasActiveFilters
-                            ? "line.3.horizontal.decrease.circle.fill"
-                            : "line.3.horizontal.decrease.circle")
-                    }
-                    .help("Filters")
-                    .popover(isPresented: $showFilters, arrowEdge: .bottom) {
-                        FilterPanelView(filters: filters)
-                    }
-
+            // Inline count display
+            if !assets.isEmpty {
+                HStack {
+                    Text("\(filteredAssets.count) of \(assets.count) assets")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                     if filters.hasActiveFilters {
-                        Button(action: { filters.clearAll() }) {
-                            Image(systemName: "xmark.circle")
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.yellow)
-                        .controlSize(.small)
-                        .help("Clear all filters")
+                        Text("(filtered)")
+                            .font(.caption)
+                            .foregroundColor(.accentColor)
                     }
-
-                    Divider().frame(height: 22)
-
-                    Button(action: { loadAllAssets() }) {
-                        Image(systemName: isLoading ? "arrow.clockwise" : "arrow.clockwise")
-                            .rotationEffect(isLoading ? .degrees(360) : .zero)
-                    }
-                    .disabled(isLoading)
-                    .help("Refresh")
-
-                    Divider().frame(height: 22)
-
-                    Button(action: { showColumnPicker.toggle() }) {
-                        Image(systemName: "tablecells.badge.ellipsis")
-                    }
-                    .help("Show/Hide Columns")
-                    .popover(isPresented: $showColumnPicker, arrowEdge: .bottom) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Columns")
-                                .font(.headline)
-                                .padding(.bottom, 4)
-                            ForEach(AssetSortField.allCases, id: \.self) { field in
-                                Toggle(field.rawValue, isOn: Binding(
-                                    get: { visibleColumns.contains(field) },
-                                    set: { on in
-                                        if on { visibleColumns.insert(field) }
-                                        else if visibleColumns.count > 1 { visibleColumns.remove(field) }
-                                    }
-                                ))
-                                .toggleStyle(.checkbox)
-                            }
-                        }
-                        .padding()
-                        .frame(minWidth: 180)
-                    }
+                    Spacer()
                 }
                 .padding(.horizontal)
-                .padding(.vertical, 6)
             }
 
             // Content
@@ -324,6 +247,59 @@ struct AssetsView: View {
                         loadAllAssets()
                     }
                 )
+            }
+        }
+        .searchable(text: $searchText, prompt: "Search assets...")
+        .toolbar { inventoryToolbar }
+    }
+
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var inventoryToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .automatic) {
+            Button(action: { showFilters.toggle() }) {
+                Label("Filters", systemImage: filters.hasActiveFilters
+                    ? "line.3.horizontal.decrease.circle.fill"
+                    : "line.3.horizontal.decrease.circle")
+            }
+            .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+                FilterPanelView(filters: filters)
+            }
+
+            if filters.hasActiveFilters {
+                Button(action: { filters.clearAll() }) {
+                    Label("Clear Filters", systemImage: "xmark.circle")
+                }
+            }
+
+            Button(action: { loadAllAssets() }) {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .disabled(isLoading)
+            .keyboardShortcut("r", modifiers: .command)
+
+            Button(action: { showColumnPicker.toggle() }) {
+                Label("Columns", systemImage: "tablecells.badge.ellipsis")
+            }
+            .popover(isPresented: $showColumnPicker, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Columns")
+                        .font(.headline)
+                        .padding(.bottom, 4)
+                    ForEach(AssetSortField.allCases, id: \.self) { field in
+                        Toggle(field.rawValue, isOn: Binding(
+                            get: { visibleColumns.contains(field) },
+                            set: { on in
+                                if on { visibleColumns.insert(field) }
+                                else if visibleColumns.count > 1 { visibleColumns.remove(field) }
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+                    }
+                }
+                .padding()
+                .frame(minWidth: 180)
             }
         }
     }

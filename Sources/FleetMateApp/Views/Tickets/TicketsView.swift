@@ -587,6 +587,11 @@ struct TicketsView: View {
         .onAppear {
             applyMeMode()
         }
+        .onChange(of: viewMode) { _, newMode in
+            if newMode == .board {
+                showBoardDetail = false
+            }
+        }
     }
 
     // MARK: - Header Section
@@ -913,26 +918,28 @@ struct TicketsView: View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
                 ticketBoardContent
-                    .frame(width: (selectedTicket != nil && showBoardDetail) ? geometry.size.width * 0.6 : geometry.size.width)
-                if selectedTicket != nil {
-                    // Sidebar toggle
-                    Button(action: { showBoardDetail.toggle() }) {
-                        ZStack {
-                            Rectangle()
-                                .fill(Color.secondary.opacity(0.08))
-                                .frame(width: 12)
-                            Image(systemName: showBoardDetail ? "chevron.compact.right" : "chevron.compact.left")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(.secondary.opacity(0.6))
-                        }
+                    .frame(width: (selectedTicket != nil && showBoardDetail) ? geometry.size.width * 0.6 : geometry.size.width - 16)
+
+                // Sidebar toggle — always visible so user can expand
+                Button(action: {
+                    if selectedTicket != nil { showBoardDetail.toggle() }
+                }) {
+                    ZStack {
+                        Rectangle()
+                            .fill(Color.secondary.opacity(0.08))
+                            .frame(width: 16)
+                        Image(systemName: showBoardDetail && selectedTicket != nil ? "chevron.compact.right" : "chevron.compact.left")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.secondary.opacity(0.6))
                     }
-                    .buttonStyle(.plain)
-                    .help(showBoardDetail ? "Hide detail" : "Show detail")
-                    .frame(width: 12)
-                    if showBoardDetail {
-                        detailSidebarView
-                            .frame(width: geometry.size.width * 0.4 - 12)
-                    }
+                }
+                .buttonStyle(.plain)
+                .help(showBoardDetail ? "Hide detail" : "Show detail")
+                .frame(width: 16)
+
+                if selectedTicket != nil && showBoardDetail {
+                    detailSidebarView
+                        .frame(width: geometry.size.width * 0.4 - 16)
                 }
             }
         }

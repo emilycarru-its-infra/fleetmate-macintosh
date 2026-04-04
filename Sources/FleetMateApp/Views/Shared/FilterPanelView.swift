@@ -70,7 +70,8 @@ struct FilterPanelView<Category: FilterCategoryProtocol>: View {
                 if filters.hasActiveFilters {
                     Button("Clear All") { filters.clearAll() }
                         .controlSize(.small)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(.yellow)
+                        .fontWeight(.semibold)
                 }
             }
             .padding(.horizontal, 14)

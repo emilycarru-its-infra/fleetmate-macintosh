@@ -90,7 +90,41 @@ struct DevicesView: View {
                             }
                         }
                     }
+
                     Spacer()
+
+                    if filters.hasActiveFilters {
+                        Button(action: { filters.clearAll() }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 16))
+                                .foregroundStyle(.yellow)
+                        }
+                        .buttonStyle(.plain)
+                        .glassButton()
+                        .help("Clear filters")
+                    }
+
+                    Button(action: { showFilters.toggle() }) {
+                        Image(systemName: filters.hasActiveFilters
+                            ? "line.3.horizontal.decrease.circle.fill"
+                            : "line.3.horizontal.decrease.circle")
+                        .font(.system(size: 16))
+                    }
+                    .buttonStyle(.plain)
+                    .glassButton()
+                    .help("Filters")
+                    .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+                        FilterPanelView(filters: filters)
+                    }
+
+                    Button(action: loadDevices) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 16))
+                    }
+                    .buttonStyle(.plain)
+                    .glassButton()
+                    .disabled(isLoading)
+                    .help("Refresh")
                 }
                 .padding()
 
@@ -238,36 +272,6 @@ struct DevicesView: View {
             Text("Are you sure you want to lock \(selectedDeviceIds.count) device(s)?")
         }
         .searchable(text: $searchText, prompt: "Search devices...")
-        .toolbar { devicesToolbar }
-    }
-
-    // MARK: - Toolbar
-
-    @ToolbarContentBuilder
-    private var devicesToolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .automatic) {
-            if filters.hasActiveFilters {
-                Button(action: { filters.clearAll() }) {
-                    Label("Clear Filters", systemImage: "xmark.circle.fill")
-                }
-                .tint(.yellow)
-            }
-
-            Button(action: { showFilters.toggle() }) {
-                Label("Filters", systemImage: filters.hasActiveFilters
-                    ? "line.3.horizontal.decrease.circle.fill"
-                    : "line.3.horizontal.decrease.circle")
-            }
-            .popover(isPresented: $showFilters, arrowEdge: .bottom) {
-                FilterPanelView(filters: filters)
-            }
-
-            Button(action: loadDevices) {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .disabled(isLoading)
-            .keyboardShortcut("r", modifiers: .command)
-        }
     }
 
     private func selectAllVisible() {

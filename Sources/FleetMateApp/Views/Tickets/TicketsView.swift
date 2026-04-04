@@ -558,6 +558,41 @@ struct TicketsView: View {
             }
         }
         .searchable(text: $searchText, prompt: "Search tickets...")
+        .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                Picker("View", selection: $viewMode) {
+                    Label("Table", systemImage: "tablecells").tag(TicketViewMode.table)
+                    Label("Board", systemImage: "rectangle.split.3x1").tag(TicketViewMode.board)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 160)
+
+                if filters.hasActiveFilters || showClosed || !isDefaultDatePreset {
+                    Button(action: {
+                        filters.clearAll()
+                        showClosed = false
+                        resetToCurrentTerm()
+                    }) {
+                        Label("Clear Filters", systemImage: "xmark.circle.fill")
+                            .foregroundStyle(.yellow)
+                    }
+                }
+
+                Button(action: { showFilters.toggle() }) {
+                    Label("Filters", systemImage: filters.hasActiveFilters
+                        ? "line.3.horizontal.decrease.circle.fill"
+                        : "line.3.horizontal.decrease.circle")
+                }
+                .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+                    FilterPanelView(filters: filters)
+                }
+
+                Button(action: loadTickets) {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(isLoading)
+            }
+        }
     }
 
 
@@ -575,14 +610,6 @@ struct TicketsView: View {
                         .foregroundColor(.secondary)
                 }
 
-                // View mode toggle
-                Picker("", selection: $viewMode) {
-                    Text("Table").tag(TicketViewMode.table)
-                    Text("Board").tag(TicketViewMode.board)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 140)
-
                 if viewMode == .board {
                     Picker("", selection: $boardGroupBy) {
                         ForEach(BoardGroupBy.allCases, id: \.self) { option in
@@ -591,44 +618,6 @@ struct TicketsView: View {
                     }
                     .frame(width: 110)
                 }
-
-                // Action buttons
-                if filters.hasActiveFilters || showClosed || !isDefaultDatePreset {
-                    Button(action: {
-                        filters.clearAll()
-                        showClosed = false
-                        resetToCurrentTerm()
-                    }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 16))
-                            .foregroundStyle(.yellow)
-                    }
-                    .buttonStyle(.plain)
-                    .glassButton()
-                    .help("Clear all filters")
-                }
-
-                Button(action: { showFilters.toggle() }) {
-                    Image(systemName: filters.hasActiveFilters
-                        ? "line.3.horizontal.decrease.circle.fill"
-                        : "line.3.horizontal.decrease.circle")
-                    .font(.system(size: 16))
-                }
-                .buttonStyle(.plain)
-                .glassButton()
-                .help("Filters")
-                .popover(isPresented: $showFilters, arrowEdge: .bottom) {
-                    FilterPanelView(filters: filters)
-                }
-
-                Button(action: loadTickets) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 16))
-                }
-                .buttonStyle(.plain)
-                .glassButton()
-                .disabled(isLoading)
-                .help("Refresh")
 
                 Spacer()
 

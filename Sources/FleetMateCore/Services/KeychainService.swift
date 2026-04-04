@@ -20,23 +20,35 @@ public class KeychainService {
         case snipeUrl = "SnipeUrl"
         case snipeApiKey = "SnipeApiKey"
         
-        // Microsoft Graph
+        // Microsoft Graph — shared tenant
         case graphTenantId = "GraphTenantId"
+        // Legacy single service principal
         case graphClientId = "GraphClientId"
         case graphClientSecret = "GraphClientSecret"
-        
+        // Devices (Intune) service principal
+        case devicesGraphId = "DevicesGraphId"
+        case devicesGraphSecret = "DevicesGraphSecret"
+        // Systems (Entra) service principal
+        case systemsGraphId = "SystemsGraphId"
+        case systemsGraphSecret = "SystemsGraphSecret"
+
         // Azure DevOps
         case devopsOrganization = "DevOpsOrganization"
         case devopsProject = "DevOpsProject"
+        case devopsClientId = "DevOpsClientId"
+        case devopsTenantId = "DevOpsTenantId"
         // NO PAT — Azure DevOps uses SSO only
-        
+
         // TeamDynamix
         case tdxBaseUrl = "TdxBaseUrl"
         case tdxAppId = "TdxAppId"
+        case tdxTicketingAppId = "TdxTicketingAppId"
+        case tdxAssetsAppId = "TdxAssetsAppId"
         case tdxUsername = "TdxUsername"
         case tdxPassword = "TdxPassword"
         case tdxBeid = "TdxBeid"
         case tdxWebServicesKey = "TdxWebServicesKey"
+        case tdxResponsibleGroupId = "TdxResponsibleGroupId"
         
         // SecureShell
         case sshPrivateKey = "SshPrivateKey"
@@ -55,28 +67,37 @@ public class KeychainService {
     /// Save a value to the keychain
     public func save(_ value: String, for key: Key) throws {
         let data = value.data(using: .utf8)!
-        
-        // Delete any existing item first
-        let deleteQuery: [CFString: Any] = [
+
+        let baseQuery: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: KeychainService.serviceName,
             kSecAttrAccount: key.rawValue
         ]
-        SecItemDelete(deleteQuery as CFDictionary)
-        
+
+        // Delete any existing item
+        let delStatus = SecItemDelete(baseQuery as CFDictionary)
+        if delStatus != errSecSuccess && delStatus != errSecItemNotFound {
+            dbg.warn("[Keychain] Delete for \(key.rawValue) returned \(delStatus)", category: "config")
+        }
+
         // Add new item
-        let addQuery: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: KeychainService.serviceName,
-            kSecAttrAccount: key.rawValue,
-            kSecValueData: data,
-            kSecAttrAccessible: kSecAttrAccessibleWhenUnlocked
-        ]
-        
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
-        
-        if status != errSecSuccess {
-            throw KeychainError.saveFailed(status: status, key: key.rawValue)
+        var addQuery = baseQuery
+        addQuery[kSecValueData] = data
+        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+
+        dbg.info("[Keychain] \(key.rawValue): del=\(delStatus) add=\(addStatus) len=\(data.count)", category: "config")
+
+        if addStatus == errSecDuplicateItem {
+            // Item exists but we couldn't delete it (different ACL?) — try update instead
+            let updateAttrs: [CFString: Any] = [kSecValueData: data]
+            let updateStatus = SecItemUpdate(baseQuery as CFDictionary, updateAttrs as CFDictionary)
+            if updateStatus != errSecSuccess {
+                dbg.error("[Keychain] Update fallback FAILED for \(key.rawValue): \(updateStatus)", category: "config")
+                throw KeychainError.saveFailed(status: updateStatus, key: key.rawValue)
+            }
+        } else if addStatus != errSecSuccess {
+            dbg.error("[Keychain] Add FAILED for \(key.rawValue): \(addStatus)", category: "config")
+            throw KeychainError.saveFailed(status: addStatus, key: key.rawValue)
         }
     }
     
@@ -86,13 +107,13 @@ public class KeychainService {
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: KeychainService.serviceName,
             kSecAttrAccount: key.rawValue,
-            kSecReturnData: true,
+            kSecReturnData: true as CFBoolean,
             kSecMatchLimit: kSecMatchLimitOne
         ]
-        
+
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        
+
         guard status == errSecSuccess,
               let data = result as? Data,
               let value = String(data: data, encoding: .utf8) else {
@@ -155,32 +176,39 @@ public class KeychainService {
         return Key.allCases.filter { exists($0) }
     }
     
-    /// Import credentials from environment variables
+    /// Seed Keychain from environment variables. Intended for CI bootstrap only.
     public func importFromEnvironment() throws {
         let env = ProcessInfo.processInfo.environment
-        
+
         let mapping: [(String, Key)] = [
-            ("REPORTMATE_URL", .reportMateUrl),
-            ("REPORTMATE_PASSPHRASE", .reportMatePassphrase),
-            ("SNIPE_URL", .snipeUrl),
-            ("SNIPE_API_KEY", .snipeApiKey),
-            ("GRAPH_TENANT_ID", .graphTenantId),
-            ("GRAPH_CLIENT_ID", .graphClientId),
-            ("GRAPH_CLIENT_SECRET", .graphClientSecret),
-            ("DEVOPS_ORGANIZATION", .devopsOrganization),
-            ("DEVOPS_PROJECT", .devopsProject),
-            // NO PAT — Azure DevOps uses SSO only
-            ("TDX_BASE_URL", .tdxBaseUrl),
-            ("TDX_APP_ID", .tdxAppId),
-            ("TDX_USERNAME", .tdxUsername),
-            ("TDX_PASSWORD", .tdxPassword),
-            ("TDX_BEID", .tdxBeid),
-            ("TDX_WEB_SERVICES_KEY", .tdxWebServicesKey),
-            ("SECURE_SHELL_PRIVATE_KEY", .sshPrivateKey),
-            ("SSH_KEY_PATH", .sshKeyPath),
-            ("SSH_USER", .sshDefaultUsername),
+            ("REPORTMATE_URL",          .reportMateUrl),
+            ("REPORTMATE_PASSPHRASE",   .reportMatePassphrase),
+            ("SNIPE_URL",               .snipeUrl),
+            ("SNIPE_API_KEY",           .snipeApiKey),
+            ("GRAPH_TENANT_ID",         .graphTenantId),
+            ("GRAPH_CLIENT_ID",         .graphClientId),
+            ("GRAPH_CLIENT_SECRET",     .graphClientSecret),
+            ("DEVICES_GRAPH_ID",        .devicesGraphId),
+            ("DEVICES_GRAPH_SECRET",    .devicesGraphSecret),
+            ("SYSTEMS_GRAPH_ID",        .systemsGraphId),
+            ("SYSTEMS_GRAPH_SECRET",    .systemsGraphSecret),
+            ("DEVOPS_ORGANIZATION",     .devopsOrganization),
+            ("DEVOPS_PROJECT",          .devopsProject),
+            ("DEVOPS_CLIENT_ID",        .devopsClientId),
+            ("DEVOPS_TENANT_ID",        .devopsTenantId),
+            ("TDX_BASE_URL",            .tdxBaseUrl),
+            ("TDX_APP_ID",              .tdxAppId),
+            ("TDX_TICKETING_APP_ID",    .tdxTicketingAppId),
+            ("TDX_ASSETS_APP_ID",       .tdxAssetsAppId),
+            ("TDX_USERNAME",            .tdxUsername),
+            ("TDX_PASSWORD",            .tdxPassword),
+            ("TDX_BEID",                .tdxBeid),
+            ("TDX_WEB_SERVICES_KEY",    .tdxWebServicesKey),
+            ("TDX_RESPONSIBLE_GROUP_ID",.tdxResponsibleGroupId),
+            ("SSH_KEY_PATH",            .sshKeyPath),
+            ("SSH_USER",                .sshDefaultUsername),
         ]
-        
+
         for (envVar, key) in mapping {
             if let value = env[envVar], !value.isEmpty {
                 try save(value, for: key)

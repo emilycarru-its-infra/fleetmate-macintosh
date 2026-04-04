@@ -246,6 +246,13 @@ struct DevicesView: View {
     @ToolbarContentBuilder
     private var devicesToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .automatic) {
+            if filters.hasActiveFilters {
+                Button(action: { filters.clearAll() }) {
+                    Label("Clear Filters", systemImage: "xmark.circle.fill")
+                }
+                .tint(.yellow)
+            }
+
             Button(action: { showFilters.toggle() }) {
                 Label("Filters", systemImage: filters.hasActiveFilters
                     ? "line.3.horizontal.decrease.circle.fill"
@@ -253,12 +260,6 @@ struct DevicesView: View {
             }
             .popover(isPresented: $showFilters, arrowEdge: .bottom) {
                 FilterPanelView(filters: filters)
-            }
-
-            if filters.hasActiveFilters {
-                Button(action: { filters.clearAll() }) {
-                    Label("Clear Filters", systemImage: "xmark.circle")
-                }
             }
 
             Button(action: loadDevices) {

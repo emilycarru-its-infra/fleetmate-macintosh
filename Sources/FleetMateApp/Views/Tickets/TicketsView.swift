@@ -695,14 +695,17 @@ struct TicketsView: View {
 
     private var ticketsTableView: some View {
         GeometryReader { geometry in
-            let sidebarWidth = min(geometry.size.width * 0.4, 420.0)
+            let sidebarW = min(geometry.size.width * 0.4, 420.0)
+            let contentW = selectedTicket != nil ? geometry.size.width - sidebarW - 1 : geometry.size.width
             HStack(spacing: 0) {
                 ticketTableContent
-                    .frame(maxWidth: .infinity)
+                    .frame(width: contentW)
+                    .clipped()
                 if selectedTicket != nil {
                     Divider()
                     detailSidebarView
-                        .frame(width: sidebarWidth)
+                        .frame(width: sidebarW)
+                        .clipped()
                 }
             }
         }
@@ -712,17 +715,22 @@ struct TicketsView: View {
 
     private var ticketsBoardView: some View {
         GeometryReader { geometry in
-            let sidebarWidth = min(geometry.size.width * 0.4, 420.0)
+            let sidebarW = min(geometry.size.width * 0.4, 420.0)
+            let contentW = selectedTicket != nil && showBoardDetail
+                ? geometry.size.width - sidebarW - 8
+                : geometry.size.width
             HStack(spacing: 0) {
                 ticketBoardContent
-                    .frame(maxWidth: .infinity)
+                    .frame(width: contentW)
+                    .clipped()
 
                 if selectedTicket != nil {
                     BoardSidebarDivider(isExpanded: $showBoardDetail)
 
                     if showBoardDetail {
                         detailSidebarView
-                            .frame(width: sidebarWidth - 8)
+                            .frame(width: sidebarW)
+                            .clipped()
                     }
                 }
             }
@@ -2272,11 +2280,12 @@ struct ViewModePill: View {
                         selection = mode
                     }
                 } label: {
-                    Text(mode == .table ? "Table" : "Board")
+                    Text(mode == .table ? "List" : "Board")
                         .font(.system(size: 12, weight: selection == mode ? .semibold : .regular))
                         .foregroundStyle(selection == mode ? .primary : .secondary)
                         .frame(width: 60)
                         .padding(.vertical, 5)
+                        .contentShape(Capsule())
                         .background {
                             if selection == mode {
                                 Capsule()
@@ -2286,6 +2295,7 @@ struct ViewModePill: View {
                         }
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
             }
         }
         .padding(3)

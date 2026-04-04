@@ -507,30 +507,25 @@ struct DashboardView: View {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(filteredActivityItems) { item in
                                 Button(action: { navigate(to: item.tab, deviceId: item.deviceId, ticketId: item.ticketId) }) {
-                                    HStack(spacing: 0) {
-                                        // Column 1: Icon + Name
-                                        HStack(spacing: 6) {
-                                            Image(systemName: item.icon)
-                                                .font(.system(size: 12))
-                                                .foregroundStyle(.secondary)
-                                                .frame(width: 16)
-                                            Text(item.name)
-                                                .font(.system(size: 12))
-                                                .lineLimit(1)
-                                                .foregroundStyle(.primary)
-                                        }
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        // Column 2: Detail (platform/status)
+                                    HStack(spacing: 4) {
+                                        Image(systemName: item.icon)
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 14)
+                                        Text(item.name)
+                                            .font(.system(size: 12))
+                                            .lineLimit(1)
+                                            .foregroundStyle(.primary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
                                         Text(item.detail)
                                             .font(.system(size: 11))
                                             .lineLimit(1)
                                             .foregroundStyle(.secondary)
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                        // Column 3: Timestamp
+                                            .frame(width: 80, alignment: .leading)
                                         Text(item.time)
                                             .font(.caption2)
                                             .foregroundStyle(.tertiary)
-                                            .frame(width: 50, alignment: .trailing)
+                                            .fixedSize()
                                     }
                                     .padding(.vertical, 7)
                                     .padding(.horizontal, 4)

@@ -515,7 +515,7 @@ struct TicketsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            headerSection
+            // No header — everything in toolbar
             contentSection
         }
         .onChange(of: selectedTicketIds) { _, newIds in
@@ -561,8 +561,8 @@ struct TicketsView: View {
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 Picker("View", selection: $viewMode) {
-                    Label("Table", systemImage: "tablecells").tag(TicketViewMode.table)
-                    Label("Board", systemImage: "rectangle.split.3x1").tag(TicketViewMode.board)
+                    Text("Table").tag(TicketViewMode.table)
+                    Text("Board").tag(TicketViewMode.board)
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 160)

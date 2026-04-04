@@ -135,19 +135,6 @@ struct AssetsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Inventory")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                if !assets.isEmpty {
-                    Text("\(filteredAssets.count) of \(assets.count) assets")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-            .padding()
-
             // Content
             if !appState.config.isSnipeConfigured {
                 VStack {

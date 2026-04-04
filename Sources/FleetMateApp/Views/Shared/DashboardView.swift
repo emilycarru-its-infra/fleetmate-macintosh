@@ -98,7 +98,8 @@ struct DashboardView: View {
     private var hasAnyService: Bool {
         appState.config.isGraphConfigured || appState.config.isSnipeConfigured ||
         appState.config.isTdxConfigured || appState.config.isDevOpsConfigured ||
-        appState.config.reportMateUrl != nil
+        appState.config.reportMateUrl != nil ||
+        !appState.authManager.configuredSystems.isEmpty
     }
 
     // Adaptive columns -- flow based on available width
@@ -117,7 +118,7 @@ struct DashboardView: View {
             .padding(.top, 16)
             .padding(.bottom, 8)
 
-            if !hasAnyService {
+            if !hasAnyService && !appState.showOnboardingWizard {
                 connectServicesPrompt
                     .padding(.horizontal, 16)
                 Spacer()
@@ -131,6 +132,15 @@ struct DashboardView: View {
         .onChange(of: appState.cachedAssets.count) { _, _ in Task { await loadInventory(); buildActivityFeed() } }
         .onChange(of: appState.cachedTickets.count) { _, _ in Task { await loadTicketsWork(); buildActivityFeed() } }
         .onChange(of: appState.cachedWorkItems.count) { _, _ in Task { await loadTicketsWork(); buildActivityFeed() } }
+        .onChange(of: appState.showOnboardingWizard) { _, showing in
+            if !showing { Task { await loadAllSections() } }
+        }
+        .onChange(of: appState.snipeSsoAuthenticated) { _, authenticated in
+            if authenticated { Task { await loadInventory(); buildActivityFeed() } }
+        }
+        .onChange(of: appState.secretsConfigured) { _, _ in
+            Task { await loadAllSections() }
+        }
     }
 
     // MARK: - Split Layout (draggable)
@@ -166,9 +176,10 @@ struct DashboardView: View {
         .frame(maxHeight: .infinity)
     }
 
-    private func navigate(to tab: AppTab, deviceId: String? = nil, ticketId: Int? = nil) {
+    private func navigate(to tab: AppTab, deviceId: String? = nil, ticketId: Int? = nil, filter: String? = nil) {
         if let deviceId { appState.navigateToDeviceId = deviceId }
         if let ticketId { appState.navigateToTicketId = ticketId }
+        if let filter { appState.navigateToFilter = filter }
         appState.navigateToTab = tab
     }
 
@@ -210,9 +221,15 @@ struct DashboardView: View {
                 Image(systemName: "cable.connector")
                     .font(.system(size: 36)).foregroundStyle(.secondary)
                 Text("No services connected").font(.headline)
-                Text("Configure your systems in Settings to see fleet data here.")
+                Text("Run the setup wizard to connect your IT systems.")
                     .foregroundStyle(.secondary)
+                Button("Run Setup Wizard") {
+                    appState.showOnboardingWizard = true
+                }
+                .controlSize(.large)
                 Button("Open Settings") { settingsSelectedTab = 0; openSettings() }
+                    .foregroundStyle(.secondary)
+                    .controlSize(.small)
             }
             .frame(maxWidth: .infinity).padding()
         }
@@ -292,12 +309,21 @@ struct DashboardView: View {
     // MARK: - KPI Grid (2x2)
 
     private var kpiGrid: some View {
+        let cfg = appState.config
         let cols = Array(repeating: GridItem(.flexible(), spacing: 16), count: 2)
         return LazyVGrid(columns: cols, spacing: 16) {
-            KPICard(kpi: KPI(title: "Managed Devices", value: "\(deviceCount)", icon: "laptopcomputer", color: .blue, loading: isLoadingFleet, tab: .devices)) { navigate(to: .devices) }
-            KPICard(kpi: KPI(title: "Assets Inventory", value: "\(assetCount)", icon: "shippingbox", color: .orange, loading: isLoadingInventory, tab: .inventory)) { navigate(to: .inventory) }
-            KPICard(kpi: KPI(title: "Active Work Items", value: "\(activeWorkItems)", icon: "list.bullet.rectangle", color: .indigo, loading: isLoadingTickets, tab: .projects)) { navigate(to: .projects) }
-            KPICard(kpi: KPI(title: "Open Tickets", value: "\(openTicketCount)", icon: "ticket", color: .purple, loading: isLoadingTickets, tab: .tickets)) { navigate(to: .tickets) }
+            if cfg.isGraphConfigured {
+                KPICard(kpi: KPI(title: "Managed Devices", value: "\(deviceCount)", icon: "laptopcomputer", color: .blue, loading: isLoadingFleet, tab: .devices)) { navigate(to: .devices) }
+            }
+            if cfg.isSnipeConfigured {
+                KPICard(kpi: KPI(title: "Assets Inventory", value: "\(assetCount)", icon: "shippingbox", color: .orange, loading: isLoadingInventory, tab: .inventory)) { navigate(to: .inventory) }
+            }
+            if cfg.isDevOpsConfigured {
+                KPICard(kpi: KPI(title: "Active Work Items", value: "\(activeWorkItems)", icon: "list.bullet.rectangle", color: .indigo, loading: isLoadingTickets, tab: .projects)) { navigate(to: .projects) }
+            }
+            if cfg.isTdxConfigured {
+                KPICard(kpi: KPI(title: "Open Tickets", value: "\(openTicketCount)", icon: "ticket", color: .purple, loading: isLoadingTickets, tab: .tickets)) { navigate(to: .tickets) }
+            }
         }
         .padding(16)
     }
@@ -397,7 +423,7 @@ struct DashboardView: View {
                         emptyState("No asset data")
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
-                            donutChart(assetStatusSlices, size: 180)
+                            donutChart(assetStatusSlices, size: 180, tab: .inventory)
                             Text("\(deployedCount) deployed - \(unassignedCount) unassigned")
                                 .font(.caption2).foregroundStyle(.secondary)
                         }
@@ -421,7 +447,7 @@ struct DashboardView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     activityFilterChip("All", tab: nil)
-                    ForEach(AppTab.allCases.filter { $0 != .dashboard }) { tab in
+                    ForEach(AppTab.enabledTabs(config: appState.config).filter { $0 != .dashboard }) { tab in
                         activityFilterChip(tab.rawValue.capitalized, tab: tab)
                     }
                 }
@@ -534,7 +560,7 @@ struct DashboardView: View {
         }
     }
 
-    private func donutChart(_ slices: [ChartSlice], size: CGFloat) -> some View {
+    private func donutChart(_ slices: [ChartSlice], size: CGFloat, tab: AppTab? = nil) -> some View {
         Chart(slices) { slice in
             SectorMark(
                 angle: .value("Count", slice.value),
@@ -552,6 +578,21 @@ struct DashboardView: View {
         }
         .chartForegroundStyleScale(domain: slices.map(\.label), range: slices.map(\.color))
         .chartLegend(position: .trailing, alignment: .center, spacing: 8)
+        .chartAngleSelection(value: .init(get: { nil as Int? }, set: { newValue in
+            if let value = newValue, let tab {
+                // Find which slice was tapped based on cumulative angle
+                var cumulative = 0
+                for slice in slices {
+                    cumulative += slice.value
+                    if value <= cumulative {
+                        // Extract the status name from "deployed (1620)" → "deployed"
+                        let filterName = slice.label.components(separatedBy: " (").first ?? slice.label
+                        navigate(to: tab, filter: filterName)
+                        break
+                    }
+                }
+            }
+        }))
         .frame(height: size)
     }
 
@@ -781,6 +822,8 @@ struct DashboardView: View {
         defer { isLoadingInventory = false }
 
         if appState.cachedAssets.isEmpty && !appState.isAssetsCacheValid {
+            // Only attempt API call if we have auth (SSO cookies or API key)
+            guard appState.snipeService.isConfigured else { return }
             do {
                 let assets = try await appState.snipeService.getAllAssets()
                 appState.updateAssetsCache(assets)

@@ -14,7 +14,12 @@ struct ContentView: View {
     @State private var selectedTab: AppTab = .dashboard
     @State private var hasAutoPromptedSso = false
     @State private var hasAutoPromptedDevOpsSso = false
+    @State private var hasAutoPromptedSnipeSso = false
     @State private var windowWidth: CGFloat = 1000
+
+    private var availableTabs: [AppTab] {
+        AppTab.enabledTabs(config: appState.config)
+    }
 
     var body: some View {
         tabContent
@@ -27,7 +32,7 @@ struct ContentView: View {
             .onPreferenceChange(WindowWidthKey.self) { windowWidth = $0 }
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    GlassTabBar(selectedTab: $selectedTab, availableWidth: windowWidth)
+                    GlassTabBar(selectedTab: $selectedTab, tabs: availableTabs, availableWidth: windowWidth)
                 }
                 if appState.authManager.hasServicePrincipalWarning {
                     ToolbarItem(placement: .automatic) {
@@ -57,24 +62,34 @@ struct ContentView: View {
                 if !appState.devOpsSsoAuthenticated && appState.isDevOpsSsoConfigured {
                     appState.attemptSilentDevOpsSso()
                 }
+                // Snipe-IT: silent SSO
+                if !appState.snipeSsoAuthenticated && appState.snipeService.shouldAttemptSso {
+                    appState.attemptSilentSnipeSso()
+                }
             }
             .onChange(of: selectedTab) { _, newTab in
-                // Phase 2: Auto-trigger interactive SSO when user first navigates
-                // to the Tickets tab and isn't authenticated yet.
+                // Re-attempt silent SSO when navigating to a tab that needs auth.
+                // No interactive popups — all web auth is silent/headless only.
                 if newTab == .tickets,
                    !appState.tdxSsoAuthenticated,
                    !hasAutoPromptedSso,
                    appState.tdxService.shouldAttemptSso {
                     hasAutoPromptedSso = true
-                    appState.triggerTdxSsoLogin()
+                    appState.attemptSilentTdxSso()
                 }
-                // DevOps: auto-trigger interactive SSO for Projects tab
                 if newTab == .projects,
                    !appState.devOpsSsoAuthenticated,
                    !hasAutoPromptedDevOpsSso,
                    appState.isDevOpsSsoConfigured {
                     hasAutoPromptedDevOpsSso = true
-                    appState.triggerDevOpsSsoLogin()
+                    appState.attemptSilentDevOpsSso()
+                }
+                if newTab == .inventory,
+                   !appState.snipeSsoAuthenticated,
+                   !hasAutoPromptedSnipeSso,
+                   appState.snipeService.shouldAttemptSso {
+                    hasAutoPromptedSnipeSso = true
+                    appState.attemptSilentSnipeSso()
                 }
             }
             .onChange(of: appState.navigateToTab) { _, newTab in
@@ -83,36 +98,20 @@ struct ContentView: View {
                     appState.navigateToTab = nil
                 }
             }
-            .sheet(isPresented: $appState.showTdxSsoLogin) {
-                TdxSsoLoginView(config: appState.config) { result in
-                    if result.success, let token = result.token {
-                        let expiry = Date().addingTimeInterval(23 * 60 * 60)
-                        appState.handleTdxSsoSuccess(
-                            token: token,
-                            expiry: expiry,
-                            userId: result.userEmail,
-                            userName: result.userName
-                        )
-                    } else {
-                        appState.handleTdxSsoFailure(result.error)
-                    }
-                }
+            .onChange(of: appState.config.isGraphConfigured) { _, _ in validateSelectedTab() }
+            .onChange(of: appState.config.isSnipeConfigured) { _, _ in validateSelectedTab() }
+            .onChange(of: appState.config.isTdxConfigured) { _, _ in validateSelectedTab() }
+            .onChange(of: appState.config.isDevOpsConfigured) { _, _ in validateSelectedTab() }
+            .sheet(isPresented: $appState.showOnboardingWizard) {
+                OnboardingWizardView()
+                    .environmentObject(appState)
             }
-            .sheet(isPresented: $appState.showDevOpsSsoLogin) {
-                DevOpsSsoLoginView(ssoService: appState.devOpsSsoService, config: appState.config) { result in
-                    if result.success, let token = result.accessToken {
-                        let expiry = Date().addingTimeInterval(TimeInterval(result.expiresIn ?? 3600))
-                        appState.handleDevOpsSsoSuccess(
-                            accessToken: token,
-                            expiry: expiry,
-                            userName: result.userName,
-                            userEmail: result.userEmail
-                        )
-                    } else {
-                        appState.handleDevOpsSsoFailure(result.error)
-                    }
-                }
-            }
+    }
+
+    private func validateSelectedTab() {
+        if !selectedTab.isEnabled(config: appState.config) {
+            selectedTab = .dashboard
+        }
     }
 
     @ViewBuilder

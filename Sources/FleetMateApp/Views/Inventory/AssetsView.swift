@@ -388,11 +388,14 @@ struct AssetsView: View {
             }
         }
         .task {
-            print("[AssetsView] .task - cache valid: \(appState.isAssetsCacheValid), assets count: \(appState.cachedAssets.count)")
-            print("[AssetsView] Snipe URL: \(appState.config.snipeUrl ?? "nil"), API Key: \(appState.config.snipeApiKey != nil ? "set" : "nil")")
-            print("[AssetsView] isSnipeConfigured: \(appState.config.isSnipeConfigured)")
             if !appState.isAssetsCacheValid || appState.cachedAssets.isEmpty {
                 loadAllAssets()
+            }
+        }
+        .onChange(of: appState.navigateToFilter) { _, filter in
+            if let filter, !filter.isEmpty {
+                statusFilter = filter
+                appState.navigateToFilter = nil
             }
         }
         .sheet(isPresented: $showReAllocateSheet) {
@@ -490,7 +493,8 @@ struct AssetsView: View {
                     Spacer(minLength: 0)
                 }
                 .frame(width: width - 10)
-                .padding(.horizontal, 4)
+                .padding(.leading, 8)
+                .padding(.trailing, 4)
             }
             .buttonStyle(.plain)
             ColumnResizeHandle(field: field, columnWidths: $columnWidths)
@@ -510,7 +514,7 @@ struct AssetsView: View {
                 .font(.system(.body, design: .monospaced))
                 .lineLimit(1)
         case .name:
-            Text(asset.name ?? "-").lineLimit(1)
+            Text(asset.displayName ?? "-").lineLimit(1)
         case .status:
             StatusBadge(status: asset.statusLabel)
         case .category:
@@ -528,7 +532,7 @@ struct AssetsView: View {
         case .area:
             Text(asset.customFieldByName("Area")?.value ?? "-").lineLimit(1)
         case .location:
-            Text(asset.location?.name ?? "-").lineLimit(1)
+            Text(asset.location?.name?.htmlDecoded ?? "-").lineLimit(1)
         }
     }
 
@@ -1110,36 +1114,40 @@ struct StatusBadge: View {
 struct ColumnResizeHandle: View {
     let field: AssetSortField
     @Binding var columnWidths: [AssetSortField: CGFloat]
-    @State private var isDragging = false
+    @GestureState private var dragOffset: CGFloat = 0
     @State private var startWidth: CGFloat = 0
+    @State private var isHovering = false
 
     var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(isDragging ? Color.accentColor : Color.secondary.opacity(0.25))
-                .frame(width: isDragging ? 2 : 1)
-                .frame(maxHeight: .infinity)
-            // Wide invisible hit-area so the handle is easy to grab
-            Color.clear
-                .frame(width: 10)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 1)
-                        .onChanged { value in
-                            if !isDragging {
-                                isDragging = true
-                                startWidth = columnWidths[field] ?? 90
-                            }
+        Rectangle()
+            .fill(dragOffset != 0 ? Color.accentColor : Color.secondary.opacity(isHovering ? 0.5 : 0.25))
+            .frame(width: dragOffset != 0 ? 2 : 1)
+            .frame(maxHeight: .infinity)
+            .padding(.horizontal, 4.5)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 2)
+                    .updating($dragOffset) { value, state, _ in
+                        state = value.translation.width
+                    }
+                    .onChanged { value in
+                        if startWidth == 0 {
+                            startWidth = columnWidths[field] ?? 90
+                        }
+                        var t = Transaction()
+                        t.disablesAnimations = true
+                        withTransaction(t) {
                             columnWidths[field] = max(40, startWidth + value.translation.width)
                         }
-                        .onEnded { _ in isDragging = false }
-                )
-                .onHover { inside in
-                    if inside { NSCursor.resizeLeftRight.push() }
-                    else { NSCursor.pop() }
-                }
-        }
-        .frame(width: 10)
+                    }
+                    .onEnded { _ in startWidth = 0 }
+            )
+            .onHover { inside in
+                isHovering = inside
+                if inside { NSCursor.resizeLeftRight.push() }
+                else { NSCursor.pop() }
+            }
+            .frame(width: 10)
     }
 }
 

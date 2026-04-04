@@ -238,214 +238,207 @@ struct BoardsView: View {
         }
     }
 
-    // MARK: - Unified Single-Row Toolbar
+    // MARK: - Unified Two-Row Toolbar
 
     private var unifiedToolbar: some View {
-        HStack(spacing: 8) {
-            // Board / List toggle
-            Picker("", selection: $viewMode) {
-                Text("Board").tag(BoardsViewMode.board)
-                Text("List").tag(BoardsViewMode.list)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 120)
-
-            Divider().frame(height: 20)
-
-            // Provider filter
-            Picker("Provider", selection: $filterProvider) {
-                Text("Backend").tag(nil as String?)
-                Text("DevOps").tag("azdevops" as String?)
-                Text("GitHub").tag("github" as String?)
-                Text("Gitea").tag("gitea" as String?)
-                Text("TDX").tag("tdx" as String?)
-            }
-            .pickerStyle(.menu)
-            .frame(width: 140)
-            .labelsHidden()
-            .onChange(of: filterProvider) { loadTasks() }
-            .onChange(of: appState.devOpsProjectReady) { _, ready in
-                if ready { loadTasks(); loadBoards() }
-            }
-
-            // Group by
-            Picker("Group", selection: $groupBy) {
-                ForEach(GroupByOption.allCases, id: \.self) { opt in
-                    Text(opt.rawValue).tag(opt)
+        VStack(spacing: 6) {
+            // Row 1: View mode, provider, group by, board selection, closed toggle
+            HStack(spacing: 8) {
+                Picker("", selection: $viewMode) {
+                    Text("Board").tag(BoardsViewMode.board)
+                    Text("List").tag(BoardsViewMode.list)
                 }
-            }
-            .pickerStyle(.menu)
-            .frame(width: 140)
-            .onChange(of: groupBy) { _, newValue in
-                if newValue == .column && availableBoards.isEmpty {
-                    loadBoards()
-                }
-            }
+                .pickerStyle(.segmented)
+                .frame(width: 120)
 
-            // Board selection (shown when grouping by Board Column)
-            if groupBy == .column {
-                if isLoadingBoards {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(width: 20)
-                } else if !availableBoards.isEmpty {
-                    Picker("Board", selection: $selectedBoardName) {
-                        Text("Select board…").tag(nil as String?)
-                        ForEach(availableBoards) { board in
-                            Text(board.name ?? "Unknown").tag(board.name as String?)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(width: 180)
-                    .labelsHidden()
-                    .onChange(of: selectedBoardName) { loadBoardColumns() }
-                }
-            }
-
-            // Show Closed toggle
-            Toggle("Closed", isOn: $showClosed)
-                .toggleStyle(.checkbox)
-                .font(.subheadline)
-
-            // Filters
-            if !allTasks.isEmpty {
                 Divider().frame(height: 20)
 
-                if !availableAreaPaths.isEmpty {
-                    Picker("Area", selection: $filterAreaPath) {
-                        Text("Areas").tag(nil as String?)
-                        ForEach(availableAreaPaths, id: \.self) { Text($0).tag($0 as String?) }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(width: 130)
-                    .labelsHidden()
+                Picker("Provider", selection: $filterProvider) {
+                    Text("Backend").tag(nil as String?)
+                    Text("DevOps").tag("azdevops" as String?)
+                    Text("GitHub").tag("github" as String?)
+                    Text("Gitea").tag("gitea" as String?)
+                    Text("TDX").tag("tdx" as String?)
+                }
+                .pickerStyle(.menu)
+                .frame(width: 140)
+                .labelsHidden()
+                .onChange(of: filterProvider) { loadTasks() }
+                .onChange(of: appState.devOpsProjectReady) { _, ready in
+                    if ready { loadTasks(); loadBoards() }
                 }
 
-                if !availableIterations.isEmpty {
-                    Picker("Iteration", selection: $filterIteration) {
-                        Text("Iterations").tag(nil as String?)
-                        ForEach(availableIterations, id: \.self) { Text($0).tag($0 as String?) }
+                Picker("Group", selection: $groupBy) {
+                    ForEach(GroupByOption.allCases, id: \.self) { opt in
+                        Text(opt.rawValue).tag(opt)
                     }
-                    .pickerStyle(.menu)
-                    .frame(width: 130)
-                    .labelsHidden()
+                }
+                .pickerStyle(.menu)
+                .frame(width: 140)
+                .onChange(of: groupBy) { _, newValue in
+                    if newValue == .column && availableBoards.isEmpty {
+                        loadBoards()
+                    }
                 }
 
-                if !availableTypes.isEmpty {
-                    Picker("Type", selection: $filterType) {
-                        Text("Types").tag(nil as String?)
-                        ForEach(availableTypes, id: \.self) { Text($0).tag($0 as String?) }
+                if groupBy == .column {
+                    if isLoadingBoards {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 20)
+                    } else if !availableBoards.isEmpty {
+                        Picker("Board", selection: $selectedBoardName) {
+                            Text("Select board…").tag(nil as String?)
+                            ForEach(availableBoards) { board in
+                                Text(board.name ?? "Unknown").tag(board.name as String?)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 180)
+                        .labelsHidden()
+                        .onChange(of: selectedBoardName) { loadBoardColumns() }
+                    }
+                }
+
+                Toggle("Closed", isOn: $showClosed)
+                    .toggleStyle(.checkbox)
+                    .font(.subheadline)
+
+                Spacer()
+
+                devOpsSsoSection
+            }
+
+            // Row 2: Filters, actions, search
+            HStack(spacing: 8) {
+                if !allTasks.isEmpty {
+                    if !availableAreaPaths.isEmpty {
+                        Picker("Area", selection: $filterAreaPath) {
+                            Text("Areas").tag(nil as String?)
+                            ForEach(availableAreaPaths, id: \.self) { Text($0).tag($0 as String?) }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 130)
+                        .labelsHidden()
+                    }
+
+                    if !availableIterations.isEmpty {
+                        Picker("Iteration", selection: $filterIteration) {
+                            Text("Iterations").tag(nil as String?)
+                            ForEach(availableIterations, id: \.self) { Text($0).tag($0 as String?) }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 130)
+                        .labelsHidden()
+                    }
+
+                    if !availableTypes.isEmpty {
+                        Picker("Type", selection: $filterType) {
+                            Text("Types").tag(nil as String?)
+                            ForEach(availableTypes, id: \.self) { Text($0).tag($0 as String?) }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 110)
+                        .labelsHidden()
+                    }
+
+                    Picker("Priority", selection: $filterPriority) {
+                        Text("Priorities").tag(nil as Int?)
+                        Text("1 – Critical").tag(1 as Int?)
+                        Text("2 – High").tag(2 as Int?)
+                        Text("3 – Medium").tag(3 as Int?)
+                        Text("4 – Low").tag(4 as Int?)
                     }
                     .pickerStyle(.menu)
                     .frame(width: 110)
                     .labelsHidden()
-                }
 
-                Picker("Priority", selection: $filterPriority) {
-                    Text("Priorities").tag(nil as Int?)
-                    Text("1 – Critical").tag(1 as Int?)
-                    Text("2 – High").tag(2 as Int?)
-                    Text("3 – Medium").tag(3 as Int?)
-                    Text("4 – Low").tag(4 as Int?)
-                }
-                .pickerStyle(.menu)
-                .frame(width: 110)
-                .labelsHidden()
-
-                if !availableAssignees.isEmpty {
-                    Picker("Assignee", selection: $filterAssignee) {
-                        Text("Assignees").tag(nil as String?)
-                        ForEach(availableAssignees, id: \.self) { Text($0).tag($0 as String?) }
+                    if !availableAssignees.isEmpty {
+                        Picker("Assignee", selection: $filterAssignee) {
+                            Text("Assignees").tag(nil as String?)
+                            ForEach(availableAssignees, id: \.self) { Text($0).tag($0 as String?) }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 130)
+                        .labelsHidden()
                     }
-                    .pickerStyle(.menu)
-                    .frame(width: 130)
-                    .labelsHidden()
-                }
 
-                if hasActiveFilters {
-                    Button(action: clearAllFilters) {
-                        Image(systemName: "xmark.circle")
+                    if hasActiveFilters {
+                        Button(action: clearAllFilters) {
+                            Image(systemName: "xmark.circle")
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.yellow)
+                        .controlSize(.small)
+                        .help("Clear filters")
                     }
-                    .buttonStyle(.bordered)
-                    .tint(.yellow)
-                    .controlSize(.small)
-                    .help("Clear filters")
                 }
-            }
 
-            Divider().frame(height: 20)
+                Spacer()
 
-            // Sync
-            if syncEnabled {
-                Button(action: syncTasks) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
+                if syncEnabled {
+                    Button(action: syncTasks) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(isSyncing)
+                    .help("Sync tasks to Planner / Markdown")
                 }
-                .disabled(isSyncing)
-                .help("Sync tasks to Planner / Markdown")
-            }
 
-            // New GitHub Project
-            Button(action: { showCreateProject = true }) {
-                Image(systemName: "folder.badge.plus")
-            }
-            .disabled(!canCreateProject)
-            .help(canCreateProject ? "New GitHub Project" : "Set organization in GitHub config")
+                Button(action: { showCreateProject = true }) {
+                    Image(systemName: "folder.badge.plus")
+                }
+                .disabled(!canCreateProject)
+                .help(canCreateProject ? "New GitHub Project" : "Set organization in GitHub config")
 
-            Spacer()
+                Button(action: { loadTasks(); loadGhProjectInfo(); loadBoards() }) {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .disabled(isLoading || isLoadingGhInfo)
+                .help("Refresh")
+                .keyboardShortcut("r", modifiers: .command)
 
-            devOpsSsoSection
+                HStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                    TextField("Search...", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .frame(width: 140)
+                    if !searchText.isEmpty {
+                        Button(action: { searchText = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.1))
+                .cornerRadius(8)
 
-            // Refresh
-            Button(action: { loadTasks(); loadGhProjectInfo(); loadBoards() }) {
-                Image(systemName: "arrow.clockwise")
-            }
-            .disabled(isLoading || isLoadingGhInfo)
-            .help("Refresh")
-            .keyboardShortcut("r", modifiers: .command)
-
-            // Search field
-            HStack(spacing: 4) {
-                Image(systemName: "magnifyingglass")
+                Text("\(filteredTasks.count)")
+                    .font(.caption)
                     .foregroundColor(.secondary)
-                TextField("Search...", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .frame(width: 140)
-                if !searchText.isEmpty {
-                    Button(action: { searchText = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(8)
+                    .monospacedDigit()
+                    .frame(minWidth: 24, alignment: .trailing)
 
-            Text("\(filteredTasks.count)")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .monospacedDigit()
-                .frame(minWidth: 24, alignment: .trailing)
-
-            // New item (backend chooser) — last on the right
-            Menu {
-                if canCreateWorkItem {
-                    Button(action: { showCreateWorkItem = true }) {
-                        Label("DevOps Work Item", systemImage: "building.2")
+                Menu {
+                    if canCreateWorkItem {
+                        Button(action: { showCreateWorkItem = true }) {
+                            Label("DevOps Work Item", systemImage: "building.2")
+                        }
                     }
-                }
-                if canCreateIssue {
-                    Button(action: { showCreateIssue = true }) {
-                        Label("GitHub Issue", systemImage: "chevron.left.forwardslash.chevron.right")
+                    if canCreateIssue {
+                        Button(action: { showCreateIssue = true }) {
+                            Label("GitHub Issue", systemImage: "chevron.left.forwardslash.chevron.right")
+                        }
                     }
+                } label: {
+                    Image(systemName: "plus")
                 }
-            } label: {
-                Image(systemName: "plus")
+                .disabled(!canCreateIssue && !canCreateWorkItem)
+                .help("New item")
             }
-            .disabled(!canCreateIssue && !canCreateWorkItem)
-            .help("New item")
         }
         .padding(.horizontal)
         .padding(.vertical, 8)

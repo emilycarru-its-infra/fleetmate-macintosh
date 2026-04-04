@@ -1,4 +1,5 @@
 import SwiftUI
+import FleetMateCore
 
 /// Top-level tab identity shared between ContentView and AppState for type-safe programmatic navigation.
 enum AppTab: String, CaseIterable, Identifiable, Hashable {
@@ -20,5 +21,20 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         case .projects: "list.clipboard"
         case .identity: "person.2"
         }
+    }
+
+    func isEnabled(config: FleetMateConfig) -> Bool {
+        switch self {
+        case .dashboard: true
+        case .devices:   config.isGraphConfigured
+        case .inventory: config.isSnipeConfigured
+        case .tickets:   config.isTdxConfigured
+        case .projects:  config.isDevOpsConfigured
+        case .identity:  config.isGraphConfigured
+        }
+    }
+
+    static func enabledTabs(config: FleetMateConfig) -> [AppTab] {
+        allCases.filter { $0.isEnabled(config: config) }
     }
 }

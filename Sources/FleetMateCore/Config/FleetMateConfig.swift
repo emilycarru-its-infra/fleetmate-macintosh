@@ -40,9 +40,11 @@ public struct FleetMateConfig: Codable {
     var munkiReportSshKeyPath: String?
     var munkiReportDbPath: String?
 
-    // Snipe-IT API settings
+    // Snipe-IT settings
     public var snipeUrl: String?
     public var snipeApiKey: String?
+    public var snipeAuthMethod: SnipeAuthMethod = .auto
+    public var snipeSsoEnabled: Bool = true
 
     // Microsoft Graph settings - shared tenant
     public var graphTenantId: String?
@@ -171,54 +173,36 @@ public struct FleetMateConfig: Codable {
         case repoRoot = "repo_root"
     }
 
-    static let configLocations: [String] = [
-        "~/.fleetmate/config.yaml",
-        "~/.config/fleetmate/config.yaml",
-        "/etc/fleetmate/config.yaml"
-    ]
+    static let configPath = "~/.fleetmate/config.yaml"
 
-    /// Load configuration from file, Keychain, and environment
+    /// Load configuration.
+    ///
+    /// Priority (lowest → highest):
+    /// 1. `~/.fleetmate/config.yaml`  — structural/non-credential settings (tasks, paths, etc.)
+    /// 2. Keychain                    — all credential values written by the Settings UI
+    /// 3. Environment variables       — CI/CD override; use `KeychainService.importFromEnvironment()`
+    ///                                  to pre-seed Keychain, or just rely on env vars passthrough
     public static func load() throws -> FleetMateConfig {
         var config = FleetMateConfig()
 
-        // Try config file locations
-        for location in configLocations {
-            let expandedPath = NSString(string: location).expandingTildeInPath
-            if FileManager.default.fileExists(atPath: expandedPath) {
-                if let loaded = loadFromFile(path: expandedPath) {
-                    config = loaded
-                    break
-                }
-                // Codable decode failed (camelCase keys vs snake_case CodingKeys) — 
-                // fall back to dictionary-based loading for nested sections
+        // 1. Structural config from file (tasks, secureShell, paths, log level, etc.)
+        let expandedPath = NSString(string: configPath).expandingTildeInPath
+        if FileManager.default.fileExists(atPath: expandedPath) {
+            if let loaded = loadFromFile(path: expandedPath) {
+                config = loaded
+            } else {
+                // Codable decode failed — fall back to dictionary loader for nested sections
                 loadConfigDictionary(path: expandedPath, into: &config)
-                break
             }
         }
 
-        // Load .env file
-        let envPaths = [
-            "~/.fleetmate/.env",
-            ".env"
-        ]
-        for envPath in envPaths {
-            let expandedPath = NSString(string: envPath).expandingTildeInPath
-            loadEnvFile(path: expandedPath, into: &config)
-        }
-        
-        // Load from secrets.yaml file (created by setup-secrets.sh)
-        // This is the PRIMARY secret storage - no Keychain prompts!
-        loadFromSecretsFile(into: &config)
-        
-        // NOTE: Keychain loading removed to avoid password prompts
-        // Secrets are now loaded from ~/.config/fleetmate/secrets.yaml
+        // 2. Credentials from Keychain (overrides any credentials that happened to be in the file)
+        loadFromKeychain(into: &config)
 
-        // Environment variables override everything (for CI/CD)
+        // 3. Environment variables override everything (CI/CD)
         loadEnvironmentVariables(into: &config)
 
-        // Find repo root
         config.repoRoot = findRepoRoot()
-
         return config
     }
     
@@ -395,73 +379,85 @@ public struct FleetMateConfig: Codable {
         }
     }
     
-    /// Load credentials from macOS Keychain
+    /// Load credentials from JSON file (previously Keychain).
     private static func loadFromKeychain(into config: inout FleetMateConfig) {
-        let keychain = KeychainService.shared
-        
-        // ReportMate
-        if let url = keychain.get(.reportMateUrl) { config.reportMateUrl = url }
-        if let passphrase = keychain.get(.reportMatePassphrase) { config.reportMatePassphrase = passphrase }
-        
-        // Snipe-IT
-        if let url = keychain.get(.snipeUrl) { config.snipeUrl = url }
-        if let apiKey = keychain.get(.snipeApiKey) { config.snipeApiKey = apiKey }
-        
-        // Graph/Entra
-        if let tenantId = keychain.get(.graphTenantId) { config.graphTenantId = tenantId }
-        if let clientId = keychain.get(.graphClientId) { config.graphClientId = clientId }
-        if let clientSecret = keychain.get(.graphClientSecret) { config.graphClientSecret = clientSecret }
-        
-        // Azure DevOps
-        if let org = keychain.get(.devopsOrganization) { config.devopsOrganization = org }
-        if let project = keychain.get(.devopsProject) { config.devopsProject = project }
-        // NO PAT — Azure DevOps uses SSO only
-        
-        // TDX
-        if let url = keychain.get(.tdxBaseUrl) { config.tdxBaseUrl = url }
-        if let appId = keychain.get(.tdxAppId), let id = Int(appId) { config.tdxAppId = id }
-        if let username = keychain.get(.tdxUsername) { config.tdxUsername = username }
-        if let password = keychain.get(.tdxPassword) { config.tdxPassword = password }
-        if let beid = keychain.get(.tdxBeid) { config.tdxBeid = beid }
-        if let wsKey = keychain.get(.tdxWebServicesKey) { config.tdxWebServicesKey = wsKey }
-        
-        // SecureShell
-        if let keyPath = keychain.get(.sshKeyPath) {
-            if config.secureShell == nil { config.secureShell = SecureShellConfig() }
-            config.secureShell?.privateKeyPath = keyPath
-        }
-        if let username = keychain.get(.sshDefaultUsername) {
-            if config.secureShell == nil { config.secureShell = SecureShellConfig() }
-            config.secureShell?.defaultUsername = username
-        }
-        if let vaultName = keychain.get(.sshKeyVaultName) {
-            if config.secureShell == nil { config.secureShell = SecureShellConfig() }
-            config.secureShell?.keyVaultName = vaultName
-        }
-    }
-
-    private static func loadEnvFile(path: String, into config: inout FleetMateConfig) {
-        guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
+        let path = NSString(string: credentialsPath).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: path),
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let creds = try? JSONSerialization.jsonObject(with: data) as? [String: String] else {
+            // Fall back to legacy Keychain read
+            loadFromKeychainLegacy(into: &config)
             return
         }
 
-        for line in contents.components(separatedBy: .newlines) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+        func get(_ key: String) -> String? { creds[key] }
+        func getInt(_ key: String) -> Int? { creds[key].flatMap(Int.init) }
 
-            let parts = trimmed.split(separator: "=", maxSplits: 1)
-            guard parts.count == 2 else { continue }
-
-            let key = String(parts[0]).trimmingCharacters(in: .whitespaces)
-            var value = String(parts[1]).trimmingCharacters(in: .whitespaces)
-            // Remove quotes
-            if (value.hasPrefix("\"") && value.hasSuffix("\"")) ||
-               (value.hasPrefix("'") && value.hasSuffix("'")) {
-                value = String(value.dropFirst().dropLast())
-            }
-
-            applyConfigValue(key: key.uppercased(), value: value, to: &config)
+        if let v = get("reportMateUrl")      { config.reportMateUrl = v }
+        if let v = get("reportMatePassphrase") { config.reportMatePassphrase = v }
+        if let v = get("snipeUrl")           { config.snipeUrl = v }
+        if let v = get("snipeApiKey")        { config.snipeApiKey = v }
+        if let v = get("graphTenantId")      { config.graphTenantId = v }
+        if let v = get("graphClientId")      { config.graphClientId = v }
+        if let v = get("graphClientSecret")  { config.graphClientSecret = v }
+        if let v = get("devicesGraphId")     { config.devicesGraphId = v }
+        if let v = get("devicesGraphSecret") { config.devicesGraphSecret = v }
+        if let v = get("systemsGraphId")     { config.systemsGraphId = v }
+        if let v = get("systemsGraphSecret") { config.systemsGraphSecret = v }
+        if let v = get("devopsOrganization") { config.devopsOrganization = v }
+        if let v = get("devopsProject")      { config.devopsProject = v }
+        if let v = get("devopsClientId")     { config.devopsClientId = v }
+        if let v = get("devopsTenantId")     { config.devopsTenantId = v }
+        if let v = get("tdxBaseUrl")         { config.tdxBaseUrl = v }
+        if let id = getInt("tdxAppId")       { config.tdxAppId = id }
+        if let id = getInt("tdxTicketingAppId") { config.tdxTicketingAppId = id }
+        if let id = getInt("tdxAssetsAppId") { config.tdxAssetsAppId = id }
+        if let v = get("tdxUsername")        { config.tdxUsername = v }
+        if let v = get("tdxPassword")        { config.tdxPassword = v }
+        if let v = get("tdxBeid")            { config.tdxBeid = v }
+        if let v = get("tdxWebServicesKey")  { config.tdxWebServicesKey = v }
+        if let id = getInt("tdxResponsibleGroupId") { config.tdxResponsibleGroupId = id }
+        if let v = get("sshKeyPath") {
+            if config.secureShell == nil { config.secureShell = SecureShellConfig() }
+            config.secureShell?.privateKeyPath = v
         }
+        if let v = get("sshDefaultUsername") {
+            if config.secureShell == nil { config.secureShell = SecureShellConfig() }
+            config.secureShell?.defaultUsername = v
+        }
+        if let v = get("sshKeyVaultName") {
+            if config.secureShell == nil { config.secureShell = SecureShellConfig() }
+            config.secureShell?.keyVaultName = v
+        }
+    }
+
+    /// Legacy Keychain loader — used when credentials.json doesn't exist yet
+    private static func loadFromKeychainLegacy(into config: inout FleetMateConfig) {
+        let kc = KeychainService.shared
+        if let v = kc.get(.reportMateUrl)        { config.reportMateUrl = v }
+        if let v = kc.get(.reportMatePassphrase)  { config.reportMatePassphrase = v }
+        if let v = kc.get(.snipeUrl)    { config.snipeUrl = v }
+        if let v = kc.get(.snipeApiKey) { config.snipeApiKey = v }
+        if let v = kc.get(.graphTenantId) { config.graphTenantId = v }
+        if let v = kc.get(.graphClientId)     { config.graphClientId = v }
+        if let v = kc.get(.graphClientSecret) { config.graphClientSecret = v }
+        if let v = kc.get(.devicesGraphId)     { config.devicesGraphId = v }
+        if let v = kc.get(.devicesGraphSecret) { config.devicesGraphSecret = v }
+        if let v = kc.get(.systemsGraphId)     { config.systemsGraphId = v }
+        if let v = kc.get(.systemsGraphSecret) { config.systemsGraphSecret = v }
+        if let v = kc.get(.devopsOrganization) { config.devopsOrganization = v }
+        if let v = kc.get(.devopsProject)      { config.devopsProject = v }
+        if let v = kc.get(.devopsClientId)     { config.devopsClientId = v }
+        if let v = kc.get(.devopsTenantId)     { config.devopsTenantId = v }
+        if let v = kc.get(.tdxBaseUrl)         { config.tdxBaseUrl = v }
+        if let v = kc.get(.tdxAppId),       let id = Int(v) { config.tdxAppId = id }
+        if let v = kc.get(.tdxTicketingAppId), let id = Int(v) { config.tdxTicketingAppId = id }
+        if let v = kc.get(.tdxAssetsAppId),    let id = Int(v) { config.tdxAssetsAppId = id }
+        if let v = kc.get(.tdxUsername)        { config.tdxUsername = v }
+        if let v = kc.get(.tdxPassword)        { config.tdxPassword = v }
+        if let v = kc.get(.tdxBeid)            { config.tdxBeid = v }
+        if let v = kc.get(.tdxWebServicesKey)  { config.tdxWebServicesKey = v }
+        if let v = kc.get(.tdxResponsibleGroupId), let id = Int(v) { config.tdxResponsibleGroupId = id }
     }
 
     private static func loadEnvironmentVariables(into config: inout FleetMateConfig) {
@@ -516,37 +512,6 @@ public struct FleetMateConfig: Codable {
         }
     }
 
-    private static func applyConfigValue(key: String, value: String, to config: inout FleetMateConfig) {
-        switch key {
-        case "REPORTMATE_URL": config.reportMateUrl = value
-        case "REPORTMATE_PASSPHRASE": config.reportMatePassphrase = value
-        case "MUNKIREPORT_URL": config.munkiReportUrl = value
-        case "MUNKIREPORT_SSH_HOST": config.munkiReportSshHost = value
-        case "MUNKIREPORT_SSH_USER": config.munkiReportSshUser = value
-        case "MUNKIREPORT_SSH_KEY_PATH": config.munkiReportSshKeyPath = value
-        case "MUNKIREPORT_DB_PATH": config.munkiReportDbPath = value
-        case "SNIPE_URL": config.snipeUrl = value
-        case "SNIPE_API_KEY": config.snipeApiKey = value
-        case "GRAPH_TENANT_ID": config.graphTenantId = value
-        case "GRAPH_CLIENT_ID": config.graphClientId = value
-        case "GRAPH_CLIENT_SECRET": config.graphClientSecret = value
-        case "DEVOPS_ORGANIZATION": config.devopsOrganization = value
-        case "DEVOPS_PROJECT": config.devopsProject = value
-        // NO PAT — Azure DevOps uses SSO only
-        case "DEVOPS_CLIENT_ID": config.devopsClientId = value
-        case "DEVOPS_TENANT_ID": config.devopsTenantId = value
-        case "TDX_BASE_URL": config.tdxBaseUrl = value
-        case "TDX_APP_ID": config.tdxAppId = Int(value)
-        case "TDX_TICKETING_APP_ID": config.tdxTicketingAppId = Int(value)
-        case "TDX_ASSETS_APP_ID": config.tdxAssetsAppId = Int(value)
-        case "TDX_USERNAME": config.tdxUsername = value
-        case "TDX_PASSWORD": config.tdxPassword = value
-        case "TDX_BEID": config.tdxBeid = value
-        case "TDX_WEB_SERVICES_KEY": config.tdxWebServicesKey = value
-        default: break
-        }
-    }
-
     private static func findRepoRoot() -> String? {
         var current = FileManager.default.currentDirectoryPath
         while !current.isEmpty && current != "/" {
@@ -590,9 +555,11 @@ public struct FleetMateConfig: Codable {
         return munkiReportSshHost != nil && munkiReportSshUser != nil && munkiReportDbPath != nil
     }
 
-    /// Check if Snipe-IT is configured
+    /// Check if Snipe-IT is configured (API key or SSO mode)
     public var isSnipeConfigured: Bool {
-        return snipeUrl != nil && snipeApiKey != nil
+        guard snipeUrl != nil else { return false }
+        if snipeAuthMethod == .browserSSO || snipeSsoEnabled { return true }
+        return snipeApiKey != nil
     }
 
     /// Check if Graph is configured (either devices or systems service principal)
@@ -615,10 +582,11 @@ public struct FleetMateConfig: Codable {
         return devopsOrganization != nil || tasks?.providers.azdevops?.organization != nil
     }
 
-    /// Check if TDX is configured
+    /// Check if TDX is configured (credentials or SSO mode)
     public var isTdxConfigured: Bool {
-        return tdxBaseUrl != nil && tdxAppId != nil &&
-               ((tdxUsername != nil && tdxPassword != nil) || (tdxBeid != nil && tdxWebServicesKey != nil))
+        guard tdxBaseUrl != nil, (tdxAppId != nil || tdxTicketingAppId != nil) else { return false }
+        if tdxAuthMethod == .browserSSO || tdxSsoEnabled { return true }
+        return (tdxUsername != nil && tdxPassword != nil) || (tdxBeid != nil && tdxWebServicesKey != nil)
     }
     
     /// Check if SecureShell is configured
@@ -657,32 +625,95 @@ public struct FleetMateConfig: Codable {
     }
 
     /// Get TDX tickets URL
+    /// TDX API base — auto-appends /TDWebApi if the URL is just the hostname
+    private var tdxApiBase: String {
+        let raw = (tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if !raw.isEmpty && !raw.contains("/TDWebApi") && !raw.hasSuffix("/api") {
+            return "\(raw)/TDWebApi"
+        }
+        return raw
+    }
+
     public func tdxTicketsUrl(_ suffix: String = "") -> String {
-        let base = (tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let appId = tdxTicketingAppId ?? tdxAppId ?? 0
         if suffix.isEmpty {
-            return "\(base)/api/\(appId)/tickets"
+            return "\(tdxApiBase)/api/\(appId)/tickets"
         }
-        return "\(base)/api/\(appId)/tickets/\(suffix)"
+        return "\(tdxApiBase)/api/\(appId)/tickets/\(suffix)"
     }
-    
+
     /// Get TDX assets URL
     public func tdxAssetsUrl(_ suffix: String = "") -> String {
-        let base = (tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let appId = tdxAssetsAppId ?? tdxAppId ?? 0
         if suffix.isEmpty {
-            return "\(base)/api/\(appId)/assets"
+            return "\(tdxApiBase)/api/\(appId)/assets"
         }
-        return "\(base)/api/\(appId)/assets/\(suffix)"
+        return "\(tdxApiBase)/api/\(appId)/assets/\(suffix)"
     }
 
     /// Get TDX people URL (not app-scoped)
     public func tdxPeopleUrl(_ suffix: String = "") -> String {
-        let base = (tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let base = tdxApiBase
         if suffix.isEmpty {
             return "\(base)/api/people"
         }
         return "\(base)/api/people/\(suffix)"
+    }
+
+    // MARK: - Persist
+
+    /// Write all credential fields to the macOS Keychain.
+    /// Called directly by the Settings UI — no files involved.
+    /// Path for the credentials JSON file (alongside config.yaml)
+    private static let credentialsPath = "~/.fleetmate/credentials.json"
+
+    public static func saveToKeychain(_ config: FleetMateConfig) throws {
+        // Save credentials as a JSON file — more reliable than per-key Keychain entries
+        let path = NSString(string: credentialsPath).expandingTildeInPath
+        let dir = (path as NSString).deletingLastPathComponent
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+
+        var creds: [String: String] = [:]
+
+        func set(_ key: String, _ value: String?) {
+            if let v = value, !v.isEmpty { creds[key] = v }
+        }
+        func setInt(_ key: String, _ value: Int?) {
+            if let v = value { creds[key] = String(v) }
+        }
+
+        set("reportMateUrl", config.reportMateUrl)
+        set("reportMatePassphrase", config.reportMatePassphrase)
+        set("snipeUrl", config.snipeUrl)
+        set("snipeApiKey", config.snipeApiKey)
+        set("graphTenantId", config.graphTenantId)
+        set("graphClientId", config.graphClientId)
+        set("graphClientSecret", config.graphClientSecret)
+        set("devicesGraphId", config.devicesGraphId)
+        set("devicesGraphSecret", config.devicesGraphSecret)
+        set("systemsGraphId", config.systemsGraphId)
+        set("systemsGraphSecret", config.systemsGraphSecret)
+        set("devopsOrganization", config.devopsOrganization)
+        set("devopsProject", config.devopsProject)
+        set("devopsClientId", config.devopsClientId)
+        set("devopsTenantId", config.devopsTenantId)
+        set("tdxBaseUrl", config.tdxBaseUrl)
+        setInt("tdxAppId", config.tdxAppId)
+        setInt("tdxTicketingAppId", config.tdxTicketingAppId)
+        setInt("tdxAssetsAppId", config.tdxAssetsAppId)
+        set("tdxUsername", config.tdxUsername)
+        set("tdxPassword", config.tdxPassword)
+        set("tdxBeid", config.tdxBeid)
+        set("tdxWebServicesKey", config.tdxWebServicesKey)
+        setInt("tdxResponsibleGroupId", config.tdxResponsibleGroupId)
+        set("sshKeyPath", config.secureShell?.privateKeyPath)
+        set("sshDefaultUsername", config.secureShell?.defaultUsername)
+        set("sshKeyVaultName", config.secureShell?.keyVaultName)
+
+        let data = try JSONSerialization.data(withJSONObject: creds, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+
+        dbg.info("[SaveCreds] Wrote \(creds.count) keys to \(path)", category: "config")
     }
 }
 
@@ -1040,4 +1071,12 @@ public enum TdxAuthMethod: String, Codable, CaseIterable, Sendable {
         case .userPassword: return "Traditional TDX username and password"
         }
     }
+}
+
+// MARK: - Snipe-IT Authentication Method
+
+public enum SnipeAuthMethod: String, Codable, CaseIterable, Sendable {
+    case auto = "auto"
+    case browserSSO = "browser_sso"
+    case apiKey = "api_key"
 }

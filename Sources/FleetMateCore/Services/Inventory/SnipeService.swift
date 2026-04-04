@@ -4,31 +4,112 @@ import Alamofire
 /// Client for Snipe-IT Asset Management API
 /// https://snipe-it.readme.io/reference/api-overview
 public class SnipeService {
-    let baseUrl: String
-    let apiKey: String
-    
-    private let session: Session
+    public let baseUrl: String
+    public let apiKey: String
+
+    private var session: Session
     private var assetCache: [SnipeAsset]?
     private var assetCacheExpiry: Date = .distantPast
     private let cacheDuration: TimeInterval
-    
+
+    // SSO cookie-based auth
+    private var ssoCookies: [HTTPCookie]?
+    public private(set) var ssoUserName: String?
+    public private(set) var ssoAuthenticated: Bool = false
+
     public var isConfigured: Bool {
-        return !baseUrl.isEmpty && !apiKey.isEmpty
+        return !baseUrl.isEmpty && (!apiKey.isEmpty || ssoAuthenticated)
     }
-    
+
+    /// True when SSO is preferred but not yet authenticated
+    public var shouldAttemptSso: Bool {
+        return !baseUrl.isEmpty && !ssoAuthenticated
+    }
+
+    public var authenticatedUserName: String? {
+        ssoUserName
+    }
+
     public init(baseUrl: String?, apiKey: String?, cacheMinutes: Int = 5) {
         self.baseUrl = (baseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         self.apiKey = apiKey ?? ""
         self.cacheDuration = TimeInterval(cacheMinutes * 60)
-        
+
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 120
-        
+
         self.session = Session(configuration: configuration)
     }
-    
+
+    // MARK: - SSO Cookie Management
+
+    /// After WKWebView SSO login, Snipe-IT sets:
+    /// - `snipeit_session` — Laravel session cookie
+    /// - `snipeit_passport_token` — Encrypted JWT for API auth (set by CreateFreshApiToken middleware)
+    /// - `XSRF-TOKEN` — CSRF token (must be sent back as X-XSRF-TOKEN header, URL-decoded)
+    /// This mimics exactly how a browser interacts with Snipe-IT after SSO.
+    public func setSsoCookies(_ cookies: [HTTPCookie], userName: String?) {
+        ssoCookies = cookies
+        ssoUserName = userName
+        ssoAuthenticated = true
+
+        // Inject cookies into shared storage so Alamofire picks them up
+        let storage = HTTPCookieStorage.shared
+        for cookie in cookies {
+            storage.setCookie(cookie)
+        }
+
+        // Recreate session with cookie support enabled
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 120
+        configuration.httpCookieAcceptPolicy = .always
+        configuration.httpShouldSetCookies = true
+        configuration.httpCookieStorage = storage
+        session = Session(configuration: configuration)
+    }
+
+    public func clearSsoCookies() {
+        if let cookies = ssoCookies {
+            let storage = HTTPCookieStorage.shared
+            for cookie in cookies {
+                storage.deleteCookie(cookie)
+            }
+        }
+        ssoCookies = nil
+        ssoUserName = nil
+        ssoAuthenticated = false
+
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 120
+        session = Session(configuration: configuration)
+    }
+
+    /// Extract the XSRF token from cookies (Laravel expects it URL-decoded in X-XSRF-TOKEN header)
+    private var xsrfToken: String? {
+        guard let cookies = ssoCookies else { return nil }
+        return cookies
+            .first(where: { $0.name == "XSRF-TOKEN" })?
+            .value
+            .removingPercentEncoding
+    }
+
     private var headers: HTTPHeaders {
-        [
+        if ssoAuthenticated, ssoCookies != nil {
+            // Cookie-based auth — mimic browser behavior.
+            // Cookies (session + passport token) are on the session's cookie storage.
+            // Laravel requires X-XSRF-TOKEN header for CSRF protection on cookie-auth requests.
+            var h: HTTPHeaders = [
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": baseUrl,
+            ]
+            if let xsrf = xsrfToken {
+                h.add(name: "X-XSRF-TOKEN", value: xsrf)
+            }
+            return h
+        }
+        return [
             "Authorization": "Bearer \(apiKey)",
             "Accept": "application/json",
             "Content-Type": "application/json"

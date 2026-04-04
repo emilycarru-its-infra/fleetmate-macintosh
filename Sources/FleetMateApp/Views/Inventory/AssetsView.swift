@@ -327,7 +327,22 @@ struct AssetsView: View {
                     .frame(minWidth: max(totalW, geo.size.width))
                 }
             }
+            .focusable()
+            .onKeyPress(.upArrow) { moveAssetSelection(by: -1); return .handled }
+            .onKeyPress(.downArrow) { moveAssetSelection(by: 1); return .handled }
         }
+    }
+
+    private func moveAssetSelection(by offset: Int) {
+        let list = filteredAssets
+        guard !list.isEmpty else { return }
+        guard let current = selectedAsset,
+              let currentIndex = list.firstIndex(where: { $0.id == current.id }) else {
+            selectedAsset = list.first
+            return
+        }
+        let newIndex = min(max(currentIndex + offset, 0), list.count - 1)
+        selectedAsset = list[newIndex]
     }
 
     @ViewBuilder

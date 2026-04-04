@@ -243,6 +243,20 @@ public struct ManagedAppRegistrationsResponse: Codable {
     }
 }
 
+// MARK: - Bulk Action Results
+
+public struct BulkActionResult: Sendable {
+    public let deviceId: String
+    public let success: Bool
+    public let error: String?
+
+    public init(deviceId: String, success: Bool, error: String? = nil) {
+        self.deviceId = deviceId
+        self.success = success
+        self.error = error
+    }
+}
+
 // MARK: - Windows Autopilot
 
 public struct WindowsAutopilotDevice: Codable, Identifiable, Sendable {

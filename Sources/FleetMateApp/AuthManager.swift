@@ -7,53 +7,54 @@ import FleetMateCore
 class AuthManager: ObservableObject {
     @Published var systems: [AuthSystemId: AuthSystemStatus] = [:]
     
-    private let config: FleetMateConfig
-    
+    private(set) var config: FleetMateConfig
+
     init(config: FleetMateConfig) {
         self.config = config
         bootstrapFromConfig()
     }
-    
+
     // MARK: - Bootstrap
-    
+
     /// Populate initial states from config: configured systems get `.configured`,
     /// unconfigured ones are omitted entirely (as if they don't exist).
-    func bootstrapFromConfig() {
+    func bootstrapFromConfig(with newConfig: FleetMateConfig? = nil) {
+        if let newConfig { config = newConfig }
         systems.removeAll()
         
-        // Devices — Graph / Intune
-        if config.isGraphConfigured {
+        // Devices — Graph / Intune (show if tenant ID set, even with CLI SSO)
+        if config.isGraphConfigured || config.graphTenantId != nil {
             systems[.intune] = AuthSystemStatus(systemId: .intune, state: .configured)
             systems[.graph]  = AuthSystemStatus(systemId: .graph,  state: .configured)
         }
-        
+
         // Assets — Snipe-IT
         if config.isSnipeConfigured {
             systems[.snipe] = AuthSystemStatus(systemId: .snipe, state: .configured)
         }
-        
+
         // Tickets — TDX
         if config.isTdxConfigured {
             systems[.tdx] = AuthSystemStatus(systemId: .tdx, state: .configured)
         }
-        
+
         // Projects — DevOps
         if config.isDevOpsConfigured {
             systems[.devops] = AuthSystemStatus(systemId: .devops, state: .configured)
         }
-        
+
         // Projects — GitHub
         if let gh = config.tasks?.providers.github, gh.enabled {
             systems[.github] = AuthSystemStatus(systemId: .github, state: .configured)
         }
-        
+
         // Projects — Gitea
         if let gt = config.tasks?.providers.gitea, gt.enabled {
             systems[.gitea] = AuthSystemStatus(systemId: .gitea, state: .configured)
         }
-        
-        // Identity — Entra
-        if config.isSystemsGraphConfigured {
+
+        // Identity — Entra (show if tenant ID set, even with CLI SSO)
+        if config.isSystemsGraphConfigured || config.graphTenantId != nil {
             systems[.entra] = AuthSystemStatus(systemId: .entra, state: .configured)
         }
     }
@@ -138,13 +139,20 @@ class AuthManager: ObservableObject {
         
         // Snipe-IT
         if systems[.snipe] != nil {
-            update(.snipe, state: .authenticating)
-            do {
-                _ = try await snipeService.getAllAssets()
-                update(.snipe, state: .valid(user: config.snipeUrl ?? "Snipe-IT", expiry: nil))
-            } catch {
-                update(.snipe, state: .failed(message: error.localizedDescription))
+            if snipeService.ssoAuthenticated {
+                // SSO mode — already authenticated via cookies
+                update(.snipe, state: .valid(user: snipeService.ssoUserName ?? "SSO User", expiry: nil))
+            } else if !snipeService.apiKey.isEmpty {
+                // API key mode — probe with a lightweight call
+                update(.snipe, state: .authenticating)
+                do {
+                    _ = try await snipeService.getAllAssets()
+                    update(.snipe, state: .valid(user: config.snipeUrl ?? "Snipe-IT", expiry: nil))
+                } catch {
+                    update(.snipe, state: .failed(message: error.localizedDescription))
+                }
             }
+            // SSO not yet authenticated + no API key = leave at .configured, SSO will handle it
         }
         
         // TDX

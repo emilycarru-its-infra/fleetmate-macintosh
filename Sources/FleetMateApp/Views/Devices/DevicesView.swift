@@ -74,35 +74,12 @@ struct DevicesView: View {
         HSplitView {
             // Main device list
             VStack(alignment: .leading, spacing: 0) {
-                // Header
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text("Devices")
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                        HStack {
-                            Text("Devices Management Service")
-                                .foregroundColor(.secondary)
-                            if !selectedDeviceIds.isEmpty {
-                                Text("• \(selectedDeviceIds.count) selected")
-                                    .foregroundColor(.accentColor)
-                                    .fontWeight(.medium)
-                            }
-                        }
-                    }
-
-                    Spacer()
-                }
-                .padding()
-
                 // Selection controls
                 HStack {
-                    if !selectedDeviceIds.isEmpty || !filteredDevices.isEmpty {
+                    if !selectedDeviceIds.isEmpty {
                         Button("Select All") { selectAllVisible() }
-                            .disabled(filteredDevices.isEmpty)
                             .controlSize(.small)
-                        Button("Clear") { selectedDeviceIds.removeAll() }
-                            .disabled(selectedDeviceIds.isEmpty)
+                        Button("Clear Selection") { selectedDeviceIds.removeAll() }
                             .controlSize(.small)
                     }
                     Spacer()

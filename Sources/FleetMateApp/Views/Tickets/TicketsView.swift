@@ -558,73 +558,77 @@ struct TicketsView: View {
             }
         }
         .searchable(text: $searchText, prompt: "Search tickets...")
-        .toolbar { ticketsToolbar }
     }
 
-    // MARK: - Toolbar
-
-    @ToolbarContentBuilder
-    private var ticketsToolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .automatic) {
-            Picker("View", selection: $viewMode) {
-                Label("Table", systemImage: "tablecells").tag(TicketViewMode.table)
-                Label("Board", systemImage: "rectangle.split.3x1").tag(TicketViewMode.board)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 140)
-
-            if filters.hasActiveFilters || showClosed || !isDefaultDatePreset {
-                Button(action: {
-                    filters.clearAll()
-                    showClosed = false
-                    resetToCurrentTerm()
-                }) {
-                    Label("Clear Filters", systemImage: "xmark.circle.fill")
-                }
-                .tint(.yellow)
-            }
-
-            Button(action: { showFilters.toggle() }) {
-                Label("Filters", systemImage: filters.hasActiveFilters
-                    ? "line.3.horizontal.decrease.circle.fill"
-                    : "line.3.horizontal.decrease.circle")
-            }
-            .popover(isPresented: $showFilters, arrowEdge: .bottom) {
-                FilterPanelView(filters: filters)
-            }
-
-            Button(action: loadTickets) {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .disabled(isLoading)
-            .keyboardShortcut("r", modifiers: .command)
-        }
-    }
 
     // MARK: - Header Section
 
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Tickets")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                Text("\(filteredTickets.count) of \(tickets.count)")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    .padding(.top, 6)
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Tickets")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                    Text("\(filteredTickets.count) of \(tickets.count)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                // View mode toggle
+                Picker("", selection: $viewMode) {
+                    Text("Table").tag(TicketViewMode.table)
+                    Text("Board").tag(TicketViewMode.board)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 140)
 
                 if viewMode == .board {
-                    HStack(spacing: 4) {
-                        Text("Columns:").foregroundColor(.secondary).font(.caption)
-                        Picker("", selection: $boardGroupBy) {
-                            ForEach(BoardGroupBy.allCases, id: \.self) { option in
-                                Text(option.rawValue).tag(option)
-                            }
+                    Picker("", selection: $boardGroupBy) {
+                        ForEach(BoardGroupBy.allCases, id: \.self) { option in
+                            Text(option.rawValue).tag(option)
                         }
-                        .frame(width: 110)
                     }
+                    .frame(width: 110)
                 }
+
+                // Action buttons
+                if filters.hasActiveFilters || showClosed || !isDefaultDatePreset {
+                    Button(action: {
+                        filters.clearAll()
+                        showClosed = false
+                        resetToCurrentTerm()
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundStyle(.yellow)
+                    }
+                    .buttonStyle(.plain)
+                    .glassButton()
+                    .help("Clear all filters")
+                }
+
+                Button(action: { showFilters.toggle() }) {
+                    Image(systemName: filters.hasActiveFilters
+                        ? "line.3.horizontal.decrease.circle.fill"
+                        : "line.3.horizontal.decrease.circle")
+                    .font(.system(size: 16))
+                }
+                .buttonStyle(.plain)
+                .glassButton()
+                .help("Filters")
+                .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+                    FilterPanelView(filters: filters)
+                }
+
+                Button(action: loadTickets) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 16))
+                }
+                .buttonStyle(.plain)
+                .glassButton()
+                .disabled(isLoading)
+                .help("Refresh")
 
                 Spacer()
 
@@ -709,10 +713,12 @@ struct TicketsView: View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
                 ticketTableContent
-                    .frame(width: geometry.size.width * 0.6)
-                Divider()
-                detailSidebarView
-                    .frame(width: geometry.size.width * 0.4)
+                    .frame(width: selectedTicket != nil ? geometry.size.width * 0.6 : geometry.size.width)
+                if selectedTicket != nil {
+                    Divider()
+                    detailSidebarView
+                        .frame(width: geometry.size.width * 0.4)
+                }
             }
         }
     }
@@ -723,28 +729,18 @@ struct TicketsView: View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
                 ticketBoardContent
-                    .frame(width: (selectedTicket != nil && showBoardDetail) ? geometry.size.width * 0.6 : geometry.size.width - 16)
+                    .frame(width: showBoardDetail && selectedTicket != nil
+                           ? geometry.size.width * 0.6
+                           : geometry.size.width)
 
-                // Sidebar toggle — always visible so user can expand
-                Button(action: {
-                    if selectedTicket != nil { showBoardDetail.toggle() }
-                }) {
-                    ZStack {
-                        Rectangle()
-                            .fill(Color.secondary.opacity(0.08))
-                            .frame(width: 16)
-                        Image(systemName: showBoardDetail && selectedTicket != nil ? "chevron.compact.right" : "chevron.compact.left")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.secondary.opacity(0.6))
+                if selectedTicket != nil {
+                    // Hoverable divider that collapses/expands sidebar
+                    BoardSidebarDivider(isExpanded: $showBoardDetail)
+
+                    if showBoardDetail {
+                        detailSidebarView
+                            .frame(width: geometry.size.width * 0.4 - 8)
                     }
-                }
-                .buttonStyle(.plain)
-                .help(showBoardDetail ? "Hide detail" : "Show detail")
-                .frame(width: 16)
-
-                if selectedTicket != nil && showBoardDetail {
-                    detailSidebarView
-                        .frame(width: geometry.size.width * 0.4 - 16)
                 }
             }
         }
@@ -2273,6 +2269,40 @@ struct TicketStatusBadge: View {
                 .frame(width: 8, height: 8)
             Text(statusName ?? "Unknown")
                 .font(.body)
+        }
+    }
+}
+
+// MARK: - Board Sidebar Divider
+
+struct BoardSidebarDivider: View {
+    @Binding var isExpanded: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(isHovering ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.15))
+                .frame(width: isHovering ? 6 : 1)
+                .animation(.easeInOut(duration: 0.15), value: isHovering)
+            if isHovering {
+                Image(systemName: isExpanded ? "chevron.compact.right" : "chevron.compact.left")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 8)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onHover { inside in
+            isHovering = inside
+            if inside { NSCursor.resizeLeftRight.push() }
+            else { NSCursor.pop() }
+        }
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isExpanded.toggle()
+            }
         }
     }
 }

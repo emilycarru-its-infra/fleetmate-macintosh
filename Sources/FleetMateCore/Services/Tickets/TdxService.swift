@@ -15,6 +15,10 @@ public class TdxService {
     private var ssoUserId: String?
     private var ssoUserName: String?
 
+    // Cookie-based SSO (when JWT is unavailable)
+    private var ssoCookies: [HTTPCookie]?
+    private var cookieSession: Session?
+
     // Reference data caches
     private var statusCache: [Int: String] = [:]
     private var typeCache: [Int: String] = [:]
@@ -28,7 +32,12 @@ public class TdxService {
     }
 
     public var baseUrl: String {
-        (config.tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let raw = (config.tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        // Auto-append /TDWebApi if the URL is just the hostname (no API path)
+        if !raw.isEmpty && !raw.contains("/TDWebApi") && !raw.hasSuffix("/api") {
+            return "\(raw)/TDWebApi"
+        }
+        return raw
     }
     
     /// Returns true if SSO authentication is active and valid
@@ -85,13 +94,33 @@ public class TdxService {
         self.ssoUserId = userId
         self.ssoUserName = userName
     }
-    
+
+    /// Set SSO cookies for cookie-based auth (when JWT is unavailable)
+    public func setSsoCookies(_ cookies: [HTTPCookie], userName: String? = nil) {
+        self.ssoCookies = cookies
+        self.ssoUserName = userName
+        self.ssoTokenExpiry = Date().addingTimeInterval(23 * 60 * 60) // 23h
+        self.ssoToken = "cookie-auth" // marker so SSO appears valid
+
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 30
+        configuration.httpCookieAcceptPolicy = .always
+        configuration.httpShouldSetCookies = true
+        configuration.httpCookieStorage = HTTPCookieStorage.shared
+        for cookie in cookies {
+            configuration.httpCookieStorage?.setCookie(cookie)
+        }
+        self.cookieSession = Session(configuration: configuration)
+    }
+
     /// Clear SSO authentication state
     public func clearSsoToken() {
         self.ssoToken = nil
         self.ssoTokenExpiry = .distantPast
         self.ssoUserId = nil
         self.ssoUserName = nil
+        self.ssoCookies = nil
+        self.cookieSession = nil
     }
 
     // MARK: - Authentication
@@ -173,7 +202,7 @@ public class TdxService {
 
     private func authenticate(url: String, body: [String: String]) async throws -> String? {
         return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, method: .post, parameters: body, encoding: JSONEncoding.default)
+            activeSession.request(url, method: .post, parameters: body, encoding: JSONEncoding.default)
                 .validate()
                 .responseString { response in
                     switch response.result {
@@ -189,10 +218,22 @@ public class TdxService {
 
     private func headers() async -> HTTPHeaders? {
         guard let token = try? await getAccessToken() else { return nil }
+        if token == "cookie-auth" {
+            // Cookie-based auth — cookies are on the session, no Bearer needed
+            return [
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            ]
+        }
         return [
             "Authorization": "Bearer \(token)",
             "Content-Type": "application/json"
         ]
+    }
+
+    /// The Alamofire session to use — cookie session when available, otherwise default
+    private var activeSession: Session {
+        cookieSession ?? session
     }
 
     // MARK: - Tickets
@@ -210,7 +251,7 @@ public class TdxService {
         let url = config.tdxTicketsUrl("search")
 
         return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, method: .post, parameters: request, encoder: JSONParameterEncoder.default, headers: headers)
+            activeSession.request(url, method: .post, parameters: request, encoder: JSONParameterEncoder.default, headers: headers)
                 .validate()
                 .responseDecodable(of: [TdxTicket].self) { response in
                     switch response.result {
@@ -234,7 +275,7 @@ public class TdxService {
         let url = config.tdxTicketsUrl("\(id)")
 
         return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, headers: headers)
+            activeSession.request(url, headers: headers)
                 .validate()
                 .responseDecodable(of: TdxTicket.self) { response in
                     switch response.result {
@@ -276,7 +317,7 @@ public class TdxService {
         let url = config.tdxTicketsUrl()
 
         return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, method: .post, parameters: createRequest, encoder: JSONParameterEncoder.default, headers: headers)
+            activeSession.request(url, method: .post, parameters: createRequest, encoder: JSONParameterEncoder.default, headers: headers)
                 .validate()
                 .responseDecodable(of: TdxTicket.self) { response in
                     switch response.result {
@@ -299,7 +340,7 @@ public class TdxService {
         dbg.info("TDX PATCH updateTicket \(id) fields: \(updates.keys.sorted())", category: "tdx")
 
         return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, method: .patch, parameters: updates, encoding: JSONEncoding.default, headers: headers)
+            activeSession.request(url, method: .patch, parameters: updates, encoding: JSONEncoding.default, headers: headers)
                 .validate()
                 .responseDecodable(of: TdxTicket.self) { response in
                     switch response.result {
@@ -328,7 +369,7 @@ public class TdxService {
         dbg.info("TDX updateTicket \(id) → POST \(url)", category: "tdx")
 
         return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, method: .post, parameters: request, encoder: JSONParameterEncoder.default, headers: headers)
+            activeSession.request(url, method: .post, parameters: request, encoder: JSONParameterEncoder.default, headers: headers)
                 .validate()
                 .responseDecodable(of: TdxTicket.self) { response in
                     switch response.result {
@@ -354,7 +395,7 @@ public class TdxService {
         dbg.debug("TDX getTicketFeed → GET \(url)", category: "tdx")
 
         return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, headers: headers)
+            activeSession.request(url, headers: headers)
                 .validate()
                 .responseData { dataResponse in
                     if let data = dataResponse.data {
@@ -399,7 +440,7 @@ public class TdxService {
         let url = config.tdxTicketsUrl("\(ticketId)/feed")
 
         return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, method: .post, parameters: request, encoder: JSONParameterEncoder.default, headers: headers)
+            activeSession.request(url, method: .post, parameters: request, encoder: JSONParameterEncoder.default, headers: headers)
                 .validate()
                 .response { response in
                     switch response.result {
@@ -426,7 +467,7 @@ public class TdxService {
         dbg.debug("TDX replyToFeedEntry → POST \(url)", category: "tdx")
 
         return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, method: .post, parameters: request, encoder: JSONParameterEncoder.default, headers: headers)
+            activeSession.request(url, method: .post, parameters: request, encoder: JSONParameterEncoder.default, headers: headers)
                 .validate()
                 .response { response in
                     switch response.result {
@@ -451,7 +492,7 @@ public class TdxService {
         dbg.debug("TDX searchPeople → GET \(url)", category: "tdx")
 
         return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, headers: headers)
+            activeSession.request(url, headers: headers)
                 .validate()
                 .responseDecodable(of: [TdxPerson].self) { response in
                     switch response.result {
@@ -477,7 +518,7 @@ public class TdxService {
         let url = "\(baseUrl)/api/\(config.tdxAppId ?? 0)/tickets/statuses"
 
         let statuses: [TdxStatusItem] = try await withCheckedThrowingContinuation { continuation in
-            session.request(url, headers: headers)
+            activeSession.request(url, headers: headers)
                 .validate()
                 .responseDecodable(of: [TdxStatusItem].self) { response in
                     switch response.result {
@@ -505,7 +546,7 @@ public class TdxService {
         let url = "\(baseUrl)/api/\(config.tdxAppId ?? 0)/tickets/types"
 
         let types: [TdxTypeItem] = try await withCheckedThrowingContinuation { continuation in
-            session.request(url, headers: headers)
+            activeSession.request(url, headers: headers)
                 .validate()
                 .responseDecodable(of: [TdxTypeItem].self) { response in
                     switch response.result {
@@ -532,7 +573,7 @@ public class TdxService {
         let url = "\(baseUrl)/api/\(config.tdxAppId ?? 0)/tickets/priorities"
 
         let priorities: [TdxPriorityItem] = try await withCheckedThrowingContinuation { continuation in
-            session.request(url, headers: headers)
+            activeSession.request(url, headers: headers)
                 .validate()
                 .responseDecodable(of: [TdxPriorityItem].self) { response in
                     switch response.result {
@@ -560,7 +601,7 @@ public class TdxService {
         let url = "\(baseUrl)/api/\(appId)/tickets/forms"
 
         let forms: [TdxFormItem] = try await withCheckedThrowingContinuation { continuation in
-            session.request(url, headers: headers)
+            activeSession.request(url, headers: headers)
                 .validate()
                 .responseDecodable(of: [TdxFormItem].self) { response in
                     switch response.result {

@@ -21,6 +21,7 @@ struct FleetMateApp: App {
                 }
         }
         .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(replacing: .newItem) { }
             

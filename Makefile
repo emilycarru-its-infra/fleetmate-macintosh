@@ -198,16 +198,16 @@ release-app:
 			echo "$(GREEN)✓ Icon compiled: Assets.car (Liquid Glass)$(NC)"; \
 		fi; \
 		if [ -f "$$ACTOOL_OUT/FleetMate.icns" ]; then \
-			cp "$$ACTOOL_OUT/FleetMate.icns" "$(APP_BUNDLE)/Contents/Resources/AppIcon.icns"; \
+			cp "$$ACTOOL_OUT/FleetMate.icns" "$(APP_BUNDLE)/Contents/Resources/FleetMate.icns"; \
 			echo "$(GREEN)✓ Icon compiled: FleetMate.icns (legacy fallback)$(NC)"; \
 		else \
-			iconutil -c icns "$$ICONSET_DIR" -o "$(APP_BUNDLE)/Contents/Resources/AppIcon.icns"; \
-			echo "$(GREEN)✓ Icon generated: AppIcon.icns (from PNG)$(NC)"; \
+			iconutil -c icns "$$ICONSET_DIR" -o "$(APP_BUNDLE)/Contents/Resources/FleetMate.icns"; \
+			echo "$(GREEN)✓ Icon generated: FleetMate.icns (from PNG)$(NC)"; \
 		fi; \
 		rm -rf "$$ACTOOL_OUT"; \
 	else \
-		iconutil -c icns "$$ICONSET_DIR" -o "$(APP_BUNDLE)/Contents/Resources/AppIcon.icns"; \
-		echo "$(GREEN)✓ Icon generated: AppIcon.icns (from PNG)$(NC)"; \
+		iconutil -c icns "$$ICONSET_DIR" -o "$(APP_BUNDLE)/Contents/Resources/FleetMate.icns"; \
+		echo "$(GREEN)✓ Icon generated: FleetMate.icns (from PNG)$(NC)"; \
 	fi; \
 	rm -rf "$$(dirname $$ICONSET_DIR)"
 	@echo "$(GREEN)✓ App bundle assembled: $(APP_BUNDLE)$(NC)"

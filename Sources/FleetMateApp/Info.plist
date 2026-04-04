@@ -7,9 +7,9 @@
 	<key>CFBundleExecutable</key>
 	<string>FleetMate</string>
 	<key>CFBundleIconFile</key>
-	<string>AppIcon</string>
+	<string>FleetMate</string>
 	<key>CFBundleIconName</key>
-	<string>AppIcon</string>
+	<string>FleetMate</string>
 	<key>CFBundleIdentifier</key>
 	<string>ca.ecuad.macadmin.fleetmate</string>
 	<key>CFBundleInfoDictionaryVersion</key>

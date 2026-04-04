@@ -1,5 +1,55 @@
 import SwiftUI
 
+/// Liquid Glass tab bar matching Activity Monitor's style.
+/// Active tab has a filled pill background, inactive tabs are text-only
+/// with vertical line separators between them.
+struct GlassTabBar: View {
+    @Binding var selectedTab: AppTab
+    let tabs: [AppTab]
+    let availableWidth: CGFloat
+    @Namespace private var selectionNS
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
+                // Separator between tabs (not before first or after selected)
+                if index > 0 && tabs[index - 1] != selectedTab && tab != selectedTab {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.25))
+                        .frame(width: 1, height: 16)
+                }
+
+                Button {
+                    withAnimation(.smooth(duration: 0.2)) {
+                        selectedTab = tab
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: tab.icon)
+                            .font(.system(size: 11))
+                        Text(tab.rawValue)
+                            .font(.system(size: 13, weight: selectedTab == tab ? .semibold : .regular))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .foregroundStyle(selectedTab == tab ? Color.primary : Color.secondary)
+                    .background {
+                        if selectedTab == tab {
+                            Capsule()
+                                .fill(.primary.opacity(0.12))
+                                .matchedGeometryEffect(id: "selection", in: selectionNS)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .help(tab.rawValue)
+            }
+        }
+        .padding(3)
+        .modifier(GlassEffectModifier())
+    }
+}
+
 /// Applies Liquid Glass on macOS 26+, falls back to a translucent capsule on older systems.
 private struct GlassEffectModifier: ViewModifier {
     func body(content: Content) -> some View {
@@ -12,135 +62,25 @@ private struct GlassEffectModifier: ViewModifier {
     }
 }
 
-/// Liquid Glass tab bar that adapts to available width.
-/// - **Full**: icon + text labels (wide windows, ≥ 850 pt)
-/// - **Compact**: icon only (medium windows, ≥ 500 pt)
-/// - **Overflow**: visible icon tabs + "…" menu (narrow windows)
-struct GlassTabBar: View {
-    @Binding var selectedTab: AppTab
-    let tabs: [AppTab]
-    let availableWidth: CGFloat
-    @Namespace private var selectionNS
+/// Glass button modifier for action buttons — interactive glass on macOS 26+
+struct GlassButtonModifier: ViewModifier {
+    var cornerRadius: CGFloat = 8
 
-    // MARK: - Layout mode
-
-    private enum LayoutMode {
-        case full
-        case compact
-        case overflow(maxVisible: Int)
-    }
-
-    private var layoutMode: LayoutMode {
-        if availableWidth >= 850 { return .full }
-        if availableWidth >= 500 { return .compact }
-        if availableWidth >= 380 { return .overflow(maxVisible: 4) }
-        return .overflow(maxVisible: 2)
-    }
-
-    // MARK: - Body
-
-    var body: some View {
-        HStack(spacing: 0) {
-            switch layoutMode {
-            case .full:
-                tabButtons(tabs: tabs, showLabels: true)
-            case .compact:
-                tabButtons(tabs: tabs, showLabels: false)
-            case .overflow(let maxVisible):
-                let split = splitTabs(maxVisible: maxVisible)
-                tabButtons(tabs: split.visible, showLabels: false)
-                overflowMenu(tabs: split.overflow)
-            }
-        }
-        .padding(3)
-        .modifier(GlassEffectModifier())
-    }
-
-    // MARK: - Tab buttons
-
-    @ViewBuilder
-    private func tabButtons(tabs: [AppTab], showLabels: Bool) -> some View {
-        ForEach(tabs) { tab in
-            Button {
-                withAnimation(.smooth(duration: 0.22)) {
-                    selectedTab = tab
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: tab.icon)
-                        .font(.system(size: 12))
-                    if showLabels {
-                        Text(tab.rawValue)
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                }
-                .padding(.horizontal, showLabels ? 13 : 10)
-                .padding(.vertical, 7)
-                .foregroundStyle(selectedTab == tab ? Color.primary : Color.secondary)
-                .background {
-                    if selectedTab == tab {
-                        Capsule()
-                            .fill(.primary.opacity(0.12))
-                            .matchedGeometryEffect(id: "selection", in: selectionNS)
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-            .help(tab.rawValue)
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content
+                .padding(8)
+                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
+        } else {
+            content
+                .padding(8)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius))
         }
     }
+}
 
-    // MARK: - Overflow menu
-
-    @ViewBuilder
-    private func overflowMenu(tabs: [AppTab]) -> some View {
-        let isSelectedInOverflow = tabs.contains(selectedTab)
-
-        Menu {
-            ForEach(tabs) { tab in
-                Button {
-                    withAnimation(.smooth(duration: 0.22)) {
-                        selectedTab = tab
-                    }
-                } label: {
-                    Label(tab.rawValue, systemImage: tab.icon)
-                }
-            }
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 12, weight: .medium))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .foregroundStyle(isSelectedInOverflow ? Color.primary : Color.secondary)
-                .background {
-                    if isSelectedInOverflow {
-                        Capsule()
-                            .fill(.primary.opacity(0.12))
-                            .matchedGeometryEffect(id: "selection", in: selectionNS)
-                    }
-                }
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("More tabs")
-    }
-
-    // MARK: - Tab splitting
-
-    /// Selected tab always stays in the visible set; bumped tab moves to overflow.
-    private func splitTabs(maxVisible: Int) -> (visible: [AppTab], overflow: [AppTab]) {
-        let all = tabs
-        guard maxVisible < all.count else { return (all, []) }
-
-        var visible = Array(all.prefix(maxVisible))
-        var overflow = Array(all.dropFirst(maxVisible))
-
-        if let idx = overflow.firstIndex(of: selectedTab) {
-            let bumped = visible[maxVisible - 1]
-            visible[maxVisible - 1] = selectedTab
-            overflow[idx] = bumped
-        }
-
-        return (visible, overflow)
+extension View {
+    func glassButton(cornerRadius: CGFloat = 8) -> some View {
+        modifier(GlassButtonModifier(cornerRadius: cornerRadius))
     }
 }

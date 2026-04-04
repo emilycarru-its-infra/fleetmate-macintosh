@@ -183,7 +183,11 @@ release-app:
 	sips -z 512 512   "$(APP_ICON_PNG)" --out "$$ICONSET_DIR/icon_512x512.png"    > /dev/null 2>&1; \
 	sips -z 1024 1024 "$(APP_ICON_PNG)" --out "$$ICONSET_DIR/icon_512x512@2x.png" > /dev/null 2>&1; \
 	iconutil -c icns "$$ICONSET_DIR" -o "$(APP_BUNDLE)/Contents/Resources/AppIcon.icns"; \
-	rm -rf "$$(dirname $$ICONSET_DIR)"
+	rm -rf "$$(dirname $$ICONSET_DIR)"; \
+	echo "$(BLUE)Copying .icon for macOS 26+ dark mode support...$(NC)"; \
+	if [ -d "build/resources/FleetMate.icon" ]; then \
+		cp -R "build/resources/FleetMate.icon" "$(APP_BUNDLE)/Contents/Resources/AppIcon.icon"; \
+	fi
 	@echo "$(GREEN)✓ App bundle assembled: $(APP_BUNDLE)$(NC)"
 
 # Sign the .app bundle

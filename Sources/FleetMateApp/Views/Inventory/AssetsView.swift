@@ -16,6 +16,58 @@ enum AssetSortField: String, CaseIterable {
     case location = "Location"
 }
 
+// MARK: - Asset Filter Categories
+
+enum AssetFilterCategory: String, FilterCategoryProtocol {
+    case status = "Status"
+    case category = "Category"
+    case platform = "Platform"
+    case manufacturer = "Manufacturer"
+    case model = "Model"
+    case usage = "Usage"
+    case catalog = "Catalog"
+    case area = "Area"
+    case location = "Location"
+    var id: String { rawValue }
+}
+
+extension FilterState where Category == AssetFilterCategory {
+    func buildFromAssets(_ assets: [SnipeAsset]) {
+        func extract(_ keyPath: (SnipeAsset) -> String?) -> [String] {
+            Array(Set(assets.compactMap(keyPath).filter { !$0.isEmpty })).sorted()
+        }
+        availableValues[.status] = extract { $0.statusLabel?.statusMeta?.capitalized }
+        availableValues[.category] = extract { $0.category?.name }
+        availableValues[.platform] = extract { $0.customFieldByName("Platform")?.value }
+        availableValues[.manufacturer] = extract { $0.manufacturer?.name }
+        availableValues[.model] = extract { $0.model?.name }
+        availableValues[.usage] = extract { $0.customFieldByName("Usage")?.value }
+        availableValues[.catalog] = extract { $0.customFieldByName("Catalog")?.value }
+        availableValues[.area] = extract { $0.customFieldByName("Area")?.value }
+        availableValues[.location] = extract { $0.location?.name }
+    }
+
+    func matches(_ asset: SnipeAsset) -> Bool {
+        for (category, selected) in selectedValues where !selected.isEmpty {
+            let value: String?
+            switch category {
+            case .status:       value = asset.statusLabel?.statusMeta?.capitalized
+            case .category:     value = asset.category?.name
+            case .platform:     value = asset.customFieldByName("Platform")?.value
+            case .manufacturer: value = asset.manufacturer?.name
+            case .model:        value = asset.model?.name
+            case .usage:        value = asset.customFieldByName("Usage")?.value
+            case .catalog:      value = asset.customFieldByName("Catalog")?.value
+            case .area:         value = asset.customFieldByName("Area")?.value
+            case .location:     value = asset.location?.name
+            }
+            if let v = value, !selected.contains(v) { return false }
+            if value == nil { return false }
+        }
+        return true
+    }
+}
+
 struct AssetsView: View {
     @EnvironmentObject var appState: AppState
     @State private var isLoading = false
@@ -34,121 +86,24 @@ struct AssetsView: View {
     @State private var visibleColumns: Set<AssetSortField> = Set(AssetSortField.allCases)
     @State private var showColumnPicker = false
 
-    // Filter states
-    @State private var statusFilter = "All"
-    @State private var categoryFilter = "All"
-    @State private var platformFilter = "All"
-    @State private var manufacturerFilter = "All"
-    @State private var modelFilter = "All"
-    @State private var usageFilter = "All"
-    @State private var catalogFilter = "All"
-    @State private var areaFilter = "All"
+    // New filter system
+    @State private var filters = FilterState<AssetFilterCategory>()
+    @State private var showFilters = false
 
     // Use cached assets from appState
     var assets: [SnipeAsset] { appState.cachedAssets }
-
-    // MARK: - Filter Options
-
-    var statusOptions: [String] {
-        var opts = Set<String>()
-        for a in assets {
-            if let s = a.statusLabel?.statusMeta, !s.isEmpty { opts.insert(s.capitalized) }
-        }
-        return ["All"] + opts.sorted()
-    }
-
-    var categoryOptions: [String] {
-        var opts = Set<String>()
-        for a in assets {
-            if let c = a.category?.name, !c.isEmpty { opts.insert(c) }
-        }
-        return ["All"] + opts.sorted()
-    }
-
-    var platformOptions: [String] {
-        var opts = Set<String>()
-        for a in assets {
-            if let v = a.customFieldByName("Platform")?.value, !v.isEmpty { opts.insert(v) }
-        }
-        return ["All"] + opts.sorted()
-    }
-
-    var manufacturerOptions: [String] {
-        var opts = Set<String>()
-        for a in assets {
-            if let m = a.manufacturer?.name, !m.isEmpty { opts.insert(m) }
-        }
-        return ["All"] + opts.sorted()
-    }
-
-    var modelOptions: [String] {
-        var opts = Set<String>()
-        for a in assets {
-            if let m = a.model?.name, !m.isEmpty { opts.insert(m) }
-        }
-        return ["All"] + opts.sorted()
-    }
-
-    var usageOptions: [String] {
-        var opts = Set<String>()
-        for a in assets {
-            if let v = a.customFieldByName("Usage")?.value, !v.isEmpty { opts.insert(v) }
-        }
-        return ["All"] + opts.sorted()
-    }
-
-    var catalogOptions: [String] {
-        var opts = Set<String>()
-        for a in assets {
-            if let v = a.customFieldByName("Catalog")?.value, !v.isEmpty { opts.insert(v) }
-        }
-        return ["All"] + opts.sorted()
-    }
-
-    var areaOptions: [String] {
-        var opts = Set<String>()
-        for a in assets {
-            if let v = a.customFieldByName("Area")?.value, !v.isEmpty { opts.insert(v) }
-        }
-        return ["All"] + opts.sorted()
-    }
-
-    var hasActiveFilters: Bool {
-        statusFilter != "All" || categoryFilter != "All" || platformFilter != "All" ||
-        manufacturerFilter != "All" || modelFilter != "All" || usageFilter != "All" ||
-        catalogFilter != "All" || areaFilter != "All"
-    }
 
     // MARK: - Filtered + Sorted Assets
 
     var filteredAssets: [SnipeAsset] {
         var result = assets
 
-        if statusFilter != "All" {
-            result = result.filter { ($0.statusLabel?.statusMeta ?? "").capitalized == statusFilter }
-        }
-        if categoryFilter != "All" {
-            result = result.filter { $0.category?.name == categoryFilter }
-        }
-        if platformFilter != "All" {
-            result = result.filter { $0.customFieldByName("Platform")?.value == platformFilter }
-        }
-        if manufacturerFilter != "All" {
-            result = result.filter { $0.manufacturer?.name == manufacturerFilter }
-        }
-        if modelFilter != "All" {
-            result = result.filter { $0.model?.name == modelFilter }
-        }
-        if usageFilter != "All" {
-            result = result.filter { $0.customFieldByName("Usage")?.value == usageFilter }
-        }
-        if catalogFilter != "All" {
-            result = result.filter { $0.customFieldByName("Catalog")?.value == catalogFilter }
-        }
-        if areaFilter != "All" {
-            result = result.filter { $0.customFieldByName("Area")?.value == areaFilter }
+        // Apply filter panel selections
+        if filters.hasActiveFilters {
+            result = result.filter { filters.matches($0) }
         }
 
+        // Text search
         if !searchText.isEmpty {
             result = result.filter {
                 ($0.name?.localizedCaseInsensitiveContains(searchText) ?? false) ||
@@ -225,71 +180,25 @@ struct AssetsView: View {
 
                     Divider().frame(height: 22)
 
-                    Picker("", selection: $statusFilter) {
-                        Text("Status").tag("All")
-                        ForEach(statusOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
+                    // Filter button + popover
+                    Button(action: { showFilters.toggle() }) {
+                        Image(systemName: filters.hasActiveFilters
+                            ? "line.3.horizontal.decrease.circle.fill"
+                            : "line.3.horizontal.decrease.circle")
                     }
-                    .frame(minWidth: 100, maxWidth: statusFilter != "All" ? 180 : 120)
-
-                    Picker("", selection: $categoryFilter) {
-                        Text("Category").tag("All")
-                        ForEach(categoryOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
+                    .help("Filters")
+                    .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+                        FilterPanelView(filters: filters)
                     }
-                    .frame(minWidth: 100, maxWidth: categoryFilter != "All" ? 180 : 130)
 
-                    Picker("", selection: $platformFilter) {
-                        Text("Platform").tag("All")
-                        ForEach(platformOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
-                    }
-                    .frame(minWidth: 100, maxWidth: platformFilter != "All" ? 180 : 120)
-
-                    Picker("", selection: $manufacturerFilter) {
-                        Text("Manufacturer").tag("All")
-                        ForEach(manufacturerOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
-                    }
-                    .frame(minWidth: 110, maxWidth: manufacturerFilter != "All" ? 200 : 140)
-
-                    Picker("", selection: $modelFilter) {
-                        Text("Model").tag("All")
-                        ForEach(modelOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
-                    }
-                    .frame(minWidth: 100, maxWidth: modelFilter != "All" ? 200 : 120)
-
-                    Picker("", selection: $usageFilter) {
-                        Text("Usage").tag("All")
-                        ForEach(usageOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
-                    }
-                    .frame(minWidth: 90, maxWidth: usageFilter != "All" ? 160 : 110)
-
-                    Picker("", selection: $catalogFilter) {
-                        Text("Catalog").tag("All")
-                        ForEach(catalogOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
-                    }
-                    .frame(minWidth: 100, maxWidth: catalogFilter != "All" ? 180 : 120)
-
-                    Picker("", selection: $areaFilter) {
-                        Text("Area").tag("All")
-                        ForEach(areaOptions.filter { $0 != "All" }, id: \.self) { Text($0).tag($0) }
-                    }
-                    .frame(minWidth: 80, maxWidth: areaFilter != "All" ? 160 : 110)
-
-                    if hasActiveFilters {
-                        Button(action: {
-                            statusFilter = "All"
-                            categoryFilter = "All"
-                            platformFilter = "All"
-                            manufacturerFilter = "All"
-                            modelFilter = "All"
-                            usageFilter = "All"
-                            catalogFilter = "All"
-                            areaFilter = "All"
-                        }) {
-                            Text("Clear")
-                                .font(.caption)
+                    if filters.hasActiveFilters {
+                        Button(action: { filters.clearAll() }) {
+                            Image(systemName: "xmark.circle")
                         }
                         .buttonStyle(.bordered)
                         .tint(.yellow)
                         .controlSize(.small)
+                        .help("Clear all filters")
                     }
 
                     Divider().frame(height: 22)
@@ -391,12 +300,18 @@ struct AssetsView: View {
             if !appState.isAssetsCacheValid || appState.cachedAssets.isEmpty {
                 loadAllAssets()
             }
+            if !appState.cachedAssets.isEmpty {
+                filters.buildFromAssets(appState.cachedAssets)
+            }
         }
         .onChange(of: appState.navigateToFilter) { _, filter in
             if let filter, !filter.isEmpty {
-                statusFilter = filter
+                filters.selectedValues[.status] = [filter]
                 appState.navigateToFilter = nil
             }
+        }
+        .onChange(of: appState.cachedAssets) { _, newAssets in
+            filters.buildFromAssets(newAssets)
         }
         .sheet(isPresented: $showReAllocateSheet) {
             if let asset = selectedAsset {
@@ -447,7 +362,8 @@ struct AssetsView: View {
                                     ForEach(cols, id: \.field) { col in
                                         assetCell(for: col.field, asset: asset)
                                             .frame(width: col.width - 12, alignment: .leading)
-                                            .padding(.horizontal, 6)
+                                            .padding(.leading, 10)
+                                            .padding(.trailing, 2)
                                     }
                                     Spacer(minLength: 0)
                                 }
@@ -492,9 +408,9 @@ struct AssetsView: View {
                     }
                     Spacer(minLength: 0)
                 }
-                .frame(width: width - 10)
-                .padding(.leading, 8)
-                .padding(.trailing, 4)
+                .frame(width: width - 12, alignment: .leading)
+                .padding(.leading, 10)
+                .padding(.trailing, 2)
             }
             .buttonStyle(.plain)
             ColumnResizeHandle(field: field, columnWidths: $columnWidths)

@@ -104,7 +104,7 @@ struct DashboardView: View {
 
     // Adaptive columns -- flow based on available width
     private let adaptiveColumns = [
-        GridItem(.adaptive(minimum: 300, maximum: 520), spacing: 14)
+        GridItem(.adaptive(minimum: 300, maximum: 520), spacing: 14, alignment: .top)
     ]
 
     var body: some View {
@@ -335,7 +335,9 @@ struct DashboardView: View {
             // Assets by Category first
             if appState.config.isSnipeConfigured {
                 chartCard("Assets by Category", tab: .inventory, isLoading: isLoadingInventory) {
-                    if assetCategoryBars.isEmpty && !isLoadingInventory {
+                    if isLoadingInventory && assetCategoryBars.isEmpty {
+                        SkeletonChartCard()
+                    } else if assetCategoryBars.isEmpty {
                         emptyState("No asset data")
                     } else {
                         barChart(assetCategoryBars, height: 180)
@@ -345,7 +347,9 @@ struct DashboardView: View {
 
             if appState.config.isGraphConfigured {
                 chartCard("Platform Distribution", tab: .devices, isLoading: isLoadingFleet) {
-                    if osSlices.isEmpty && !isLoadingFleet {
+                    if isLoadingFleet && osSlices.isEmpty {
+                        SkeletonChartCard()
+                    } else if osSlices.isEmpty {
                         emptyState("No device data")
                     } else {
                         TreemapChart(slices: osSlices, height: 180)
@@ -355,7 +359,9 @@ struct DashboardView: View {
 
             if appState.config.isTdxConfigured {
                 chartCard("Ticket Status", tab: .tickets, isLoading: isLoadingTickets) {
-                    if ticketStatusSlices.isEmpty && !isLoadingTickets {
+                    if isLoadingTickets && ticketStatusSlices.isEmpty {
+                        SkeletonChartCard()
+                    } else if ticketStatusSlices.isEmpty {
                         emptyState("No ticket data")
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
@@ -368,7 +374,9 @@ struct DashboardView: View {
                     }
                 }
                 chartCard("Tickets by Priority", tab: .tickets, isLoading: isLoadingTickets) {
-                    if ticketPriorityBars.isEmpty && !isLoadingTickets {
+                    if isLoadingTickets && ticketPriorityBars.isEmpty {
+                        SkeletonChartCard()
+                    } else if ticketPriorityBars.isEmpty {
                         emptyState("No ticket data")
                     } else {
                         barChart(ticketPriorityBars, height: 120)
@@ -378,7 +386,9 @@ struct DashboardView: View {
 
             if appState.config.isDevOpsConfigured {
                 chartCard("Work Items", tab: .projects, isLoading: isLoadingTickets) {
-                    if workItemSlices.isEmpty && !isLoadingTickets {
+                    if isLoadingTickets && workItemSlices.isEmpty {
+                        SkeletonChartCard()
+                    } else if workItemSlices.isEmpty {
                         emptyState("No work item data")
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
@@ -398,7 +408,9 @@ struct DashboardView: View {
                             miniStat("Managed", "\(rmDeviceCount)", color: .blue)
                             miniStat("Errors", "\(rmErrorCount)", color: rmErrorCount > 0 ? .red : .green)
                         }
-                        if errorCategoryBars.isEmpty && !isLoadingReportMate {
+                        if isLoadingReportMate && errorCategoryBars.isEmpty {
+                            SkeletonChartCard()
+                        } else if errorCategoryBars.isEmpty {
                             emptyState("No errors found")
                         } else {
                             barChart(errorCategoryBars, height: 180)
@@ -409,7 +421,9 @@ struct DashboardView: View {
 
             if appState.config.isGraphConfigured {
                 chartCard("Compliance", tab: .devices, isLoading: isLoadingFleet) {
-                    if complianceSlices.isEmpty && !isLoadingFleet {
+                    if isLoadingFleet && complianceSlices.isEmpty {
+                        SkeletonChartCard()
+                    } else if complianceSlices.isEmpty {
                         emptyState("No device data")
                     } else {
                         donutChart(complianceSlices, size: 180)
@@ -419,7 +433,9 @@ struct DashboardView: View {
 
             if appState.config.isSnipeConfigured {
                 chartCard("Asset Status", tab: .inventory, isLoading: isLoadingInventory) {
-                    if assetStatusSlices.isEmpty && !isLoadingInventory {
+                    if isLoadingInventory && assetStatusSlices.isEmpty {
+                        SkeletonChartCard()
+                    } else if assetStatusSlices.isEmpty {
                         emptyState("No asset data")
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
@@ -455,7 +471,14 @@ struct DashboardView: View {
 
             // Feed fills remaining height
             GroupBox {
-                if filteredActivityItems.isEmpty {
+                if filteredActivityItems.isEmpty && isAnyLoading {
+                    VStack(spacing: 0) {
+                        ForEach(0..<6, id: \.self) { _ in
+                            SkeletonRow()
+                            Divider()
+                        }
+                    }
+                } else if filteredActivityItems.isEmpty {
                     Text(activityItems.isEmpty ? "Activity will appear once data loads." : "No activity for this filter.")
                         .foregroundStyle(.secondary).font(.callout)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1096,9 +1119,9 @@ struct KPICard: View {
                         .font(.title3)
                         .foregroundStyle(kpi.color)
                         .frame(width: 28)
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .leading, spacing: 3) {
                         if kpi.loading {
-                            ProgressView().controlSize(.small)
+                            SkeletonView(width: 60, height: 22, cornerRadius: 4)
                         } else {
                             Text(kpi.value)
                                 .font(.title2.bold().monospacedDigit())
@@ -1179,10 +1202,14 @@ struct DashboardSplitHandle: View {
             else { NSCursor.pop() }
         }
         .gesture(
-            DragGesture(minimumDistance: 1)
+            DragGesture(minimumDistance: 2)
                 .onChanged { value in
-                    let newFraction = splitFractionDragStart + value.translation.width / totalWidth
-                    splitFraction = min(0.8, max(0.2, newFraction))
+                    var t = Transaction()
+                    t.disablesAnimations = true
+                    withTransaction(t) {
+                        let newFraction = splitFractionDragStart + value.translation.width / totalWidth
+                        splitFraction = min(0.8, max(0.2, newFraction))
+                    }
                 }
                 .onEnded { value in
                     let newFraction = splitFractionDragStart + value.translation.width / totalWidth

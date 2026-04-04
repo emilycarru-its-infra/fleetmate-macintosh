@@ -32,6 +32,7 @@ struct GlassTabBar: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
+                    .contentShape(Capsule())
                     .foregroundStyle(selectedTab == tab ? Color.primary : Color.secondary)
                     .background {
                         if selectedTab == tab {
@@ -42,6 +43,7 @@ struct GlassTabBar: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
                 .help(tab.rawValue)
             }
         }

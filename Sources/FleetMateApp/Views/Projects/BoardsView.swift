@@ -653,8 +653,23 @@ struct BoardsView: View {
                         }
                     }
                 }
+                .focusable()
+                .onKeyPress(.upArrow) { moveTaskSelection(by: -1); return .handled }
+                .onKeyPress(.downArrow) { moveTaskSelection(by: 1); return .handled }
             }
         }
+    }
+
+    private func moveTaskSelection(by offset: Int) {
+        let list = filteredTasks
+        guard !list.isEmpty else { return }
+        guard let current = selectedTask,
+              let currentIndex = list.firstIndex(where: { $0.compositeKey == current.compositeKey }) else {
+            selectedTask = list.first
+            return
+        }
+        let newIndex = min(max(currentIndex + offset, 0), list.count - 1)
+        selectedTask = list[newIndex]
     }
 
     // MARK: - Inline Task Detail Sidebar

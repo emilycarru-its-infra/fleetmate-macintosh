@@ -1,4 +1,4 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 5.9
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "FleetMate",
     platforms: [
-        .macOS(.v26)
+        .macOS(.v14)
     ],
     products: [
         .library(name: "FleetMateCore", targets: ["FleetMateCore"]),
@@ -18,10 +18,8 @@ let package = Package(
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.0.0"),
         .package(url: "https://github.com/onevcat/Rainbow.git", from: "4.0.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
+        .package(url: "https://github.com/Kitura/BlueSocket.git", from: "2.0.0"),
         .package(url: "https://github.com/Alamofire/Alamofire.git", from: "5.8.0"),
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
-        .package(url: "https://github.com/apple/swift-nio-ssh.git", from: "0.8.0"),
-        .package(url: "https://github.com/apple/swift-crypto.git", from: "3.0.0"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
     ],
     targets: [
@@ -32,9 +30,6 @@ let package = Package(
                 .product(name: "Yams", package: "Yams"),
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "Alamofire", package: "Alamofire"),
-                .product(name: "NIO", package: "swift-nio"),
-                .product(name: "NIOSSH", package: "swift-nio-ssh"),
-                .product(name: "Crypto", package: "swift-crypto"),
             ],
             path: "Sources/FleetMateCore"
         ),
@@ -45,6 +40,7 @@ let package = Package(
                 "FleetMateCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "Rainbow", package: "Rainbow"),
+                .product(name: "Socket", package: "BlueSocket"),
             ],
             path: "Sources/FleetMate"
         ),
@@ -55,17 +51,7 @@ let package = Package(
                 "FleetMateCore",
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
             ],
-            path: "Sources/FleetMateApp",
-            exclude: [
-                "Info.plist",
-                "FleetMateApp.entitlements"
-            ]
+            path: "Sources/FleetMateApp"
         ),
-        .testTarget(
-            name: "FleetMateTests",
-            dependencies: ["FleetMateCore"],
-            path: "Tests/FleetMateTests"
-        ),
-    ],
-    swiftLanguageModes: [.v5]
+    ]
 )

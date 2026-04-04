@@ -30,12 +30,8 @@ struct BoardsView: View {
     @State private var isLoading = false
     @State private var searchText = ""
     @State private var filterProvider: String? = nil
-    @State private var filterBucket: String? = nil
-    @State private var filterAreaPath: String? = nil
-    @State private var filterIteration: String? = nil
-    @State private var filterType: String? = nil
-    @State private var filterPriority: Int? = nil
-    @State private var filterAssignee: String? = nil
+    @State private var filters = FilterState<TaskFilterCategory>()
+    @State private var showFilters = false
     @State private var groupBy: GroupByOption = .column
     @State private var showClosed = false
     @State private var selectedTask: UnifiedTask? = nil
@@ -102,26 +98,9 @@ struct BoardsView: View {
 
     private var filteredTasks: [UnifiedTask] {
         var result = allTasks
-        if let provider = filterProvider {
-            result = result.filter { $0.provider == provider }
-        }
-        if let bucket = filterBucket {
-            result = result.filter { $0.bucket == bucket }
-        }
-        if let area = filterAreaPath {
-            result = result.filter { $0.metadata["areaPath"] == area }
-        }
-        if let iter = filterIteration {
-            result = result.filter { $0.metadata["iterationPath"] == iter }
-        }
-        if let type = filterType {
-            result = result.filter { $0.metadata["workItemType"] == type }
-        }
-        if let p = filterPriority {
-            result = result.filter { $0.priority == p }
-        }
-        if let assignee = filterAssignee {
-            result = result.filter { $0.assignees.contains(assignee) }
+
+        if filters.hasActiveFilters {
+            result = result.filter { filters.matches($0) }
         }
         if !showClosed {
             result = result.filter { $0.state != .closed }
@@ -133,7 +112,6 @@ struct BoardsView: View {
                 ($0.description?.lowercased().contains(q) ?? false)
             }
         }
-        // When grouping by board column, only show tasks whose type belongs to the selected board
         if groupBy == .column && !boardAllowedTypes.isEmpty {
             result = result.filter { task in
                 guard let wiType = task.metadata["workItemType"] else { return true }
@@ -144,36 +122,9 @@ struct BoardsView: View {
     }
 
     /// Distinct values from loaded tasks for filter pickers
-    private var availableAreaPaths: [String] {
-        Array(Set(allTasks.compactMap { $0.metadata["areaPath"] })).sorted()
-    }
-    private var availableIterations: [String] {
-        Array(Set(allTasks.compactMap { $0.metadata["iterationPath"] })).sorted()
-    }
-    private var availableTypes: [String] {
-        Array(Set(allTasks.compactMap { $0.metadata["workItemType"] })).sorted()
-    }
-    private var availableAssignees: [String] {
-        Array(Set(allTasks.flatMap { $0.assignees })).sorted()
-    }
-
     private var openTasks: [UnifiedTask]       { filteredTasks.filter { $0.state == .open } }
     private var inProgressTasks: [UnifiedTask] { filteredTasks.filter { $0.state == .inProgress } }
     private var closedTasks: [UnifiedTask]     { filteredTasks.filter { $0.state == .closed } }
-
-    private var hasActiveFilters: Bool {
-        filterBucket != nil || filterAreaPath != nil || filterIteration != nil ||
-        filterType != nil || filterPriority != nil || filterAssignee != nil
-    }
-
-    private func clearAllFilters() {
-        filterBucket = nil
-        filterAreaPath = nil
-        filterIteration = nil
-        filterType = nil
-        filterPriority = nil
-        filterAssignee = nil
-    }
 
     // MARK: - Body
 
@@ -312,59 +263,18 @@ struct BoardsView: View {
             // Row 2: Filters, actions, search
             HStack(spacing: 8) {
                 if !allTasks.isEmpty {
-                    if !availableAreaPaths.isEmpty {
-                        Picker("Area", selection: $filterAreaPath) {
-                            Text("Areas").tag(nil as String?)
-                            ForEach(availableAreaPaths, id: \.self) { Text($0).tag($0 as String?) }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 130)
-                        .labelsHidden()
+                    Button(action: { showFilters.toggle() }) {
+                        Image(systemName: filters.hasActiveFilters
+                            ? "line.3.horizontal.decrease.circle.fill"
+                            : "line.3.horizontal.decrease.circle")
+                    }
+                    .help("Filters")
+                    .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+                        FilterPanelView(filters: filters)
                     }
 
-                    if !availableIterations.isEmpty {
-                        Picker("Iteration", selection: $filterIteration) {
-                            Text("Iterations").tag(nil as String?)
-                            ForEach(availableIterations, id: \.self) { Text($0).tag($0 as String?) }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 130)
-                        .labelsHidden()
-                    }
-
-                    if !availableTypes.isEmpty {
-                        Picker("Type", selection: $filterType) {
-                            Text("Types").tag(nil as String?)
-                            ForEach(availableTypes, id: \.self) { Text($0).tag($0 as String?) }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 110)
-                        .labelsHidden()
-                    }
-
-                    Picker("Priority", selection: $filterPriority) {
-                        Text("Priorities").tag(nil as Int?)
-                        Text("1 – Critical").tag(1 as Int?)
-                        Text("2 – High").tag(2 as Int?)
-                        Text("3 – Medium").tag(3 as Int?)
-                        Text("4 – Low").tag(4 as Int?)
-                    }
-                    .pickerStyle(.menu)
-                    .frame(width: 110)
-                    .labelsHidden()
-
-                    if !availableAssignees.isEmpty {
-                        Picker("Assignee", selection: $filterAssignee) {
-                            Text("Assignees").tag(nil as String?)
-                            ForEach(availableAssignees, id: \.self) { Text($0).tag($0 as String?) }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 130)
-                        .labelsHidden()
-                    }
-
-                    if hasActiveFilters {
-                        Button(action: clearAllFilters) {
+                    if filters.hasActiveFilters {
+                        Button(action: { filters.clearAll() }) {
                             Image(systemName: "xmark.circle")
                         }
                         .buttonStyle(.bordered)
@@ -840,6 +750,7 @@ struct BoardsView: View {
                     allTasks = await registry.listTasks(filter: filter)
                 }
                 dbg.info("BoardsView: loaded \(allTasks.count) total tasks", category: "boards")
+                filters.buildFromTasks(allTasks)
                 for (provider, count) in Dictionary(grouping: allTasks, by: \.provider).mapValues(\.count) {
                     dbg.info("  provider '\(provider)': \(count) tasks", category: "boards")
                 }

@@ -566,14 +566,12 @@ struct TicketsView: View {
     @ToolbarContentBuilder
     private var ticketsToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .automatic) {
-            Button(action: { showFilters.toggle() }) {
-                Label("Filters", systemImage: filters.hasActiveFilters
-                    ? "line.3.horizontal.decrease.circle.fill"
-                    : "line.3.horizontal.decrease.circle")
+            Picker("View", selection: $viewMode) {
+                Label("Table", systemImage: "tablecells").tag(TicketViewMode.table)
+                Label("Board", systemImage: "rectangle.split.3x1").tag(TicketViewMode.board)
             }
-            .popover(isPresented: $showFilters, arrowEdge: .bottom) {
-                FilterPanelView(filters: filters)
-            }
+            .pickerStyle(.segmented)
+            .frame(width: 140)
 
             if filters.hasActiveFilters || showClosed || !isDefaultDatePreset {
                 Button(action: {
@@ -581,8 +579,18 @@ struct TicketsView: View {
                     showClosed = false
                     resetToCurrentTerm()
                 }) {
-                    Label("Clear Filters", systemImage: "xmark.circle")
+                    Label("Clear Filters", systemImage: "xmark.circle.fill")
                 }
+                .tint(.yellow)
+            }
+
+            Button(action: { showFilters.toggle() }) {
+                Label("Filters", systemImage: filters.hasActiveFilters
+                    ? "line.3.horizontal.decrease.circle.fill"
+                    : "line.3.horizontal.decrease.circle")
+            }
+            .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+                FilterPanelView(filters: filters)
             }
 
             Button(action: loadTickets) {
@@ -597,7 +605,6 @@ struct TicketsView: View {
 
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Row 1: Title + SSO + Refresh
             HStack {
                 Text("Tickets")
                     .font(.largeTitle)
@@ -606,18 +613,6 @@ struct TicketsView: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .padding(.top, 6)
-                Spacer()
-                ssoSection
-            }
-
-            // Row 2: View mode toggle + board options
-            HStack(spacing: 10) {
-                Picker("", selection: $viewMode) {
-                    Text("Table").tag(TicketViewMode.table)
-                    Text("Board").tag(TicketViewMode.board)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 140)
 
                 if viewMode == .board {
                     HStack(spacing: 4) {
@@ -631,116 +626,13 @@ struct TicketsView: View {
                     }
                 }
 
-                Toggle("Closed", isOn: $showClosed)
-                    .toggleStyle(.checkbox)
-                    .font(.caption)
-
                 Spacer()
 
-                Text("\(filteredTickets.count) of \(tickets.count)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            // Row 3: Date range
-            HStack(spacing: 8) {
-                // This Term button
-                Button(action: {
-                    resetToCurrentTerm()
-                }) {
-                    Text("This Term")
-                        .font(.caption)
-                }
-                .buttonStyle(.bordered)
-                .tint(isDefaultDatePreset ? .accentColor : nil)
-                .controlSize(.small)
-
-                // Last Term button
-                Button(action: {
-                    setLastTerm()
-                }) {
-                    Text("Last Term")
-                        .font(.caption)
-                }
-                .buttonStyle(.bordered)
-                .tint(isLastTermPreset ? .accentColor : nil)
-                .controlSize(.small)
-
-                // Academic term picker
-                Picker("", selection: $termSeason) {
-                    ForEach(AcademicTerm.allCases, id: \.self) { t in
-                        Text(t.rawValue).tag(t)
-                    }
-                }
-                .frame(width: 90)
-                .onChange(of: termSeason) { _, _ in
-                    datePreset = .term(termSeason, termYear)
-                    loadTickets()
-                }
-
-                Picker("", selection: $termYear) {
-                    let currentYear = Calendar.current.component(.year, from: Date())
-                    ForEach((currentYear - 5)...currentYear, id: \.self) { year in
-                        Text(String(year)).tag(year)
-                    }
-                }
-                .frame(width: 75)
-                .onChange(of: termYear) { _, _ in
-                    datePreset = .term(termSeason, termYear)
-                    loadTickets()
-                }
-
-                Divider().frame(height: 16)
-
-                // Quick presets
-                ForEach([DateRangePreset.today, .thisWeek, .thisMonth], id: \.label) { preset in
-                    Button(action: {
-                        datePreset = preset
-                        loadTickets()
-                    }) {
-                        Text(preset.label)
-                            .font(.caption)
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(datePreset.label == preset.label ? .accentColor : nil)
-                    .controlSize(.small)
-                }
-
-                // Custom date range
-                Button(action: {
-                    datePreset = .custom
-                }) {
-                    Text("Custom")
-                        .font(.caption)
-                }
-                .buttonStyle(.bordered)
-                .tint(datePreset == .custom ? .accentColor : nil)
-                .controlSize(.small)
-
-                if datePreset == .custom {
-                    DatePicker("", selection: $customDateFrom, displayedComponents: .date)
-                        .labelsHidden()
-                        .frame(width: 100)
-                    Text("to")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    DatePicker("", selection: $customDateTo, displayedComponents: .date)
-                        .labelsHidden()
-                        .frame(width: 100)
-                    Button(action: { loadTickets() }) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.caption)
-                    }
-                    .controlSize(.small)
-                }
-
-                Spacer()
-
-                // Show the active date range label
                 Text(dateRangeLabel)
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
+
         }
         .padding(.horizontal)
         .padding(.top, 12)

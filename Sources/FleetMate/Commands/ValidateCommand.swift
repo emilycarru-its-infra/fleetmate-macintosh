@@ -57,18 +57,18 @@ struct ValidateCommand: AsyncParsableCommand {
     
     private func printResults(_ result: ValidationResult, verbose: Bool, path: String) {
         print("📁 Repository:".lightBlue + " \(path)")
-        print("PkgInfo files:".lightBlue + " \(result.pkgInfoCount)")
+        print("📦 PkgInfo files:".lightBlue + " \(result.pkgInfoCount)")
         print("📚 Catalogs:".lightBlue + " \(result.catalogCount)")
         print("📋 Manifests:".lightBlue + " \(result.manifestCount)")
         print("")
         
         if result.errors.isEmpty && result.warnings.isEmpty {
-            print("[ok] " + "Repository is valid!".green.bold + "\n")
+            print("✅ " + "Repository is valid!".green.bold + "\n")
             return
         }
         
         if !result.errors.isEmpty {
-            print("[error] " + "Errors (\(result.errors.count))".red.bold + "\n")
+            print("❌ " + "Errors (\(result.errors.count))".red.bold + "\n")
             for error in result.errors {
                 print("  • ".red + error.message)
                 print("    " + error.path.lightBlack)
@@ -77,20 +77,20 @@ struct ValidateCommand: AsyncParsableCommand {
         }
         
         if verbose && !result.warnings.isEmpty {
-            print("[WARNING] " + "Warnings (\(result.warnings.count))".yellow.bold + "\n")
+            print("⚠️  " + "Warnings (\(result.warnings.count))".yellow.bold + "\n")
             for warning in result.warnings {
                 print("  • ".yellow + warning.message)
                 print("    " + warning.path.lightBlack)
             }
             print("")
         } else if !result.warnings.isEmpty {
-            print("[WARNING] \(result.warnings.count) warnings (use --verbose to show)".yellow + "\n")
+            print("⚠️  \(result.warnings.count) warnings (use --verbose to show)".yellow + "\n")
         }
         
         if result.isValid {
-            print("[ok] " + "Repository structure is valid".green + " (with warnings)\n")
+            print("✅ " + "Repository structure is valid".green + " (with warnings)\n")
         } else {
-            print("[error] " + "Repository has errors that must be fixed".red + "\n")
+            print("❌ " + "Repository has errors that must be fixed".red + "\n")
         }
     }
 }
@@ -146,7 +146,7 @@ struct LintCommand: AsyncParsableCommand {
     
     private func printIssues(_ issues: [LintIssue]) {
         if issues.isEmpty {
-            print("[ok] " + "No lint issues found!".green.bold + "\n")
+            print("✅ " + "No lint issues found!".green.bold + "\n")
             return
         }
         
@@ -175,7 +175,7 @@ struct LintCommand: AsyncParsableCommand {
     private func ruleIcon(_ rule: String) -> String {
         switch rule {
         case "naming": return "📛"
-        case "documentation": return "doc"
+        case "documentation": return "📝"
         case "categorization": return "🏷️"
         case "catalogs": return "📚"
         case "uninstall": return "🗑️"

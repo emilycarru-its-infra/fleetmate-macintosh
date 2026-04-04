@@ -1,5 +1,21 @@
 import Foundation
 
+extension String {
+    /// Decode common HTML entities (e.g. &amp;quot; → ")
+    public var htmlDecoded: String {
+        var result = self
+        let entities: [(String, String)] = [
+            ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
+            ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
+            ("&#x27;", "'"), ("&#x2F;", "/"), ("&nbsp;", " "),
+        ]
+        for (entity, char) in entities {
+            result = result.replacingOccurrences(of: entity, with: char)
+        }
+        return result
+    }
+}
+
 // MARK: - API Response Wrappers
 
 public struct SnipeListResponse<T: Decodable>: Decodable, Sendable where T: Sendable {
@@ -73,6 +89,9 @@ public struct SnipeAsset: Codable, Identifiable, Hashable, Sendable {
         case customFields = "custom_fields"
     }
     
+    /// Name with HTML entities decoded
+    public var displayName: String? { name?.htmlDecoded }
+
     /// Get custom field value by database column name
     func customFieldValue(_ columnName: String) -> String? {
         guard let fields = customFields else { return nil }

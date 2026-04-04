@@ -11,6 +11,7 @@ enum TicketFilterCategory: String, FilterCategoryProtocol {
     case form = "Form"
     case classification = "Classification"
     case type = "Type"
+    case timePeriod = "Time Period"
     var id: String { rawValue }
 }
 
@@ -26,6 +27,7 @@ extension FilterState where Category == TicketFilterCategory {
         availableValues[.form] = extract { $0.formName }
         availableValues[.classification] = extract { $0.classificationName }
         availableValues[.type] = extract { $0.typeName }
+        availableValues[.timePeriod] = ["This Term", "Last Term", "Today", "This Week", "This Month", "Include Closed"]
     }
 
     func matches(_ ticket: TdxTicket) -> Bool {
@@ -39,6 +41,7 @@ extension FilterState where Category == TicketFilterCategory {
             case .form:           value = ticket.formName
             case .classification: value = ticket.classificationName
             case .type:           value = ticket.typeName
+            case .timePeriod:     continue // handled externally by date range logic
             }
             if let v = value, !selected.contains(v) { return false }
             if value == nil { return false }

@@ -557,6 +557,40 @@ struct TicketsView: View {
                 showBoardDetail = false
             }
         }
+        .searchable(text: $searchText, prompt: "Search tickets...")
+        .toolbar { ticketsToolbar }
+    }
+
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder
+    private var ticketsToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .automatic) {
+            Button(action: { showFilters.toggle() }) {
+                Label("Filters", systemImage: filters.hasActiveFilters
+                    ? "line.3.horizontal.decrease.circle.fill"
+                    : "line.3.horizontal.decrease.circle")
+            }
+            .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+                FilterPanelView(filters: filters)
+            }
+
+            if filters.hasActiveFilters || showClosed || !isDefaultDatePreset {
+                Button(action: {
+                    filters.clearAll()
+                    showClosed = false
+                    resetToCurrentTerm()
+                }) {
+                    Label("Clear Filters", systemImage: "xmark.circle")
+                }
+            }
+
+            Button(action: loadTickets) {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .disabled(isLoading)
+            .keyboardShortcut("r", modifiers: .command)
+        }
     }
 
     // MARK: - Header Section
@@ -576,33 +610,8 @@ struct TicketsView: View {
                 ssoSection
             }
 
-            // Row 2: Search + view mode toggle + filters
+            // Row 2: View mode toggle + board options
             HStack(spacing: 10) {
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                    TextField("Search...", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .frame(width: 140)
-                    if !searchText.isEmpty {
-                        Button(action: { searchText = "" }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary)
-                                .font(.caption)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(5)
-                .background(Color.secondary.opacity(0.1))
-                .cornerRadius(6)
-
-                Button(action: loadTickets) {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .disabled(isLoading)
-                .help("Refresh")
-
                 Picker("", selection: $viewMode) {
                     Text("Table").tag(TicketViewMode.table)
                     Text("Board").tag(TicketViewMode.board)
@@ -611,8 +620,6 @@ struct TicketsView: View {
                 .frame(width: 140)
 
                 if viewMode == .board {
-                    Divider().frame(height: 20)
-
                     HStack(spacing: 4) {
                         Text("Columns:").foregroundColor(.secondary).font(.caption)
                         Picker("", selection: $boardGroupBy) {
@@ -624,36 +631,15 @@ struct TicketsView: View {
                     }
                 }
 
-                // Filter button + popover
-                Button(action: { showFilters.toggle() }) {
-                    Image(systemName: filters.hasActiveFilters
-                        ? "line.3.horizontal.decrease.circle.fill"
-                        : "line.3.horizontal.decrease.circle")
-                }
-                .help("Filters")
-                .popover(isPresented: $showFilters, arrowEdge: .bottom) {
-                    FilterPanelView(filters: filters)
-                }
-
                 Toggle("Closed", isOn: $showClosed)
                     .toggleStyle(.checkbox)
                     .font(.caption)
 
-                if filters.hasActiveFilters || showClosed || !isDefaultDatePreset {
-                    Button(action: {
-                        filters.clearAll()
-                        showClosed = false
-                        resetToCurrentTerm()
-                    }) {
-                        Image(systemName: "xmark.circle")
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.yellow)
-                    .controlSize(.small)
-                    .help("Clear all filters")
-                }
-
                 Spacer()
+
+                Text("\(filteredTickets.count) of \(tickets.count)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
 
             // Row 3: Date range

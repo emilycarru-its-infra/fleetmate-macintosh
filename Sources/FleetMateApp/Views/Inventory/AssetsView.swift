@@ -258,6 +258,13 @@ struct AssetsView: View {
     @ToolbarContentBuilder
     private var inventoryToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .automatic) {
+            if filters.hasActiveFilters {
+                Button(action: { filters.clearAll() }) {
+                    Label("Clear Filters", systemImage: "xmark.circle.fill")
+                }
+                .tint(.yellow)
+            }
+
             Button(action: { showFilters.toggle() }) {
                 Label("Filters", systemImage: filters.hasActiveFilters
                     ? "line.3.horizontal.decrease.circle.fill"
@@ -265,12 +272,6 @@ struct AssetsView: View {
             }
             .popover(isPresented: $showFilters, arrowEdge: .bottom) {
                 FilterPanelView(filters: filters)
-            }
-
-            if filters.hasActiveFilters {
-                Button(action: { filters.clearAll() }) {
-                    Label("Clear Filters", systemImage: "xmark.circle")
-                }
             }
 
             Button(action: { loadAllAssets() }) {
@@ -1006,33 +1007,32 @@ struct StatusBadge: View {
 struct ColumnResizeHandle: View {
     let field: AssetSortField
     @Binding var columnWidths: [AssetSortField: CGFloat]
-    @GestureState private var dragOffset: CGFloat = 0
-    @State private var startWidth: CGFloat = 0
     @State private var isHovering = false
+    @State private var isDragging = false
+    @State private var startWidth: CGFloat = 0
 
     var body: some View {
         Rectangle()
-            .fill(dragOffset != 0 ? Color.accentColor : Color.secondary.opacity(isHovering ? 0.5 : 0.25))
-            .frame(width: dragOffset != 0 ? 2 : 1)
+            .fill(isDragging ? Color.accentColor : Color.secondary.opacity(isHovering ? 0.5 : 0.25))
+            .frame(width: isDragging ? 2 : 1)
             .frame(maxHeight: .infinity)
             .padding(.horizontal, 4.5)
             .contentShape(Rectangle())
             .gesture(
-                DragGesture(minimumDistance: 2)
-                    .updating($dragOffset) { value, state, _ in
-                        state = value.translation.width
-                    }
+                DragGesture(minimumDistance: 4)
                     .onChanged { value in
-                        if startWidth == 0 {
+                        if !isDragging {
+                            isDragging = true
                             startWidth = columnWidths[field] ?? 90
                         }
-                        var t = Transaction()
-                        t.disablesAnimations = true
-                        withTransaction(t) {
-                            columnWidths[field] = max(40, startWidth + value.translation.width)
-                        }
                     }
-                    .onEnded { _ in startWidth = 0 }
+                    .onEnded { value in
+                        // Only update width once at the end — no per-frame re-renders
+                        let newWidth = max(40, startWidth + value.translation.width)
+                        columnWidths[field] = newWidth
+                        isDragging = false
+                        startWidth = 0
+                    }
             )
             .onHover { inside in
                 isHovering = inside

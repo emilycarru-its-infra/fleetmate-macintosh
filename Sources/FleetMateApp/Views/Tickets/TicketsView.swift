@@ -799,8 +799,8 @@ struct TicketsView: View {
                         Spacer(minLength: 0)
                     }
                     .frame(minWidth: minW)
+                    .frame(height: 32)
                     .padding(.leading, 8)
-                    .padding(.vertical, 6)
                     .background(Color.secondary.opacity(0.08))
 
                     Divider()
@@ -814,29 +814,24 @@ struct TicketsView: View {
                                         .font(.system(.body, design: .monospaced))
                                         .frame(width: colW(.id) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
-                                        .textSelection(.enabled)
                                     Text(ticket.title ?? "-")
                                         .frame(width: colW(.title) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
                                         .lineLimit(1)
-                                        .textSelection(.enabled)
                                     TicketStatusBadge(statusName: ticket.statusName)
                                         .frame(width: colW(.status) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
                                     Text(ticket.priorityName ?? "-")
                                         .frame(width: colW(.priority) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
-                                        .textSelection(.enabled)
                                     Text(ticket.requestorName ?? "-")
                                         .frame(width: colW(.requestor) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
                                         .lineLimit(1)
-                                        .textSelection(.enabled)
                                     Text(ticket.responsibleFullName ?? "-")
                                         .frame(width: colW(.responsible) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
                                         .lineLimit(1)
-                                        .textSelection(.enabled)
                                     Text(formatDateString(ticket.modifiedDate))
                                         .frame(width: colW(.modified) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
@@ -850,7 +845,7 @@ struct TicketsView: View {
                                     Spacer(minLength: 0)
                                 }
                                 .frame(minWidth: minW)
-                                .padding(.vertical, 4)
+                                .frame(height: 28)
                                 .background(
                                     selectedTicket?.id == ticket.id
                                         ? Color.accentColor.opacity(0.2)
@@ -865,6 +860,8 @@ struct TicketsView: View {
                             }
                         }
                     }
+                    .frame(height: max(100, geo.size.height - 33))
+                    .frame(minWidth: minW)
                 }
             }
             .focusable()
@@ -2372,30 +2369,19 @@ struct BoardSidebarDivider: View {
     @State private var isHovering = false
 
     var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(isHovering ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.15))
-                .frame(width: isHovering ? 6 : 1)
-                .animation(.easeInOut(duration: 0.15), value: isHovering)
-            if isHovering {
-                Image(systemName: isExpanded ? "chevron.compact.right" : "chevron.compact.left")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.secondary)
+        Rectangle()
+            .fill(isHovering ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.15))
+            .frame(width: isHovering ? 6 : 1)
+            .animation(.easeInOut(duration: 0.15), value: isHovering)
+            .frame(width: 8)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .onHover { isHovering = $0 }
+            .onTapGesture {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
             }
-        }
-        .frame(width: 8)
-        .frame(maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .onHover { inside in
-            isHovering = inside
-            if inside { NSCursor.resizeLeftRight.push() }
-            else { NSCursor.pop() }
-        }
-        .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                isExpanded.toggle()
-            }
-        }
     }
 }
 
@@ -2417,15 +2403,14 @@ struct TicketColumnResizeHandle: View {
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 4)
-                    .onChanged { _ in
+                    .onChanged { value in
                         if !isDragging {
                             isDragging = true
                             startWidth = columnWidths[field] ?? 100
                         }
+                        columnWidths[field] = max(40, startWidth + value.translation.width)
                     }
-                    .onEnded { value in
-                        let newWidth = max(40, startWidth + value.translation.width)
-                        columnWidths[field] = newWidth
+                    .onEnded { _ in
                         isDragging = false
                         startWidth = 0
                     }

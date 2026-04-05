@@ -75,11 +75,13 @@ struct AssetsView: View {
     @State private var sortField: AssetSortField = .assetTag
     @State private var sortAscending = true
     @State private var selectedAsset: SnipeAsset?
+    @State private var selectedAssetIds: Set<Int> = []
+    @State private var lastClickedIndex: Int?
     @State private var showReAllocateSheet = false
 
     // Column state
     @State private var columnWidths: [AssetSortField: CGFloat] = [
-        .assetTag: 90, .serial: 110, .name: 160, .status: 110,
+        .assetTag: 120, .serial: 110, .name: 160, .status: 110,
         .category: 110, .platform: 100, .manufacturer: 120, .model: 120,
         .usage: 100, .catalog: 100, .area: 100, .location: 120
     ]
@@ -181,7 +183,7 @@ struct AssetsView: View {
                                 asset: asset,
                                 snipeUrl: appState.config.snipeUrl,
                                 snipeService: appState.snipeService,
-                                onClose: { selectedAsset = nil },
+                                onClose: { selectedAsset = nil; selectedAssetIds = [] },
                                 onReAllocate: { showReAllocateSheet = true },
                                 onSaved: { loadAllAssets() }
                             )
@@ -311,13 +313,37 @@ struct AssetsView: View {
                                 .frame(minWidth: max(totalW, geo.size.width))
                                 .frame(height: 28)
                                 .background(
-                                    selectedAsset?.id == asset.id
+                                    selectedAssetIds.contains(asset.id)
                                         ? Color.accentColor.opacity(0.2)
                                         : (idx % 2 == 1 ? Color.secondary.opacity(0.04) : Color.clear)
                                 )
                                 .contentShape(Rectangle())
+                                .gesture(TapGesture().modifiers(.command).onEnded {
+                                    if selectedAssetIds.contains(asset.id) {
+                                        selectedAssetIds.remove(asset.id)
+                                        if selectedAsset?.id == asset.id {
+                                            selectedAsset = selectedAssetIds.isEmpty ? nil : filteredAssets.first { selectedAssetIds.contains($0.id) }
+                                        }
+                                    } else {
+                                        selectedAssetIds.insert(asset.id)
+                                        selectedAsset = asset
+                                    }
+                                    lastClickedIndex = idx
+                                })
+                                .gesture(TapGesture().modifiers(.shift).onEnded {
+                                    let anchor = lastClickedIndex ?? 0
+                                    let range = min(anchor, idx)...max(anchor, idx)
+                                    for i in range {
+                                        if i < filteredAssets.count {
+                                            selectedAssetIds.insert(filteredAssets[i].id)
+                                        }
+                                    }
+                                    selectedAsset = asset
+                                })
                                 .onTapGesture {
-                                    selectedAsset = selectedAsset?.id == asset.id ? nil : asset
+                                    selectedAssetIds = [asset.id]
+                                    selectedAsset = asset
+                                    lastClickedIndex = idx
                                 }
                                 Divider().padding(.leading, 8)
                             }
@@ -339,10 +365,16 @@ struct AssetsView: View {
         guard let current = selectedAsset,
               let currentIndex = list.firstIndex(where: { $0.id == current.id }) else {
             selectedAsset = list.first
+            if let first = list.first {
+                selectedAssetIds = [first.id]
+                lastClickedIndex = 0
+            }
             return
         }
         let newIndex = min(max(currentIndex + offset, 0), list.count - 1)
         selectedAsset = list[newIndex]
+        selectedAssetIds = [list[newIndex].id]
+        lastClickedIndex = newIndex
     }
 
     @ViewBuilder
@@ -1004,11 +1036,9 @@ struct ColumnResizeHandle: View {
                             isDragging = true
                             startWidth = columnWidths[field] ?? 90
                         }
+                        columnWidths[field] = max(40, startWidth + value.translation.width)
                     }
-                    .onEnded { value in
-                        // Only update width once at the end — no per-frame re-renders
-                        let newWidth = max(40, startWidth + value.translation.width)
-                        columnWidths[field] = newWidth
+                    .onEnded { _ in
                         isDragging = false
                         startWidth = 0
                     }

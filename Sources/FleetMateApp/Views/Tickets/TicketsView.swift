@@ -198,7 +198,6 @@ struct TicketsView: View {
     @State private var saveErrorMessage: String? = nil
     @State private var saveSucceeded = false
     @State private var isSavingDescription = false
-    @State private var showBoardDetail = true
 
     @FocusState private var descriptionFocused: Bool
 
@@ -558,15 +557,21 @@ struct TicketsView: View {
             applyMeMode()
             if !tickets.isEmpty { filters.buildFromTickets(tickets) }
         }
-        .onChange(of: viewMode) { _, newMode in
-            if newMode == .board {
-                showBoardDetail = false
-            }
-        }
         .searchable(text: $searchText, prompt: "Search tickets...")
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 ViewModePill(selection: $viewMode)
+
+                if viewMode == .board {
+                    Picker("Group by", selection: $boardGroupBy) {
+                        ForEach(BoardGroupBy.allCases, id: \.self) { option in
+                            Text(option.rawValue).tag(option)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 130)
+                    .help("Group board columns by")
+                }
 
                 if filters.hasActiveFilters || showClosed || !isDefaultDatePreset {
                     Button(action: {
@@ -597,42 +602,6 @@ struct TicketsView: View {
     }
 
 
-    // MARK: - Header Section
-
-    private var headerSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Tickets")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                    Text("\(filteredTickets.count) of \(tickets.count)")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                if viewMode == .board {
-                    Picker("", selection: $boardGroupBy) {
-                        ForEach(BoardGroupBy.allCases, id: \.self) { option in
-                            Text(option.rawValue).tag(option)
-                        }
-                    }
-                    .frame(width: 110)
-                }
-
-                Spacer()
-
-                Text(dateRangeLabel)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-        }
-        .padding(.horizontal)
-        .padding(.top, 12)
-        .padding(.bottom, 6)
-    }
-
     @ViewBuilder
     private var ssoSection: some View {
         if appState.tdxSsoAuthenticated, let userName = appState.tdxAuthenticatedUserName {
@@ -662,7 +631,6 @@ struct TicketsView: View {
     }
 
     // MARK: - Content Section
-    // (filtersSection and viewModeToggle are now in headerSection)
 
     @ViewBuilder
     private var contentSection: some View {
@@ -721,22 +689,17 @@ struct TicketsView: View {
 
     private var ticketsBoardView: some View {
         GeometryReader { geometry in
-            let hasSidebar = selectedTicket != nil && showBoardDetail
+            let hasSidebar = selectedTicket != nil
             let sidebarW: CGFloat = 700
-            let dividerW: CGFloat = selectedTicket != nil ? 8 : 0
-            let contentW: CGFloat = hasSidebar ? geometry.size.width - sidebarW - dividerW : geometry.size.width - dividerW
+            let contentW: CGFloat = hasSidebar ? geometry.size.width - sidebarW - 1 : geometry.size.width
             HStack(spacing: 0) {
                 ticketBoardContent
                     .frame(width: contentW)
                     .clipped()
-
-                if selectedTicket != nil {
-                    BoardSidebarDivider(isExpanded: $showBoardDetail)
-
-                    if showBoardDetail {
-                        detailSidebarView
-                            .frame(width: sidebarW)
-                    }
+                if hasSidebar {
+                    Divider()
+                    detailSidebarView
+                        .frame(width: sidebarW)
                 }
             }
         }
@@ -762,7 +725,6 @@ struct TicketsView: View {
             },
             onSelectTicket: { ticket in
                 selectedTicketIds = [ticket.id]
-                showBoardDetail = true
             }
         )
     }
@@ -2329,8 +2291,6 @@ struct TicketStatusBadge: View {
     }
 }
 
-// MARK: - Board Sidebar Divider
-
 // MARK: - View Mode Pill Toggle
 
 struct ViewModePill: View {
@@ -2361,27 +2321,6 @@ struct ViewModePill: View {
         }
         .padding(3)
         .background(.secondary.opacity(0.08), in: Capsule())
-    }
-}
-
-struct BoardSidebarDivider: View {
-    @Binding var isExpanded: Bool
-    @State private var isHovering = false
-
-    var body: some View {
-        Rectangle()
-            .fill(isHovering ? Color.accentColor.opacity(0.4) : Color.secondary.opacity(0.15))
-            .frame(width: isHovering ? 6 : 1)
-            .animation(.easeInOut(duration: 0.15), value: isHovering)
-            .frame(width: 8)
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .onHover { isHovering = $0 }
-            .onTapGesture {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isExpanded.toggle()
-                }
-            }
     }
 }
 

@@ -17,6 +17,14 @@ public class GraphService {
     private let baseUrl = "https://graph.microsoft.com/v1.0"
     private let graphResourceId = "https://graph.microsoft.com"
 
+    // Transport: by default every Graph call runs inside an `aze` session (the
+    // domain identity's token never leaves Azure). Set the environment variable
+    // FLEETMATE_GRAPH_TRANSPORT=direct to fall back to a local Alamofire request
+    // with an `az`-minted delegated token (dev / break-glass).
+    private let useAze: Bool
+    private let azeTransport: AzeGraphTransport
+    private static let graphDecoder = JSONDecoder()
+
     public var isConfigured: Bool {
         return config.isGraphConfigured
     }
@@ -28,6 +36,9 @@ public class GraphService {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 60
         self.session = Session(configuration: configuration)
+
+        self.useAze = config.graphUsesAze
+        self.azeTransport = AzeGraphTransport()
     }
 
     // MARK: - Authentication
@@ -79,6 +90,9 @@ public class GraphService {
     }
 
     private func headers() async -> HTTPHeaders? {
+        // In aze mode auth happens inside the session — return a non-nil empty
+        // header set so existing `guard let headers` call sites pass through.
+        if useAze { return [:] }
         guard let token = try? await getAccessToken() else { return nil }
         return [
             "Authorization": "Bearer \(token)",
@@ -438,6 +452,10 @@ public class GraphService {
     // MARK: - Private Helpers
 
     private func fetch<T: Decodable>(url: String, headers: HTTPHeaders) async throws -> T {
+        if useAze {
+            let data = try await azeTransport.send(GraphRequest(method: .get, url: url))
+            return try GraphService.graphDecoder.decode(T.self, from: data)
+        }
         return try await withCheckedThrowingContinuation { continuation in
             session.request(url, headers: headers)
                 .validate()
@@ -453,6 +471,11 @@ public class GraphService {
     }
 
     private func postAction(url: String, body: [String: Any]? = nil, headers: HTTPHeaders) async throws {
+        if useAze {
+            let bodyData = try body.map { try JSONSerialization.data(withJSONObject: $0) }
+            _ = try await azeTransport.send(GraphRequest(method: .post, url: url, body: bodyData))
+            return
+        }
         return try await withCheckedThrowingContinuation { continuation in
             let request: DataRequest
             if let body = body {
@@ -472,6 +495,11 @@ public class GraphService {
     }
 
     private func post<T: Decodable>(url: String, body: [String: Any], headers: HTTPHeaders) async throws -> T {
+        if useAze {
+            let bodyData = try JSONSerialization.data(withJSONObject: body)
+            let data = try await azeTransport.send(GraphRequest(method: .post, url: url, body: bodyData))
+            return try GraphService.graphDecoder.decode(T.self, from: data)
+        }
         return try await withCheckedThrowingContinuation { continuation in
             session.request(url, method: .post, parameters: body, encoding: JSONEncoding.default, headers: headers)
                 .validate()

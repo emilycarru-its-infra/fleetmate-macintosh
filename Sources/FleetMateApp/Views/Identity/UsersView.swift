@@ -7,6 +7,7 @@ struct UsersView: View {
     @State private var searchResults: [EntraUser] = []
     @State private var isLoading = false
     @State private var selectedUser: EntraUser?
+    @State private var pendingDisable: EntraUser?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -81,7 +82,41 @@ struct UsersView: View {
             } else {
                 List(searchResults, id: \.id, selection: $selectedUser) { user in
                     UserRow(user: user)
+                        .contextMenu {
+                            if user.accountEnabled == true {
+                                Button("Disable Account", role: .destructive) { pendingDisable = user }
+                            } else {
+                                Button("Enable Account") { setUser(user, enabled: true) }
+                            }
+                        }
                 }
+            }
+        }
+        .alert("Disable Account?", isPresented: Binding(
+            get: { pendingDisable != nil },
+            set: { if !$0 { pendingDisable = nil } }
+        ), presenting: pendingDisable) { user in
+            Button("Cancel", role: .cancel) { pendingDisable = nil }
+            Button("Disable", role: .destructive) {
+                setUser(user, enabled: false)
+                pendingDisable = nil
+            }
+        } message: { user in
+            Text("Disable \(user.userPrincipalName ?? user.displayName ?? "this user")? They will be unable to sign in.")
+        }
+    }
+
+    private func setUser(_ user: EntraUser, enabled: Bool) {
+        guard let identifier = user.userPrincipalName ?? user.id else {
+            appState.errorMessage = "User has no UPN or id to act on"
+            return
+        }
+        Task {
+            do {
+                try await appState.graphService.setUserAccountEnabled(identifier, enabled: enabled)
+                searchUser() // refresh the row's state
+            } catch {
+                appState.errorMessage = "Failed to \(enabled ? "enable" : "disable") account: \(error.localizedDescription)"
             }
         }
     }

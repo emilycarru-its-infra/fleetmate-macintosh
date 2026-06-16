@@ -69,27 +69,26 @@ struct AssetsSubcommand: AsyncParsableCommand {
     private func printAssetsTable(_ assets: [SnipeAsset]) {
         print("\n" + "Snipe-IT Assets".bold + " (\(assets.count) shown)\n")
         
-        let header = String(format: "%-12s %-15s %-25s %-15s %-15s",
-            "Asset Tag", "Serial", "Name", "Status", "Location")
+        let header = "Asset Tag".col(12) + " " + "Serial".col(15) + " " + "Name".col(25) + " " + "Status".col(15) + " " + "Location".col(15)
         print(header.underline)
-        
+
         for asset in assets {
-            let statusName = asset.statusLabel?.name ?? "Unknown"
+            let statusName = (asset.statusLabel?.name ?? "Unknown")
+            let statusCell = statusName.col(15)
             let statusColor: String
             switch asset.statusLabel?.statusMeta {
-            case "deployed": statusColor = statusName.green
-            case "deployable": statusColor = statusName.cyan
-            case "archived": statusColor = statusName.lightBlack
-            case "pending": statusColor = statusName.yellow
-            default: statusColor = statusName
+            case "deployed": statusColor = statusCell.green
+            case "deployable": statusColor = statusCell.cyan
+            case "archived": statusColor = statusCell.lightBlack
+            case "pending": statusColor = statusCell.yellow
+            default: statusColor = statusCell
             }
-            
-            let row = String(format: "%-12s %-15s %-25s %-15s %-15s",
-                String((asset.assetTag ?? "-").prefix(10)),
-                String((asset.serial ?? "-").prefix(13)),
-                String((asset.name ?? "-").prefix(23)),
-                statusColor,
-                String((asset.location?.name ?? "-").prefix(13)))
+
+            let row = (asset.assetTag ?? "-").col(12) + " "
+                + (asset.serial ?? "-").col(15) + " "
+                + (asset.name ?? "-").col(25) + " "
+                + statusColor + " "
+                + (asset.location?.name ?? "-").col(15)
             print(row)
         }
         print("")
@@ -197,17 +196,15 @@ struct UsersSubcommand: AsyncParsableCommand {
         
         print("\n" + "Snipe-IT Users".bold + " (\(users.count) shown)\n")
         
-        let header = String(format: "%-8s %-20s %-25s %-20s %-5s",
-            "ID", "Username", "Name", "Email", "Assets")
+        let header = "ID".col(8) + " " + "Username".col(20) + " " + "Name".col(25) + " " + "Email".col(20) + " " + "Assets".col(5)
         print(header.underline)
-        
+
         for user in users {
-            let row = String(format: "%-8d %-20s %-25s %-20s %-5d",
-                user.id,
-                String((user.username ?? "-").prefix(18)),
-                String(user.fullName.prefix(23)),
-                String((user.email ?? "-").prefix(18)),
-                user.assetsCount ?? 0)
+            let row = user.id.col(8) + " "
+                + (user.username ?? "-").col(20) + " "
+                + user.fullName.col(25) + " "
+                + (user.email ?? "-").col(20) + " "
+                + (user.assetsCount ?? 0).col(5)
             print(row)
         }
         print("")
@@ -235,16 +232,14 @@ struct LocationsSubcommand: AsyncParsableCommand {
         
         print("\n" + "Snipe-IT Locations".bold + " (\(locations.count) total)\n")
         
-        let header = String(format: "%-8s %-30s %-20s %-8s",
-            "ID", "Name", "City", "Assets")
+        let header = "ID".col(8) + " " + "Name".col(30) + " " + "City".col(20) + " " + "Assets".col(8)
         print(header.underline)
-        
+
         for location in locations {
-            let row = String(format: "%-8d %-30s %-20s %-8d",
-                location.id,
-                String((location.name ?? "-").prefix(28)),
-                String((location.city ?? "-").prefix(18)),
-                location.assetsCount ?? 0)
+            let row = location.id.col(8) + " "
+                + (location.name ?? "-").col(30) + " "
+                + (location.city ?? "-").col(20) + " "
+                + (location.assetsCount ?? 0).col(8)
             print(row)
         }
         print("")

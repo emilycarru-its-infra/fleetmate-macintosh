@@ -563,7 +563,16 @@ public struct FleetMateConfig: Codable {
     }
 
     /// Check if Graph is configured (either devices or systems service principal)
+    /// Whether Graph calls route through an `aze` elevation session (default)
+    /// rather than a locally-minted token. Set FLEETMATE_GRAPH_TRANSPORT=direct
+    /// to opt out. In aze mode no local Graph credentials are required — the
+    /// domain identity authenticates inside the session.
+    public var graphUsesAze: Bool {
+        return (ProcessInfo.processInfo.environment["FLEETMATE_GRAPH_TRANSPORT"]?.lowercased() ?? "aze") != "direct"
+    }
+
     public var isGraphConfigured: Bool {
+        if graphUsesAze { return true }
         return graphTenantId != nil && (isDevicesGraphConfigured || isSystemsGraphConfigured || graphClientId != nil)
     }
     

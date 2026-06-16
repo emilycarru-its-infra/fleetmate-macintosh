@@ -68,27 +68,25 @@ struct ItemsSubcommand: AsyncParsableCommand {
     private func printItemsTable(_ items: [WorkItem]) {
         print("\n" + "Azure DevOps Work Items".bold + " (\(items.count) shown)\n")
 
-        let header = String(format: "%-8s %-12s %-12s %-40s %-15s",
-            "ID", "Type", "State", "Title", "Assigned To")
+        let header = "ID".col(8) + " " + "Type".col(12) + " " + "State".col(12) + " " + "Title".col(40) + " " + "Assigned To".col(15)
         print(header.underline)
 
         for item in items {
             let fields = item.fields
-            let stateStr = fields?.state ?? "Unknown"
+            let stateCell = (fields?.state ?? "Unknown").col(12)
             let stateColor: String
-            switch stateStr.lowercased() {
-            case "active", "new": stateColor = stateStr.cyan
-            case "resolved", "done": stateColor = stateStr.green
-            case "closed": stateColor = stateStr.lightBlack
-            default: stateColor = stateStr.yellow
+            switch (fields?.state ?? "Unknown").lowercased() {
+            case "active", "new": stateColor = stateCell.cyan
+            case "resolved", "done": stateColor = stateCell.green
+            case "closed": stateColor = stateCell.lightBlack
+            default: stateColor = stateCell.yellow
             }
 
-            let row = String(format: "%-8d %-12s %-12s %-40s %-15s",
-                item.id,
-                String((fields?.workItemType ?? "-").prefix(10)),
-                stateColor,
-                String((fields?.title ?? "-").prefix(38)),
-                String((fields?.assignedTo?.displayName ?? "-").prefix(13)))
+            let row = item.id.col(8) + " "
+                + (fields?.workItemType ?? "-").col(12) + " "
+                + stateColor + " "
+                + (fields?.title ?? "-").col(40) + " "
+                + (fields?.assignedTo?.displayName ?? "-").col(15)
             print(row)
         }
         print("")

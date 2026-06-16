@@ -8,6 +8,10 @@ struct GroupsView: View {
     @State private var expandedGroupIds: Set<String> = []
     @State private var groupDevices: [String: [EntraDevice]] = [:]
     @State private var loadingGroupIds: Set<String> = []
+    @State private var pendingRemoval: (group: EntraGroup, device: EntraDevice)?
+    @State private var pendingRemediation: EntraGroup?
+    @State private var addMemberTarget: EntraGroup?
+    @State private var addMemberObjectId: String = ""
     
     // Use cached groups from appState
     var groups: [EntraGroup] { appState.cachedGroups }
@@ -104,7 +108,10 @@ struct GroupsView: View {
                             isExpanded: expandedGroupIds.contains(group.id ?? ""),
                             isLoadingMembers: loadingGroupIds.contains(group.id ?? ""),
                             devices: groupDevices[group.id ?? ""] ?? [],
-                            onToggle: { toggleGroup(group) }
+                            onToggle: { toggleGroup(group) },
+                            onRemoveMember: { device in pendingRemoval = (group, device) },
+                            onDeployRemediation: { pendingRemediation = group },
+                            onAddMember: { addMemberTarget = group; addMemberObjectId = "" }
                         )
                     }
                 }
@@ -114,6 +121,92 @@ struct GroupsView: View {
         .task {
             if !appState.isGroupsCacheValid {
                 loadDeviceGroups()
+            }
+        }
+        .alert("Remove from group?", isPresented: Binding(
+            get: { pendingRemoval != nil },
+            set: { if !$0 { pendingRemoval = nil } }
+        ), presenting: pendingRemoval) { item in
+            Button("Cancel", role: .cancel) { pendingRemoval = nil }
+            Button("Remove", role: .destructive) {
+                removeMember(group: item.group, device: item.device)
+                pendingRemoval = nil
+            }
+        } message: { item in
+            Text("Remove \(item.device.displayName ?? "this device") from \(item.group.displayName ?? "the group")?")
+        }
+        .alert("Deploy Cimian Push?", isPresented: Binding(
+            get: { pendingRemediation != nil },
+            set: { if !$0 { pendingRemediation = nil } }
+        ), presenting: pendingRemediation) { group in
+            Button("Cancel", role: .cancel) { pendingRemediation = nil }
+            Button("Deploy") {
+                deployRemediation(group: group)
+                pendingRemediation = nil
+            }
+        } message: { group in
+            Text("Deploy the Cimian push-trigger proactive remediation to \(group.displayName ?? "this group")? Targeted Windows devices will run a managed software update.")
+        }
+        .alert("Add Member", isPresented: Binding(
+            get: { addMemberTarget != nil },
+            set: { if !$0 { addMemberTarget = nil; addMemberObjectId = "" } }
+        ), presenting: addMemberTarget) { group in
+            TextField("Object id (user or device)", text: $addMemberObjectId)
+            Button("Cancel", role: .cancel) { addMemberTarget = nil; addMemberObjectId = "" }
+            Button("Add") {
+                addMember(group: group, objectId: addMemberObjectId.trimmingCharacters(in: .whitespacesAndNewlines))
+                addMemberTarget = nil
+                addMemberObjectId = ""
+            }
+        } message: { group in
+            Text("Enter the object id of the user or device to add to \(group.displayName ?? "the group").")
+        }
+    }
+
+    private func addMember(group: EntraGroup, objectId: String) {
+        guard let groupId = group.id, !objectId.isEmpty else {
+            appState.errorMessage = "Group id or object id missing"
+            return
+        }
+        Task {
+            do {
+                try await appState.graphService.addGroupMember(group: groupId, objectId: objectId)
+                let devices = try await appState.graphService.getGroupDeviceMembers(groupId)
+                groupDevices[groupId] = devices
+            } catch {
+                appState.errorMessage = "Failed to add member: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func deployRemediation(group: EntraGroup) {
+        guard let groupId = group.id else {
+            appState.errorMessage = "Group has no id"
+            return
+        }
+        Task {
+            do {
+                let scriptId = try await appState.graphService.deployCimianPushRemediation(group: groupId)
+                appState.errorMessage = "Deployed Cimian push remediation (script \(scriptId))"
+            } catch {
+                appState.errorMessage = "Failed to deploy remediation: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func removeMember(group: EntraGroup, device: EntraDevice) {
+        guard let groupId = group.id, let objectId = device.id else {
+            appState.errorMessage = "Missing group or device id"
+            return
+        }
+        Task {
+            do {
+                try await appState.graphService.removeGroupMember(group: groupId, objectId: objectId)
+                // Refresh this group's member list.
+                let devices = try await appState.graphService.getGroupDeviceMembers(groupId)
+                groupDevices[groupId] = devices
+            } catch {
+                appState.errorMessage = "Failed to remove member: \(error.localizedDescription)"
             }
         }
     }
@@ -172,6 +265,9 @@ struct GroupDisclosureRow: View {
     let isLoadingMembers: Bool
     let devices: [EntraDevice]
     let onToggle: () -> Void
+    var onRemoveMember: (EntraDevice) -> Void = { _ in }
+    var onDeployRemediation: () -> Void = {}
+    var onAddMember: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -204,6 +300,10 @@ struct GroupDisclosureRow: View {
             }
             .buttonStyle(.plain)
             .padding(.vertical, 4)
+            .contextMenu {
+                Button("Add Member…") { onAddMember() }
+                Button("Deploy Cimian Push Remediation…") { onDeployRemediation() }
+            }
 
             // Expanded content
             if isExpanded {
@@ -256,6 +356,11 @@ struct GroupDisclosureRow: View {
                             
                             ForEach(devices) { device in
                                 DeviceMemberRow(device: device)
+                                    .contextMenu {
+                                        Button("Remove from group", role: .destructive) {
+                                            onRemoveMember(device)
+                                        }
+                                    }
                             }
                         }
                         .padding(.leading, 24)

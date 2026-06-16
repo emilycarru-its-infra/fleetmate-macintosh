@@ -50,6 +50,9 @@ struct ContentView: View {
                         .help("One or more systems are logged in as a Service Principal")
                     }
                 }
+                ToolbarItem(placement: .automatic) {
+                    AzeStatusBadge(state: appState.azeSessionState)
+                }
             }
             .onAppear {
                 // Phase 1: Attempt silent SSO in the background (no UI).
@@ -130,4 +133,39 @@ struct ContentView: View {
 #Preview {
     ContentView()
         .environmentObject(AppState())
+}
+
+/// Toolbar badge reflecting the aze elevation-session state. Hidden in direct
+/// mode; shows a warming spinner, a green "aze" when ready, or a red warning.
+struct AzeStatusBadge: View {
+    let state: AzeSessionState
+
+    var body: some View {
+        switch state {
+        case .direct:
+            EmptyView()
+        case .warming:
+            HStack(spacing: 4) {
+                ProgressView().controlSize(.mini)
+                Text("aze…").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(.secondary.opacity(0.12), in: .rect(cornerRadius: 4))
+            .help("Warming the elevation session (container cold start, ~30s)")
+        case .warm:
+            badge(color: .green, text: "aze", help: "Elevation sessions ready — Intune/Entra calls run secretlessly via aze")
+        case .failed:
+            badge(color: .red, text: "aze!", help: "Could not warm the elevation session; the first action will retry. Check that you are signed in with az login.")
+        }
+    }
+
+    private func badge(color: Color, text: String, help: String) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(text).font(.system(size: 10, weight: .bold)).foregroundStyle(color)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(color.opacity(0.12), in: .rect(cornerRadius: 4))
+        .help(help)
+    }
 }

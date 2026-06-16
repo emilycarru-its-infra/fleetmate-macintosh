@@ -41,6 +41,21 @@ public class GraphService {
         self.azeTransport = AzeGraphTransport()
     }
 
+    // MARK: - Session warming
+
+    /// Pre-warm the elevation sessions Graph uses (Intune → devices, Entra →
+    /// identity) so the container cold start is paid at launch, not on the
+    /// first user action. No-op in direct mode. Best-effort and concurrent.
+    public func warmElevationSessions() async {
+        guard useAze else { return }
+        await withTaskGroup(of: Void.self) { group in
+            for domain in [GraphDomain.devices, GraphDomain.identity] {
+                group.addTask { _ = await self.azeTransport.warm(domain) }
+            }
+            for await _ in group {}
+        }
+    }
+
     // MARK: - Authentication
 
     private func getAccessToken() async throws -> String? {
@@ -264,6 +279,52 @@ public class GraphService {
                         } else {
                             try await self.postAction(url: url, headers: headers)
                         }
+                        return BulkActionResult(deviceId: deviceId, success: true)
+                    } catch {
+                        return BulkActionResult(deviceId: deviceId, success: false, error: error.localizedDescription)
+                    }
+                }
+            }
+            var results: [BulkActionResult] = []
+            for await result in group { results.append(result) }
+            return results
+        }
+    }
+
+    /// Factory-reset devices. `keepEnrollmentData`/`keepUserData` map to the
+    /// Intune wipe action options (default full wipe).
+    public func wipeDevices(_ deviceIds: [String], keepEnrollmentData: Bool = false, keepUserData: Bool = false) async throws -> [BulkActionResult] {
+        guard let headers = await headers() else { return [] }
+
+        return await withTaskGroup(of: BulkActionResult.self) { group in
+            for deviceId in deviceIds {
+                group.addTask {
+                    let url = "\(self.baseUrl)/deviceManagement/managedDevices/\(deviceId)/wipe"
+                    do {
+                        try await self.postAction(url: url, body: ["keepEnrollmentData": keepEnrollmentData, "keepUserData": keepUserData], headers: headers)
+                        return BulkActionResult(deviceId: deviceId, success: true)
+                    } catch {
+                        return BulkActionResult(deviceId: deviceId, success: false, error: error.localizedDescription)
+                    }
+                }
+            }
+            var results: [BulkActionResult] = []
+            for await result in group { results.append(result) }
+            return results
+        }
+    }
+
+    /// Retire devices — removes company data and unenrolls, leaving personal
+    /// data intact (POST .../retire).
+    public func retireDevices(_ deviceIds: [String]) async throws -> [BulkActionResult] {
+        guard let headers = await headers() else { return [] }
+
+        return await withTaskGroup(of: BulkActionResult.self) { group in
+            for deviceId in deviceIds {
+                group.addTask {
+                    let url = "\(self.baseUrl)/deviceManagement/managedDevices/\(deviceId)/retire"
+                    do {
+                        try await self.postAction(url: url, headers: headers)
                         return BulkActionResult(deviceId: deviceId, success: true)
                     } catch {
                         return BulkActionResult(deviceId: deviceId, success: false, error: error.localizedDescription)

@@ -69,17 +69,14 @@ struct MunkiDevicesSubcommand: AsyncParsableCommand {
     private func printDevicesTable(_ devices: [MunkiDevice]) {
         print("\n" + "MunkiReport Devices".bold + " (\(devices.count) total)\n")
         
-        let header = String(format: "%-20s %-30s %-15s %-20s",
-            "Serial", "Computer Name", "OS Version", "Last Check-in")
+        let header = "Serial".col(20) + " " + "Computer Name".col(30) + " " + "OS Version".col(15) + " " + "Last Check-in".col(20)
         print(header.underline)
-        
+
         for device in devices {
-            let lastCheckin = device.lastSeenFormatted
-            let row = String(format: "%-20s %-30s %-15s %-20s",
-                device.serialNumber,
-                String(device.displayName.prefix(28)),
-                device.osVersion,
-                String(lastCheckin.prefix(18)))
+            let row = device.serialNumber.col(20) + " "
+                + device.displayName.col(30) + " "
+                + device.osVersion.col(15) + " "
+                + device.lastSeenFormatted.col(20)
             print(row)
         }
         print("")
@@ -226,9 +223,9 @@ struct InstallsSubcommand: AsyncParsableCommand {
         } else {
             print("\n" + "Managed Installs for \(serial)".bold + " (\(installs.count) packages)\n")
             
-            let header = String(format: "%-35s %-20s %-10s", "Name", "Version", "Status")
+            let header = "Name".col(35) + " " + "Version".col(20) + " " + "Status".col(10)
             print(header.underline)
-            
+
             for install in installs {
                 let status = install.status
                 let statusColor: String
@@ -237,11 +234,9 @@ struct InstallsSubcommand: AsyncParsableCommand {
                 case "": statusColor = "-"
                 default: statusColor = "- \(status)".red
                 }
-                
-                let row = String(format: "%-35s %-20s %-10s",
-                    String(install.name.prefix(33)),
-                    String((install.installedVersion.isEmpty ? install.version : install.installedVersion).prefix(18)),
-                    statusColor)
+
+                let version = install.installedVersion.isEmpty ? install.version : install.installedVersion
+                let row = install.name.col(35) + " " + version.col(20) + " " + statusColor
                 print(row)
             }
             print("")
@@ -281,14 +276,12 @@ struct MunkiErrorsSubcommand: AsyncParsableCommand {
         } else {
             print("\n" + "Install Errors".bold.red + " (\(errors.count) total)\n")
             
-            let header = String(format: "%-35s %-25s %-20s", "Package", "Device", "Status")
+            let header = "Package".col(35) + " " + "Device".col(25) + " " + "Status".col(20)
             print(header.underline)
-            
+
             for error in errors {
-                let row = String(format: "%-35s %-25s %-20s",
-                    String(error.itemName.prefix(33)),
-                    String((error.hostname.isEmpty ? error.serialNumber : error.hostname).prefix(23)),
-                    String(error.status.prefix(18)))
+                let device = error.hostname.isEmpty ? error.serialNumber : error.hostname
+                let row = error.itemName.col(35) + " " + device.col(25) + " " + error.status.col(20)
                 print(row)
             }
             print("")
@@ -330,14 +323,11 @@ struct StaleSubcommand: AsyncParsableCommand {
         } else {
             print("\n" + "Stale Devices".bold.yellow + " (no check-in for \(days)+ days): \(staleDevices.count)\n")
             
-            let header = String(format: "%-20s %-30s %-20s", "Serial", "Computer Name", "Last Check-in")
+            let header = "Serial".col(20) + " " + "Computer Name".col(30) + " " + "Last Check-in".col(20)
             print(header.underline)
-            
+
             for device in staleDevices {
-                let row = String(format: "%-20s %-30s %-20s",
-                    device.serialNumber,
-                    String(device.displayName.prefix(28)),
-                    device.lastSeenFormatted)
+                let row = device.serialNumber.col(20) + " " + device.displayName.col(30) + " " + device.lastSeenFormatted.col(20)
                 print(row)
             }
             print("")

@@ -73,17 +73,16 @@ extension ProjectsCommand {
                 return
             }
 
-            let header = String(format: "%-6s %-35s %-10s %-12s",
-                               "#", "Title", "Status", "Updated")
+            let header = "#".col(6) + " " + "Title".col(35) + " " + "Status".col(10) + " " + "Updated".col(12)
             print(header.bold)
             print(String(repeating: "─", count: 65))
 
             for p in projects {
-                let status = p.closed ? "Closed".dim : (p.isPublic ? "Public".green : "Private".blue)
+                let statusText = p.closed ? "Closed" : (p.isPublic ? "Public" : "Private")
+                let statusCell = statusText.col(10)
+                let status = p.closed ? statusCell.dim : (p.isPublic ? statusCell.green : statusCell.blue)
                 let title = p.title.count > 32 ? String(p.title.prefix(32)) + "…" : p.title
-                let row = String(format: "%-6d %-35s %-10s %-12s",
-                               p.number, title, status,
-                               formatDate(p.updatedAt))
+                let row = p.number.col(6) + " " + title.col(35) + " " + status + " " + formatDate(p.updatedAt).col(12)
                 print(row)
             }
         }
@@ -189,8 +188,7 @@ extension ProjectsCommand {
                 return
             }
 
-            let header = String(format: "%-5s %-40s %-15s %-15s %-15s",
-                               "Type", "Title", "Status", "Assignees", "Labels")
+            let header = "Type".col(5) + " " + "Title".col(40) + " " + "Status".col(15) + " " + "Assignees".col(15) + " " + "Labels".col(15)
             print(header.bold)
             print(String(repeating: "─", count: 92))
 
@@ -213,8 +211,8 @@ extension ProjectsCommand {
                 default: typeIcon = "?"
                 }
 
-                print(String(format: " %-4s %-40s %-15s %-15s %-15s",
-                           typeIcon, truncTitle, status, assignees, labels))
+                // typeIcon is a single colored glyph; pad manually to width 5.
+                print(" " + typeIcon + "   " + truncTitle.col(40) + " " + status.col(15) + " " + assignees.col(15) + " " + labels.col(15))
             }
             print("\n\(items.count) items".dim)
         }

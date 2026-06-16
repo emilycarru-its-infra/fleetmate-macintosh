@@ -104,26 +104,24 @@ extension TasksCommand {
             }
 
             // Print table header
-            let header = String(format: "%-10s %-6s %-50s %-12s %-15s",
-                               "Provider", "ID", "Title", "State", "Bucket")
+            let header = "Provider".col(10) + " " + "ID".col(6) + " " + "Title".col(50) + " " + "State".col(12) + " " + "Bucket".col(15)
             print(header.bold)
             print(String(repeating: "-", count: 95))
 
             for task in tasks.sorted(by: { ($0.state.rawValue, $0.provider) < ($1.state.rawValue, $1.provider) }) {
                 let title = task.title.count > 47 ? String(task.title.prefix(47)) + "..." : task.title
-                let stateStr: String
+                let stateCell: String
                 switch task.state {
-                case .open: stateStr = "Open".green
-                case .inProgress: stateStr = "In Progress".blue
-                case .closed: stateStr = "Closed".dim
+                case .open: stateCell = "Open".col(12).green
+                case .inProgress: stateCell = "In Progress".col(12).blue
+                case .closed: stateCell = "Closed".col(12).dim
                 }
 
-                let row = String(format: "%-10s %-6s %-50s %-12s %-15s",
-                               task.provider.cyan,
-                               task.id,
-                               title,
-                               stateStr,
-                               task.bucket ?? "-")
+                let row = task.provider.col(10).cyan + " "
+                    + task.id.col(6) + " "
+                    + title.col(50) + " "
+                    + stateCell + " "
+                    + (task.bucket ?? "-").col(15)
                 print(row)
             }
 

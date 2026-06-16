@@ -58,13 +58,16 @@ public class GraphService {
     /// Pre-warm the elevation sessions Graph uses (Intune → devices, Entra →
     /// identity) so the container cold start is paid at launch, not on the
     /// first user action. No-op in direct mode. Best-effort and concurrent.
-    public func warmElevationSessions() async {
-        guard useAze else { return }
-        await withTaskGroup(of: Void.self) { group in
+    @discardableResult
+    public func warmElevationSessions() async -> Bool {
+        guard useAze else { return false }
+        return await withTaskGroup(of: Bool.self) { group in
             for domain in [GraphDomain.devices, GraphDomain.identity] {
-                group.addTask { _ = await self.azeTransport.warm(domain) }
+                group.addTask { await self.azeTransport.warm(domain) }
             }
-            for await _ in group {}
+            var allWarmed = true
+            for await warmed in group { allWarmed = allWarmed && warmed }
+            return allWarmed
         }
     }
 

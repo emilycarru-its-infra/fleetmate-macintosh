@@ -102,6 +102,19 @@ public struct AzeGraphTransport: GraphTransport {
     /// and cheap once the container is warm.
     static let loginCommand = "az login --identity --allow-no-subscriptions -o none"
 
+    /// Pre-create and log in a domain's session so the ~30s container cold start
+    /// is paid up front (e.g. at app launch) instead of on the first user action.
+    /// Best-effort: a failure here just means the first real call pays the cost.
+    @discardableResult
+    public func warm(_ domain: GraphDomain) async -> Bool {
+        do {
+            _ = try await execute(domain: domain, command: AzeGraphTransport.loginCommand)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     public func send(_ request: GraphRequest) async throws -> Data {
         let domain = router.domain(for: request.url)
         let command = AzeGraphTransport.buildAzRestCommand(request)

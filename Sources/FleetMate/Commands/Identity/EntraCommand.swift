@@ -11,7 +11,10 @@ struct EntraCommand: AsyncParsableCommand {
             UserSubcommand.self,
             GroupSubcommand.self,
             CheckGroupSubcommand.self,
-            SearchGroupsSubcommand.self
+            SearchGroupsSubcommand.self,
+            EntraAddMemberSubcommand.self,
+            EntraRemoveMemberSubcommand.self,
+            EntraSetUserSubcommand.self
         ],
         defaultSubcommand: UserSubcommand.self
     )

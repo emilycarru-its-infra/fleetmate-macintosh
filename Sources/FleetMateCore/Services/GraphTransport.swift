@@ -158,7 +158,7 @@ public struct AzeGraphTransport: GraphTransport {
 
     private func execute(domain: GraphDomain, command: String) async throws -> Data {
         if let native = native {
-            let (out, code) = try await native.exec(domain, command: command)
+            let (out, code) = try await native.exec(domain, command: command, ttlHours: ttlHours)
             if code == 0 { return Data(out.utf8) }
             throw AzeError(exitCode: code, message: out)
         }
@@ -199,8 +199,17 @@ public struct AzeGraphTransport: GraphTransport {
                     return
                 }
 
+                // Drain both pipes concurrently — reading one to EOF before the
+                // other can deadlock if the child fills the second pipe buffer.
+                var errData = Data()
+                let errGroup = DispatchGroup()
+                errGroup.enter()
+                DispatchQueue.global(qos: .userInitiated).async {
+                    errData = stderr.fileHandleForReading.readDataToEndOfFile()
+                    errGroup.leave()
+                }
                 let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-                let errData = stderr.fileHandleForReading.readDataToEndOfFile()
+                errGroup.wait()
                 process.waitUntilExit()
 
                 if ProcessInfo.processInfo.environment["FLEETMATE_AZE_DEBUG"] != nil {

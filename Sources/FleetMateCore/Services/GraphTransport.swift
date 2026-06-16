@@ -78,11 +78,17 @@ public struct AzeGraphTransport: GraphTransport {
     private let azePath: String
     private let router: GraphDomainRouter
     private let ttlHours: Int?
+    /// When set, drive the elevation protocol natively (no external `aze`
+    /// script). Default on; set FLEETMATE_AZE_SCRIPT=1 to fall back to the
+    /// external script during the transition.
+    private let native: ElevationSession?
 
     public init(azePath: String? = nil, router: GraphDomainRouter = GraphDomainRouter(), ttlHours: Int? = nil) {
         self.azePath = azePath ?? AzeGraphTransport.locateAze()
         self.router = router
         self.ttlHours = ttlHours
+        let useScript = ProcessInfo.processInfo.environment["FLEETMATE_AZE_SCRIPT"] != nil
+        self.native = useScript ? nil : ElevationSession()
     }
 
     /// Find `aze` on common install paths; fall back to PATH lookup via env.
@@ -151,6 +157,11 @@ public struct AzeGraphTransport: GraphTransport {
     }
 
     private func execute(domain: GraphDomain, command: String) async throws -> Data {
+        if let native = native {
+            let (out, code) = try await native.exec(domain, command: command)
+            if code == 0 { return Data(out.utf8) }
+            throw AzeError(exitCode: code, message: out)
+        }
         let azePath = self.azePath
         let ttlHours = self.ttlHours
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in

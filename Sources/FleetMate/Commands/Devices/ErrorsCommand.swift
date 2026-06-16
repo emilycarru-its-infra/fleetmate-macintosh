@@ -153,19 +153,18 @@ struct ByItemSubcommand: AsyncParsableCommand {
         
         print("\n" + "Errors by Item".bold.red + " (Top \(summaries.count) failing packages)\n")
         
-        let header = String(format: "%-40s %-10s %-20s",
-            "Item Name", "Devices", "Category")
+        let header = "Item Name".col(40) + " " + "Devices".col(10) + " " + "Category".col(20)
         print(header.underline)
-        
+
         for summary in summaries {
-            let deviceCount = summary.deviceCount > 10 ? 
-                String(summary.deviceCount).red : 
-                (summary.deviceCount > 5 ? String(summary.deviceCount).yellow : String(summary.deviceCount))
-            
-            let row = String(format: "%-40s %-10s %-20s",
-                String(summary.itemName.prefix(38)),
-                deviceCount,
-                summary.category.rawValue)
+            let countCell = String(summary.deviceCount).col(10)
+            let deviceCount = summary.deviceCount > 10 ?
+                countCell.red :
+                (summary.deviceCount > 5 ? countCell.yellow : countCell)
+
+            let row = summary.itemName.col(40) + " "
+                + deviceCount + " "
+                + summary.category.rawValue.col(20)
             print(row)
         }
         
@@ -220,20 +219,19 @@ struct ByDeviceSubcommand: AsyncParsableCommand {
         
         print("\n" + "Errors by Device".bold.red + " (Top \(summaries.count) problematic devices)\n")
         
-        let header = String(format: "%-20s %-30s %-10s %-20s",
-            "Serial", "Device Name", "Errors", "Location")
+        let header = "Serial".col(20) + " " + "Device Name".col(30) + " " + "Errors".col(10) + " " + "Location".col(20)
         print(header.underline)
-        
+
         for summary in summaries {
-            let errorCount = summary.errorCount > 5 ? 
-                String(summary.errorCount).red : 
-                (summary.errorCount > 2 ? String(summary.errorCount).yellow : String(summary.errorCount))
-            
-            let row = String(format: "%-20s %-30s %-10s %-20s",
-                summary.serialNumber,
-                String(summary.deviceName.prefix(28)),
-                errorCount,
-                String(summary.location.prefix(18)))
+            let countCell = String(summary.errorCount).col(10)
+            let errorCount = summary.errorCount > 5 ?
+                countCell.red :
+                (summary.errorCount > 2 ? countCell.yellow : countCell)
+
+            let row = summary.serialNumber.col(20) + " "
+                + summary.deviceName.col(30) + " "
+                + errorCount + " "
+                + summary.location.col(20)
             print(row)
         }
         

@@ -11,7 +11,10 @@ struct IntuneCommand: AsyncParsableCommand {
             IntuneDevicesSubcommand.self,
             IntuneDeviceSubcommand.self,
             ComplianceSubcommand.self,
-            NonCompliantSubcommand.self
+            NonCompliantSubcommand.self,
+            IntuneWipeSubcommand.self,
+            IntuneRetireSubcommand.self,
+            IntuneCimianPushSubcommand.self
         ],
         defaultSubcommand: IntuneDevicesSubcommand.self
     )
@@ -55,29 +58,33 @@ struct IntuneDevicesSubcommand: AsyncParsableCommand {
         }
     }
 
+    /// Fixed-width column. Delegates to the shared `String.col` formatter.
+    private func pad(_ value: String, _ width: Int) -> String { value.col(width) }
+
     private func printDevicesTable(_ devices: [IntuneDevice]) {
         print("\n" + "Intune Managed Devices".bold + " (\(devices.count) shown)\n")
 
-        let header = String(format: "%-15s %-20s %-12s %-15s %-20s",
-            "Serial", "Name", "Compliance", "OS", "User")
+        let header = pad("Serial", 15) + " " + pad("Name", 20) + " " + pad("Compliance", 12) + " " + pad("OS", 15) + " " + pad("User", 20)
         print(header.underline)
 
         for device in devices {
             let complianceState = device.complianceState ?? "Unknown"
-            let complianceColor: String
+            // Pad the plain text first, then color the cell — ANSI codes are
+            // zero-width on screen so columns stay aligned.
+            let compCell = pad(complianceState, 12)
+            let complianceColored: String
             switch complianceState.lowercased() {
-            case "compliant": complianceColor = complianceState.green
-            case "noncompliant": complianceColor = complianceState.red
-            case "ingraceperiod": complianceColor = complianceState.yellow
-            default: complianceColor = complianceState.lightBlack
+            case "compliant": complianceColored = compCell.green
+            case "noncompliant": complianceColored = compCell.red
+            case "ingraceperiod": complianceColored = compCell.yellow
+            default: complianceColored = compCell.lightBlack
             }
 
-            let row = String(format: "%-15s %-20s %-12s %-15s %-20s",
-                String((device.serialNumber ?? "-").prefix(13)),
-                String((device.deviceName ?? "-").prefix(18)),
-                complianceColor,
-                String((device.operatingSystem ?? "-").prefix(13)),
-                String((device.userDisplayName ?? device.userPrincipalName ?? "-").prefix(18)))
+            let row = pad(device.serialNumber ?? "-", 15) + " "
+                + pad(device.deviceName ?? "-", 20) + " "
+                + complianceColored + " "
+                + pad(device.operatingSystem ?? "-", 15) + " "
+                + pad(device.userDisplayName ?? device.userPrincipalName ?? "-", 20)
             print(row)
         }
         print("")

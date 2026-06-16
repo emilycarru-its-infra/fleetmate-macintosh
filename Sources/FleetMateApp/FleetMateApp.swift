@@ -43,9 +43,18 @@ struct FleetMateApp: App {
     }
 }
 
+/// State of the aze elevation sessions Graph rides on, surfaced in the UI.
+enum AzeSessionState {
+    case direct   // not using aze (FLEETMATE_GRAPH_TRANSPORT=direct)
+    case warming  // container cold start in progress (~30s)
+    case warm     // ready
+    case failed   // warm attempt failed; first real call will retry
+}
+
 @MainActor
 class AppState: ObservableObject {
     @Published var config: FleetMateConfig
+    @Published var azeSessionState: AzeSessionState = .direct
     @Published var isLoading = false
     @Published var errorMessage: String?
     @Published var secretsConfigured = false
@@ -305,10 +314,24 @@ class AppState: ObservableObject {
     func invalidateGroupsCache() { groupsCacheTime = nil }
     
     // MARK: - Background Preloading
-    
+
+    /// Warm the aze elevation sessions (Intune → devices, Entra → identity) so
+    /// the ~30s container cold start is paid once at launch rather than on the
+    /// user's first action. No-op outside aze mode.
+    func warmElevationSessions() async {
+        guard config.graphUsesAze else { azeSessionState = .direct; return }
+        azeSessionState = .warming
+        let warmed = await graphService.warmElevationSessions()
+        azeSessionState = warmed ? .warm : .failed
+    }
+
     /// Preload all data sources concurrently in the background
     func preloadAllData() async {
         dbg.info("preloadAllData starting", category: "preload")
+        // Pay the container cold start once, up front, for both Graph domains —
+        // so the concurrent loads below reuse warm sessions instead of each
+        // racing to create one.
+        await warmElevationSessions()
         dbg.info("  Graph configured:  \(config.isGraphConfigured), cache valid: \(isDevicesCacheValid)", category: "preload")
         dbg.info("  Snipe configured:  \(config.isSnipeConfigured), cache valid: \(isAssetsCacheValid)", category: "preload")
         dbg.info("  TDX configured:    \(config.isTdxConfigured), cache valid: \(isTicketsCacheValid)", category: "preload")

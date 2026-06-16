@@ -27,6 +27,8 @@ struct DevicesView: View {
     @State private var showLockConfirmation = false
     @State private var showRebootConfirmation = false
     @State private var showWipeConfirmation = false
+    @State private var showRetireConfirmation = false
+    @State private var wipeKeepUserData = false
     
     // App selection for reinstall
     @State private var availableApps: [MobileApp] = []
@@ -168,6 +170,8 @@ struct DevicesView: View {
                     showLockConfirmation: $showLockConfirmation,
                     showRebootConfirmation: $showRebootConfirmation,
                     showWipeConfirmation: $showWipeConfirmation,
+                    showRetireConfirmation: $showRetireConfirmation,
+                    wipeKeepUserData: $wipeKeepUserData,
                     availableApps: $availableApps,
                     selectedAppId: $selectedAppId,
                     appSearchText: $appSearchText,
@@ -214,6 +218,22 @@ struct DevicesView: View {
             }
         } message: {
             Text("Are you sure you want to lock \(selectedDeviceIds.count) device(s)?")
+        }
+        .alert("Confirm Wipe", isPresented: $showWipeConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Wipe", role: .destructive) {
+                performWipe()
+            }
+        } message: {
+            Text("This will factory-reset \(selectedDeviceIds.count) device(s)\(wipeKeepUserData ? ", keeping user data" : ", erasing all data"). This cannot be undone.")
+        }
+        .alert("Confirm Retire", isPresented: $showRetireConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Retire", role: .destructive) {
+                performRetire()
+            }
+        } message: {
+            Text("This will remove company data and unenroll \(selectedDeviceIds.count) device(s), leaving personal data intact.")
         }
         .searchable(text: $searchText, prompt: "Search devices...")
         .toolbar {
@@ -353,7 +373,51 @@ struct DevicesView: View {
             }
         }
     }
-    
+
+    private func performWipe() {
+        Task {
+            isPerformingAction = true
+            actionMessage = "Wiping \(selectedDeviceIds.count) device(s)..."
+            defer { isPerformingAction = false }
+
+            do {
+                let results = try await appState.graphService.wipeDevices(Array(selectedDeviceIds), keepUserData: wipeKeepUserData)
+                let successful = results.filter { $0.success }.count
+                let failed = results.count - successful
+
+                if failed == 0 {
+                    actionMessage = "Successfully sent wipe to \(successful) device(s)"
+                } else {
+                    actionMessage = "Wiped \(successful) device(s), \(failed) failed"
+                }
+            } catch {
+                actionMessage = "Error: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func performRetire() {
+        Task {
+            isPerformingAction = true
+            actionMessage = "Retiring \(selectedDeviceIds.count) device(s)..."
+            defer { isPerformingAction = false }
+
+            do {
+                let results = try await appState.graphService.retireDevices(Array(selectedDeviceIds))
+                let successful = results.filter { $0.success }.count
+                let failed = results.count - successful
+
+                if failed == 0 {
+                    actionMessage = "Successfully sent retire to \(successful) device(s)"
+                } else {
+                    actionMessage = "Retired \(successful) device(s), \(failed) failed"
+                }
+            } catch {
+                actionMessage = "Error: \(error.localizedDescription)"
+            }
+        }
+    }
+
     private func performAppReinstall() {
         guard let appId = selectedAppId else {
             actionMessage = "Please select an app to reinstall"
@@ -399,6 +463,8 @@ struct DeviceActionsPanel: View {
     @Binding var showLockConfirmation: Bool
     @Binding var showRebootConfirmation: Bool
     @Binding var showWipeConfirmation: Bool
+    @Binding var showRetireConfirmation: Bool
+    @Binding var wipeKeepUserData: Bool
     @Binding var availableApps: [MobileApp]
     @Binding var selectedAppId: String?
     @Binding var appSearchText: String
@@ -534,7 +600,58 @@ struct DeviceActionsPanel: View {
                     }
                     
                     Divider()
-                    
+
+                    // Retire Section
+                    ActionAccordion(
+                        title: "Retire Device",
+                        icon: "minus.circle",
+                        isExpanded: expandedSections.contains("retire"),
+                        onToggle: { toggleSection("retire") }
+                    ) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Remove company data and unenroll the selected devices. Personal data is left intact.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            Button(action: { showRetireConfirmation = true }) {
+                                Label("Retire Device", systemImage: "minus.circle")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                            .disabled(isPerformingAction)
+                        }
+                    }
+
+                    Divider()
+
+                    // Wipe Section
+                    ActionAccordion(
+                        title: "Wipe Device",
+                        icon: "trash.fill",
+                        isExpanded: expandedSections.contains("wipe"),
+                        onToggle: { toggleSection("wipe") }
+                    ) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Factory-reset the selected devices. This cannot be undone.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+
+                            Toggle("Keep user data", isOn: $wipeKeepUserData)
+                                .font(.caption)
+
+                            Button(action: { showWipeConfirmation = true }) {
+                                Label("Wipe Device", systemImage: "trash.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                            .disabled(isPerformingAction)
+                        }
+                    }
+
+                    Divider()
+
                     // App Reinstall Section
                     ActionAccordion(
                         title: "Reinstall App",

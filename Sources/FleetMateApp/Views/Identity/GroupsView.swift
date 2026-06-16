@@ -8,6 +8,7 @@ struct GroupsView: View {
     @State private var expandedGroupIds: Set<String> = []
     @State private var groupDevices: [String: [EntraDevice]] = [:]
     @State private var loadingGroupIds: Set<String> = []
+    @State private var pendingRemoval: (group: EntraGroup, device: EntraDevice)?
     
     // Use cached groups from appState
     var groups: [EntraGroup] { appState.cachedGroups }
@@ -104,7 +105,8 @@ struct GroupsView: View {
                             isExpanded: expandedGroupIds.contains(group.id ?? ""),
                             isLoadingMembers: loadingGroupIds.contains(group.id ?? ""),
                             devices: groupDevices[group.id ?? ""] ?? [],
-                            onToggle: { toggleGroup(group) }
+                            onToggle: { toggleGroup(group) },
+                            onRemoveMember: { device in pendingRemoval = (group, device) }
                         )
                     }
                 }
@@ -114,6 +116,35 @@ struct GroupsView: View {
         .task {
             if !appState.isGroupsCacheValid {
                 loadDeviceGroups()
+            }
+        }
+        .alert("Remove from group?", isPresented: Binding(
+            get: { pendingRemoval != nil },
+            set: { if !$0 { pendingRemoval = nil } }
+        ), presenting: pendingRemoval) { item in
+            Button("Cancel", role: .cancel) { pendingRemoval = nil }
+            Button("Remove", role: .destructive) {
+                removeMember(group: item.group, device: item.device)
+                pendingRemoval = nil
+            }
+        } message: { item in
+            Text("Remove \(item.device.displayName ?? "this device") from \(item.group.displayName ?? "the group")?")
+        }
+    }
+
+    private func removeMember(group: EntraGroup, device: EntraDevice) {
+        guard let groupId = group.id, let objectId = device.id else {
+            appState.errorMessage = "Missing group or device id"
+            return
+        }
+        Task {
+            do {
+                try await appState.graphService.removeGroupMember(group: groupId, objectId: objectId)
+                // Refresh this group's member list.
+                let devices = try await appState.graphService.getGroupDeviceMembers(groupId)
+                groupDevices[groupId] = devices
+            } catch {
+                appState.errorMessage = "Failed to remove member: \(error.localizedDescription)"
             }
         }
     }
@@ -172,6 +203,7 @@ struct GroupDisclosureRow: View {
     let isLoadingMembers: Bool
     let devices: [EntraDevice]
     let onToggle: () -> Void
+    var onRemoveMember: (EntraDevice) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -256,6 +288,11 @@ struct GroupDisclosureRow: View {
                             
                             ForEach(devices) { device in
                                 DeviceMemberRow(device: device)
+                                    .contextMenu {
+                                        Button("Remove from group", role: .destructive) {
+                                            onRemoveMember(device)
+                                        }
+                                    }
                             }
                         }
                         .padding(.leading, 24)

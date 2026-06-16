@@ -58,12 +58,8 @@ struct IntuneDevicesSubcommand: AsyncParsableCommand {
         }
     }
 
-    /// Truncate-and-pad to a fixed column width. (Avoids `String(format: "%s")`,
-    /// which treats a Swift String as a C `char*` and crashes in `strlen`.)
-    private func pad(_ value: String, _ width: Int) -> String {
-        let truncated = value.count > width ? String(value.prefix(width)) : value
-        return truncated + String(repeating: " ", count: max(0, width - truncated.count))
-    }
+    /// Fixed-width column. Delegates to the shared `String.col` formatter.
+    private func pad(_ value: String, _ width: Int) -> String { value.col(width) }
 
     private func printDevicesTable(_ devices: [IntuneDevice]) {
         print("\n" + "Intune Managed Devices".bold + " (\(devices.count) shown)\n")

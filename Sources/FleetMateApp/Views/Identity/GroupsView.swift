@@ -9,6 +9,7 @@ struct GroupsView: View {
     @State private var groupDevices: [String: [EntraDevice]] = [:]
     @State private var loadingGroupIds: Set<String> = []
     @State private var pendingRemoval: (group: EntraGroup, device: EntraDevice)?
+    @State private var pendingRemediation: EntraGroup?
     
     // Use cached groups from appState
     var groups: [EntraGroup] { appState.cachedGroups }
@@ -106,7 +107,8 @@ struct GroupsView: View {
                             isLoadingMembers: loadingGroupIds.contains(group.id ?? ""),
                             devices: groupDevices[group.id ?? ""] ?? [],
                             onToggle: { toggleGroup(group) },
-                            onRemoveMember: { device in pendingRemoval = (group, device) }
+                            onRemoveMember: { device in pendingRemoval = (group, device) },
+                            onDeployRemediation: { pendingRemediation = group }
                         )
                     }
                 }
@@ -129,6 +131,33 @@ struct GroupsView: View {
             }
         } message: { item in
             Text("Remove \(item.device.displayName ?? "this device") from \(item.group.displayName ?? "the group")?")
+        }
+        .alert("Deploy Cimian Push?", isPresented: Binding(
+            get: { pendingRemediation != nil },
+            set: { if !$0 { pendingRemediation = nil } }
+        ), presenting: pendingRemediation) { group in
+            Button("Cancel", role: .cancel) { pendingRemediation = nil }
+            Button("Deploy") {
+                deployRemediation(group: group)
+                pendingRemediation = nil
+            }
+        } message: { group in
+            Text("Deploy the Cimian push-trigger proactive remediation to \(group.displayName ?? "this group")? Targeted Windows devices will run a managed software update.")
+        }
+    }
+
+    private func deployRemediation(group: EntraGroup) {
+        guard let groupId = group.id else {
+            appState.errorMessage = "Group has no id"
+            return
+        }
+        Task {
+            do {
+                let scriptId = try await appState.graphService.deployCimianPushRemediation(group: groupId)
+                appState.errorMessage = "Deployed Cimian push remediation (script \(scriptId))"
+            } catch {
+                appState.errorMessage = "Failed to deploy remediation: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -204,6 +233,7 @@ struct GroupDisclosureRow: View {
     let devices: [EntraDevice]
     let onToggle: () -> Void
     var onRemoveMember: (EntraDevice) -> Void = { _ in }
+    var onDeployRemediation: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -236,6 +266,9 @@ struct GroupDisclosureRow: View {
             }
             .buttonStyle(.plain)
             .padding(.vertical, 4)
+            .contextMenu {
+                Button("Deploy Cimian Push Remediation…") { onDeployRemediation() }
+            }
 
             // Expanded content
             if isExpanded {

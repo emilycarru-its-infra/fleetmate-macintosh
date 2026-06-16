@@ -25,6 +25,10 @@ private func resolveDeviceId(_ service: GraphService, _ identifier: String) asyn
 }
 
 private func reportBulk(_ results: [BulkActionResult], action: String) throws {
+    guard !results.isEmpty else {
+        print("\(action): no devices acted on (not authenticated, or no match)".red)
+        throw ExitCode.failure
+    }
     let ok = results.filter { $0.success }.count
     let failed = results.count - ok
     if failed == 0 {

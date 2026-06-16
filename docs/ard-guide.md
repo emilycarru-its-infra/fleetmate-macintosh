@@ -10,7 +10,7 @@
 
 ```bash
 # 1. Clone
-git clone https://github.com/fleetmate-hq/fleetmate-macintosh
+git clone https://github.com/emilycarru-its-infra/fleetmate-macintosh
 cd fleetmate-macintosh
 
 # 2. Build

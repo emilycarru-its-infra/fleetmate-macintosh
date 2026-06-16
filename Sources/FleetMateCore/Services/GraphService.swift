@@ -1,6 +1,18 @@
 import Foundation
 import Alamofire
 
+public enum GraphServiceError: Error, CustomStringConvertible {
+    case notAuthenticated
+    case notFound(String)
+
+    public var description: String {
+        switch self {
+        case .notAuthenticated: return "Not authenticated to Microsoft Graph"
+        case .notFound(let what): return "Not found: \(what)"
+        }
+    }
+}
+
 /// Microsoft Graph service for Intune devices and Entra ID users/groups
 /// Uses Azure CLI SSO for authentication on macOS
 public class GraphService {
@@ -17,6 +29,14 @@ public class GraphService {
     private let baseUrl = "https://graph.microsoft.com/v1.0"
     private let graphResourceId = "https://graph.microsoft.com"
 
+    // Transport: by default every Graph call runs inside an `aze` session (the
+    // domain identity's token never leaves Azure). Set the environment variable
+    // FLEETMATE_GRAPH_TRANSPORT=direct to fall back to a local Alamofire request
+    // with an `az`-minted delegated token (dev / break-glass).
+    private let useAze: Bool
+    private let azeTransport: AzeGraphTransport
+    private static let graphDecoder = JSONDecoder()
+
     public var isConfigured: Bool {
         return config.isGraphConfigured
     }
@@ -28,6 +48,27 @@ public class GraphService {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 60
         self.session = Session(configuration: configuration)
+
+        self.useAze = config.graphUsesAze
+        self.azeTransport = AzeGraphTransport()
+    }
+
+    // MARK: - Session warming
+
+    /// Pre-warm the elevation sessions Graph uses (Intune → devices, Entra →
+    /// identity) so the container cold start is paid at launch, not on the
+    /// first user action. No-op in direct mode. Best-effort and concurrent.
+    @discardableResult
+    public func warmElevationSessions() async -> Bool {
+        guard useAze else { return false }
+        return await withTaskGroup(of: Bool.self) { group in
+            for domain in [GraphDomain.devices, GraphDomain.identity] {
+                group.addTask { await self.azeTransport.warm(domain) }
+            }
+            var allWarmed = true
+            for await warmed in group { allWarmed = allWarmed && warmed }
+            return allWarmed
+        }
     }
 
     // MARK: - Authentication
@@ -79,6 +120,9 @@ public class GraphService {
     }
 
     private func headers() async -> HTTPHeaders? {
+        // In aze mode auth happens inside the session — return a non-nil empty
+        // header set so existing `guard let headers` call sites pass through.
+        if useAze { return [:] }
         guard let token = try? await getAccessToken() else { return nil }
         return [
             "Authorization": "Bearer \(token)",
@@ -262,6 +306,172 @@ public class GraphService {
         }
     }
 
+    /// Factory-reset devices. `keepEnrollmentData`/`keepUserData` map to the
+    /// Intune wipe action options (default full wipe).
+    public func wipeDevices(_ deviceIds: [String], keepEnrollmentData: Bool = false, keepUserData: Bool = false) async throws -> [BulkActionResult] {
+        guard let headers = await headers() else { return [] }
+
+        return await withTaskGroup(of: BulkActionResult.self) { group in
+            for deviceId in deviceIds {
+                group.addTask {
+                    let url = "\(self.baseUrl)/deviceManagement/managedDevices/\(deviceId)/wipe"
+                    do {
+                        try await self.postAction(url: url, body: ["keepEnrollmentData": keepEnrollmentData, "keepUserData": keepUserData], headers: headers)
+                        return BulkActionResult(deviceId: deviceId, success: true)
+                    } catch {
+                        return BulkActionResult(deviceId: deviceId, success: false, error: error.localizedDescription)
+                    }
+                }
+            }
+            var results: [BulkActionResult] = []
+            for await result in group { results.append(result) }
+            return results
+        }
+    }
+
+    /// Retire devices — removes company data and unenrolls, leaving personal
+    /// data intact (POST .../retire).
+    public func retireDevices(_ deviceIds: [String]) async throws -> [BulkActionResult] {
+        guard let headers = await headers() else { return [] }
+
+        return await withTaskGroup(of: BulkActionResult.self) { group in
+            for deviceId in deviceIds {
+                group.addTask {
+                    let url = "\(self.baseUrl)/deviceManagement/managedDevices/\(deviceId)/retire"
+                    do {
+                        try await self.postAction(url: url, headers: headers)
+                        return BulkActionResult(deviceId: deviceId, success: true)
+                    } catch {
+                        return BulkActionResult(deviceId: deviceId, success: false, error: error.localizedDescription)
+                    }
+                }
+            }
+            var results: [BulkActionResult] = []
+            for await result in group { results.append(result) }
+            return results
+        }
+    }
+
+    // MARK: - Proactive Remediations
+
+    private struct DeviceHealthScriptRef: Decodable { let id: String }
+
+    private static func utcParts() -> (date: String, time: String, stamp: String) {
+        let f = DateFormatter()
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        let date = f.string(from: Date())
+        f.dateFormat = "HH:mm:ss"
+        let time = f.string(from: Date())
+        return (date, time, "\(date) \(time)")
+    }
+
+    /// Create a proactive remediation (deviceHealthScript) and assign it to a
+    /// group with a run-once schedule. Returns the new script id.
+    @discardableResult
+    public func deployRemediation(displayName: String, detectionScript: String, remediationScript: String, group groupNameOrId: String, description: String? = nil) async throws -> String {
+        guard let headers = await headers() else { throw GraphServiceError.notAuthenticated }
+        guard let groupId = try await resolveGroupId(groupNameOrId) else {
+            throw GraphServiceError.notFound("group \(groupNameOrId)")
+        }
+
+        let createBody: [String: Any] = [
+            "displayName": displayName,
+            "description": description ?? "Deployed by FleetMate",
+            "publisher": "FleetMate",
+            "runAsAccount": "system",
+            "enforceSignatureCheck": false,
+            "runAs32Bit": false,
+            "detectionScriptContent": Data(detectionScript.utf8).base64EncodedString(),
+            "remediationScriptContent": Data(remediationScript.utf8).base64EncodedString(),
+        ]
+        let created: DeviceHealthScriptRef = try await post(url: "\(baseUrl)/deviceManagement/deviceHealthScripts", body: createBody, headers: headers)
+
+        let now = GraphService.utcParts()
+        let assignBody: [String: Any] = [
+            "deviceHealthScriptAssignments": [[
+                "target": [
+                    "@odata.type": "#microsoft.graph.groupAssignmentTarget",
+                    "groupId": groupId,
+                ],
+                "runRemediationScript": true,
+                "runSchedule": [
+                    "@odata.type": "#microsoft.graph.deviceHealthScriptRunOnceSchedule",
+                    "date": now.date,
+                    "time": now.time,
+                    "useUtc": true,
+                ],
+            ]],
+        ]
+        try await postAction(url: "\(baseUrl)/deviceManagement/deviceHealthScripts/\(created.id)/assign", body: assignBody, headers: headers)
+        return created.id
+    }
+
+    /// Deploy the Cimian push trigger remediation to a group — a proactive
+    /// remediation that writes `.cimian.headless` on target Windows devices to
+    /// force an immediate managed software update run.
+    @discardableResult
+    public func deployCimianPushRemediation(group groupNameOrId: String) async throws -> String {
+        let stamp = GraphService.utcParts().stamp
+        let detectionScript = """
+        # Cimian Push - Detection Script
+        # Exit 0 = remediation needed (trigger file does not exist)
+        # Exit 1 = no action needed (trigger file already exists or MSU is running)
+
+        $triggerFile = 'C:\\ProgramData\\ManagedInstalls\\.cimian.headless'
+        $msuProcess = Get-Process -Name 'managedsoftwareupdate' -ErrorAction SilentlyContinue
+
+        if ($msuProcess) {
+            Write-Output 'managedsoftwareupdate is already running'
+            exit 1
+        }
+
+        if (Test-Path $triggerFile) {
+            $age = (Get-Date) - (Get-Item $triggerFile).LastWriteTime
+            if ($age.TotalMinutes -lt 5) {
+                Write-Output 'Trigger file exists and is recent'
+                exit 1
+            }
+        }
+
+        Write-Output 'Cimian push trigger needed'
+        exit 0
+        """
+        let remediationScript = """
+        # Cimian Push - Remediation Script
+        # Creates .cimian.headless trigger file for CimianWatcher to pick up
+
+        $managedInstallsDir = 'C:\\ProgramData\\ManagedInstalls'
+        $triggerFile = Join-Path $managedInstallsDir '.cimian.headless'
+
+        if (-not (Test-Path $managedInstallsDir)) {
+            New-Item -ItemType Directory -Path $managedInstallsDir -Force | Out-Null
+        }
+
+        $content = @"
+        Bootstrap triggered at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+        Mode: Headless
+        Triggered by: FleetMate Intune Push
+        "@
+
+        Set-Content -Path $triggerFile -Value $content -Force
+        Write-Output "Cimian push trigger created at $triggerFile"
+
+        $svc = Get-Service -Name 'CimianWatcher' -ErrorAction SilentlyContinue
+        if ($svc -and $svc.Status -ne 'Running') {
+            Start-Service -Name 'CimianWatcher' -ErrorAction SilentlyContinue
+            Write-Output 'CimianWatcher service was stopped, started it'
+        }
+        """
+        return try await deployRemediation(
+            displayName: "Cimian Push Trigger - \(stamp)",
+            detectionScript: detectionScript,
+            remediationScript: remediationScript,
+            group: groupNameOrId,
+            description: "FleetMate-initiated Cimian push trigger. Creates .cimian.headless to force an immediate managed software update run.")
+    }
+
     // MARK: - Entra Users
 
     public func getUser(_ userPrincipalNameOrId: String, includeGroups: Bool = false) async throws -> EntraUser? {
@@ -435,9 +645,58 @@ public class GraphService {
         return response.value
     }
 
+    // MARK: - Entra Writes (group membership, user state)
+
+    /// Resolve a group name or id to its object id (passes ids through).
+    private func resolveGroupId(_ groupNameOrId: String) async throws -> String? {
+        if UUID(uuidString: groupNameOrId) != nil { return groupNameOrId }
+        return try await getGroupByName(groupNameOrId)?.id
+    }
+
+    /// Resolve a user UPN or id to its object id (passes ids through).
+    private func resolveUserId(_ userPrincipalNameOrId: String) async throws -> String? {
+        if UUID(uuidString: userPrincipalNameOrId) != nil { return userPrincipalNameOrId }
+        return try await getUser(userPrincipalNameOrId)?.id
+    }
+
+    /// Add a directory object (user or device) to a group.
+    public func addGroupMember(group groupNameOrId: String, objectId: String) async throws {
+        guard let headers = await headers() else { throw GraphServiceError.notAuthenticated }
+        guard let groupId = try await resolveGroupId(groupNameOrId) else {
+            throw GraphServiceError.notFound("group \(groupNameOrId)")
+        }
+        let url = "\(baseUrl)/groups/\(groupId)/members/$ref"
+        let body: [String: Any] = ["@odata.id": "\(baseUrl)/directoryObjects/\(objectId)"]
+        try await postAction(url: url, body: body, headers: headers)
+    }
+
+    /// Remove a directory object from a group.
+    public func removeGroupMember(group groupNameOrId: String, objectId: String) async throws {
+        guard let headers = await headers() else { throw GraphServiceError.notAuthenticated }
+        guard let groupId = try await resolveGroupId(groupNameOrId) else {
+            throw GraphServiceError.notFound("group \(groupNameOrId)")
+        }
+        let url = "\(baseUrl)/groups/\(groupId)/members/\(objectId)/$ref"
+        try await deleteAction(url: url, headers: headers)
+    }
+
+    /// Enable or disable a user account (PATCH accountEnabled).
+    public func setUserAccountEnabled(_ userPrincipalNameOrId: String, enabled: Bool) async throws {
+        guard let headers = await headers() else { throw GraphServiceError.notAuthenticated }
+        guard let userId = try await resolveUserId(userPrincipalNameOrId) else {
+            throw GraphServiceError.notFound("user \(userPrincipalNameOrId)")
+        }
+        let url = "\(baseUrl)/users/\(userId)"
+        try await patchAction(url: url, body: ["accountEnabled": enabled], headers: headers)
+    }
+
     // MARK: - Private Helpers
 
     private func fetch<T: Decodable>(url: String, headers: HTTPHeaders) async throws -> T {
+        if useAze {
+            let data = try await azeTransport.send(GraphRequest(method: .get, url: url))
+            return try GraphService.graphDecoder.decode(T.self, from: data)
+        }
         return try await withCheckedThrowingContinuation { continuation in
             session.request(url, headers: headers)
                 .validate()
@@ -453,6 +712,11 @@ public class GraphService {
     }
 
     private func postAction(url: String, body: [String: Any]? = nil, headers: HTTPHeaders) async throws {
+        if useAze {
+            let bodyData = try body.map { try JSONSerialization.data(withJSONObject: $0) }
+            _ = try await azeTransport.send(GraphRequest(method: .post, url: url, body: bodyData))
+            return
+        }
         return try await withCheckedThrowingContinuation { continuation in
             let request: DataRequest
             if let body = body {
@@ -471,7 +735,51 @@ public class GraphService {
         }
     }
 
+    private func patchAction(url: String, body: [String: Any], headers: HTTPHeaders) async throws {
+        if useAze {
+            let bodyData = try JSONSerialization.data(withJSONObject: body)
+            _ = try await azeTransport.send(GraphRequest(method: .patch, url: url, body: bodyData))
+            return
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            session.request(url, method: .patch, parameters: body, encoding: JSONEncoding.default, headers: headers)
+                .validate()
+                .response { response in
+                    switch response.result {
+                    case .success:
+                        continuation.resume()
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
+                }
+        }
+    }
+
+    private func deleteAction(url: String, headers: HTTPHeaders) async throws {
+        if useAze {
+            _ = try await azeTransport.send(GraphRequest(method: .delete, url: url))
+            return
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            session.request(url, method: .delete, headers: headers)
+                .validate()
+                .response { response in
+                    switch response.result {
+                    case .success:
+                        continuation.resume()
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
+                }
+        }
+    }
+
     private func post<T: Decodable>(url: String, body: [String: Any], headers: HTTPHeaders) async throws -> T {
+        if useAze {
+            let bodyData = try JSONSerialization.data(withJSONObject: body)
+            let data = try await azeTransport.send(GraphRequest(method: .post, url: url, body: bodyData))
+            return try GraphService.graphDecoder.decode(T.self, from: data)
+        }
         return try await withCheckedThrowingContinuation { continuation in
             session.request(url, method: .post, parameters: body, encoding: JSONEncoding.default, headers: headers)
                 .validate()

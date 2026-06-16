@@ -136,13 +136,28 @@ public actor IntuneManagementProvider: ManagementProvider {
     }
     
     public func syncDevice(deviceId: String) async throws {
-        // Would need Graph API call to POST /deviceManagement/managedDevices/{id}/syncDevice
-        throw ProviderError.apiError("Device sync not yet implemented for Intune")
+        let results = try await service.syncDevices([deviceId])
+        try Self.requireSuccess(results, action: "sync")
     }
-    
+
     public func wipeDevice(deviceId: String) async throws {
-        // Would need Graph API call to POST /deviceManagement/managedDevices/{id}/wipe
-        throw ProviderError.apiError("Device wipe not yet implemented for Intune")
+        let results = try await service.wipeDevices([deviceId])
+        try Self.requireSuccess(results, action: "wipe")
+    }
+
+    public func retireDevice(deviceId: String) async throws {
+        let results = try await service.retireDevices([deviceId])
+        try Self.requireSuccess(results, action: "retire")
+    }
+
+    /// Surface a failed single-device action as a provider error.
+    private static func requireSuccess(_ results: [BulkActionResult], action: String) throws {
+        guard let result = results.first else {
+            throw ProviderError.apiError("Intune \(action) returned no result")
+        }
+        if !result.success {
+            throw ProviderError.apiError("Intune \(action) failed: \(result.error ?? "unknown error")")
+        }
     }
     
     public func getComplianceStatus(deviceId: String) async throws -> ComplianceStatus {

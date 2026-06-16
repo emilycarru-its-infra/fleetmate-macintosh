@@ -29,6 +29,31 @@ swift build -c release
 
 The compiled binary will be at `.build/release/fleetmate`.
 
+Build the macOS app bundle (GUI):
+
+```bash
+make release-app
+```
+
+The assembled `.app` is at `.build/app/FleetMate.app`. Sign and notarize with `make release-app-signed` (requires the Developer ID identity and notarization credentials).
+
+### Elevated access (Intune & Entra)
+
+Intune and Entra read **and write** operations run through a built-in elevation session — FleetMate creates a short-lived Azure Container Instance with a domain managed identity attached and runs each Graph call inside it, so the identity's token never leaves Azure and no secret is stored locally. This is the same model as the `aze` tool, reimplemented natively inside FleetMate (no external `aze` script required).
+
+Each operator needs, on their own machine:
+
+- the Azure CLI (`az`) installed
+- a current `az login` from a compliant device
+- membership in the elevation operators group (granted out of band)
+
+The app is **not** a privilege: without operator membership and a signed-in session, elevated calls simply fail. An operator who has FleetMate and is signed in has elevated access; the app alone grants nothing.
+
+Operations route to the right identity automatically — Intune (`deviceManagement/*`) to the devices identity, users/groups/directory to the identity domain. The first call to a domain pays a one-time container cold start (~30s); the app warms both at launch so this is usually invisible. Toggles for transition/debugging:
+
+- `FLEETMATE_GRAPH_TRANSPORT=direct` — bypass elevation and use a local `az`-minted token (dev/break-glass)
+- `FLEETMATE_AZE_SCRIPT=1` — use the external `aze` script instead of the built-in session
+
 ### Configuration
 
 FleetMate uses a priority-based configuration system:

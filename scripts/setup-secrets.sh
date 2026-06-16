@@ -260,17 +260,17 @@ cat > "$CONFIG_FILE" << 'EOF'
 # Run 'scripts/setup-secrets.sh --force' to refresh secrets from Azure Key Vault.
 
 # Graph API (Microsoft Intune/Entra)
-# Credentials: Keychain -> com.github.fleetmate-qa -> GraphClientId, GraphClientSecret, GraphTenantId
+# Credentials: Keychain -> ca.ecuad.macadmin.fleetmate -> GraphClientId, GraphClientSecret, GraphTenantId
 graph:
   use_azure_cli_auth: true  # Prefer Azure CLI SSO over client credentials
 
 # Snipe-IT Asset Management
-# Credentials: Keychain -> com.github.fleetmate-qa -> SnipeApiKey, SnipeUrl
+# Credentials: Keychain -> ca.ecuad.macadmin.fleetmate -> SnipeApiKey, SnipeUrl
 snipe:
   enabled: true
 
 # TeamDynamix (TDX) Ticketing
-# Credentials: Keychain -> com.github.fleetmate-qa -> TdxUsername, TdxPassword, TdxBeid, TdxWebServicesKey
+# Credentials: Keychain -> ca.ecuad.macadmin.fleetmate -> TdxUsername, TdxPassword, TdxBeid, TdxWebServicesKey
 tdx:
   base_url: https://servicedesk.emilycarru.ca/TDWebApi
   app_id: 116
@@ -283,7 +283,7 @@ devops:
   use_azure_cli_auth: true
 
 # ReportMate API
-# Credentials: Keychain -> com.github.fleetmate-qa -> ReportMateUrl, ReportMatePassphrase
+# Credentials: Keychain -> ca.ecuad.macadmin.fleetmate -> ReportMateUrl, ReportMatePassphrase
 reportmate:
   enabled: true
 

@@ -22,7 +22,7 @@ FleetMate is a unified command-line interface for managing IT assets across mult
 Build from source:
 
 ```bash
-git clone https://github.com/fleetmate-qa/fleetmate-macintosh.git
+git clone https://github.com/emilycarru-its-infra/fleetmate-macintosh.git
 cd fleetmate-macintosh
 swift build -c release
 ```
@@ -454,7 +454,7 @@ export SNIPE_API_KEY="your-key"
 
 ```bash
 # Clone repository
-git clone https://github.com/fleetmate-qa/fleetmate-macintosh.git
+git clone https://github.com/emilycarru-its-infra/fleetmate-macintosh.git
 cd fleetmate-macintosh
 
 # Build debug version

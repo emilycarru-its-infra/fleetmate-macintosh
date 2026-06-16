@@ -98,8 +98,8 @@ public actor ElevationSession {
 
     /// Run a single-line command inside the session and return its stdout +
     /// exit code, mirroring `aze run`.
-    public func exec(_ domain: GraphDomain, command: String) async throws -> (out: String, code: Int32) {
-        try await ensureSession(domain)
+    public func exec(_ domain: GraphDomain, command: String, ttlHours: Int? = nil) async throws -> (out: String, code: Int32) {
+        try await ensureSession(domain, ttlHours: ttlHours ?? ElevationSession.defaultTtlHours)
         let name = ElevationSession.sessionName(for: domain)
 
         let sub = try await runAz(["account", "show", "--query", "id", "-o", "tsv"]).out.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -203,8 +203,17 @@ public actor ElevationSession {
                     cont.resume(throwing: ElevationError.azLaunchFailed(error.localizedDescription))
                     return
                 }
+                // Drain both pipes concurrently to avoid a deadlock when one
+                // fills its buffer while we block reading the other.
+                var errData = Data()
+                let errGroup = DispatchGroup()
+                errGroup.enter()
+                DispatchQueue.global(qos: .userInitiated).async {
+                    errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                    errGroup.leave()
+                }
                 let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-                let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                errGroup.wait()
                 process.waitUntilExit()
                 cont.resume(returning: (
                     String(data: outData, encoding: .utf8) ?? "",

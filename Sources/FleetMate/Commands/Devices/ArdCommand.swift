@@ -282,14 +282,14 @@ struct ArdGroupScanSubcommand: AsyncParsableCommand {
         let nW = 32; let iW = 18
 
         print("\n=== \(group) ===\n".bold)
-        print(String(format: "  %-\(nW)s %-\(iW)s %s", "COMPUTER", "IP", "STATUS").bold)
+        print(("  " + "COMPUTER".col(nW) + " " + "IP".col(iW) + " STATUS").bold)
         print("  " + String(repeating: "-", count: nW) + " " + String(repeating: "-", count: iW) + " ------")
         for s in visible {
             let ip = s.ip.isEmpty ? "—" : s.ip
             let status = s.online
                 ? "+ online".green
                 : (s.ip.isEmpty ? "? no IP".yellow : "- offline".red)
-            print(String(format: "  %-\(nW)s %-\(iW)s %@", String(s.name.prefix(nW)), ip, status))
+            print("  " + s.name.col(nW) + " " + ip.col(iW) + " " + status)
         }
         print("\n  Total: \(results.count) | Online: \(onlineCount) | Offline: \(offlineCount)\n")
     }

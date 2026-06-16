@@ -102,7 +102,11 @@ public actor ElevationSession {
         try await ensureSession(domain, ttlHours: ttlHours ?? ElevationSession.defaultTtlHours)
         let name = ElevationSession.sessionName(for: domain)
 
-        let sub = try await runAz(["account", "show", "--query", "id", "-o", "tsv"]).out.trimmingCharacters(in: .whitespacesAndNewlines)
+        let account = try await runAz(["account", "show", "--query", "id", "-o", "tsv"])
+        let sub = account.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard account.code == 0, !sub.isEmpty else {
+            throw ElevationError.execHandshakeFailed("Not logged in to az (run az login). \(account.err.trimmingCharacters(in: .whitespacesAndNewlines))")
+        }
         let uri = "https://management.azure.com/subscriptions/\(sub)/resourceGroups/\(ElevationSession.sessionsResourceGroup)/providers/Microsoft.ContainerInstance/containerGroups/\(name)/containers/\(name)/exec?api-version=\(ElevationSession.execApiVersion)"
         let body = "{\"command\":\"/bin/bash\",\"terminalSize\":{\"rows\":24,\"cols\":500}}"
 

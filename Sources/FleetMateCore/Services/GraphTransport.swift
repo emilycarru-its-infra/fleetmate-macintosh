@@ -144,7 +144,7 @@ public struct AzeGraphTransport: GraphTransport {
     /// so the container shell does not expand `$top`, `$filter`, `$skiptoken`,
     /// `$ref`, etc.
     static func buildAzRestCommand(_ request: GraphRequest) -> String {
-        var parts = ["az", "rest", "--method", request.method.rawValue, "--url", shellSingleQuote(request.url)]
+        var parts = ["az", "rest", "--method", request.method.rawValue, "--uri", shellSingleQuote(request.url)]
         if let body = request.body, let json = String(data: body, encoding: .utf8) {
             parts += ["--headers", "Content-Type=application/json", "--body", shellSingleQuote(json)]
         }

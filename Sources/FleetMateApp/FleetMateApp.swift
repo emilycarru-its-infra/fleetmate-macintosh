@@ -305,10 +305,21 @@ class AppState: ObservableObject {
     func invalidateGroupsCache() { groupsCacheTime = nil }
     
     // MARK: - Background Preloading
-    
+
+    /// Warm the aze elevation sessions (Intune → devices, Entra → identity) so
+    /// the ~30s container cold start is paid once at launch rather than on the
+    /// user's first action. No-op outside aze mode.
+    func warmElevationSessions() async {
+        await graphService.warmElevationSessions()
+    }
+
     /// Preload all data sources concurrently in the background
     func preloadAllData() async {
         dbg.info("preloadAllData starting", category: "preload")
+        // Pay the container cold start once, up front, for both Graph domains —
+        // so the concurrent loads below reuse warm sessions instead of each
+        // racing to create one.
+        await warmElevationSessions()
         dbg.info("  Graph configured:  \(config.isGraphConfigured), cache valid: \(isDevicesCacheValid)", category: "preload")
         dbg.info("  Snipe configured:  \(config.isSnipeConfigured), cache valid: \(isAssetsCacheValid)", category: "preload")
         dbg.info("  TDX configured:    \(config.isTdxConfigured), cache valid: \(isTicketsCacheValid)", category: "preload")

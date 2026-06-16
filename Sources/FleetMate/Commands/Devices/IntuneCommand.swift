@@ -11,7 +11,10 @@ struct IntuneCommand: AsyncParsableCommand {
             IntuneDevicesSubcommand.self,
             IntuneDeviceSubcommand.self,
             ComplianceSubcommand.self,
-            NonCompliantSubcommand.self
+            NonCompliantSubcommand.self,
+            IntuneWipeSubcommand.self,
+            IntuneRetireSubcommand.self,
+            IntuneCimianPushSubcommand.self
         ],
         defaultSubcommand: IntuneDevicesSubcommand.self
     )

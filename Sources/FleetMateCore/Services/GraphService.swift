@@ -1,6 +1,18 @@
 import Foundation
 import Alamofire
 
+public enum GraphServiceError: Error, CustomStringConvertible {
+    case notAuthenticated
+    case notFound(String)
+
+    public var description: String {
+        switch self {
+        case .notAuthenticated: return "Not authenticated to Microsoft Graph"
+        case .notFound(let what): return "Not found: \(what)"
+        }
+    }
+}
+
 /// Microsoft Graph service for Intune devices and Entra ID users/groups
 /// Uses Azure CLI SSO for authentication on macOS
 public class GraphService {
@@ -510,6 +522,51 @@ public class GraphService {
         return response.value
     }
 
+    // MARK: - Entra Writes (group membership, user state)
+
+    /// Resolve a group name or id to its object id (passes ids through).
+    private func resolveGroupId(_ groupNameOrId: String) async throws -> String? {
+        if UUID(uuidString: groupNameOrId) != nil { return groupNameOrId }
+        return try await getGroupByName(groupNameOrId)?.id
+    }
+
+    /// Resolve a user UPN or id to its object id (passes ids through).
+    private func resolveUserId(_ userPrincipalNameOrId: String) async throws -> String? {
+        if UUID(uuidString: userPrincipalNameOrId) != nil { return userPrincipalNameOrId }
+        return try await getUser(userPrincipalNameOrId)?.id
+    }
+
+    /// Add a directory object (user or device) to a group.
+    public func addGroupMember(group groupNameOrId: String, objectId: String) async throws {
+        guard let headers = await headers() else { throw GraphServiceError.notAuthenticated }
+        guard let groupId = try await resolveGroupId(groupNameOrId) else {
+            throw GraphServiceError.notFound("group \(groupNameOrId)")
+        }
+        let url = "\(baseUrl)/groups/\(groupId)/members/$ref"
+        let body: [String: Any] = ["@odata.id": "\(baseUrl)/directoryObjects/\(objectId)"]
+        try await postAction(url: url, body: body, headers: headers)
+    }
+
+    /// Remove a directory object from a group.
+    public func removeGroupMember(group groupNameOrId: String, objectId: String) async throws {
+        guard let headers = await headers() else { throw GraphServiceError.notAuthenticated }
+        guard let groupId = try await resolveGroupId(groupNameOrId) else {
+            throw GraphServiceError.notFound("group \(groupNameOrId)")
+        }
+        let url = "\(baseUrl)/groups/\(groupId)/members/\(objectId)/$ref"
+        try await deleteAction(url: url, headers: headers)
+    }
+
+    /// Enable or disable a user account (PATCH accountEnabled).
+    public func setUserAccountEnabled(_ userPrincipalNameOrId: String, enabled: Bool) async throws {
+        guard let headers = await headers() else { throw GraphServiceError.notAuthenticated }
+        guard let userId = try await resolveUserId(userPrincipalNameOrId) else {
+            throw GraphServiceError.notFound("user \(userPrincipalNameOrId)")
+        }
+        let url = "\(baseUrl)/users/\(userId)"
+        try await patchAction(url: url, body: ["accountEnabled": enabled], headers: headers)
+    }
+
     // MARK: - Private Helpers
 
     private func fetch<T: Decodable>(url: String, headers: HTTPHeaders) async throws -> T {
@@ -552,6 +609,45 @@ public class GraphService {
                     continuation.resume(throwing: error)
                 }
             }
+        }
+    }
+
+    private func patchAction(url: String, body: [String: Any], headers: HTTPHeaders) async throws {
+        if useAze {
+            let bodyData = try JSONSerialization.data(withJSONObject: body)
+            _ = try await azeTransport.send(GraphRequest(method: .patch, url: url, body: bodyData))
+            return
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            session.request(url, method: .patch, parameters: body, encoding: JSONEncoding.default, headers: headers)
+                .validate()
+                .response { response in
+                    switch response.result {
+                    case .success:
+                        continuation.resume()
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
+                }
+        }
+    }
+
+    private func deleteAction(url: String, headers: HTTPHeaders) async throws {
+        if useAze {
+            _ = try await azeTransport.send(GraphRequest(method: .delete, url: url))
+            return
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            session.request(url, method: .delete, headers: headers)
+                .validate()
+                .response { response in
+                    switch response.result {
+                    case .success:
+                        continuation.resume()
+                    case .failure(let error):
+                        continuation.resume(throwing: error)
+                    }
+                }
         }
     }
 

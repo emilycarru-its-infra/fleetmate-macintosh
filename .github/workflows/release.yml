@@ -1,0 +1,108 @@
+# .github/workflows/release.yml
+#
+# Build & publish the FleetMate macOS app + CLI as a GitHub Release.
+#
+# IMPORTANT: The artifacts produced here are UNSIGNED and un-notarized on
+# purpose. No Apple signing certs or notarization secrets live in this repo.
+# The unsigned FleetMate.app + fleetmate CLI are fetched by the ECU
+# "Munki - Mgmt Tools Bootstrap" Azure DevOps pipeline (munki-bootstrap-mgmt),
+# which deep-signs + notarizes them downstream with the ECU Developer ID and
+# packages the app into the Munki bootstrap set. This mirrors how MunkiTools /
+# BootstrapMate / ReportMate are consumed: every tool comes from a release
+# download, never a private submodule clone or a secret baked into CI.
+#
+# Triggered by pushing a v* tag (e.g. v1.2.0) or manually via workflow_dispatch
+# (which produces a timestamped, non-release build artifact).
+
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Select newest Xcode 26 (provides the macOS 26 SDK + actool Liquid Glass icons)
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+
+      - name: Resolve version
+        id: version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          if [ "$REF_TYPE" = "tag" ]; then
+            VERSION="${REF_NAME#v}"
+            TAG="$REF_NAME"
+          else
+            VERSION="$(date '+%Y.%m.%d.%H%M')"
+            TAG=""
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Building FleetMate version: $VERSION"
+
+      - name: Stamp version into sources
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # CLI: ArgumentParser version string reported by `fleetmate --version`.
+          sed -i '' "s/version: \"[^\"]*\"/version: \"$VERSION\"/" Sources/FleetMate/FleetMate.swift
+          # App: CFBundleShortVersionString + CFBundleVersion in the bundle Info.plist.
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" Sources/FleetMateApp/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" Sources/FleetMateApp/Info.plist
+
+      - name: Build UNSIGNED CLI + app bundle
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # SIGNING_IDENTITY is irrelevant here: `release` and `release-app`
+          # only compile + assemble; they never invoke codesign.
+          make release VERSION="$VERSION"
+          make release-app VERSION="$VERSION"
+
+      - name: Stage release artifacts
+        id: stage
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          # App: ditto keeps the .app structure + resource forks inside the zip.
+          ditto -c -k --keepParent .build/app/FleetMate.app "out/FleetMate-App-$VERSION.zip"
+          # CLI: raw Mach-O binary, resolved via SPM's release bin path.
+          cp "$(swift build -c release --show-bin-path)/fleetmate" "out/fleetmate-$VERSION"
+          echo "Staged artifacts:"
+          ls -la out/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: FleetMate-${{ steps.version.outputs.version }}
+          path: out/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release (tag pushes only)
+        if: ${{ github.ref_type == 'tag' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/* --clobber
+          else
+            gh release create "$TAG" out/* --generate-notes
+          fi

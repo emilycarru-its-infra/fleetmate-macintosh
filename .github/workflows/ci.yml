@@ -1,0 +1,45 @@
+# .github/workflows/ci.yml
+#
+# Fast build validation on every push to main and every PR. Compiles all
+# three SPM products (fleetmate CLI, FleetMateApp, FleetMateCore) in release
+# configuration so a broken build is caught before it reaches a tag/release.
+#
+# No signing, no notarization, no secrets: the FleetMate binaries read their
+# credentials at runtime from ~/.config/fleetmate, so nothing sensitive is
+# needed to compile. Signing happens downstream in the ECU Azure DevOps
+# "Munki - Mgmt Tools Bootstrap" pipeline (munki-bootstrap-mgmt), which pulls
+# the GitHub Release produced by release.yml and signs it with the ECU
+# Developer ID.
+
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select newest Xcode 26 (provides the macOS 26 SDK + actool Liquid Glass icons)
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+
+      - name: Build release (all products)
+        run: |
+          swift build -c release --product fleetmate
+          swift build -c release --product FleetMateApp

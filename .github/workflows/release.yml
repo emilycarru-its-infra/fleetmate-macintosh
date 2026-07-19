@@ -58,11 +58,17 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # CLI: ArgumentParser version string reported by `fleetmate --version`.
+          # Versioning matches BootstrapMate: the full YYYY.MM.DD.HHMM timestamp is
+          # the binary/pkg version, and the GUI splits it into a marketing date +
+          # build time so the About box reads "YYYY.MM.DD (HHMM)" instead of
+          # "YYYY.MM.DD.HHMM (YYYY.MM.DD.HHMM)".
+          MARKETING_VERSION="${VERSION%.*}"   # YYYY.MM.DD
+          BUILD_NUMBER="${VERSION##*.}"        # HHMM
+          # CLI: full timestamp reported by `fleetmate --version`.
           sed -i '' "s/version: \"[^\"]*\"/version: \"$VERSION\"/" Sources/FleetMate/FleetMate.swift
-          # App: CFBundleShortVersionString + CFBundleVersion in the bundle Info.plist.
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" Sources/FleetMateApp/Info.plist
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" Sources/FleetMateApp/Info.plist
+          # App: CFBundleShortVersionString = marketing date, CFBundleVersion = HHMM.
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $MARKETING_VERSION" Sources/FleetMateApp/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" Sources/FleetMateApp/Info.plist
 
       - name: Build UNSIGNED CLI + app bundle
         env:

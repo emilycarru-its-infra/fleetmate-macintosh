@@ -223,12 +223,10 @@ public struct FleetMateConfig: Codable {
             }
         }
 
-        // 2. Credentials from ~/.config/fleetmate/secrets.yaml (setup-secrets.sh).
-        // The CLI historically only read ~/.fleetmate/config.yaml + Keychain, so
-        // creds written here by setup-secrets.sh (ReportMate URL/passphrase/OIDC
-        // audience, Snipe key, TDX, …) never loaded. Read it as a file source;
-        // Keychain still overrides below where present.
-        loadFromSecretsFile(into: &config)
+        // 2. Credentials from ~/.fleetmate/secrets.yaml (written by
+        // scripts/setup-secrets.sh), alongside config.yaml. Keychain still
+        // overrides below where present.
+        loadFromSecretsFile(at: "~/.fleetmate/secrets.yaml", into: &config)
 
         // 3. Credentials from Keychain (overrides any credentials that happened to be in the file)
         loadFromKeychain(into: &config)
@@ -240,30 +238,30 @@ public struct FleetMateConfig: Codable {
         return config
     }
     
-    /// Load secrets from ~/.config/fleetmate/secrets.yaml (created by setup-secrets.sh)
-    /// Returns true if secrets file was found and loaded successfully
+    /// Load secrets from a `secrets.yaml` (created by scripts/setup-secrets.sh).
+    /// Returns true if the file was found and loaded. Called once per candidate
+    /// path in ascending priority, so a later call's values override earlier
+    /// ones. Absent files are silently skipped; diagnostics go to stderr so they
+    /// never corrupt a command's stdout (e.g. `login --json`).
     @discardableResult
-    private static func loadFromSecretsFile(into config: inout FleetMateConfig) -> Bool {
-        let secretsPath = NSString(string: "~/.config/fleetmate/secrets.yaml").expandingTildeInPath
-        
+    private static func loadFromSecretsFile(at path: String, into config: inout FleetMateConfig) -> Bool {
+        let secretsPath = NSString(string: path).expandingTildeInPath
+
         guard FileManager.default.fileExists(atPath: secretsPath) else {
-            print("[FleetMate] secrets.yaml not found at \(secretsPath)")
             return false
         }
-        
+
         guard let contents = try? String(contentsOfFile: secretsPath, encoding: .utf8) else {
-            print("[FleetMate] Could not read secrets.yaml")
+            FileHandle.standardError.write(Data("[FleetMate] Could not read \(secretsPath)\n".utf8))
             return false
         }
-        
+
         // Parse as dictionary to allow missing keys (FleetMateConfig decode requires all keys)
         guard let yaml = try? Yams.load(yaml: contents) as? [String: Any] else {
-            print("[FleetMate] Failed to parse secrets.yaml as dictionary")
+            FileHandle.standardError.write(Data("[FleetMate] Failed to parse \(secretsPath)\n".utf8))
             return false
         }
-        
-        print("[FleetMate] Loaded \(yaml.count) secrets from \(secretsPath)")
-        
+
         // Helper to get string value
         func str(_ key: String) -> String? {
             yaml[key] as? String

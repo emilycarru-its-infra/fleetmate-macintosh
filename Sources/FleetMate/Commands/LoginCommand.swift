@@ -79,7 +79,7 @@ struct LoginCommand: AsyncParsableCommand {
                 let ok = await graph.warmElevationSessions()
                 report.set(.graph, ok ? .ok : .failed, ok ? "aze elevation sessions warmed" : "could not warm elevation sessions")
             } else {
-                report.set(.graph, azureOk ? .ok : .failed, azureOk ? "ready via aze (use --warm to pre-start containers)" : "needs Azure sign-in")
+                report.set(.graph, azureOk ? .ok : .failed, azureOk ? "ready — built-in elevation (use --warm to pre-start containers)" : "needs Azure sign-in")
             }
         }
 
@@ -89,18 +89,30 @@ struct LoginCommand: AsyncParsableCommand {
             report.set(.devops, ok ? .ok : .failed, ok ? (config.devopsOrganization ?? "") : "auth failed (Azure sign-in required)")
         }
 
-        // Snipe-IT — API key.
-        let snipe = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
+        // Snipe-IT — Entra bearer (SSO) when snipe_oidc_audience is set (dormant
+        // until Snipe's OIDC guard ships), else the shared API key.
+        let snipe = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey, oidcAudience: config.snipeOidcAudience)
         if snipe.isConfigured {
-            do { report.set(.snipe, .ok, "\(try await snipe.getLocations().count) locations") }
-            catch { report.set(.snipe, .failed, error.localizedDescription.oneLine) }
+            do {
+                let n = try await snipe.getLocations().count
+                report.set(.snipe, .ok, snipe.usesOidc ? "SSO identity valid · \(n) locations" : "\(n) locations")
+            } catch {
+                let r = LoginCommand.classify(error, service: "Snipe-IT", oidc: snipe.usesOidc)
+                report.set(.snipe, r.0, r.1)
+            }
         }
 
-        // ReportMate.
-        let rm = ReportMateService(baseUrl: config.reportMateUrl, passphrase: config.reportMatePassphrase)
+        // ReportMate — Entra bearer (SSO) when reportmate_oidc_audience is set,
+        // else the legacy X-Client-Passphrase.
+        let rm = ReportMateService(baseUrl: config.reportMateUrl, passphrase: config.reportMatePassphrase, oidcAudience: config.reportMateOidcAudience)
         if rm.isConfigured {
-            do { report.set(.reportmate, .ok, "\(try await rm.getDevices().count) devices") }
-            catch { report.set(.reportmate, .failed, error.localizedDescription.oneLine) }
+            do {
+                let n = try await rm.getDevices().count
+                report.set(.reportmate, .ok, rm.usesOidc ? "SSO identity valid · \(n) devices" : "\(n) devices")
+            } catch {
+                let r = LoginCommand.classify(error, service: "ReportMate", oidc: rm.usesOidc)
+                report.set(.reportmate, r.0, r.1)
+            }
         }
 
         // MunkiReport.
@@ -140,6 +152,24 @@ struct LoginCommand: AsyncParsableCommand {
     }
 
     static func shortId(_ id: String) -> String { id.count > 8 ? String(id.prefix(8)) + "…" : id }
+
+    /// Classify a service auth failure into the three identity states the spec
+    /// calls for: needs-sign-in / reachable-but-no-role / unreachable-or-error.
+    static func classify(_ error: Error, service: String, oidc: Bool) -> (AuthStatus, String) {
+        if error is AzTokenError {
+            return (.failed, "Azure sign-in required — run `fleetmate login`")
+        }
+        let d = error.localizedDescription
+        let lower = d.lowercased()
+        if d.contains("403") || lower.contains("forbidden") {
+            return (.unverified, oidc ? "reachable — no \(service) role assigned to your identity"
+                                      : "reachable — credential lacks permission")
+        }
+        if d.contains("401") || lower.contains("unauthor") {
+            return (.failed, oidc ? "token rejected (401) — check audience/role assignment" : "unauthorized (401)")
+        }
+        return (.failed, d.oneLine)
+    }
 
     /// Run `az` synchronously (blocking is fine for a CLI), returning stdout/stderr/exit.
     @discardableResult

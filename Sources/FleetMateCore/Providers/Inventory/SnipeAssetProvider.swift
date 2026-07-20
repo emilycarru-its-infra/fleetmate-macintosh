@@ -89,11 +89,7 @@ public actor SnipeAssetProvider: AssetProvider {
     
     public init(config: FleetMateConfig) {
         self.config = config
-        self.service = SnipeService(
-            baseUrl: config.snipeUrl,
-            apiKey: config.snipeApiKey,
-            cacheMinutes: config.cacheMinutes
-        )
+        self.service = SnipeService(config: config)
     }
     
     public func authenticate() async throws -> Bool {

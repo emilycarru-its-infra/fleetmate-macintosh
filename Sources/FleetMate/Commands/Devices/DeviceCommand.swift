@@ -30,7 +30,7 @@ struct DeviceCommand: AsyncParsableCommand {
         let reportMate = config.isReportMateConfigured ? 
             ReportMateService(config: config) : nil
         let snipe = config.isSnipeConfigured ?
-            SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey) : nil
+            SnipeService(config: config) : nil
         
         var deviceInfo = DeviceInfo()
         deviceInfo.query = query

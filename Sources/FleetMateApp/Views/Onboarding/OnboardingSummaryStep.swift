@@ -304,7 +304,7 @@ struct OnboardingSummaryStep: View {
             return ConnectionTestResult(service: "Snipe-IT", success: false, message: "SSO timed out")
         } else {
             do {
-                let service = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
+                let service = SnipeService(config: config)
                 _ = try await service.getAllAssets()
                 return ConnectionTestResult(service: "Snipe-IT", success: true, message: "Connected")
             } catch {

@@ -6,6 +6,10 @@ import Alamofire
 public class SnipeService {
     public let baseUrl: String
     public let apiKey: String
+    /// When set, authenticate with an Entra bearer token for this audience
+    /// (SSO / az model) instead of the shared Snipe API key. Dormant until
+    /// Snipe-IT's OIDC guard ships (ADO #3721). See FleetMateConfig.
+    public let oidcAudience: String?
 
     private var session: Session
     private var assetCache: [SnipeAsset]?
@@ -30,9 +34,10 @@ public class SnipeService {
         ssoUserName
     }
 
-    public init(baseUrl: String?, apiKey: String?, cacheMinutes: Int = 5) {
+    public init(baseUrl: String?, apiKey: String?, oidcAudience: String? = nil, cacheMinutes: Int = 5) {
         self.baseUrl = (baseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         self.apiKey = apiKey ?? ""
+        self.oidcAudience = (oidcAudience?.isEmpty == false) ? oidcAudience : nil
         self.cacheDuration = TimeInterval(cacheMinutes * 60)
 
         let configuration = URLSessionConfiguration.default
@@ -114,6 +119,25 @@ public class SnipeService {
             "Accept": "application/json",
             "Content-Type": "application/json"
         ]
+    }
+
+    /// True when configured to use Entra bearer (SSO) auth rather than the API key.
+    public var usesOidc: Bool { oidcAudience != nil }
+
+    /// Resolve auth headers: an Entra bearer token minted off the operator's
+    /// az/login session when an OIDC audience is configured (prefer-bearer),
+    /// otherwise the legacy SSO-cookie / API-key headers. Dormant until
+    /// `snipe_oidc_audience` is set.
+    private func authHeaders() async throws -> HTTPHeaders {
+        if let audience = oidcAudience {
+            let token = try await AzTokenSource.shared.token(forResource: audience)
+            return [
+                "Authorization": "Bearer \(token)",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            ]
+        }
+        return headers
     }
     
     // MARK: - Assets
@@ -240,8 +264,9 @@ public class SnipeService {
     private func fetch<T: Decodable>(_ path: String) async throws -> T? {
         let url = "\(baseUrl)\(path)"
         
+        let hdrs = try await authHeaders()
         return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, headers: headers)
+            session.request(url, headers: hdrs)
                 .validate()
                 .responseDecodable(of: T.self) { response in
                     switch response.result {
@@ -261,8 +286,9 @@ public class SnipeService {
     private func fetchList<T: Decodable>(_ path: String, parameters: [String: Any] = [:]) async throws -> [T] {
         let url = "\(baseUrl)\(path)"
         
+        let hdrs = try await authHeaders()
         return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, parameters: parameters, headers: headers)
+            session.request(url, parameters: parameters, headers: hdrs)
                 .validate()
                 .responseDecodable(of: SnipeListResponse<T>.self) { response in
                     switch response.result {
@@ -284,8 +310,9 @@ public class SnipeService {
     private func post<T: Encodable, R: Decodable>(_ path: String, body: T) async throws -> R {
         let url = "\(baseUrl)\(path)"
         
+        let hdrs = try await authHeaders()
         return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, method: .post, parameters: body, encoder: JSONParameterEncoder.default, headers: headers)
+            session.request(url, method: .post, parameters: body, encoder: JSONParameterEncoder.default, headers: hdrs)
                 .validate(statusCode: 200..<500)  // allow 4xx so we can decode Snipe-IT error bodies
                 .responseDecodable(of: R.self) { response in
                     switch response.result {
@@ -304,8 +331,9 @@ public class SnipeService {
     private func put<T: Encodable, R: Decodable>(_ path: String, body: T) async throws -> R {
         let url = "\(baseUrl)\(path)"
 
+        let hdrs = try await authHeaders()
         return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, method: .put, parameters: body, encoder: JSONParameterEncoder.default, headers: headers)
+            session.request(url, method: .put, parameters: body, encoder: JSONParameterEncoder.default, headers: hdrs)
                 .validate(statusCode: 200..<500)
                 .responseDecodable(of: R.self) { response in
                     switch response.result {

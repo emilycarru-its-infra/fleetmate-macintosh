@@ -49,7 +49,20 @@ public struct FleetMateConfig: Codable {
     // Microsoft Graph settings - shared tenant
     public var graphTenantId: String?
     public var graphPageSize: Int = 100
-    
+
+    // Azure sign-in (used by `fleetmate login`). These are public directory
+    // GUIDs, not secrets, so they live in config.yaml (overridable), never
+    // secrets.yaml. Defaults below target the ECU tenant/subscription.
+    public var azureTenantId: String?
+    public var azureSubscriptionId: String?
+    public static let defaultAzureTenantId = "d22686a0-c1be-48e0-8f91-5bdd033f7dad"
+    public static let defaultAzureSubscriptionId = "59d35012-b593-4b2f-bd50-28e666ed12f7"
+    /// Tenant used for `az login`: explicit azure config, else the shared Graph
+    /// tenant, else the ECU default.
+    public var effectiveAzureTenantId: String { azureTenantId ?? graphTenantId ?? FleetMateConfig.defaultAzureTenantId }
+    /// Subscription selected after login: explicit azure config, else the ECU default.
+    public var effectiveAzureSubscriptionId: String { azureSubscriptionId ?? FleetMateConfig.defaultAzureSubscriptionId }
+
     // Microsoft Graph - Devices (Intune) Service Principal
     // Used for: /deviceManagement/managedDevices
     public var devicesGraphId: String?
@@ -129,6 +142,8 @@ public struct FleetMateConfig: Codable {
         case snipeUrl = "snipe_url"
         case snipeApiKey = "snipe_api_key"
         case graphTenantId = "graph_tenant_id"
+        case azureTenantId = "azure_tenant_id"
+        case azureSubscriptionId = "azure_subscription_id"
         case graphClientId = "graph_client_id"
         case graphClientSecret = "graph_client_secret"
         case graphPageSize = "graph_page_size"
@@ -246,7 +261,11 @@ public struct FleetMateConfig: Codable {
         
         // Microsoft Graph - shared tenant
         if let v = str("graph_tenant_id"), !v.isEmpty { config.graphTenantId = v }
-        
+
+        // Azure sign-in (fleetmate login) — public GUIDs, config-overridable.
+        if let v = str("azure_tenant_id"), !v.isEmpty { config.azureTenantId = v }
+        if let v = str("azure_subscription_id"), !v.isEmpty { config.azureSubscriptionId = v }
+
         // Microsoft Graph - Devices (Intune) Service Principal
         if let v = str("devices_graph_id"), !v.isEmpty { config.devicesGraphId = v }
         if let v = str("devices_graph_secret"), !v.isEmpty { config.devicesGraphSecret = v }

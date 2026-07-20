@@ -404,7 +404,7 @@ struct ValidateSubcommand: AsyncParsableCommand {
             return
         }
         
-        let service = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey, cacheMinutes: config.cacheMinutes)
+        let service = SnipeService(config: config)
         do {
             let assets = try await service.getAssets()
             print("[ok] Connected (\(assets.count) assets)".green)

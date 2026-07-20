@@ -43,7 +43,7 @@ struct AssetsSubcommand: AsyncParsableCommand {
     
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let service = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
+        let service = SnipeService(config: config)
         
         guard service.isConfigured else {
             print("Snipe-IT not configured. Set SNIPE_URL and SNIPE_API_KEY.".red)
@@ -114,7 +114,7 @@ struct AssetSubcommand: AsyncParsableCommand {
     
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let service = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
+        let service = SnipeService(config: config)
         
         guard service.isConfigured else {
             print("Snipe-IT not configured.".red)
@@ -181,7 +181,7 @@ struct UsersSubcommand: AsyncParsableCommand {
     
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let service = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
+        let service = SnipeService(config: config)
         
         guard service.isConfigured else {
             print("Snipe-IT not configured.".red)
@@ -221,7 +221,7 @@ struct LocationsSubcommand: AsyncParsableCommand {
     
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let service = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
+        let service = SnipeService(config: config)
         
         guard service.isConfigured else {
             print("Snipe-IT not configured.".red)
@@ -259,7 +259,7 @@ struct SearchSubcommand: AsyncParsableCommand {
     
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let service = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
+        let service = SnipeService(config: config)
         
         guard service.isConfigured else {
             print("Snipe-IT not configured.".red)
@@ -306,7 +306,7 @@ struct CheckoutSubcommand: AsyncParsableCommand {
     
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let service = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
+        let service = SnipeService(config: config)
         
         guard service.isConfigured else {
             print("Snipe-IT not configured.".red)
@@ -351,7 +351,7 @@ struct CheckinSubcommand: AsyncParsableCommand {
     
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let service = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
+        let service = SnipeService(config: config)
         
         guard service.isConfigured else {
             print("Snipe-IT not configured.".red)
@@ -386,7 +386,7 @@ struct AuditSubcommand: AsyncParsableCommand {
     
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let service = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
+        let service = SnipeService(config: config)
         
         guard service.isConfigured else {
             print("Snipe-IT not configured.".red)

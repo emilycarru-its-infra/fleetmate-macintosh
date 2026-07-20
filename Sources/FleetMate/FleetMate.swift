@@ -8,6 +8,7 @@ struct FleetMate: AsyncParsableCommand {
         abstract: "FleetMate - Fleet orchestration, inventory, deployment monitoring, and troubleshooting",
         version: "1.0.0",
         subcommands: [
+            LoginCommand.self,
             StatusCommand.self,
             ValidateCommand.self,
             SnipeCommand.self,

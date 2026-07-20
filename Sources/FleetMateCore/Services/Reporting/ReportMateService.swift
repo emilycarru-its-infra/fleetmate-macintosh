@@ -135,7 +135,7 @@ public class ReportMateService {
         
         logger.debug("Fetching install records from ReportMate...")
         
-        let url = "\(baseUrl)/api/devices/installs"
+        let url = "\(baseUrl)/api/v1/installs"
         let installs: [InstallRecord]? = try await fetch(url)
         
         installCache = installs ?? []
@@ -215,7 +215,7 @@ public class ReportMateService {
     public func getDeviceLog(_ serialNumber: String) async throws -> DeviceLog? {
         logger.debug("Fetching install log for device \(serialNumber)")
         
-        let url = "\(baseUrl)/api/device/\(serialNumber)/installs/log"
+        let url = "\(baseUrl)/api/v1/device/\(serialNumber)/installs/log"
         return try await fetch(url)
     }
     
@@ -223,7 +223,7 @@ public class ReportMateService {
     public func getDeviceNetwork(_ serialNumber: String) async throws -> NetworkInfo? {
         logger.debug("Fetching network info for device \(serialNumber)")
         
-        let url = "\(baseUrl)/api/device/\(serialNumber)/modules/network"
+        let url = "\(baseUrl)/api/v1/device/\(serialNumber)/modules/network"
         
         // The API returns wrapped data, need to decode appropriately
         if let wrapper: ModuleDataWrapper = try await fetch(url),
@@ -236,10 +236,13 @@ public class ReportMateService {
     }
     
     /// Get fleet-wide network data (all devices with network info)
+    /// NOTE: the ReportMate v1 API has no fleet-wide network endpoint
+    /// (/api/devices/network → 404); per-device network is available via
+    /// getDeviceNetwork(_:). This returns [] until a v1 fleet endpoint exists.
     public func getFleetNetwork() async throws -> [DeviceNetworkInfo] {
         logger.debug("Fetching fleet network data...")
-        
-        let url = "\(baseUrl)/api/devices/network"
+
+        let url = "\(baseUrl)/api/v1/devices/network"
         return try await fetch(url) ?? []
     }
     
@@ -247,7 +250,7 @@ public class ReportMateService {
     public func getFullDevice(_ serialNumber: String) async throws -> FullDevice? {
         logger.debug("Fetching full device data for \(serialNumber)")
         
-        let url = "\(baseUrl)/api/device/\(serialNumber)"
+        let url = "\(baseUrl)/api/v1/device/\(serialNumber)"
         return try await fetch(url)
     }
     

@@ -62,34 +62,47 @@ public struct ReportMateDevice: Codable {
         catalogUrl = ""
     }
     
+    // The ReportMate API returns camelCase keys and omits many fields on list
+    // endpoints (e.g. /api/v1/devices), so decode leniently: missing keys fall
+    // back to defaults rather than throwing. CodingKeys therefore use the
+    // property names (camelCase) directly.
     enum CodingKeys: String, CodingKey {
-        case id
-        case deviceId = "device_id"
-        case serialNumber = "serial_number"
-        case deviceName = "device_name"
-        case name
-        case hostname
-        case owner
-        case assetTag = "asset_tag"
-        case location
-        case catalog
-        case ipAddress = "ip_address"
-        case macAddress = "mac_address"
-        case osVersion = "os_version"
-        case osBuild = "os_build"
-        case architecture
-        case manufacturer
-        case model
-        case lastSeen = "last_seen"
-        case collectedAt = "collected_at"
-        case munkiVersion = "munki_version"
-        case manifestUrl = "manifest_url"
-        case catalogUrl = "catalog_url"
+        case id, deviceId, serialNumber, deviceName, name, hostname, owner, assetTag
+        case location, catalog, ipAddress, macAddress, osVersion, osBuild
+        case architecture, manufacturer, model, lastSeen, collectedAt
+        case munkiVersion, manifestUrl, catalogUrl
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func s(_ k: CodingKeys) -> String { (try? c.decode(String.self, forKey: k)) ?? "" }
+        deviceId = s(.deviceId)
+        id = (try? c.decode(String.self, forKey: .id)) ?? deviceId
+        serialNumber = s(.serialNumber)
+        deviceName = s(.deviceName)
+        name = s(.name)
+        hostname = s(.hostname)
+        owner = s(.owner)
+        assetTag = s(.assetTag)
+        location = s(.location)
+        catalog = s(.catalog)
+        ipAddress = s(.ipAddress)
+        macAddress = s(.macAddress)
+        osVersion = s(.osVersion)
+        osBuild = s(.osBuild)
+        architecture = s(.architecture)
+        manufacturer = s(.manufacturer)
+        model = s(.model)
+        lastSeen = try? c.decode(Date.self, forKey: .lastSeen)
+        collectedAt = try? c.decode(Date.self, forKey: .collectedAt)
+        munkiVersion = s(.munkiVersion)
+        manifestUrl = s(.manifestUrl)
+        catalogUrl = s(.catalogUrl)
     }
 }
 
 /// Response wrapper from ReportMate /api/devices endpoint
-public struct DevicesResponse: Codable {
+public struct DevicesResponse: Decodable {
     public var devices: [ReportMateDevice]
     public var total: Int
     public var offset: Int
@@ -101,12 +114,19 @@ public struct DevicesResponse: Codable {
         offset = 0
         limit = 0
     }
-    
+
+    // v1 responds { devices, total, page, pageSize, hasMore } — no offset/limit.
+    // Decode leniently so the envelope shape can evolve without breaking clients.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        devices = (try? c.decode([ReportMateDevice].self, forKey: .devices)) ?? []
+        total = (try? c.decode(Int.self, forKey: .total)) ?? devices.count
+        offset = (try? c.decode(Int.self, forKey: .offset)) ?? 0
+        limit = (try? c.decode(Int.self, forKey: .limit)) ?? ((try? c.decode(Int.self, forKey: .pageSize)) ?? 0)
+    }
+
     enum CodingKeys: String, CodingKey {
-        case devices
-        case total
-        case offset
-        case limit
+        case devices, total, offset, limit, pageSize
     }
 }
 
@@ -203,22 +223,32 @@ public struct InstallRecord: Codable {
         raw = nil
     }
     
+    // camelCase to match the ReportMate v1 API; lenient decode so list endpoints
+    // that omit fields (location, raw, …) fall back to defaults instead of throwing.
     enum CodingKeys: String, CodingKey {
-        case id
-        case deviceId = "device_id"
-        case deviceName = "device_name"
-        case serialNumber = "serial_number"
-        case lastSeen = "last_seen"
-        case collectedAt = "collected_at"
-        case itemName = "item_name"
-        case currentStatus = "current_status"
-        case latestVersion = "latest_version"
-        case installedVersion = "installed_version"
-        case installDate = "install_date"
-        case usage
-        case catalog
-        case location
-        case raw
+        case id, deviceId, deviceName, serialNumber, lastSeen, collectedAt
+        case itemName, currentStatus, latestVersion, installedVersion, installDate
+        case usage, catalog, location, raw
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func s(_ k: CodingKeys) -> String { (try? c.decode(String.self, forKey: k)) ?? "" }
+        id = s(.id)
+        deviceId = s(.deviceId)
+        deviceName = s(.deviceName)
+        serialNumber = s(.serialNumber)
+        lastSeen = try? c.decode(Date.self, forKey: .lastSeen)
+        collectedAt = try? c.decode(Date.self, forKey: .collectedAt)
+        itemName = s(.itemName)
+        currentStatus = s(.currentStatus)
+        latestVersion = s(.latestVersion)
+        installedVersion = s(.installedVersion)
+        installDate = try? c.decode(Date.self, forKey: .installDate)
+        usage = s(.usage)
+        catalog = s(.catalog)
+        location = s(.location)
+        raw = try? c.decode(InstallRawInfo.self, forKey: .raw)
     }
 }
 
@@ -460,8 +490,15 @@ public struct DeviceLog: Codable {
     }
     
     enum CodingKeys: String, CodingKey {
-        case serialNumber = "serial_number"
-        case entries
+        case serialNumber, entries
+    }
+
+    // camelCase v1 keys; lenient so a missing/renamed field degrades to empty
+    // rather than throwing.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        serialNumber = (try? c.decode(String.self, forKey: .serialNumber)) ?? ""
+        entries = (try? c.decode([LogEntry].self, forKey: .entries)) ?? []
     }
 }
 

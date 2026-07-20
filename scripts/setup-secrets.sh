@@ -117,14 +117,8 @@ echo "   ├─ TdxPassword..."
 TDX_PASSWORD=$(get_secret "$KEY_VAULT_NAME" "TdxPassword")
 echo "   ├─ TdxBeid..."
 TDX_BEID=$(get_secret "$KEY_VAULT_NAME" "TdxBeid")
-echo "   ├─ TdxBeidSecret..."
+echo "   └─ TdxBeidSecret..."
 TDX_WEB_SERVICES_KEY=$(get_secret "$KEY_VAULT_NAME" "TdxBeidSecret")
-echo "   ├─ DevicesGraphId..."
-GRAPH_CLIENT_ID=$(get_secret "$KEY_VAULT_NAME" "DevicesGraphId")
-echo "   ├─ DevicesGraphSecret..."
-GRAPH_CLIENT_SECRET=$(get_secret "$KEY_VAULT_NAME" "DevicesGraphSecret")
-echo "   └─ AzureTenantId..."
-GRAPH_TENANT_ID=$(get_secret "$KEY_VAULT_NAME" "AzureTenantId")
 
 # Fetch secrets from Cimian Key Vault
 echo ""
@@ -138,40 +132,23 @@ DEVOPS_ORG=$(get_secret "$CIMIAN_KEY_VAULT_NAME" "AzureDevOpsOrganization")
 echo "   └─ AzureDevOpsProject..."
 DEVOPS_PROJECT=$(get_secret "$CIMIAN_KEY_VAULT_NAME" "AzureDevOpsProject")
 
-# Fetch Graph secrets from Entra Key Vault (preferred source)
-echo ""
-echo "   From Key Vault: $ENTRA_KEY_VAULT_NAME"
-echo "   ├─ DevicesGraphId (for Intune)..."
-DEVICES_GRAPH_ID=$(get_secret "$ENTRA_KEY_VAULT_NAME" "DevicesGraphId")
-echo "   ├─ DevicesGraphSecret..."
-DEVICES_GRAPH_SECRET=$(get_secret "$ENTRA_KEY_VAULT_NAME" "DevicesGraphSecret")
-echo "   ├─ SystemsGraphId (for Entra users/groups)..."
-SYSTEMS_GRAPH_ID=$(get_secret "$ENTRA_KEY_VAULT_NAME" "SystemsGraphId")
-echo "   └─ SystemsGraphSecret..."
-SYSTEMS_GRAPH_SECRET=$(get_secret "$ENTRA_KEY_VAULT_NAME" "SystemsGraphSecret")
-
-# Fall back to Inventory Key Vault if Entra failed
-if [ -z "$DEVICES_GRAPH_ID" ]; then
-    echo "   (Using fallback from $KEY_VAULT_NAME)"
-    DEVICES_GRAPH_ID="$GRAPH_CLIENT_ID"
-    DEVICES_GRAPH_SECRET="$GRAPH_CLIENT_SECRET"
-fi
+# Graph credentials are no longer fetched or stored locally. FleetMate reaches
+# Microsoft Graph through the `aze` elevation model (GraphService default), where
+# the DevOps-Devices / DevOps-Identity managed-identity token is minted inside an
+# ephemeral Azure Container Instance and never touches this machine. The break-glass
+# `direct` transport (FLEETMATE_GRAPH_TRANSPORT=direct) uses a delegated token from
+# the operator's own `az login`, not a service-principal secret.
 
 echo ""
 
 # Set defaults for missing values
 REPORTMATE_URL="${REPORTMATE_URL:-https://reportmate-functions-api.blackdune-79551938.canadacentral.azurecontainerapps.io}"
-GRAPH_TENANT_ID="${GRAPH_TENANT_ID:-$TENANT_ID}"
 DEVOPS_ORG="${DEVOPS_ORG:-ecuad}"
 DEVOPS_PROJECT="${DEVOPS_PROJECT:-DevOps}"
 
 # Validate required secrets
 MISSING_SECRETS=()
 [ -z "$SNIPE_API_KEY" ] && MISSING_SECRETS+=("SnipeApiKey")
-[ -z "$DEVICES_GRAPH_ID" ] && MISSING_SECRETS+=("DevicesGraphId")
-[ -z "$DEVICES_GRAPH_SECRET" ] && MISSING_SECRETS+=("DevicesGraphSecret")
-[ -z "$SYSTEMS_GRAPH_ID" ] && MISSING_SECRETS+=("SystemsGraphId")
-[ -z "$SYSTEMS_GRAPH_SECRET" ] && MISSING_SECRETS+=("SystemsGraphSecret")
 
 if [ ${#MISSING_SECRETS[@]} -gt 0 ]; then
     echo "⚠️  Warning: The following secrets are missing from Key Vault:"
@@ -199,16 +176,8 @@ cat > "$SECRETS_FILE" << EOF
 snipe_url: "${SNIPE_API_URL:-}"
 snipe_api_key: "${SNIPE_API_KEY:-}"
 
-# Microsoft Graph - Devices (Intune) Service Principal
-# Used for: /deviceManagement/managedDevices
-graph_tenant_id: "${GRAPH_TENANT_ID:-}"
-devices_graph_id: "${DEVICES_GRAPH_ID:-}"
-devices_graph_secret: "${DEVICES_GRAPH_SECRET:-}"
-
-# Microsoft Graph - Systems (Entra) Service Principal
-# Used for: /users, /groups
-systems_graph_id: "${SYSTEMS_GRAPH_ID:-}"
-systems_graph_secret: "${SYSTEMS_GRAPH_SECRET:-}"
+# Microsoft Graph credentials intentionally omitted — FleetMate authenticates to
+# Graph via the aze elevation model (no service-principal secret on this machine).
 
 # Azure DevOps (uses 'az' CLI with user login)
 devops_organization: "${DEVOPS_ORG:-}"
@@ -234,11 +203,6 @@ echo ""
 STORED=0
 [ -n "$SNIPE_API_URL" ] && ((STORED++))
 [ -n "$SNIPE_API_KEY" ] && ((STORED++))
-[ -n "$GRAPH_TENANT_ID" ] && ((STORED++))
-[ -n "$DEVICES_GRAPH_ID" ] && ((STORED++))
-[ -n "$DEVICES_GRAPH_SECRET" ] && ((STORED++))
-[ -n "$SYSTEMS_GRAPH_ID" ] && ((STORED++))
-[ -n "$SYSTEMS_GRAPH_SECRET" ] && ((STORED++))
 [ -n "$DEVOPS_ORG" ] && ((STORED++))
 [ -n "$DEVOPS_PROJECT" ] && ((STORED++))
 [ -n "$TDX_USERNAME" ] && ((STORED++))
@@ -355,11 +319,6 @@ check_secret() {
 
 check_secret "snipe_url"
 check_secret "snipe_api_key"
-check_secret "graph_tenant_id"
-check_secret "devices_graph_id"
-check_secret "devices_graph_secret"
-check_secret "systems_graph_id"
-check_secret "systems_graph_secret"
 check_secret "tdx_base_url"
 check_secret "tdx_username"
 check_secret "tdx_password"

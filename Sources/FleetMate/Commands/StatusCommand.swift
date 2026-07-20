@@ -45,10 +45,7 @@ struct StatusCommand: AsyncParsableCommand {
         }
         
         // Gather Snipe-IT stats
-        let snipeService = SnipeService(
-            baseUrl: config.snipeUrl,
-            apiKey: config.snipeApiKey
-        )
+        let snipeService = SnipeService(config: config)
         
         if snipeService.isConfigured {
             do {

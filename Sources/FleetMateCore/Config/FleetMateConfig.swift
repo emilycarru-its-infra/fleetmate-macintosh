@@ -73,6 +73,16 @@ public struct FleetMateConfig: Codable {
     /// Subscription selected after login: explicit azure config, else the built-in default.
     public var effectiveAzureSubscriptionId: String { azureSubscriptionId ?? FleetMateConfig.defaultAzureSubscriptionId }
 
+    // OIDC bearer audiences for ReportMate + Snipe-IT. Both APIs verify an Entra
+    // token minted from the operator's own SSO session (az account
+    // get-access-token --resource <audience>), replacing the shared ReportMate
+    // passphrase and Snipe super-key. Like the Azure GUIDs above these are public
+    // app-registration client IDs, not secrets, and are baked in as defaults so
+    // FleetMate authenticates modern-by-default on every install. Override via
+    // config to fall back to the legacy passphrase/API-key path (break-glass).
+    public static let defaultReportMateOidcAudience = "3e8c1d2a-4b5f-4a6e-9c7d-0e1f2a3b4c5d"
+    public static let defaultSnipeOidcAudience = "7c2e4a90-1b3d-4f5e-8a6c-0d9e8f7a6b5c"
+
     // Microsoft Graph - Devices (Intune) Service Principal
     // Used for: /deviceManagement/managedDevices
     public var devicesGraphId: String?
@@ -233,6 +243,17 @@ public struct FleetMateConfig: Codable {
 
         // 3. Environment variables override everything (CI/CD)
         loadEnvironmentVariables(into: &config)
+
+        // Modern-by-default: unless explicitly overridden, ReportMate and Snipe-IT
+        // authenticate with an Entra bearer minted from the operator's SSO session,
+        // not the legacy shared passphrase/API-key. Applied last so any config,
+        // Keychain, or env override still wins.
+        if (config.reportMateOidcAudience ?? "").isEmpty {
+            config.reportMateOidcAudience = FleetMateConfig.defaultReportMateOidcAudience
+        }
+        if (config.snipeOidcAudience ?? "").isEmpty {
+            config.snipeOidcAudience = FleetMateConfig.defaultSnipeOidcAudience
+        }
 
         config.repoRoot = findRepoRoot()
         return config
@@ -593,10 +614,11 @@ public struct FleetMateConfig: Codable {
         return munkiReportSshHost != nil && munkiReportSshUser != nil && munkiReportDbPath != nil
     }
 
-    /// Check if Snipe-IT is configured (API key or SSO mode)
+    /// Check if Snipe-IT is configured (OIDC bearer, API key, or SSO mode)
     public var isSnipeConfigured: Bool {
         guard snipeUrl != nil else { return false }
         if snipeAuthMethod == .browserSSO || snipeSsoEnabled { return true }
+        if (snipeOidcAudience ?? "").isEmpty == false { return true }
         return snipeApiKey != nil
     }
 

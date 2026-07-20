@@ -29,7 +29,7 @@ SUBSCRIPTION_ID="59d35012-b593-4b2f-bd50-28e666ed12f7"
 TENANT_ID="d22686a0-c1be-48e0-8f91-5bdd033f7dad"
 
 # Config file (non-sensitive settings only)
-CONFIG_DIR="$HOME/.config/fleetmate"
+CONFIG_DIR="$HOME/.fleetmate"
 CONFIG_FILE="$CONFIG_DIR/config.yaml"
 SECRETS_FILE="$CONFIG_DIR/secrets.yaml"
 
@@ -55,7 +55,7 @@ echo ""
 echo "This script will:"
 echo "  1. Authenticate to Azure using SSO"
 echo "  2. Fetch secrets from Azure Key Vault"
-echo "  3. Store them in ~/.config/fleetmate/secrets.yaml (0600 permissions)"
+echo "  3. Store them in ~/.fleetmate/secrets.yaml (0600 permissions)"
 echo "  4. Create a config file for non-sensitive settings"
 echo ""
 
@@ -289,7 +289,7 @@ cat > "$HELPER_SCRIPT" << 'EOF'
 #!/bin/bash
 # Check which FleetMate secrets are configured
 
-SECRETS_FILE="$HOME/.config/fleetmate/secrets.yaml"
+SECRETS_FILE="$HOME/.fleetmate/secrets.yaml"
 
 echo ""
 echo "FleetMate Secrets Status"

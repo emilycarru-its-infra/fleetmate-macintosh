@@ -79,7 +79,7 @@ struct LoginCommand: AsyncParsableCommand {
                 let ok = await graph.warmElevationSessions()
                 report.set(.graph, ok ? .ok : .failed, ok ? "aze elevation sessions warmed" : "could not warm elevation sessions")
             } else {
-                report.set(.graph, azureOk ? .ok : .failed, azureOk ? "ready via aze (use --warm to pre-start containers)" : "needs Azure sign-in")
+                report.set(.graph, azureOk ? .ok : .failed, azureOk ? "ready — built-in elevation (use --warm to pre-start containers)" : "needs Azure sign-in")
             }
         }
 

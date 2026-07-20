@@ -153,7 +153,7 @@ struct AzeStatusBadge: View {
             .background(.secondary.opacity(0.12), in: .rect(cornerRadius: 4))
             .help("Warming the elevation session (container cold start, ~30s)")
         case .warm:
-            badge(color: .green, text: "aze", help: "Elevation sessions ready — Intune/Entra calls run secretlessly via aze")
+            badge(color: .green, text: "aze", help: "Elevation sessions ready — Intune/Entra calls run secretlessly through FleetMate's built-in elevation")
         case .failed:
             badge(color: .red, text: "aze!", help: "Could not warm the elevation session; the first action will retry. Check that you are signed in with az login.")
         }

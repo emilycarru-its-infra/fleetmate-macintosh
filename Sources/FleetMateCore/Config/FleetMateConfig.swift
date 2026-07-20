@@ -205,10 +205,10 @@ public struct FleetMateConfig: Codable {
     /// Load configuration.
     ///
     /// Priority (lowest → highest):
-    /// 1. `~/.fleetmate/config.yaml`  — structural/non-credential settings (tasks, paths, etc.)
-    /// 2. Keychain                    — all credential values written by the Settings UI
-    /// 3. Environment variables       — CI/CD override; use `KeychainService.importFromEnvironment()`
-    ///                                  to pre-seed Keychain, or just rely on env vars passthrough
+    /// 1. `~/.fleetmate/config.yaml`         — structural/non-credential settings (tasks, paths, etc.)
+    /// 2. `~/.config/fleetmate/secrets.yaml` — credentials written by `scripts/setup-secrets.sh`
+    /// 3. Keychain                           — credential values written by the Settings UI
+    /// 4. Environment variables              — CI/CD override
     public static func load() throws -> FleetMateConfig {
         var config = FleetMateConfig()
 
@@ -223,7 +223,14 @@ public struct FleetMateConfig: Codable {
             }
         }
 
-        // 2. Credentials from Keychain (overrides any credentials that happened to be in the file)
+        // 2. Credentials from ~/.config/fleetmate/secrets.yaml (setup-secrets.sh).
+        // The CLI historically only read ~/.fleetmate/config.yaml + Keychain, so
+        // creds written here by setup-secrets.sh (ReportMate URL/passphrase/OIDC
+        // audience, Snipe key, TDX, …) never loaded. Read it as a file source;
+        // Keychain still overrides below where present.
+        loadFromSecretsFile(into: &config)
+
+        // 3. Credentials from Keychain (overrides any credentials that happened to be in the file)
         loadFromKeychain(into: &config)
 
         // 3. Environment variables override everything (CI/CD)

@@ -7,6 +7,9 @@ import Logging
 public class ReportMateService {
     private let baseUrl: String
     private let passphrase: String?
+    /// When set, authenticate with an Entra bearer token for this audience
+    /// (SSO / az model) instead of the passphrase. See FleetMateConfig.
+    private let oidcAudience: String?
     private let session: Session
     private let logger = Logger(label: "com.fleetmate.reportmate")
     
@@ -22,32 +25,46 @@ public class ReportMateService {
         return !baseUrl.isEmpty
     }
     
-    public init(baseUrl: String?, passphrase: String?, cacheMinutes: Int = 5) {
+    public init(baseUrl: String?, passphrase: String?, oidcAudience: String? = nil, cacheMinutes: Int = 5) {
         self.baseUrl = (baseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         self.passphrase = passphrase
+        self.oidcAudience = (oidcAudience?.isEmpty == false) ? oidcAudience : nil
         self.cacheDuration = TimeInterval(cacheMinutes * 60)
-        
+
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 120
-        
+
         self.session = Session(configuration: configuration)
     }
-    
+
     /// Convenience initializer from config
     public convenience init(config: FleetMateConfig) {
         self.init(
             baseUrl: config.reportMateUrl,
             passphrase: config.reportMatePassphrase,
+            oidcAudience: config.reportMateOidcAudience,
             cacheMinutes: config.cacheMinutes
         )
     }
-    
-    private var headers: HTTPHeaders {
-        var hdrs: HTTPHeaders = [
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        ]
-        if let passphrase = passphrase, !passphrase.isEmpty {
+
+    /// True when configured to use Entra bearer (SSO) auth rather than the passphrase.
+    public var usesOidc: Bool { oidcAudience != nil }
+
+    private let baseHeaders: HTTPHeaders = [
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    ]
+
+    /// Resolve the auth headers for a request: an Entra bearer token minted off
+    /// the operator's az/login session when an OIDC audience is configured
+    /// (prefer-bearer), otherwise the legacy X-Client-Passphrase. Both are
+    /// accepted by the API, so unset audience is a safe no-op fallback.
+    private func authHeaders() async throws -> HTTPHeaders {
+        var hdrs = baseHeaders
+        if let audience = oidcAudience {
+            let token = try await AzTokenSource.shared.token(forResource: audience)
+            hdrs.add(name: "Authorization", value: "Bearer \(token)")
+        } else if let passphrase = passphrase, !passphrase.isEmpty {
             hdrs.add(name: "X-Client-Passphrase", value: passphrase)
         }
         return hdrs
@@ -68,7 +85,7 @@ public class ReportMateService {
         let limit = 100
         
         while true {
-            let url = "\(baseUrl)/api/devices?offset=\(offset)&limit=\(limit)"
+            let url = "\(baseUrl)/api/v1/devices?offset=\(offset)&limit=\(limit)"
             
             let response: DevicesResponse? = try await fetch(url)
             guard let wrapper = response, !wrapper.devices.isEmpty else {
@@ -267,6 +284,7 @@ public class ReportMateService {
     // MARK: - Private Helpers
     
     private func fetch<T: Decodable>(_ url: String) async throws -> T? {
+        let hdrs = try await authHeaders()
         return try await withCheckedThrowingContinuation { continuation in
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .custom { decoder in
@@ -298,7 +316,7 @@ public class ReportMateService {
                 throw DecodingError.dataCorruptedError(in: container, debugDescription: "Cannot decode date: \(dateString)")
             }
             
-            session.request(url, headers: headers)
+            session.request(url, headers: hdrs)
                 .validate()
                 .responseDecodable(of: T.self, decoder: decoder) { response in
                     switch response.result {

@@ -118,7 +118,7 @@ class AppState: ObservableObject {
     lazy var devOpsService: AzureDevOpsService = AzureDevOpsService(config: config)
     lazy var devOpsSsoService: DevOpsSsoService = DevOpsSsoService(tenantId: config.devopsTenantId ?? config.graphTenantId)
     lazy var tdxService: TdxService = TdxService(config: config)
-    lazy var snipeService: SnipeService = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
+    lazy var snipeService: SnipeService = SnipeService(config: config)
     lazy var reportMateService: ReportMateService = ReportMateService(config: config)
 
     init() {
@@ -199,7 +199,7 @@ class AppState: ObservableObject {
             devOpsService = AzureDevOpsService(config: config)
             devOpsSsoService = DevOpsSsoService(tenantId: config.devopsTenantId ?? config.graphTenantId)
             tdxService = TdxService(config: config)
-            snipeService = SnipeService(baseUrl: config.snipeUrl, apiKey: config.snipeApiKey)
+            snipeService = SnipeService(config: config)
             reportMateService = ReportMateService(config: config)
             errorMessage = nil
             

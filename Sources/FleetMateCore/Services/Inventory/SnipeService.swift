@@ -22,7 +22,7 @@ public class SnipeService {
     public private(set) var ssoAuthenticated: Bool = false
 
     public var isConfigured: Bool {
-        return !baseUrl.isEmpty && (!apiKey.isEmpty || ssoAuthenticated)
+        return !baseUrl.isEmpty && (oidcAudience != nil || !apiKey.isEmpty || ssoAuthenticated)
     }
 
     /// True when SSO is preferred but not yet authenticated
@@ -44,6 +44,17 @@ public class SnipeService {
         configuration.timeoutIntervalForRequest = 120
 
         self.session = Session(configuration: configuration)
+    }
+
+    /// Convenience initializer from config — threads the OIDC audience so every
+    /// call site authenticates the same way (Entra bearer by default).
+    public convenience init(config: FleetMateConfig) {
+        self.init(
+            baseUrl: config.snipeUrl,
+            apiKey: config.snipeApiKey,
+            oidcAudience: config.snipeOidcAudience,
+            cacheMinutes: config.cacheMinutes
+        )
     }
 
     // MARK: - SSO Cookie Management

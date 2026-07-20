@@ -32,6 +32,11 @@ public struct FleetMateConfig: Codable {
     // ReportMate API settings (replaces MunkiReport)
     public var reportMateUrl: String?
     public var reportMatePassphrase: String?
+    /// When set, FleetMate authenticates to the ReportMate API with a short-lived
+    /// Entra bearer token minted for this audience (app/client id or api:// URI)
+    /// off the operator's `fleetmate login` session, instead of the passphrase.
+    /// Unset → legacy passphrase (dormant). ECU prod value: 26c197e0-3c53-4c52-b104-2f84b1669105.
+    public var reportMateOidcAudience: String?
     
     // Legacy MunkiReport settings (deprecated, use ReportMate)
     public var munkiReportUrl: String?
@@ -43,6 +48,11 @@ public struct FleetMateConfig: Codable {
     // Snipe-IT settings
     public var snipeUrl: String?
     public var snipeApiKey: String?
+    /// When set, FleetMate authenticates to the Snipe-IT API with an Entra bearer
+    /// token minted for this audience off the operator's `fleetmate login` session
+    /// instead of the shared API key. Unset → legacy API key (dormant). Lights up
+    /// once Snipe-IT's OIDC guard ships (ADO #3721) and a Snipe API app reg exists.
+    public var snipeOidcAudience: String?
     public var snipeAuthMethod: SnipeAuthMethod = .auto
     public var snipeSsoEnabled: Bool = true
 
@@ -134,6 +144,7 @@ public struct FleetMateConfig: Codable {
     enum CodingKeys: String, CodingKey {
         case reportMateUrl = "reportmate_url"
         case reportMatePassphrase = "reportmate_passphrase"
+        case reportMateOidcAudience = "reportmate_oidc_audience"
         case munkiReportUrl = "munkireport_url"
         case munkiReportSshHost = "munkireport_ssh_host"
         case munkiReportSshUser = "munkireport_ssh_user"
@@ -141,6 +152,7 @@ public struct FleetMateConfig: Codable {
         case munkiReportDbPath = "munkireport_db_path"
         case snipeUrl = "snipe_url"
         case snipeApiKey = "snipe_api_key"
+        case snipeOidcAudience = "snipe_oidc_audience"
         case graphTenantId = "graph_tenant_id"
         case azureTenantId = "azure_tenant_id"
         case azureSubscriptionId = "azure_subscription_id"
@@ -193,10 +205,10 @@ public struct FleetMateConfig: Codable {
     /// Load configuration.
     ///
     /// Priority (lowest → highest):
-    /// 1. `~/.fleetmate/config.yaml`  — structural/non-credential settings (tasks, paths, etc.)
-    /// 2. Keychain                    — all credential values written by the Settings UI
-    /// 3. Environment variables       — CI/CD override; use `KeychainService.importFromEnvironment()`
-    ///                                  to pre-seed Keychain, or just rely on env vars passthrough
+    /// 1. `~/.fleetmate/config.yaml`         — structural/non-credential settings (tasks, paths, etc.)
+    /// 2. `~/.config/fleetmate/secrets.yaml` — credentials written by `scripts/setup-secrets.sh`
+    /// 3. Keychain                           — credential values written by the Settings UI
+    /// 4. Environment variables              — CI/CD override
     public static func load() throws -> FleetMateConfig {
         var config = FleetMateConfig()
 
@@ -211,7 +223,14 @@ public struct FleetMateConfig: Codable {
             }
         }
 
-        // 2. Credentials from Keychain (overrides any credentials that happened to be in the file)
+        // 2. Credentials from ~/.config/fleetmate/secrets.yaml (setup-secrets.sh).
+        // The CLI historically only read ~/.fleetmate/config.yaml + Keychain, so
+        // creds written here by setup-secrets.sh (ReportMate URL/passphrase/OIDC
+        // audience, Snipe key, TDX, …) never loaded. Read it as a file source;
+        // Keychain still overrides below where present.
+        loadFromSecretsFile(into: &config)
+
+        // 3. Credentials from Keychain (overrides any credentials that happened to be in the file)
         loadFromKeychain(into: &config)
 
         // 3. Environment variables override everything (CI/CD)
@@ -258,6 +277,7 @@ public struct FleetMateConfig: Codable {
         // Snipe-IT
         if let v = str("snipe_url"), !v.isEmpty { config.snipeUrl = v }
         if let v = str("snipe_api_key"), !v.isEmpty { config.snipeApiKey = v }
+        if let v = str("snipe_oidc_audience"), !v.isEmpty { config.snipeOidcAudience = v }
         
         // Microsoft Graph - shared tenant
         if let v = str("graph_tenant_id"), !v.isEmpty { config.graphTenantId = v }
@@ -298,6 +318,7 @@ public struct FleetMateConfig: Codable {
         // ReportMate
         if let v = str("reportmate_url"), !v.isEmpty { config.reportMateUrl = v }
         if let v = str("reportmate_passphrase"), !v.isEmpty { config.reportMatePassphrase = v }
+        if let v = str("reportmate_oidc_audience"), !v.isEmpty { config.reportMateOidcAudience = v }
         
         return true
     }

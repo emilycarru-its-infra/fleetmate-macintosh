@@ -72,36 +72,21 @@ public struct AzeError: Error, Sendable, CustomStringConvertible {
     }
 }
 
-/// Runs each request *inside* an `aze` session as `az rest …`, so the domain
-/// identity's token stays in Azure and only the JSON result comes back.
+/// Runs each request *inside* an elevation session as `az rest …`, so the
+/// domain identity's token stays in Azure and only the JSON result comes back.
+///
+/// The whole elevation protocol (container lifecycle, exec handshake, websocket)
+/// is reimplemented natively in `ElevationSession` — FleetMate has no dependency
+/// on the external `~/bin/aze` script.
 public struct AzeGraphTransport: GraphTransport {
-    private let azePath: String
     private let router: GraphDomainRouter
     private let ttlHours: Int?
-    /// When set, drive the elevation protocol natively (no external `aze`
-    /// script). Default on; set FLEETMATE_AZE_SCRIPT=1 to fall back to the
-    /// external script during the transition.
-    private let native: ElevationSession?
+    private let session: ElevationSession
 
-    public init(azePath: String? = nil, router: GraphDomainRouter = GraphDomainRouter(), ttlHours: Int? = nil) {
-        self.azePath = azePath ?? AzeGraphTransport.locateAze()
+    public init(router: GraphDomainRouter = GraphDomainRouter(), ttlHours: Int? = nil) {
         self.router = router
         self.ttlHours = ttlHours
-        let useScript = ProcessInfo.processInfo.environment["FLEETMATE_AZE_SCRIPT"] != nil
-        self.native = useScript ? nil : ElevationSession()
-    }
-
-    /// Find `aze` on common install paths; fall back to PATH lookup via env.
-    static func locateAze() -> String {
-        let candidates = [
-            "\(NSHomeDirectory())/bin/aze",
-            "/usr/local/bin/aze",
-            "/opt/homebrew/bin/aze",
-        ]
-        for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
-            return candidate
-        }
-        return "aze"
+        self.session = ElevationSession()
     }
 
     /// Logs the session's `az` in as its attached managed identity. Idempotent
@@ -157,80 +142,8 @@ public struct AzeGraphTransport: GraphTransport {
     }
 
     private func execute(domain: GraphDomain, command: String) async throws -> Data {
-        if let native = native {
-            let (out, code) = try await native.exec(domain, command: command, ttlHours: ttlHours)
-            if code == 0 { return Data(out.utf8) }
-            throw AzeError(exitCode: code, message: out)
-        }
-        let azePath = self.azePath
-        let ttlHours = self.ttlHours
-        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-            DispatchQueue.global(qos: .userInitiated).async {
-                var azeArgs = ["run", domain.rawValue]
-                if let ttl = ttlHours { azeArgs += ["--ttl", String(ttl)] }
-                azeArgs += ["--", command]
-
-                let process = Process()
-                if azePath == "aze" {
-                    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                    process.arguments = ["aze"] + azeArgs
-                } else {
-                    process.executableURL = URL(fileURLWithPath: azePath)
-                    process.arguments = azeArgs
-                }
-
-                // A GUI-launched process inherits a thin environment; make sure
-                // az / brew-python / aze are reachable.
-                var env = ProcessInfo.processInfo.environment
-                let extraPaths = ["\(NSHomeDirectory())/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
-                let existingPath = env["PATH"] ?? ""
-                env["PATH"] = (extraPaths + (existingPath.isEmpty ? [] : [existingPath])).joined(separator: ":")
-                process.environment = env
-
-                let stdout = Pipe()
-                let stderr = Pipe()
-                process.standardOutput = stdout
-                process.standardError = stderr
-
-                do {
-                    try process.run()
-                } catch {
-                    continuation.resume(throwing: AzeError(exitCode: -1, message: "could not launch aze: \(error.localizedDescription)"))
-                    return
-                }
-
-                // Drain both pipes concurrently — reading one to EOF before the
-                // other can deadlock if the child fills the second pipe buffer.
-                var errData = Data()
-                let errGroup = DispatchGroup()
-                errGroup.enter()
-                DispatchQueue.global(qos: .userInitiated).async {
-                    errData = stderr.fileHandleForReading.readDataToEndOfFile()
-                    errGroup.leave()
-                }
-                let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-                errGroup.wait()
-                process.waitUntilExit()
-
-                if ProcessInfo.processInfo.environment["FLEETMATE_AZE_DEBUG"] != nil {
-                    // Sizes + exit only — never the response body (may hold PII).
-                    let errText = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    let dbg = "[aze-debug] aze run \(domain.rawValue) exit=\(process.terminationStatus) outBytes=\(outData.count) errBytes=\(errData.count) err=\(errText)\n"
-                    FileHandle.standardError.write(Data(dbg.utf8))
-                }
-
-                if process.terminationStatus == 0 {
-                    continuation.resume(returning: outData)
-                } else {
-                    // The inner command's real error lands on stdout (aze prints
-                    // the session output there); stderr is aze's own chatter
-                    // ("Re-attaching…"). Prefer stdout, keep stderr as context.
-                    let outText = String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    let errText = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    let message = [outText, errText].filter { !$0.isEmpty }.joined(separator: " | ")
-                    continuation.resume(throwing: AzeError(exitCode: process.terminationStatus, message: message))
-                }
-            }
-        }
+        let (out, code) = try await session.exec(domain, command: command, ttlHours: ttlHours)
+        if code == 0 { return Data(out.utf8) }
+        throw AzeError(exitCode: code, message: out)
     }
 }

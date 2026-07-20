@@ -40,7 +40,7 @@ FORCE_RUN=false
 # Check if already configured (unless forced)
 if [[ "$FORCE_RUN" != "true" ]]; then
     # Check if secrets file exists and has content
-    if [ -f "$SECRETS_FILE" ] && grep -q "snipe_api_key:" "$SECRETS_FILE" 2>/dev/null; then
+    if [ -f "$SECRETS_FILE" ] && grep -q "snipe_url:" "$SECRETS_FILE" 2>/dev/null; then
         echo "FleetMate secrets already configured in: $SECRETS_FILE"
         echo "Run with --force to refresh: $0 --force"
         exit 0
@@ -109,8 +109,6 @@ echo ""
 echo "   From Key Vault: $KEY_VAULT_NAME"
 echo "   ├─ SnipeApiUrl..."
 SNIPE_API_URL=$(get_secret "$KEY_VAULT_NAME" "SnipeApiUrl")
-echo "   ├─ SnipeApiKey..."
-SNIPE_API_KEY=$(get_secret "$KEY_VAULT_NAME" "SnipeApiKey")
 echo "   ├─ TdxUsername..."
 TDX_USERNAME=$(get_secret "$KEY_VAULT_NAME" "TdxUsername")
 echo "   ├─ TdxPassword..."
@@ -125,8 +123,6 @@ echo ""
 echo "   From Key Vault: $CIMIAN_KEY_VAULT_NAME"
 echo "   ├─ ReportMateApiUrl..."
 REPORTMATE_URL=$(get_secret "$CIMIAN_KEY_VAULT_NAME" "ReportMateApiUrl")
-echo "   ├─ ReportMatePassphrase..."
-REPORTMATE_PASSPHRASE=$(get_secret "$CIMIAN_KEY_VAULT_NAME" "ReportMatePassphrase")
 echo "   ├─ AzureDevOpsOrganization..."
 DEVOPS_ORG=$(get_secret "$CIMIAN_KEY_VAULT_NAME" "AzureDevOpsOrganization")
 echo "   └─ AzureDevOpsProject..."
@@ -146,9 +142,11 @@ REPORTMATE_URL="${REPORTMATE_URL:-https://reportmate-functions-api.blackdune-795
 DEVOPS_ORG="${DEVOPS_ORG:-ecuad}"
 DEVOPS_PROJECT="${DEVOPS_PROJECT:-DevOps}"
 
-# Validate required secrets
+# Validate required secrets. Snipe + ReportMate no longer need a shared
+# secret here — FleetMate authenticates to both with an Entra bearer minted
+# from the operator's SSO session (audiences baked into FleetMate defaults).
 MISSING_SECRETS=()
-[ -z "$SNIPE_API_KEY" ] && MISSING_SECRETS+=("SnipeApiKey")
+[ -z "$SNIPE_API_URL" ] && MISSING_SECRETS+=("SnipeApiUrl")
 
 if [ ${#MISSING_SECRETS[@]} -gt 0 ]; then
     echo "⚠️  Warning: The following secrets are missing from Key Vault:"
@@ -172,9 +170,9 @@ cat > "$SECRETS_FILE" << EOF
 # Refreshed from Azure Key Vault by scripts/setup-secrets.sh
 # Permissions: 0600 (owner read/write only)
 
-# Snipe-IT
+# Snipe-IT — FleetMate authenticates with an Entra bearer (SSO) mapped to your
+# Snipe user; the shared API key is retired. Only the URL is stored here.
 snipe_url: "${SNIPE_API_URL:-}"
-snipe_api_key: "${SNIPE_API_KEY:-}"
 
 # Microsoft Graph credentials intentionally omitted — FleetMate authenticates to
 # Graph via the aze elevation model (no service-principal secret on this machine).
@@ -191,9 +189,10 @@ tdx_password: "${TDX_PASSWORD:-}"
 tdx_beid: "${TDX_BEID:-}"
 tdx_web_services_key: "${TDX_WEB_SERVICES_KEY:-}"
 
-# ReportMate
+# ReportMate — FleetMate authenticates with an Entra bearer (SSO) verified
+# against the ReportMate app roles; the shared passphrase is retired. Only the
+# URL is stored here.
 reportmate_url: "${REPORTMATE_URL:-}"
-reportmate_passphrase: "${REPORTMATE_PASSPHRASE:-}"
 EOF
 chmod 600 "$SECRETS_FILE"
 echo "   ✓ Created: $SECRETS_FILE (permissions: 0600)"
@@ -202,7 +201,6 @@ echo ""
 # Count configured secrets
 STORED=0
 [ -n "$SNIPE_API_URL" ] && ((STORED++))
-[ -n "$SNIPE_API_KEY" ] && ((STORED++))
 [ -n "$DEVOPS_ORG" ] && ((STORED++))
 [ -n "$DEVOPS_PROJECT" ] && ((STORED++))
 [ -n "$TDX_USERNAME" ] && ((STORED++))
@@ -210,7 +208,6 @@ STORED=0
 [ -n "$TDX_BEID" ] && ((STORED++))
 [ -n "$TDX_WEB_SERVICES_KEY" ] && ((STORED++))
 [ -n "$REPORTMATE_URL" ] && ((STORED++))
-[ -n "$REPORTMATE_PASSPHRASE" ] && ((STORED++))
 STORED=$((STORED + 2))  # TdxBaseUrl and TdxAppId are always set
 
 echo ""
@@ -247,7 +244,7 @@ devops:
   use_azure_cli_auth: true
 
 # ReportMate API
-# Credentials: Keychain -> ca.ecuad.macadmin.fleetmate -> ReportMateUrl, ReportMatePassphrase
+# Auth: Entra bearer (SSO) minted from the operator's az session; no shared secret.
 reportmate:
   enabled: true
 
@@ -318,14 +315,12 @@ check_secret() {
 }
 
 check_secret "snipe_url"
-check_secret "snipe_api_key"
 check_secret "tdx_base_url"
 check_secret "tdx_username"
 check_secret "tdx_password"
 check_secret "tdx_beid"
 check_secret "tdx_web_services_key"
 check_secret "reportmate_url"
-check_secret "reportmate_passphrase"
 check_secret "devops_organization"
 check_secret "devops_project"
 

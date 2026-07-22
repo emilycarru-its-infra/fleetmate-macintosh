@@ -129,18 +129,19 @@ public class TdxService {
         let authMethod = config.tdxAuthMethod
         dbg.debug("TDX getAccessToken (method=\(authMethod), ssoValid=\(ssoToken != nil && Date() < ssoTokenExpiry))", category: "tdx-auth")
         
-        // Check for valid SSO token first (if SSO is configured)
-        if authMethod == .browserSSO || authMethod == .auto {
+        // Browser-SSO is an explicit opt-in only. TDX's Web API has no inbound
+        // SSO/OAuth path, so the "SSO token" is a value scraped from a WKWebView
+        // session, not a portable API JWT — sending it as a Bearer token makes
+        // the API return 400. `.auto` must therefore NOT prefer it (that was the
+        // "Auto → SSO (active)" failure); it falls through to the service-account
+        // loginadmin path below. See the TDX auth-ceiling notes.
+        if authMethod == .browserSSO {
             if let token = ssoToken, !token.isEmpty, Date() < ssoTokenExpiry {
                 dbg.info("TDX using SSO token (expires in \(Int(ssoTokenExpiry.timeIntervalSinceNow))s)", category: "tdx-auth")
                 return token
             }
-            
-            // If browserSSO is required and no valid token, return nil
-            if authMethod == .browserSSO {
-                dbg.warn("TDX browserSSO required but no valid SSO token", category: "tdx-auth")
-                return nil
-            }
+            dbg.warn("TDX browserSSO required but no valid SSO token", category: "tdx-auth")
+            return nil
         }
         
         // Check cached service account / password token

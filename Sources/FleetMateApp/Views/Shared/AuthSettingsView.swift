@@ -300,9 +300,10 @@ struct AuthSettingsView: View {
         case .serviceAccount: return "Service account (BEID + WebServicesKey)"
         case .userPassword:   return "Username / password"
         case .auto:
-            if appState.tdxSsoAuthenticated { return "Auto → SSO (active)" }
-            if appState.config.tdxBeid != nil { return "Auto → Service account + SSO available" }
-            return "Auto"
+            // `.auto` uses the service-account loginadmin path; the WKWebView SSO
+            // token is not a valid API credential and is no longer preferred.
+            if appState.config.tdxBeid != nil { return "Auto → Service account (BEID)" }
+            return "Auto → needs BEID + WebServicesKey"
         }
     }
 

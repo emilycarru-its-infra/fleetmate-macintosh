@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Native reimplementation of the `aze` elevation protocol, so FleetMate has no
 /// dependency on the external `~/bin/aze` script. The container lifecycle and
@@ -98,7 +99,38 @@ public actor ElevationSession {
 
     /// Run a single-line command inside the session and return its stdout +
     /// exit code, mirroring `aze run`.
+    ///
+    /// The exec container cannot service concurrent commands: every exec opens a
+    /// pseudo-terminal on the same session, and two commands running at once
+    /// interleave their output on that shared stream, corrupting both payloads
+    /// (an `az rest` JSON response comes back spliced with another command's
+    /// bytes and fails to decode). Callers legitimately fan out — the app fires
+    /// several Graph/Intune fetches at launch — so we serialize per domain
+    /// through a process-wide gate. Different domains hit different containers
+    /// and still run concurrently.
     public func exec(_ domain: GraphDomain, command: String, ttlHours: Int? = nil) async throws -> (out: String, code: Int32) {
+        await ElevationSessionGate.shared.acquire(domain)
+        do {
+            let result = try await runExec(domain, command: command, ttlHours: ttlHours)
+            await ElevationSessionGate.shared.release(domain)
+            return result
+        } catch {
+            await ElevationSessionGate.shared.release(domain)
+            throw error
+        }
+    }
+
+    /// The ACI exec pty→websocket bridge drops bytes intermittently under load,
+    /// so a captured payload can arrive short even with no concurrency (a single
+    /// large `az rest` page fails this way ~100% of the time; even a 20 KB
+    /// payload fails a fraction of runs). Every exec therefore carries an
+    /// in-container checksum of its true stdout, computed before the bytes hit
+    /// the pty; the client verifies what it received and re-runs on any
+    /// mismatch. Small results (login probes, single-device lookups) usually
+    /// pass first try; large ones may take a couple of attempts.
+    static let maxExecAttempts = 6
+
+    private func runExec(_ domain: GraphDomain, command: String, ttlHours: Int? = nil) async throws -> (out: String, code: Int32) {
         try await ensureSession(domain, ttlHours: ttlHours ?? ElevationSession.defaultTtlHours)
         let name = ElevationSession.sessionName(for: domain)
 
@@ -110,17 +142,25 @@ public actor ElevationSession {
         let uri = "https://management.azure.com/subscriptions/\(sub)/resourceGroups/\(ElevationSession.sessionsResourceGroup)/providers/Microsoft.ContainerInstance/containerGroups/\(name)/containers/\(name)/exec?api-version=\(ElevationSession.execApiVersion)"
         let body = "{\"command\":\"/bin/bash\",\"terminalSize\":{\"rows\":24,\"cols\":500}}"
 
-        let execResp = try await runAz(["rest", "--method", "post", "--uri", uri, "--body", body])
-        guard execResp.code == 0,
-              let data = execResp.out.data(using: .utf8),
-              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let wsString = json["webSocketUri"] as? String,
-              let wsURL = URL(string: wsString),
-              let password = json["password"] as? String else {
-            throw ElevationError.execHandshakeFailed(execResp.err.isEmpty ? execResp.out : execResp.err)
+        var lastError: Error = ElevationError.execHandshakeFailed("no exec attempts were made")
+        for _ in 0..<ElevationSession.maxExecAttempts {
+            do {
+                // Each attempt needs a fresh exec websocket.
+                let execResp = try await runAz(["rest", "--method", "post", "--uri", uri, "--body", body])
+                guard execResp.code == 0,
+                      let data = execResp.out.data(using: .utf8),
+                      let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let wsString = json["webSocketUri"] as? String,
+                      let wsURL = URL(string: wsString),
+                      let password = json["password"] as? String else {
+                    throw ElevationError.execHandshakeFailed(execResp.err.isEmpty ? execResp.out : execResp.err)
+                }
+                return try await runWebSocket(url: wsURL, password: password, command: command)
+            } catch let error as ElevationError where error.isCaptureFailure {
+                lastError = error // pty mangled the stream — re-run the exec
+            }
         }
-
-        return try await runWebSocket(url: wsURL, password: password, command: command)
+        throw lastError
     }
 
     private func runWebSocket(url: URL, password: String, command: String) async throws -> (out: String, code: Int32) {
@@ -132,9 +172,8 @@ public actor ElevationSession {
         try await ws.send(.string(password))
         try await ws.send(.string("stty -echo\n"))
         try? await Task.sleep(nanoseconds: 2_000_000_000)
-        try await ws.send(.string("printf '\\n<<<AZE_BEGIN>>>\\n'; ( \(command) ); printf '\\n<<<AZE_END:%d>>>\\n' \"$?\"; exit\n"))
+        try await ws.send(.string(ElevationSession.wrap(command)))
 
-        let endMarker = try! NSRegularExpression(pattern: "<<<AZE_END:\\d+>>>")
         var raw = ""
         let deadline = Date().addingTimeInterval(3600)
         while Date() < deadline {
@@ -149,9 +188,13 @@ public actor ElevationSession {
             case .data(let d): raw += String(decoding: d, as: UTF8.self)
             @unknown default: break
             }
-            let stripped = ElevationSession.stripAnsi(raw)
-            if endMarker.firstMatch(in: stripped, range: NSRange(stripped.startIndex..., in: stripped)) != nil {
-                break
+            // The END marker is short and last; a cheap substring check avoids
+            // re-stripping the whole (potentially 100s of KB) buffer each frame.
+            if raw.range(of: "<<<AZE_END:") != nil {
+                let stripped = ElevationSession.stripAnsi(raw)
+                if ElevationSession.endMarker.firstMatch(in: stripped, range: NSRange(stripped.startIndex..., in: stripped)) != nil {
+                    break
+                }
             }
         }
 
@@ -159,26 +202,57 @@ public actor ElevationSession {
         guard let parsed = ElevationSession.parseMarkers(text) else {
             throw ElevationError.noOutputMarkers(text)
         }
-        return parsed
+        // Verify the payload survived the pty intact: compare the length and MD5
+        // the container computed on the true stdout against what we received.
+        let bytes = Data(parsed.out.utf8)
+        let digest = Insecure.MD5.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+        guard bytes.count == parsed.expectedLen, digest == parsed.expectedMd5 else {
+            throw ElevationError.corruptedOutput(expected: parsed.expectedLen, actual: bytes.count)
+        }
+        return (parsed.out, parsed.code)
     }
 
     // MARK: - Helpers
+
+    static let endMarker = try! NSRegularExpression(pattern: "<<<AZE_END:[0-9]+:[0-9]+:[0-9a-f]+>>>")
+
+    /// Wrap a command so the container reports its stdout together with the exact
+    /// byte length and MD5 of that stdout, computed *before* the bytes traverse
+    /// the lossy exec pty. Those let the client detect a mangled payload and
+    /// re-run. stderr is captured to a temp file and folded into the output only
+    /// on failure, so a normal payload stays clean (and stray warnings no longer
+    /// interleave with the JSON we care about). `md5sum`, `wc`, `printf`, and
+    /// `cat` are all coreutils present in the elevation image.
+    static func wrap(_ command: String) -> String {
+        "__o=$( ( \(command) ) 2>/tmp/aze_err ); __c=$?; "
+            + "if [ \"$__c\" -ne 0 ]; then __o=\"$__o$(cat /tmp/aze_err 2>/dev/null)\"; fi; "
+            + "__n=$(printf %s \"$__o\" | wc -c | tr -d ' '); "
+            + "__m=$(printf %s \"$__o\" | md5sum | cut -d' ' -f1); "
+            + "printf '\\n<<<AZE_BEGIN>>>\\n%s\\n<<<AZE_END:%s:%s:%s>>>\\n' \"$__o\" \"$__c\" \"$__n\" \"$__m\"; exit\n"
+    }
 
     static func stripAnsi(_ s: String) -> String {
         guard let re = try? NSRegularExpression(pattern: "\\x1b\\[[0-9;?]*[a-zA-Z]") else { return s }
         return re.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: "")
     }
 
-    /// Extract the command output between the BEGIN/END sentinels and the exit code.
-    static func parseMarkers(_ text: String) -> (out: String, code: Int32)? {
-        guard let re = try? NSRegularExpression(pattern: "<<<AZE_BEGIN>>>\\n(.*)\\n?<<<AZE_END:(\\d+)>>>", options: [.dotMatchesLineSeparators]) else { return nil }
+    /// Extract the command output between the BEGIN/END sentinels, the exit code,
+    /// and the integrity trailer (expected byte length + MD5) the container
+    /// stamped on the true stdout. The output is returned verbatim — no trimming
+    /// — so the client's checksum is taken over exactly the printed bytes.
+    static func parseMarkers(_ text: String) -> (out: String, code: Int32, expectedLen: Int, expectedMd5: String)? {
+        guard let re = try? NSRegularExpression(pattern: "<<<AZE_BEGIN>>>\\n(.*)\\n<<<AZE_END:(\\d+):(\\d+):([0-9a-f]+)>>>", options: [.dotMatchesLineSeparators]) else { return nil }
         let range = NSRange(text.startIndex..., in: text)
         guard let m = re.firstMatch(in: text, range: range),
               let outRange = Range(m.range(at: 1), in: text),
-              let codeRange = Range(m.range(at: 2), in: text) else { return nil }
-        let out = String(text[outRange]).trimmingCharacters(in: CharacterSet(charactersIn: "\n"))
+              let codeRange = Range(m.range(at: 2), in: text),
+              let lenRange = Range(m.range(at: 3), in: text),
+              let md5Range = Range(m.range(at: 4), in: text) else { return nil }
+        let out = String(text[outRange])
         let code = Int32(text[codeRange]) ?? 0
-        return (out, code)
+        let len = Int(text[lenRange]) ?? -1
+        let md5 = String(text[md5Range])
+        return (out, code, len, md5)
     }
 
     private func runAz(_ args: [String]) async throws -> (out: String, err: String, code: Int32) {
@@ -229,12 +303,60 @@ public actor ElevationSession {
     }
 }
 
+/// Process-wide, per-domain serialization for elevation exec calls.
+///
+/// The elevation session container multiplexes every exec onto one pseudo-
+/// terminal, so concurrent commands against the same domain corrupt each
+/// other's output. A single `ElevationSession` actor is not enough to prevent
+/// this — the app builds several `ElevationSession` instances (each
+/// `GraphService` owns its own transport), and they all target the same shared
+/// containers. This gate lives above every instance so one command runs per
+/// domain at a time across the whole process. It is a fair FIFO semaphore:
+/// ownership passes directly to the next waiter on release, so a domain never
+/// goes idle while callers are queued.
+actor ElevationSessionGate {
+    static let shared = ElevationSessionGate()
+
+    private var busy: Set<GraphDomain> = []
+    private var waiters: [GraphDomain: [CheckedContinuation<Void, Never>]] = [:]
+
+    func acquire(_ domain: GraphDomain) async {
+        if !busy.contains(domain) {
+            busy.insert(domain)
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters[domain, default: []].append(continuation)
+        }
+    }
+
+    func release(_ domain: GraphDomain) {
+        if var queue = waiters[domain], !queue.isEmpty {
+            let next = queue.removeFirst()
+            waiters[domain] = queue.isEmpty ? nil : queue
+            next.resume() // stays busy; ownership handed to the next waiter
+        } else {
+            busy.remove(domain)
+        }
+    }
+}
+
 public enum ElevationError: Error, CustomStringConvertible {
     case identityResolutionFailed(GraphDomain)
     case createFailed(String)
     case execHandshakeFailed(String)
     case noOutputMarkers(String)
+    case corruptedOutput(expected: Int, actual: Int)
     case azLaunchFailed(String)
+
+    /// A capture that the pty mangled — worth re-running the exec. Handshake and
+    /// identity failures are not retriable here; they surface to the caller.
+    var isCaptureFailure: Bool {
+        switch self {
+        case .noOutputMarkers, .corruptedOutput: return true
+        default: return false
+        }
+    }
 
     public var description: String {
         switch self {
@@ -242,6 +364,7 @@ public enum ElevationError: Error, CustomStringConvertible {
         case .createFailed(let m): return "Failed to create elevation session: \(m)"
         case .execHandshakeFailed(let m): return "Exec handshake failed: \(m)"
         case .noOutputMarkers(let t): return "Could not find output markers in session output:\n\(t)"
+        case .corruptedOutput(let expected, let actual): return "Elevation output truncated by the exec bridge (expected \(expected) bytes, got \(actual))"
         case .azLaunchFailed(let m): return "Could not launch az: \(m)"
         }
     }

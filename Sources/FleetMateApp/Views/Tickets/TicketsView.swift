@@ -695,11 +695,17 @@ struct TicketsView: View {
             HStack(spacing: 0) {
                 ticketBoardContent
                     .frame(width: contentW)
-                    .clipped()
+                    // The board's horizontal ScrollView draws its content past a
+                    // plain .clipped() bound; clipShape strictly confines it so
+                    // the columns can't bleed under the detail pane.
+                    .clipShape(Rectangle())
                 if hasSidebar {
                     Divider()
                     detailSidebarView
                         .frame(width: sidebarW)
+                        // Opaque fill so nothing behind the pane shows through
+                        // (the detail views themselves have no background).
+                        .background(Color(nsColor: .windowBackgroundColor))
                 }
             }
         }

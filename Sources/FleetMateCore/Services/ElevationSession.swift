@@ -120,15 +120,17 @@ public actor ElevationSession {
         }
     }
 
-    /// The ACI exec pty→websocket bridge drops bytes intermittently under load,
-    /// so a captured payload can arrive short even with no concurrency (a single
-    /// large `az rest` page fails this way ~100% of the time; even a 20 KB
-    /// payload fails a fraction of runs). Every exec therefore carries an
-    /// in-container checksum of its true stdout, computed before the bytes hit
-    /// the pty; the client verifies what it received and re-runs on any
-    /// mismatch. Small results (login probes, single-device lookups) usually
-    /// pass first try; large ones may take a couple of attempts.
+    /// The ACI exec pty→websocket bridge drops bytes intermittently under load
+    /// (~2% per KB, even with no concurrency), so any payload past a few KB
+    /// arrives corrupt and cannot be carried whole. Instead the container writes
+    /// its stdout to a temp file and serves it as small, individually-checksummed
+    /// base64 chunks; the client keeps the chunks whose MD5 matches and re-serves
+    /// only the ones the pty mangled, from the same stable file. A full device
+    /// page converges in ~2–3 round trips; small results (login probes,
+    /// single-device lookups) come back in one chunk, one trip.
     static let maxExecAttempts = 6
+    static let chunkBytes = 4096
+    static let maxChunkPasses = 8
 
     private func runExec(_ domain: GraphDomain, command: String, ttlHours: Int? = nil) async throws -> (out: String, code: Int32) {
         try await ensureSession(domain, ttlHours: ttlHours ?? ElevationSession.defaultTtlHours)
@@ -142,28 +144,83 @@ public actor ElevationSession {
         let uri = "https://management.azure.com/subscriptions/\(sub)/resourceGroups/\(ElevationSession.sessionsResourceGroup)/providers/Microsoft.ContainerInstance/containerGroups/\(name)/containers/\(name)/exec?api-version=\(ElevationSession.execApiVersion)"
         let body = "{\"command\":\"/bin/bash\",\"terminalSize\":{\"rows\":24,\"cols\":500}}"
 
-        var lastError: Error = ElevationError.execHandshakeFailed("no exec attempts were made")
+        let chunk = ElevationSession.chunkBytes
+        let file = "/tmp/aze_\(UUID().uuidString)"
+        var meta: (code: Int32, total: Int, md5: String)?
+        var chunks: [Int: Data] = [:]
+
+        // Phase 1 — produce: run the command into the file and emit META + every
+        // chunk. Retry the whole produce until the (tiny) META header parses.
+        let produceCmd = ElevationSession.buildProduce(command: command, file: file, chunk: chunk)
+        var lastError: Error = ElevationError.noOutputMarkers("no produce attempt succeeded")
         for _ in 0..<ElevationSession.maxExecAttempts {
+            let text: String
             do {
-                // Each attempt needs a fresh exec websocket.
-                let execResp = try await runAz(["rest", "--method", "post", "--uri", uri, "--body", body])
-                guard execResp.code == 0,
-                      let data = execResp.out.data(using: .utf8),
-                      let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let wsString = json["webSocketUri"] as? String,
-                      let wsURL = URL(string: wsString),
-                      let password = json["password"] as? String else {
-                    throw ElevationError.execHandshakeFailed(execResp.err.isEmpty ? execResp.out : execResp.err)
-                }
-                return try await runWebSocket(url: wsURL, password: password, command: command)
-            } catch let error as ElevationError where error.isCaptureFailure {
-                lastError = error // pty mangled the stream — re-run the exec
+                text = try await handshakeAndRun(uri: uri, body: body, command: produceCmd)
+            } catch let error as ElevationError where !error.isCaptureFailure {
+                throw error // handshake / identity failures are not worth re-running
+            } catch {
+                lastError = error
+                continue
             }
+            if let m = ElevationSession.parseMeta(text) {
+                meta = m
+                chunks = [:]
+                for (i, d) in ElevationSession.parseChunks(text) { chunks[i] = d }
+                break
+            }
+            lastError = ElevationError.noOutputMarkers(String(text.prefix(200)))
+        }
+        guard let m = meta else { throw lastError }
+        let expected = m.total == 0 ? 0 : (m.total + chunk - 1) / chunk
+
+        // Phase 2 — re-serve only the chunks the pty mangled, from the same file.
+        for _ in 0..<ElevationSession.maxChunkPasses {
+            let missing = (0..<expected).filter { chunks[$0] == nil }
+            if missing.isEmpty { break }
+            let reserveCmd = ElevationSession.buildReserve(file: file, chunk: chunk, indices: missing)
+            let text = try await handshakeAndRun(uri: uri, body: body, command: reserveCmd)
+            for (i, d) in ElevationSession.parseChunks(text) where i < expected { chunks[i] = d }
+        }
+
+        let stillMissing = (0..<expected).filter { chunks[$0] == nil }
+        guard stillMissing.isEmpty else {
+            throw ElevationError.corruptedOutput(expected: expected, actual: expected - stillMissing.count)
+        }
+
+        var assembled = Data()
+        assembled.reserveCapacity(m.total)
+        for i in 0..<expected { assembled.append(chunks[i]!) }
+        let digest = Insecure.MD5.hash(data: assembled).map { String(format: "%02x", $0) }.joined()
+        guard assembled.count == m.total, digest == m.md5 else {
+            throw ElevationError.corruptedOutput(expected: m.total, actual: assembled.count)
+        }
+        return (String(decoding: assembled, as: UTF8.self), m.code)
+    }
+
+    /// Open one exec websocket and run a single self-terminating command
+    /// (ends in `<<<AZE_DONE>>>` then `exit`). Retries only the handshake POST,
+    /// which occasionally fails transiently; the returned text may still contain
+    /// mangled chunks — that is handled by the chunk layer above.
+    private func handshakeAndRun(uri: String, body: String, command: String) async throws -> String {
+        var lastError: Error = ElevationError.execHandshakeFailed("no handshake attempt")
+        for _ in 0..<3 {
+            let execResp = try await runAz(["rest", "--method", "post", "--uri", uri, "--body", body])
+            guard execResp.code == 0,
+                  let data = execResp.out.data(using: .utf8),
+                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let wsString = json["webSocketUri"] as? String,
+                  let wsURL = URL(string: wsString),
+                  let password = json["password"] as? String else {
+                lastError = ElevationError.execHandshakeFailed(execResp.err.isEmpty ? execResp.out : execResp.err)
+                continue
+            }
+            return try await runWebSocket(url: wsURL, password: password, command: command)
         }
         throw lastError
     }
 
-    private func runWebSocket(url: URL, password: String, command: String) async throws -> (out: String, code: Int32) {
+    private func runWebSocket(url: URL, password: String, command: String) async throws -> String {
         let session = URLSession(configuration: .default)
         let ws = session.webSocketTask(with: url)
         ws.resume()
@@ -171,64 +228,79 @@ public actor ElevationSession {
 
         try await ws.send(.string(password))
         try await ws.send(.string("stty -echo\n"))
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
-        try await ws.send(.string(ElevationSession.wrap(command)))
+        // Wait for the shell to actually be ready to accept input rather than
+        // guessing with a fixed sleep (a command sent too early is silently
+        // dropped). Send a readiness probe and hold the command until the marker
+        // echoes back — as fast as the shell allows, with a bounded fallback.
+        try await ws.send(.string("printf '<<<AZE_RDY>>>\\n'\n"))
 
         var raw = ""
+        var sentCommand = false
+        let readyDeadline = Date().addingTimeInterval(15)
         let deadline = Date().addingTimeInterval(3600)
         while Date() < deadline {
+            if !sentCommand, raw.range(of: "<<<AZE_RDY>>>") != nil || Date() > readyDeadline {
+                try await ws.send(.string(command))
+                sentCommand = true
+            }
             let message: URLSessionWebSocketTask.Message
             do {
                 message = try await ws.receive()
             } catch {
-                break // closed or errored — fall through to parse what we have
+                break // closed (the command's `exit`) or errored — parse what we have
             }
             switch message {
             case .string(let s): raw += s
             case .data(let d): raw += String(decoding: d, as: UTF8.self)
             @unknown default: break
             }
-            // The END marker is short and last; a cheap substring check avoids
-            // re-stripping the whole (potentially 100s of KB) buffer each frame.
-            if raw.range(of: "<<<AZE_END:") != nil {
-                let stripped = ElevationSession.stripAnsi(raw)
-                if ElevationSession.endMarker.firstMatch(in: stripped, range: NSRange(stripped.startIndex..., in: stripped)) != nil {
-                    break
-                }
-            }
+            if sentCommand, raw.range(of: "<<<AZE_DONE>>>") != nil { break }
         }
-
-        let text = ElevationSession.stripAnsi(raw).replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
-        guard let parsed = ElevationSession.parseMarkers(text) else {
-            throw ElevationError.noOutputMarkers(text)
-        }
-        // Verify the payload survived the pty intact: compare the length and MD5
-        // the container computed on the true stdout against what we received.
-        let bytes = Data(parsed.out.utf8)
-        let digest = Insecure.MD5.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
-        guard bytes.count == parsed.expectedLen, digest == parsed.expectedMd5 else {
-            throw ElevationError.corruptedOutput(expected: parsed.expectedLen, actual: bytes.count)
-        }
-        return (parsed.out, parsed.code)
+        return ElevationSession.stripAnsi(raw).replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
     }
 
     // MARK: - Helpers
 
-    static let endMarker = try! NSRegularExpression(pattern: "<<<AZE_END:[0-9]+:[0-9]+:[0-9a-f]+>>>")
+    static let metaRegex = try! NSRegularExpression(pattern: "<<<AZE_META:(\\d+):(\\d+):([0-9a-f]+)>>>")
+    static let chunkRegex = try! NSRegularExpression(pattern: "<<<AZE_C:(\\d+):([0-9a-f]+)>>>([A-Za-z0-9+/=]*)<<<CE>>>")
 
-    /// Wrap a command so the container reports its stdout together with the exact
-    /// byte length and MD5 of that stdout, computed *before* the bytes traverse
-    /// the lossy exec pty. Those let the client detect a mangled payload and
-    /// re-run. stderr is captured to a temp file and folded into the output only
-    /// on failure, so a normal payload stays clean (and stray warnings no longer
-    /// interleave with the JSON we care about). `md5sum`, `wc`, `printf`, and
-    /// `cat` are all coreutils present in the elevation image.
-    static func wrap(_ command: String) -> String {
-        "__o=$( ( \(command) ) 2>/tmp/aze_err ); __c=$?; "
-            + "if [ \"$__c\" -ne 0 ]; then __o=\"$__o$(cat /tmp/aze_err 2>/dev/null)\"; fi; "
-            + "__n=$(printf %s \"$__o\" | wc -c | tr -d ' '); "
-            + "__m=$(printf %s \"$__o\" | md5sum | cut -d' ' -f1); "
-            + "printf '\\n<<<AZE_BEGIN>>>\\n%s\\n<<<AZE_END:%s:%s:%s>>>\\n' \"$__o\" \"$__c\" \"$__n\" \"$__m\"; exit\n"
+    /// Produce command: capture stdout to a stable file (folding in stderr only on
+    /// failure), print a MD5+length header, then emit every `chunk`-byte slice as
+    /// base64 tagged with its own MD5. A stale-file sweep keeps /tmp bounded. Each
+    /// slice is independently verifiable, so a byte the pty drops invalidates just
+    /// that slice. `md5sum`/`base64`/`tail`/`head`/`wc` are coreutils in the image.
+    /// The `<<<` / `>>>` sentinel fences are assembled from shell variables at
+    /// runtime (`L`/`R`) so the literal marker strings never appear in the command
+    /// source. If `stty -echo` hasn't taken effect yet the shell echoes the
+    /// command, and that echo must not contain a real `<<<AZE_DONE>>>` (etc.) or
+    /// the client would match it and return before the command even runs.
+    static let markerVars = "L='<<<'; R='>>>'; "
+
+    static func buildProduce(command: String, file: String, chunk: Int) -> String {
+        ElevationSession.markerVars
+            + "find /tmp -maxdepth 1 -name 'aze_*' -mmin +30 -delete 2>/dev/null; "
+            + "f=\(file); ( \(command) ) >\"$f\" 2>/tmp/aze_err; c=$?; "
+            + "[ \"$c\" -ne 0 ] && cat /tmp/aze_err >>\"$f\"; "
+            + "t=$(wc -c <\"$f\" | tr -d ' '); m=$(md5sum \"$f\" | cut -d' ' -f1); "
+            + "printf '\\n%sAZE_META:%s:%s:%s%s\\n' \"$L\" \"$c\" \"$t\" \"$m\" \"$R\"; "
+            + "o=0; i=0; while [ \"$o\" -lt \"$t\" ]; do "
+            + "d=$(tail -c +$((o+1)) \"$f\" | head -c \(chunk) | base64 | tr -d '\\n'); "
+            + "k=$(printf %s \"$d\" | md5sum | cut -d' ' -f1); "
+            + "printf '%sAZE_C:%s:%s%s%s%sCE%s\\n' \"$L\" \"$i\" \"$k\" \"$R\" \"$d\" \"$L\" \"$R\"; "
+            + "o=$((o+\(chunk))); i=$((i+1)); done; "
+            + "printf '%sAZE_DONE%s\\n' \"$L\" \"$R\"; exit\n"
+    }
+
+    /// Re-serve specific chunk indices from the file the produce step wrote.
+    static func buildReserve(file: String, chunk: Int, indices: [Int]) -> String {
+        let list = indices.map(String.init).joined(separator: " ")
+        return ElevationSession.markerVars
+            + "f=\(file); for i in \(list); do "
+            + "o=$((i*\(chunk))); "
+            + "d=$(tail -c +$((o+1)) \"$f\" | head -c \(chunk) | base64 | tr -d '\\n'); "
+            + "k=$(printf %s \"$d\" | md5sum | cut -d' ' -f1); "
+            + "printf '%sAZE_C:%s:%s%s%s%sCE%s\\n' \"$L\" \"$i\" \"$k\" \"$R\" \"$d\" \"$L\" \"$R\"; "
+            + "done; printf '%sAZE_DONE%s\\n' \"$L\" \"$R\"; exit\n"
     }
 
     static func stripAnsi(_ s: String) -> String {
@@ -236,23 +308,36 @@ public actor ElevationSession {
         return re.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: "")
     }
 
-    /// Extract the command output between the BEGIN/END sentinels, the exit code,
-    /// and the integrity trailer (expected byte length + MD5) the container
-    /// stamped on the true stdout. The output is returned verbatim — no trimming
-    /// — so the client's checksum is taken over exactly the printed bytes.
-    static func parseMarkers(_ text: String) -> (out: String, code: Int32, expectedLen: Int, expectedMd5: String)? {
-        guard let re = try? NSRegularExpression(pattern: "<<<AZE_BEGIN>>>\\n(.*)\\n<<<AZE_END:(\\d+):(\\d+):([0-9a-f]+)>>>", options: [.dotMatchesLineSeparators]) else { return nil }
+    /// Parse the produce header: (exit code, total byte length, full-payload MD5).
+    static func parseMeta(_ text: String) -> (code: Int32, total: Int, md5: String)? {
         let range = NSRange(text.startIndex..., in: text)
-        guard let m = re.firstMatch(in: text, range: range),
-              let outRange = Range(m.range(at: 1), in: text),
-              let codeRange = Range(m.range(at: 2), in: text),
-              let lenRange = Range(m.range(at: 3), in: text),
-              let md5Range = Range(m.range(at: 4), in: text) else { return nil }
-        let out = String(text[outRange])
-        let code = Int32(text[codeRange]) ?? 0
-        let len = Int(text[lenRange]) ?? -1
-        let md5 = String(text[md5Range])
-        return (out, code, len, md5)
+        guard let m = ElevationSession.metaRegex.firstMatch(in: text, range: range),
+              let codeRange = Range(m.range(at: 1), in: text),
+              let totalRange = Range(m.range(at: 2), in: text),
+              let md5Range = Range(m.range(at: 3), in: text) else { return nil }
+        return (Int32(text[codeRange]) ?? 0, Int(text[totalRange]) ?? 0, String(text[md5Range]))
+    }
+
+    /// Extract every intact chunk: (index, decoded bytes). A chunk is kept only if
+    /// the received base64 still matches the MD5 the container stamped on it and
+    /// decodes cleanly; anything the pty mangled is silently dropped and will be
+    /// re-served.
+    static func parseChunks(_ text: String) -> [(Int, Data)] {
+        var out: [(Int, Data)] = []
+        let range = NSRange(text.startIndex..., in: text)
+        ElevationSession.chunkRegex.enumerateMatches(in: text, range: range) { match, _, _ in
+            guard let match = match,
+                  let idxRange = Range(match.range(at: 1), in: text),
+                  let md5Range = Range(match.range(at: 2), in: text),
+                  let dataRange = Range(match.range(at: 3), in: text),
+                  let idx = Int(text[idxRange]) else { return }
+            let declaredMd5 = String(text[md5Range])
+            let b64 = String(text[dataRange])
+            let digest = Insecure.MD5.hash(data: Data(b64.utf8)).map { String(format: "%02x", $0) }.joined()
+            guard digest == declaredMd5, let decoded = Data(base64Encoded: b64) else { return }
+            out.append((idx, decoded))
+        }
+        return out
     }
 
     private func runAz(_ args: [String]) async throws -> (out: String, err: String, code: Int32) {

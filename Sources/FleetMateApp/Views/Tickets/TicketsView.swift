@@ -668,22 +668,15 @@ struct TicketsView: View {
     // MARK: - Table + Detail (60/40)
 
     private var ticketsTableView: some View {
-        GeometryReader { geometry in
-            let hasSidebar = selectedTicket != nil
-            let sidebarW: CGFloat = 700
-            let contentW: CGFloat = hasSidebar ? geometry.size.width - sidebarW - 1 : geometry.size.width
-            HStack(spacing: 0) {
-                ticketTableContent
-                    .frame(width: contentW)
-                    .clipShape(Rectangle())
-                if hasSidebar {
-                    Divider()
-                    detailSidebarView
-                        .frame(width: sidebarW)
-                        // Opaque fill so the list (and its selection highlight)
-                        // can't bleed under the detail pane at the divider.
-                        .background(Color(nsColor: .windowBackgroundColor))
-                }
+        // HSplitView sizes and clips each pane natively (and is user-resizable),
+        // so neither the list nor the detail content can spill past its pane.
+        HSplitView {
+            ticketTableContent
+                .frame(minWidth: 380)
+            if selectedTicket != nil {
+                detailSidebarView
+                    .frame(minWidth: 440, idealWidth: 660, maxWidth: 900)
+                    .background(Color(nsColor: .windowBackgroundColor))
             }
         }
     }
@@ -691,25 +684,15 @@ struct TicketsView: View {
     // MARK: - Board + Detail
 
     private var ticketsBoardView: some View {
-        GeometryReader { geometry in
-            let hasSidebar = selectedTicket != nil
-            let sidebarW: CGFloat = 700
-            let contentW: CGFloat = hasSidebar ? geometry.size.width - sidebarW - 1 : geometry.size.width
-            HStack(spacing: 0) {
-                ticketBoardContent
-                    .frame(width: contentW)
-                    // The board's horizontal ScrollView draws its content past a
-                    // plain .clipped() bound; clipShape strictly confines it so
-                    // the columns can't bleed under the detail pane.
-                    .clipShape(Rectangle())
-                if hasSidebar {
-                    Divider()
-                    detailSidebarView
-                        .frame(width: sidebarW)
-                        // Opaque fill so nothing behind the pane shows through
-                        // (the detail views themselves have no background).
-                        .background(Color(nsColor: .windowBackgroundColor))
-                }
+        // HSplitView clips the board's greedy horizontal ScrollView to its pane
+        // and the detail to its own, so neither spills past the divider.
+        HSplitView {
+            ticketBoardContent
+                .frame(minWidth: 380)
+            if selectedTicket != nil {
+                detailSidebarView
+                    .frame(minWidth: 440, idealWidth: 660, maxWidth: 900)
+                    .background(Color(nsColor: .windowBackgroundColor))
             }
         }
     }
@@ -1074,7 +1057,10 @@ struct TicketsView: View {
                 .cornerRadius(6)
             }
 
-            HStack(spacing: 8) {
+            // Adaptive grid so these wrap to the pane width instead of forcing
+            // the row wider than the detail pane (which spilled off both edges).
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 260), spacing: 8, alignment: .leading)],
+                      alignment: .leading, spacing: 8) {
                 // Status
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Status")
@@ -1089,7 +1075,7 @@ struct TicketsView: View {
                         }
                     }
                     .labelsHidden()
-                    .fixedSize()
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 // Priority
@@ -1106,7 +1092,7 @@ struct TicketsView: View {
                         }
                     }
                     .labelsHidden()
-                    .fixedSize()
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 // Classification
@@ -1128,7 +1114,7 @@ struct TicketsView: View {
                         }
                     }
                     .labelsHidden()
-                    .fixedSize()
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 // Form
@@ -1150,7 +1136,7 @@ struct TicketsView: View {
                         }
                     }
                     .labelsHidden()
-                    .fixedSize()
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }

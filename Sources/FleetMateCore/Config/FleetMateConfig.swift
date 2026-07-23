@@ -58,7 +58,10 @@ public struct FleetMateConfig: Codable {
 
     // Microsoft Graph settings - shared tenant
     public var graphTenantId: String?
-    public var graphPageSize: Int = 100
+    // Graph caps $top at 1000 for managedDevices; a large page means the fleet
+    // comes back in one round trip instead of many, which matters most over the
+    // elevation transport (each page is a separate exec).
+    public var graphPageSize: Int = 1000
 
     // Azure sign-in (used by `fleetmate login`). These are public directory
     // GUIDs, not secrets, so they live in config.yaml (overridable), never

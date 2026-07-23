@@ -41,9 +41,9 @@ struct EntraUserInspector: View {
     @EnvironmentObject var appState: AppState
     let user: EntraUser
 
-    enum InspectorTab: Hashable { case overview, properties, devices, groups }
+    enum InspectorTab: Hashable { case properties, devices, groups }
 
-    @State private var tab: InspectorTab = .overview
+    @State private var tab: InspectorTab = .properties
     @State private var full: EntraUser?
     @State private var manager: EntraUserRef?
     @State private var devices: [EntraDevice] = []
@@ -57,20 +57,18 @@ struct EntraUserInspector: View {
             header
             Divider()
             Picker("", selection: $tab) {
-                Text("Overview").tag(InspectorTab.overview)
                 Text("Properties").tag(InspectorTab.properties)
                 Text("Devices (\(devices.count))").tag(InspectorTab.devices)
                 Text("Groups (\(groups.count))").tag(InspectorTab.groups)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(maxWidth: 560)
+            .frame(maxWidth: 460)
             .padding(.horizontal)
             .padding(.vertical, 8)
             Divider()
             ScrollView {
                 switch tab {
-                case .overview:   overview
                 case .properties: properties
                 case .devices:    devicesTab
                 case .groups:     groupsTab
@@ -114,27 +112,6 @@ struct EntraUserInspector: View {
                      systemImage: enabled ? "checkmark.circle.fill" : "xmark.circle.fill")
             .foregroundColor(enabled ? .green : .red)
             .font(.callout)
-    }
-
-    // MARK: Overview
-
-    private var overview: some View {
-        propertySection("Summary", [
-            ("User principal name", u.userPrincipalName),
-            ("Object ID", u.id),
-            ("User type", u.userType),
-            ("Email", u.mail),
-            ("Job title", u.jobTitle),
-            ("Department", u.department),
-            ("Company", u.companyName),
-            ("Manager", manager?.displayName),
-            ("Office", u.officeLocation),
-            ("Employee ID", u.employeeId),
-            ("Devices", devices.isEmpty ? nil : "\(devices.count)"),
-            ("Groups", groups.isEmpty ? nil : "\(groups.count)"),
-            ("Created", formatDate(u.createdDateTime)),
-        ])
-        .padding()
     }
 
     // MARK: Properties (full Azure-style)

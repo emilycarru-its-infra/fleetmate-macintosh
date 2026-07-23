@@ -483,16 +483,41 @@ public class GraphService {
         guard let headers = await headers() else { return nil }
 
         let escapedId = userPrincipalNameOrId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? userPrincipalNameOrId
-        let url = "\(baseUrl)/users/\(escapedId)"
+        // Graph returns almost none of the inspector fields (incl. accountEnabled)
+        // by default, so request them explicitly.
+        let url = "\(baseUrl)/users/\(escapedId)?$select=\(EntraUser.inspectorSelect)"
 
         var user: EntraUser = try await fetch(url: url, headers: headers)
-        userCache[cacheKey] = (user, Date().addingTimeInterval(cacheDuration))
 
         if includeGroups {
             user.memberOf = try await getUserGroups(userPrincipalNameOrId)
         }
 
+        userCache[cacheKey] = (user, Date().addingTimeInterval(cacheDuration))
         return user
+    }
+
+    /// The user's manager (nil when none / not permitted). The manager endpoint
+    /// 404s when a user has no manager, which surfaces as a thrown error here.
+    public func getUserManager(_ userPrincipalNameOrId: String) async throws -> EntraUserRef? {
+        guard let headers = await headers() else { return nil }
+        let escapedId = userPrincipalNameOrId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? userPrincipalNameOrId
+        let url = "\(baseUrl)/users/\(escapedId)/manager?$select=id,displayName,userPrincipalName,jobTitle"
+        return try? await fetch(url: url, headers: headers) as EntraUserRef
+    }
+
+    /// Devices the user has registered / signed in to (Entra device objects).
+    public func getUserDevices(_ userPrincipalNameOrId: String) async throws -> [EntraDevice] {
+        guard let headers = await headers() else { return [] }
+        let escapedId = userPrincipalNameOrId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? userPrincipalNameOrId
+        var url = "\(baseUrl)/users/\(escapedId)/registeredDevices"
+        var devices: [EntraDevice] = []
+        while URL(string: url) != nil {
+            let response: EntraDeviceListResponse = try await fetch(url: url, headers: headers)
+            devices.append(contentsOf: response.value)
+            if let nextLink = response.nextLink { url = nextLink } else { break }
+        }
+        return devices
     }
 
     public func getUserGroups(_ userPrincipalNameOrId: String) async throws -> [EntraGroup] {
@@ -532,7 +557,8 @@ public class GraphService {
 
         let filter = "startswith(displayName, '\(query)') or startswith(userPrincipalName, '\(query)') or startswith(mail, '\(query)')"
         let escapedFilter = filter.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filter
-        let url = "\(baseUrl)/users?$filter=\(escapedFilter)&$top=\(limit)"
+        // Explicit $select so the row's enabled/disabled state is correct.
+        let url = "\(baseUrl)/users?$filter=\(escapedFilter)&$top=\(limit)&$select=\(EntraUser.rowSelect)"
 
         let response: EntraUserListResponse = try await fetch(url: url, headers: headers)
         return response.value
@@ -634,15 +660,23 @@ public class GraphService {
         return Array(devices.prefix(limit))
     }
 
-    public func searchGroups(_ query: String, limit: Int = 50) async throws -> [EntraGroup] {
+    public func searchGroups(_ query: String, limit: Int = 999) async throws -> [EntraGroup] {
         guard let headers = await headers() else { return [] }
 
         let filter = "startswith(displayName, '\(query)')"
         let escapedFilter = filter.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filter
-        let url = "\(baseUrl)/groups?$filter=\(escapedFilter)&$top=\(limit)"
+        var url = "\(baseUrl)/groups?$filter=\(escapedFilter)&$top=\(min(limit, config.graphPageSize))"
 
-        let response: EntraGroupListResponse = try await fetch(url: url, headers: headers)
-        return response.value
+        // Paginate: a prefix like "Devices-" matches far more than one page, and
+        // the caller filters the full set client-side (so e.g. "Shared-" can match
+        // "Devices-Shared-*").
+        var groups: [EntraGroup] = []
+        while URL(string: url) != nil, groups.count < limit {
+            let response: EntraGroupListResponse = try await fetch(url: url, headers: headers)
+            groups.append(contentsOf: response.value)
+            if let nextLink = response.nextLink { url = nextLink } else { break }
+        }
+        return Array(groups.prefix(limit))
     }
 
     // MARK: - Entra Writes (group membership, user state)

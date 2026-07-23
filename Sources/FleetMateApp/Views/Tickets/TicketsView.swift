@@ -833,6 +833,10 @@ struct TicketsView: View {
                 }
             }
             .focusable()
+            // Keep keyboard focus for arrow-key navigation but drop the blue
+            // macOS focus ring, whose right edge showed as a vertical bar against
+            // the detail pane.
+            .focusEffectDisabled()
             .onKeyPress(.upArrow) { moveTicketSelection(by: -1); return .handled }
             .onKeyPress(.downArrow) { moveTicketSelection(by: 1); return .handled }
         }

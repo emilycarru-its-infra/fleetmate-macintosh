@@ -675,11 +675,14 @@ struct TicketsView: View {
             HStack(spacing: 0) {
                 ticketTableContent
                     .frame(width: contentW)
-                    .clipped()
+                    .clipShape(Rectangle())
                 if hasSidebar {
                     Divider()
                     detailSidebarView
                         .frame(width: sidebarW)
+                        // Opaque fill so the list (and its selection highlight)
+                        // can't bleed under the detail pane at the divider.
+                        .background(Color(nsColor: .windowBackgroundColor))
                 }
             }
         }
@@ -2173,6 +2176,7 @@ struct FeedEntryRow: View {
                 Text(entry.createdFullName ?? "Unknown")
                     .font(.body)
                     .fontWeight(.semibold)
+                    .foregroundColor(.secondary)
                 Spacer()
                 if entry.isPrivate == true {
                     Text("Private")
@@ -2199,7 +2203,7 @@ struct FeedEntryRow: View {
             if let body = entry.body, !body.isEmpty {
                 Text(TicketsView.decodeHtml(body))
                     .font(.body)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.primary)
                     .textSelection(.enabled)
             }
 
@@ -2217,6 +2221,7 @@ struct FeedEntryRow: View {
                                     Text(reply.createdFullName ?? "Unknown")
                                         .font(.callout)
                                         .fontWeight(.semibold)
+                                        .foregroundColor(.secondary)
                                     Spacer()
                                     if let dateStr = reply.createdDate, let date = TicketsView.parseDate(dateStr) {
                                         Text(formatRelativeDate(date))

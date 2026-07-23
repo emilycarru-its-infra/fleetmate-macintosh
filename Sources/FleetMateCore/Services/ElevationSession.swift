@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import Compression
 
 /// Native reimplementation of the `aze` elevation protocol, so FleetMate has no
 /// dependency on the external `~/bin/aze` script. The container lifecycle and
@@ -146,7 +147,10 @@ public actor ElevationSession {
 
         let chunk = ElevationSession.chunkBytes
         let file = "/tmp/aze_\(UUID().uuidString)"
-        var meta: (code: Int32, total: Int, md5: String)?
+        // The chunked, served file holds the raw-DEFLATE-compressed payload;
+        // meta carries both the compressed size/hash (to reassemble the transfer)
+        // and the original size/hash (to verify after inflation).
+        var meta: (code: Int32, compTotal: Int, compMd5: String, rawLen: Int, rawMd5: String)?
         var chunks: [Int: Data] = [:]
 
         // Phase 1 — produce: run the command into the file and emit META + every
@@ -172,7 +176,7 @@ public actor ElevationSession {
             lastError = ElevationError.noOutputMarkers(String(text.prefix(200)))
         }
         guard let m = meta else { throw lastError }
-        let expected = m.total == 0 ? 0 : (m.total + chunk - 1) / chunk
+        let expected = m.compTotal == 0 ? 0 : (m.compTotal + chunk - 1) / chunk
 
         // Phase 2 — re-serve only the chunks the pty mangled, from the same file.
         for _ in 0..<ElevationSession.maxChunkPasses {
@@ -188,14 +192,23 @@ public actor ElevationSession {
             throw ElevationError.corruptedOutput(expected: expected, actual: expected - stillMissing.count)
         }
 
-        var assembled = Data()
-        assembled.reserveCapacity(m.total)
-        for i in 0..<expected { assembled.append(chunks[i]!) }
-        let digest = Insecure.MD5.hash(data: assembled).map { String(format: "%02x", $0) }.joined()
-        guard assembled.count == m.total, digest == m.md5 else {
-            throw ElevationError.corruptedOutput(expected: m.total, actual: assembled.count)
+        var compressed = Data()
+        compressed.reserveCapacity(m.compTotal)
+        for i in 0..<expected { compressed.append(chunks[i]!) }
+        let compDigest = Insecure.MD5.hash(data: compressed).map { String(format: "%02x", $0) }.joined()
+        guard compressed.count == m.compTotal, compDigest == m.compMd5 else {
+            throw ElevationError.corruptedOutput(expected: m.compTotal, actual: compressed.count)
         }
-        return (String(decoding: assembled, as: UTF8.self), m.code)
+
+        // Inflate (raw DEFLATE) and verify against the original size + hash.
+        guard let raw = ElevationSession.inflateRaw(compressed, expectedSize: m.rawLen) else {
+            throw ElevationError.corruptedOutput(expected: m.rawLen, actual: -1)
+        }
+        let rawDigest = Insecure.MD5.hash(data: raw).map { String(format: "%02x", $0) }.joined()
+        guard raw.count == m.rawLen, rawDigest == m.rawMd5 else {
+            throw ElevationError.corruptedOutput(expected: m.rawLen, actual: raw.count)
+        }
+        return (String(decoding: raw, as: UTF8.self), m.code)
     }
 
     /// Open one exec websocket and run a single self-terminating command
@@ -261,7 +274,7 @@ public actor ElevationSession {
 
     // MARK: - Helpers
 
-    static let metaRegex = try! NSRegularExpression(pattern: "<<<AZE_META:(\\d+):(\\d+):([0-9a-f]+)>>>")
+    static let metaRegex = try! NSRegularExpression(pattern: "<<<AZE_META:(\\d+):(\\d+):([0-9a-f]+):(\\d+):([0-9a-f]+)>>>")
     static let chunkRegex = try! NSRegularExpression(pattern: "<<<AZE_C:(\\d+):([0-9a-f]+)>>>([A-Za-z0-9+/=]*)<<<CE>>>")
 
     /// Produce command: capture stdout to a stable file (folding in stderr only on
@@ -276,14 +289,21 @@ public actor ElevationSession {
     /// the client would match it and return before the command even runs.
     static let markerVars = "L='<<<'; R='>>>'; "
 
+    /// Compress the command's stdout with raw DEFLATE (via python's zlib, present
+    /// in the azure-cli image) before chunking — a JSON device page shrinks ~8×,
+    /// so far fewer bytes cross the lossy pty. `$f` holds the compressed stream
+    /// that gets chunked and served; META carries the compressed size/MD5 (to
+    /// rebuild the transfer) and the original size/MD5 (to verify after inflate).
     static func buildProduce(command: String, file: String, chunk: Int) -> String {
         ElevationSession.markerVars
             + "find /tmp -maxdepth 1 -name 'aze_*' -mmin +30 -delete 2>/dev/null; "
-            + "f=\(file); ( \(command) ) >\"$f\" 2>/tmp/aze_err; c=$?; "
-            + "[ \"$c\" -ne 0 ] && cat /tmp/aze_err >>\"$f\"; "
-            + "t=$(wc -c <\"$f\" | tr -d ' '); m=$(md5sum \"$f\" | cut -d' ' -f1); "
-            + "printf '\\n%sAZE_META:%s:%s:%s%s\\n' \"$L\" \"$c\" \"$t\" \"$m\" \"$R\"; "
-            + "o=0; i=0; while [ \"$o\" -lt \"$t\" ]; do "
+            + "r=\(file).raw; f=\(file); ( \(command) ) >\"$r\" 2>/tmp/aze_err; c=$?; "
+            + "[ \"$c\" -ne 0 ] && cat /tmp/aze_err >>\"$r\"; "
+            + "python3 -c 'import zlib,sys; d=sys.stdin.buffer.read(); co=zlib.compressobj(6,zlib.DEFLATED,-15); sys.stdout.buffer.write(co.compress(d)+co.flush())' <\"$r\" >\"$f\"; "
+            + "rt=$(wc -c <\"$r\" | tr -d ' '); rm=$(md5sum \"$r\" | cut -d' ' -f1); "
+            + "ct=$(wc -c <\"$f\" | tr -d ' '); cm=$(md5sum \"$f\" | cut -d' ' -f1); "
+            + "printf '\\n%sAZE_META:%s:%s:%s:%s:%s%s\\n' \"$L\" \"$c\" \"$ct\" \"$cm\" \"$rt\" \"$rm\" \"$R\"; "
+            + "o=0; i=0; while [ \"$o\" -lt \"$ct\" ]; do "
             + "d=$(tail -c +$((o+1)) \"$f\" | head -c \(chunk) | base64 | tr -d '\\n'); "
             + "k=$(printf %s \"$d\" | md5sum | cut -d' ' -f1); "
             + "printf '%sAZE_C:%s:%s%s%s%sCE%s\\n' \"$L\" \"$i\" \"$k\" \"$R\" \"$d\" \"$L\" \"$R\"; "
@@ -291,7 +311,7 @@ public actor ElevationSession {
             + "printf '%sAZE_DONE%s\\n' \"$L\" \"$R\"; exit\n"
     }
 
-    /// Re-serve specific chunk indices from the file the produce step wrote.
+    /// Re-serve specific chunk indices from the compressed file produce wrote.
     static func buildReserve(file: String, chunk: Int, indices: [Int]) -> String {
         let list = indices.map(String.init).joined(separator: " ")
         return ElevationSession.markerVars
@@ -303,19 +323,40 @@ public actor ElevationSession {
             + "done; printf '%sAZE_DONE%s\\n' \"$L\" \"$R\"; exit\n"
     }
 
+    /// Inflate a raw-DEFLATE stream (RFC 1951, matching python's `wbits=-15`).
+    static func inflateRaw(_ data: Data, expectedSize: Int) -> Data? {
+        if expectedSize == 0 { return Data() }
+        guard !data.isEmpty else { return nil }
+        var out = Data(count: expectedSize)
+        let written = out.withUnsafeMutableBytes { dst -> Int in
+            data.withUnsafeBytes { src -> Int in
+                compression_decode_buffer(
+                    dst.baseAddress!.assumingMemoryBound(to: UInt8.self), expectedSize,
+                    src.baseAddress!.assumingMemoryBound(to: UInt8.self), data.count,
+                    nil, COMPRESSION_ZLIB)
+            }
+        }
+        return written == expectedSize ? out : nil
+    }
+
     static func stripAnsi(_ s: String) -> String {
         guard let re = try? NSRegularExpression(pattern: "\\x1b\\[[0-9;?]*[a-zA-Z]") else { return s }
         return re.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: "")
     }
 
-    /// Parse the produce header: (exit code, total byte length, full-payload MD5).
-    static func parseMeta(_ text: String) -> (code: Int32, total: Int, md5: String)? {
+    /// Parse the produce header: exit code, compressed size + MD5 (the chunked
+    /// transfer), and original size + MD5 (verified after inflation).
+    static func parseMeta(_ text: String) -> (code: Int32, compTotal: Int, compMd5: String, rawLen: Int, rawMd5: String)? {
         let range = NSRange(text.startIndex..., in: text)
         guard let m = ElevationSession.metaRegex.firstMatch(in: text, range: range),
               let codeRange = Range(m.range(at: 1), in: text),
-              let totalRange = Range(m.range(at: 2), in: text),
-              let md5Range = Range(m.range(at: 3), in: text) else { return nil }
-        return (Int32(text[codeRange]) ?? 0, Int(text[totalRange]) ?? 0, String(text[md5Range]))
+              let compTotalRange = Range(m.range(at: 2), in: text),
+              let compMd5Range = Range(m.range(at: 3), in: text),
+              let rawLenRange = Range(m.range(at: 4), in: text),
+              let rawMd5Range = Range(m.range(at: 5), in: text) else { return nil }
+        return (Int32(text[codeRange]) ?? 0,
+                Int(text[compTotalRange]) ?? 0, String(text[compMd5Range]),
+                Int(text[rawLenRange]) ?? 0, String(text[rawMd5Range]))
     }
 
     /// Extract every intact chunk: (index, decoded bytes). A chunk is kept only if

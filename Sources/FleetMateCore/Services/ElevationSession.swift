@@ -98,7 +98,23 @@ public actor ElevationSession {
 
     /// Run a single-line command inside the session and return its stdout +
     /// exit code, mirroring `aze run`.
+    ///
+    /// SECURITY INVARIANT: this is a general-purpose primitive that will run *any*
+    /// bash string inside the privileged container. Callers MUST pass only commands
+    /// produced by the sanctioned builder (`AzeGraphTransport.buildAzRestCommand`)
+    /// or the fixed `AzeGraphTransport.loginCommand`. Never pass free-form or
+    /// user-supplied text, and never a token-extraction command such as
+    /// `az account get-access-token` — the elevation model deliberately keeps the
+    /// identity's token inside Azure and never surfaces it to the client. The guard
+    /// below is a defensive backstop, not a substitute for that contract.
     public func exec(_ domain: GraphDomain, command: String, ttlHours: Int? = nil) async throws -> (out: String, code: Int32) {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("az ") else {
+            throw ElevationError.commandRejected("command must be an az invocation built by the sanctioned builder")
+        }
+        guard !trimmed.contains("get-access-token") else {
+            throw ElevationError.commandRejected("token extraction is not permitted in an elevation session")
+        }
         try await ensureSession(domain, ttlHours: ttlHours ?? ElevationSession.defaultTtlHours)
         let name = ElevationSession.sessionName(for: domain)
 
@@ -157,9 +173,24 @@ public actor ElevationSession {
 
         let text = ElevationSession.stripAnsi(raw).replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         guard let parsed = ElevationSession.parseMarkers(text) else {
-            throw ElevationError.noOutputMarkers(text)
+            throw ElevationError.noOutputMarkers(ElevationSession.redactedBodySummary(text))
         }
         return parsed
+    }
+
+    /// Build a non-sensitive summary of a session body that failed to parse. The
+    /// raw body is privileged Graph JSON (device/user/directory records) and must
+    /// never be embedded in a thrown error or log line. We surface only a byte
+    /// count and a fixed "output withheld" notice; a bounded last-200-char tail is
+    /// appended only when `FLEETMATE_ELEVATION_DEBUG` is set in the environment.
+    static func redactedBodySummary(_ text: String) -> String {
+        let byteCount = text.utf8.count
+        var summary = "\(byteCount) bytes; output withheld — see transcript"
+        if ProcessInfo.processInfo.environment["FLEETMATE_ELEVATION_DEBUG"] != nil {
+            let tail = String(text.suffix(200))
+            summary += "\ntail (debug): \(tail)"
+        }
+        return summary
     }
 
     // MARK: - Helpers
@@ -234,6 +265,7 @@ public enum ElevationError: Error, CustomStringConvertible {
     case createFailed(String)
     case execHandshakeFailed(String)
     case noOutputMarkers(String)
+    case commandRejected(String)
     case azLaunchFailed(String)
 
     public var description: String {
@@ -241,7 +273,8 @@ public enum ElevationError: Error, CustomStringConvertible {
         case .identityResolutionFailed(let d): return "Could not resolve managed identity for domain \(d.rawValue)"
         case .createFailed(let m): return "Failed to create elevation session: \(m)"
         case .execHandshakeFailed(let m): return "Exec handshake failed: \(m)"
-        case .noOutputMarkers(let t): return "Could not find output markers in session output:\n\(t)"
+        case .noOutputMarkers(let summary): return "Could not find output markers in session output (\(summary))"
+        case .commandRejected(let m): return "Elevation command rejected: \(m)"
         case .azLaunchFailed(let m): return "Could not launch az: \(m)"
         }
     }

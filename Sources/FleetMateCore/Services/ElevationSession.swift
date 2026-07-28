@@ -101,6 +101,15 @@ public actor ElevationSession {
     /// Run a single-line command inside the session and return its stdout +
     /// exit code, mirroring `aze run`.
     ///
+    /// SECURITY INVARIANT: this is a general-purpose primitive that will run *any*
+    /// bash string inside the privileged container. Callers MUST pass only commands
+    /// produced by the sanctioned builder (`AzeGraphTransport.buildAzRestCommand`)
+    /// or the fixed `AzeGraphTransport.loginCommand`. Never pass free-form or
+    /// user-supplied text, and never a token-extraction command such as
+    /// `az account get-access-token` — the elevation model deliberately keeps the
+    /// identity's token inside Azure and never surfaces it to the client. The guard
+    /// below is a defensive backstop, not a substitute for that contract.
+    ///
     /// The exec container cannot service concurrent commands: every exec opens a
     /// pseudo-terminal on the same session, and two commands running at once
     /// interleave their output on that shared stream, corrupting both payloads
@@ -110,6 +119,16 @@ public actor ElevationSession {
     /// through a process-wide gate. Different domains hit different containers
     /// and still run concurrently.
     public func exec(_ domain: GraphDomain, command: String, ttlHours: Int? = nil) async throws -> (out: String, code: Int32) {
+        // Reject before taking the gate — a rejected command should not queue
+        // behind an in-flight one.
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("az ") else {
+            throw ElevationError.commandRejected("command must be an az invocation built by the sanctioned builder")
+        }
+        guard !trimmed.contains("get-access-token") else {
+            throw ElevationError.commandRejected("token extraction is not permitted in an elevation session")
+        }
+
         await ElevationSessionGate.shared.acquire(domain)
         do {
             let result = try await runExec(domain, command: command, ttlHours: ttlHours)
@@ -173,7 +192,9 @@ public actor ElevationSession {
                 for (i, d) in ElevationSession.parseChunks(text) { chunks[i] = d }
                 break
             }
-            lastError = ElevationError.noOutputMarkers(String(text.prefix(200)))
+            // Never put the capture itself in the error — even the chunk envelope
+            // is base64 of privileged Graph JSON.
+            lastError = ElevationError.noOutputMarkers(ElevationSession.redactedBodySummary(text))
         }
         guard let m = meta else { throw lastError }
         let expected = m.compTotal == 0 ? 0 : (m.compTotal + chunk - 1) / chunk
@@ -269,7 +290,25 @@ public actor ElevationSession {
             }
             if sentCommand, raw.range(of: "<<<AZE_DONE>>>") != nil { break }
         }
+        // Marker parsing moved up into `runExec`: under the chunked protocol this
+        // returns a META/chunk envelope, not the final body, so the websocket layer
+        // hands back raw text and the caller decides what a valid capture looks like.
         return ElevationSession.stripAnsi(raw).replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+    }
+
+    /// Build a non-sensitive summary of a session body that failed to parse. The
+    /// raw body is privileged Graph JSON (device/user/directory records) and must
+    /// never be embedded in a thrown error or log line. We surface only a byte
+    /// count and a fixed "output withheld" notice; a bounded last-200-char tail is
+    /// appended only when `FLEETMATE_ELEVATION_DEBUG` is set in the environment.
+    static func redactedBodySummary(_ text: String) -> String {
+        let byteCount = text.utf8.count
+        var summary = "\(byteCount) bytes; output withheld — see transcript"
+        if ProcessInfo.processInfo.environment["FLEETMATE_ELEVATION_DEBUG"] != nil {
+            let tail = String(text.suffix(200))
+            summary += "\ntail (debug): \(tail)"
+        }
+        return summary
     }
 
     // MARK: - Helpers
@@ -473,6 +512,7 @@ public enum ElevationError: Error, CustomStringConvertible {
     case execHandshakeFailed(String)
     case noOutputMarkers(String)
     case corruptedOutput(expected: Int, actual: Int)
+    case commandRejected(String)
     case azLaunchFailed(String)
 
     /// A capture that the pty mangled — worth re-running the exec. Handshake and
@@ -489,8 +529,9 @@ public enum ElevationError: Error, CustomStringConvertible {
         case .identityResolutionFailed(let d): return "Could not resolve managed identity for domain \(d.rawValue)"
         case .createFailed(let m): return "Failed to create elevation session: \(m)"
         case .execHandshakeFailed(let m): return "Exec handshake failed: \(m)"
-        case .noOutputMarkers(let t): return "Could not find output markers in session output:\n\(t)"
+        case .noOutputMarkers(let summary): return "Could not find output markers in session output (\(summary))"
         case .corruptedOutput(let expected, let actual): return "Elevation output truncated by the exec bridge (expected \(expected) bytes, got \(actual))"
+        case .commandRejected(let m): return "Elevation command rejected: \(m)"
         case .azLaunchFailed(let m): return "Could not launch az: \(m)"
         }
     }

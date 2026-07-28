@@ -2294,34 +2294,17 @@ struct TicketStatusBadge: View {
 
 // MARK: - View Mode Pill Toggle
 
+/// Thin wrapper preserving the existing call site; the control itself now lives
+/// in SegmentedPill so Projects renders an identical one.
 struct ViewModePill: View {
     @Binding var selection: TicketViewMode
-    @Namespace private var pillNS
 
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach([TicketViewMode.table, .board], id: \.self) { mode in
-                Text(mode == .table ? "List" : "Board")
-                    .appFont(fixed: 12, weight: selection == mode ? .semibold : .regular)
-                    .foregroundStyle(selection == mode ? .primary : .secondary)
-                    .frame(width: 56, height: 24)
-                    .background {
-                        if selection == mode {
-                            Capsule()
-                                .fill(.primary.opacity(0.15))
-                                .matchedGeometryEffect(id: "pill", in: pillNS)
-                        }
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        withAnimation(.smooth(duration: 0.2)) {
-                            selection = mode
-                        }
-                    }
-            }
-        }
-        .padding(3)
-        .background(.secondary.opacity(0.08), in: Capsule())
+        SegmentedPill(
+            selection: $selection,
+            options: [.table, .board],
+            label: { $0 == .table ? "List" : "Board" }
+        )
     }
 }
 

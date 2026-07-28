@@ -38,15 +38,22 @@ class AuthManager: ObservableObject {
             systems[.tdx] = AuthSystemStatus(systemId: .tdx, state: .configured)
         }
 
-        // Projects — DevOps
-        if config.isDevOpsConfigured {
-            systems[.devops] = AuthSystemStatus(systemId: .devops, state: .configured)
-        }
+        // Projects — DevOps and GitHub are always listed, even before they are
+        // configured. Gating them on their own config made the panel unusable:
+        // the Settings ▸ Projects toggle sends you here to enter the DevOps
+        // organization, but with no row to edit there was nothing to fill in and
+        // the toggle silently did nothing. An unconfigured row shows as
+        // `.notConfigured` with its edit button, which is the way in.
+        systems[.devops] = AuthSystemStatus(
+            systemId: .devops,
+            state: config.isDevOpsConfigured ? .configured : .notConfigured
+        )
 
-        // Projects — GitHub
-        if let gh = config.tasks?.providers.github, gh.enabled {
-            systems[.github] = AuthSystemStatus(systemId: .github, state: .configured)
-        }
+        // GitHub authenticates through the `gh` CLI / Keychain rather than
+        // anything stored here, so `enabled` says nothing about whether it works
+        // — probeGitHub() resolves the real state. Listing it unconditionally is
+        // what lets the panel report a GitHub session that is already live.
+        systems[.github] = AuthSystemStatus(systemId: .github, state: .configured)
 
         // Projects — Gitea
         if let gt = config.tasks?.providers.gitea, gt.enabled {

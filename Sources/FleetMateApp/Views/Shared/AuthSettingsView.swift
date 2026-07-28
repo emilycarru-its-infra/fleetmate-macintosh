@@ -214,9 +214,17 @@ struct AuthSettingsView: View {
 
         case .devops:
             detailGrid {
-                detailRow("Auth method", "Platform SSO (OAuth2 PKCE)")
-                if let org  = cfg.devopsOrganization { detailRow("Organization", org) }
-                if let proj = cfg.devopsProject      { detailRow("Project",      proj) }
+                detailRow("Auth method", "Secretless — az sign-in (MSAL cache)")
+                if let org = cfg.devopsOrganization {
+                    detailRow("Organization", org)
+                } else {
+                    detailRow("Organization", "not set — required", .orange)
+                }
+                if let proj = cfg.devopsProject {
+                    detailRow("Project", proj)
+                } else if cfg.devopsOrganization != nil {
+                    detailRow("Project", "auto-discovered", .secondary)
+                }
                 if let user = appState.devOpsSsoAuthenticated ? appState.devOpsSsoUserName : system.user {
                     detailRow("Signed in as", user, .green)
                 }

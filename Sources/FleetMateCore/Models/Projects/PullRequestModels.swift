@@ -14,6 +14,14 @@ public enum PullRequestSource: String, Codable, Sendable, CaseIterable {
         }
     }
 
+    /// Compact label for filter pills, where "Azure DevOps" is too wide.
+    public var shortName: String {
+        switch self {
+        case .azureDevOps: return "DevOps"
+        case .gitHub:      return "GitHub"
+        }
+    }
+
     /// SF Symbol used as the row badge.
     public var symbolName: String {
         switch self {

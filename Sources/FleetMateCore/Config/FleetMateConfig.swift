@@ -639,13 +639,17 @@ public struct FleetMateConfig: Codable {
         return graphTenantId != nil && (isDevicesGraphConfigured || isSystemsGraphConfigured || graphClientId != nil)
     }
     
-    /// Check if Devices Graph (Intune) is configured
+    /// Check if Devices Graph (Intune) is configured. In aze mode the DevOps-Devices
+    /// managed identity authenticates inside the session — no local creds needed.
     public var isDevicesGraphConfigured: Bool {
+        if graphUsesAze { return true }
         return graphTenantId != nil && devicesGraphId != nil && devicesGraphSecret != nil
     }
-    
-    /// Check if Systems Graph (Entra users/groups) is configured
+
+    /// Check if Systems Graph (Entra users/groups) is configured. In aze mode the
+    /// DevOps-Identity managed identity authenticates inside the session.
     public var isSystemsGraphConfigured: Bool {
+        if graphUsesAze { return true }
         return graphTenantId != nil && systemsGraphId != nil && systemsGraphSecret != nil
     }
 

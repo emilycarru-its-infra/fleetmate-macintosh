@@ -175,12 +175,26 @@ struct AuthSettingsView: View {
 
         case .snipe:
             detailGrid {
-                let isSso = cfg.snipeSsoEnabled || cfg.snipeAuthMethod == .browserSSO
-                detailRow("Auth method", isSso ? "Platform SSO (Browser)" : "API key (Bearer token)")
+                // Three states, not two. OIDC is the default since the fork's
+                // guard shipped, but this row only knew "browser SSO" and "API
+                // key" — and defaulted to claiming browser SSO, which is how a
+                // healthy OIDC Snipe came to be labelled with a flow it wasn't
+                // using and marked failed when that flow timed out.
+                let usesOidc = (cfg.snipeOidcAudience?.isEmpty == false)
+                let isCookieSso = !usesOidc && (cfg.snipeSsoEnabled || cfg.snipeAuthMethod == .browserSSO)
+
+                if usesOidc {
+                    detailRow("Auth method", "SSO bearer (OIDC)")
+                } else {
+                    detailRow("Auth method", isCookieSso ? "Platform SSO (Browser)" : "API key (Bearer token)")
+                }
                 if let url = cfg.snipeUrl {
                     detailRow("Instance URL", url)
                 }
-                if isSso {
+                if usesOidc {
+                    detailRow("Audience", cfg.snipeOidcAudience.map { shortId($0) } ?? "")
+                    if let user = system.user { detailRow("Signed in as", user, .green) }
+                } else if isCookieSso {
                     if let user = appState.snipeSsoAuthenticated ? appState.snipeAuthenticatedUserName : system.user {
                         detailRow("SSO signed in as", user, .green)
                     }
@@ -214,7 +228,12 @@ struct AuthSettingsView: View {
 
         case .devops:
             detailGrid {
-                detailRow("Auth method", "Secretless — az sign-in (MSAL cache)")
+                // Deliberately not phrased like the Graph rows' "Secretless — az
+                // elevation". Azure DevOps does NOT go through elevation and must
+                // not: every commit, pull request and work-item edit has to be
+                // attributed to the operator's own @ecuad.ca account, not to a
+                // managed identity. The token comes straight from `az login`.
+                detailRow("Auth method", "Your az sign-in — no elevation")
                 if let org = cfg.devopsOrganization {
                     detailRow("Organization", org)
                 } else {
@@ -225,8 +244,18 @@ struct AuthSettingsView: View {
                 } else if cfg.devopsOrganization != nil {
                     detailRow("Project", "auto-discovered", .secondary)
                 }
-                if let user = appState.devOpsSsoAuthenticated ? appState.devOpsSsoUserName : system.user {
-                    detailRow("Signed in as", user, .green)
+                // Show the UPN, not just a display name — the point is to make it
+                // visible *which* account DevOps will attribute work to.
+                let signedInAs = appState.devOpsSsoAuthenticated
+                    ? (appState.devOpsSsoUserEmail ?? appState.devOpsSsoUserName)
+                    : system.user
+                if let signedInAs {
+                    detailRow("Signed in as", signedInAs, .green)
+                }
+                if let name = appState.devOpsSsoUserName,
+                   appState.devOpsSsoUserEmail != nil,
+                   name != appState.devOpsSsoUserEmail {
+                    detailRow("Attributed to", name, .secondary)
                 }
                 if case .failed(let msg) = system.state {
                     detailRow("Error", msg, .red)

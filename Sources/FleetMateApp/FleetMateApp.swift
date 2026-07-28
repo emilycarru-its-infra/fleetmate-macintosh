@@ -530,8 +530,19 @@ class AppState: ObservableObject {
 
             self.ssoViewModel = nil
             hiddenWindow.close()
-            dbg.warn("[SSO Phase 1.5] Headless WKWebView SSO FAILED or timed out — auth unavailable (no interactive fallback)", category: "tdx-sso")
-            self.authManager.update(.tdx, state: .failed(message: "Silent SSO failed"))
+            // Deliberately does NOT touch the TDX auth badge. TeamDynamix's API
+            // supports no Entra/OAuth login at all — `/api/auth/loginsso` is
+            // internal to TDX's own client-side JS and mints no portable token —
+            // so browser SSO is not, and cannot become, TDX's auth path. That is
+            // the service-account JWT (BEID + WebServicesKey), which probeAll
+            // verifies independently.
+            //
+            // Reporting a failure here was a race the badge lost: this fires at
+            // ~28s while the probe, queued behind the Graph elevation warm-up,
+            // lands at ~68s. Whichever finished last won, which is how the panel
+            // came to show "Failed: Silent SSO failed" directly above a green
+            // "signed in as Service Account".
+            dbg.warn("[SSO Phase 1.5] Headless WKWebView SSO FAILED or timed out — TDX auth is unaffected (service-account JWT is the supported path)", category: "tdx-sso")
         }
     }
 
@@ -705,7 +716,7 @@ class AppState: ObservableObject {
             self.devOpsSsoViewModel = nil
             hiddenWindow.close()
             dbg.warn("[DevOps SSO Phase 1.5] Headless SSO FAILED or timed out — auth unavailable (no interactive fallback)", category: "devops-sso")
-            self.authManager.update(.devops, state: .failed(message: "Silent SSO failed"))
+            self.authManager.reportOptionalAuthFailure(.devops, message: "Silent SSO failed")
         }
     }
 
@@ -831,7 +842,7 @@ class AppState: ObservableObject {
             self.snipeSsoService = nil
             hiddenWindow.close()
             dbg.warn("[Snipe SSO Phase 1.5] Headless SSO FAILED or timed out", category: "snipe-sso")
-            self.authManager.update(.snipe, state: .failed(message: "Silent SSO failed"))
+            self.authManager.reportOptionalAuthFailure(.snipe, message: "Silent SSO failed")
         }
     }
 

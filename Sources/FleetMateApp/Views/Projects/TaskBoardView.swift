@@ -47,11 +47,11 @@ struct TaskStateColumn: View {
             // Column header
             HStack {
                 Text(state.displayName)
-                    .font(.headline)
+                    .appFont(.headline)
                     .foregroundColor(.primary)
                 Spacer()
                 Text("\(tasks.count)")
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                     .foregroundColor(.secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
@@ -109,7 +109,7 @@ struct TaskBoardCard: View {
             
             // Title
             Text(task.title)
-                .font(.subheadline)
+                .appFont(.subheadline)
                 .fontWeight(.medium)
                 .lineLimit(2)
                 .foregroundColor(.primary)
@@ -118,7 +118,7 @@ struct TaskBoardCard: View {
             HStack(spacing: 8) {
                 if let bucket = task.bucket {
                     Text(bucket)
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color.secondary.opacity(0.2))
@@ -134,7 +134,7 @@ struct TaskBoardCard: View {
                     } icon: {
                         Image(systemName: "person.fill")
                     }
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                 }
             }
@@ -143,9 +143,9 @@ struct TaskBoardCard: View {
             if let due = task.dueDate {
                 HStack(spacing: 4) {
                     Image(systemName: "calendar")
-                        .font(.caption2)
+                        .appFont(.caption2)
                     Text(due, style: .date)
-                        .font(.caption)
+                        .appFont(.caption)
                 }
                 .foregroundColor(due < Date() ? .red : .secondary)
             }
@@ -177,9 +177,9 @@ struct TaskProviderBadge: View {
         
         HStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.caption2)
+                .appFont(.caption2)
             Text(provider)
-                .font(.caption2)
+                .appFont(.caption2)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
@@ -203,7 +203,7 @@ struct TaskPriorityBadge: View {
         }()
         
         Text(label)
-            .font(.caption2)
+            .appFont(.caption2)
             .fontWeight(.medium)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)

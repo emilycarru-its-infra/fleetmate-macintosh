@@ -65,7 +65,7 @@ struct FilterPanelView<Category: FilterCategoryProtocol>: View {
             // Header
             HStack {
                 Text("Filters")
-                    .font(.headline)
+                    .appFont(.headline)
                 Spacer()
                 if filters.hasActiveFilters {
                     Button("Clear All") { filters.clearAll() }
@@ -102,10 +102,10 @@ struct FilterPanelView<Category: FilterCategoryProtocol>: View {
                     HStack(spacing: 6) {
                         Image(systemName: "magnifyingglass")
                             .foregroundStyle(.secondary)
-                            .font(.caption)
+                            .appFont(.caption)
                         TextField("Search...", text: $searchText)
                             .textFieldStyle(.plain)
-                            .font(.caption)
+                            .appFont(.caption)
                         if !searchText.isEmpty {
                             Button(action: { searchText = "" }) {
                                 Image(systemName: "xmark.circle.fill")
@@ -128,7 +128,7 @@ struct FilterPanelView<Category: FilterCategoryProtocol>: View {
                             }
                             if filteredValues.isEmpty {
                                 Text("No matching values")
-                                    .font(.caption)
+                                    .appFont(.caption)
                                     .foregroundStyle(.tertiary)
                                     .padding(12)
                             }
@@ -148,12 +148,12 @@ struct FilterPanelView<Category: FilterCategoryProtocol>: View {
         Button(action: { filters.selectedCategory = category }) {
             HStack(spacing: 8) {
                 Text(category.rawValue)
-                    .font(.system(size: 12, weight: filters.selectedCategory == category ? .semibold : .regular))
+                    .appFont(fixed: 12, weight: filters.selectedCategory == category ? .semibold : .regular)
                     .foregroundStyle(filters.selectedCategory == category ? .primary : .secondary)
                 Spacer()
                 if filters.isActive(category) {
                     Text("\(filters.activeCount(category))")
-                        .font(.system(size: 10, weight: .bold))
+                        .appFont(fixed: 10, weight: .bold)
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
@@ -176,9 +176,9 @@ struct FilterPanelView<Category: FilterCategoryProtocol>: View {
             HStack(spacing: 8) {
                 Image(systemName: isSelected ? "checkmark.square.fill" : "square")
                     .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-                    .font(.system(size: 13))
+                    .appFont(fixed: 13)
                 Text(value.htmlDecoded)
-                    .font(.system(size: 12))
+                    .appFont(fixed: 12)
                     .lineLimit(1)
                 Spacer()
             }

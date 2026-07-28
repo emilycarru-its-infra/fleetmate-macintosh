@@ -40,13 +40,13 @@ struct GenericTaskSidebarView: View {
             HStack {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .medium))
+                        .appFont(fixed: 13, weight: .medium)
                 }
                 .buttonStyle(.plain)
                 .help("Close sidebar")
 
                 Text(task.provider.uppercased())
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                 Spacer()
                 if let url = task.externalUrl, let urlObj = URL(string: url) {
@@ -64,7 +64,7 @@ struct GenericTaskSidebarView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     // Title
                     Text(task.title)
-                        .font(.title3)
+                        .appFont(.title3)
                         .fontWeight(.semibold)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -73,7 +73,7 @@ struct GenericTaskSidebarView: View {
                         StateBadge(state: task.state)
                         if let bucket = task.bucket {
                             Text(bucket)
-                                .font(.caption)
+                                .appFont(.caption)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
                                 .background(Color.secondary.opacity(0.15))
@@ -87,7 +87,7 @@ struct GenericTaskSidebarView: View {
                             FlowLayout(spacing: 6) {
                                 ForEach(task.labels, id: \.self) { label in
                                     Text(label)
-                                        .font(.caption)
+                                        .appFont(.caption)
                                         .padding(.horizontal, 8)
                                         .padding(.vertical, 4)
                                         .background(Color.accentColor.opacity(0.15))
@@ -100,7 +100,7 @@ struct GenericTaskSidebarView: View {
                     // Assignees
                     if !task.assignees.isEmpty {
                         SidebarSection(title: "Assignees", icon: "person.2") {
-                            ForEach(task.assignees, id: \.self) { Text($0).font(.subheadline) }
+                            ForEach(task.assignees, id: \.self) { Text($0).appFont(.subheadline) }
                         }
                     }
 
@@ -117,16 +117,16 @@ struct GenericTaskSidebarView: View {
                         LabeledContent("Created") {
                             Text(task.createdAt, style: .date)
                         }
-                        .font(.subheadline)
+                        .appFont(.subheadline)
                         LabeledContent("Updated") {
                             Text(task.updatedAt, style: .date)
                         }
-                        .font(.subheadline)
+                        .appFont(.subheadline)
                         if let closed = task.closedAt {
                             LabeledContent("Closed") {
                                 Text(closed, style: .date)
                             }
-                            .font(.subheadline)
+                            .appFont(.subheadline)
                         }
                     }
                 }
@@ -148,7 +148,7 @@ struct StateBadge: View {
                 .fill(color)
                 .frame(width: 8, height: 8)
             Text(state.displayName)
-                .font(.caption)
+                .appFont(.caption)
                 .fontWeight(.medium)
         }
         .padding(.horizontal, 8)
@@ -174,7 +174,7 @@ struct SidebarSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label(title, systemImage: icon)
-                .font(.caption)
+                .appFont(.caption)
                 .fontWeight(.semibold)
                 .foregroundColor(.secondary)
                 .textCase(.uppercase)

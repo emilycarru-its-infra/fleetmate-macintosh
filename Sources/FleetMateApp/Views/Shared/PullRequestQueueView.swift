@@ -108,7 +108,7 @@ struct PullRequestQueueSection: View {
 
             ForEach(model.errors) { error in
                 Label("\(error.source.displayName): \(error.message)", systemImage: "exclamationmark.triangle")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.orange)
                     .lineLimit(2)
             }
@@ -126,7 +126,7 @@ struct PullRequestQueueSection: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Text("My pull requests").font(.headline)
+            Text("My pull requests").appFont(.headline)
 
             if model.isLoading {
                 ProgressView().controlSize(.mini)
@@ -142,7 +142,7 @@ struct PullRequestQueueSection: View {
 
             Button(action: { model.load(appState: appState, force: true) }) {
                 Image(systemName: "arrow.clockwise")
-                    .font(.caption)
+                    .appFont(.caption)
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
@@ -156,8 +156,8 @@ struct PullRequestQueueSection: View {
         let count = model.queue.pullRequests.filter { $0.source == source }.count
         return Button(action: { model.toggle(source) }) {
             HStack(spacing: 4) {
-                Image(systemName: source.symbolName).font(.system(size: 9))
-                Text("\(count)").font(.caption2.monospacedDigit())
+                Image(systemName: source.symbolName).appFont(fixed: 9)
+                Text("\(count)").appFont(.caption2).monospacedDigit()
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
@@ -183,12 +183,12 @@ struct PullRequestQueueSection: View {
                     Button(action: { isCollapsed.wrappedValue.toggle() }) {
                         HStack(spacing: 6) {
                             Image(systemName: "chevron.down")
-                                .font(.caption2)
+                                .appFont(.caption2)
                                 .foregroundStyle(.secondary)
                                 .rotationEffect(.degrees(isCollapsed.wrappedValue ? -90 : 0))
-                            Text(relation.sectionTitle).font(.subheadline.weight(.semibold))
+                            Text(relation.sectionTitle).appFont(.subheadline, weight: .semibold)
                             Text("\(items.count)")
-                                .font(.caption2.monospacedDigit())
+                                .appFont(.caption2).monospacedDigit()
                                 .padding(.horizontal, 6).padding(.vertical, 1)
                                 .background(Color.secondary.opacity(0.15))
                                 .clipShape(Capsule())
@@ -214,7 +214,7 @@ struct PullRequestQueueSection: View {
                                 else { expandedSections.insert(relation) }
                             }) {
                                 Text(isExpanded ? "Show less" : "Show \(items.count - collapsedRowLimit) more")
-                                    .font(.caption)
+                                    .appFont(.caption)
                                     .foregroundStyle(Color.accentColor)
                                     .frame(maxWidth: .infinity, alignment: .center)
                                     .padding(.vertical, 7)
@@ -232,12 +232,12 @@ struct PullRequestQueueSection: View {
         GroupBox {
             VStack(spacing: 6) {
                 Image(systemName: "checkmark.circle")
-                    .font(.title2)
+                    .appFont(.title2)
                     .foregroundStyle(.green)
                 Text("No open pull requests")
-                    .font(.callout)
+                    .appFont(.callout)
                 Text("Nothing waiting on you across Azure DevOps or GitHub.")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
@@ -263,7 +263,7 @@ struct PullRequestRow: View {
                     .clipShape(RoundedRectangle(cornerRadius: 1.5))
 
                 Image(systemName: pullRequest.source.symbolName)
-                    .font(.system(size: 12))
+                    .appFont(fixed: 12)
                     .foregroundStyle(pullRequest.source.tint)
                     .frame(width: 16)
                     .padding(.top, 1)
@@ -271,7 +271,7 @@ struct PullRequestRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(pullRequest.title)
-                            .font(.system(size: 12, weight: .semibold))
+                            .appFont(fixed: 12, weight: .semibold)
                             .lineLimit(1)
                             .foregroundStyle(.primary)
                         statusPills
@@ -283,14 +283,14 @@ struct PullRequestRow: View {
                 reviewerBubbles
 
                 HStack(spacing: 3) {
-                    Image(systemName: "bubble.left").font(.system(size: 9))
-                    Text("\(pullRequest.commentCount)").font(.caption2.monospacedDigit())
+                    Image(systemName: "bubble.left").appFont(fixed: 9)
+                    Text("\(pullRequest.commentCount)").appFont(.caption2).monospacedDigit()
                 }
                 .foregroundStyle(pullRequest.commentCount > 0 ? .secondary : .tertiary)
                 .frame(width: 34, alignment: .trailing)
 
                 Text(timestampLabel)
-                    .font(.caption2)
+                    .appFont(.caption2)
                     .foregroundStyle(.secondary)
                     .frame(width: 116, alignment: .trailing)
                     .fixedSize(horizontal: true, vertical: false)
@@ -322,7 +322,7 @@ struct PullRequestRow: View {
 
     private func pill(_ text: String, color: Color) -> some View {
         Text(text)
-            .font(.system(size: 9, weight: .medium))
+            .appFont(fixed: 9, weight: .medium)
             .padding(.horizontal, 5).padding(.vertical, 1)
             .background(color.opacity(0.15))
             .foregroundStyle(color)
@@ -333,14 +333,14 @@ struct PullRequestRow: View {
         HStack(spacing: 4) {
             Text("\(pullRequest.authorName) request \(pullRequest.reference) into")
                 .lineLimit(1)
-            Image(systemName: "shippingbox").font(.system(size: 9))
+            Image(systemName: "shippingbox").appFont(fixed: 9)
             Text("\(pullRequest.container)/\(pullRequest.repository)")
                 .lineLimit(1)
-            Image(systemName: "arrow.triangle.branch").font(.system(size: 9))
+            Image(systemName: "arrow.triangle.branch").appFont(fixed: 9)
             Text(pullRequest.targetBranch)
                 .lineLimit(1)
         }
-        .font(.system(size: 10))
+        .appFont(fixed: 10)
         .foregroundStyle(.secondary)
     }
 
@@ -352,7 +352,7 @@ struct PullRequestRow: View {
             HStack(spacing: -4) {
                 ForEach(shown) { reviewer in
                     Text(reviewer.initials)
-                        .font(.system(size: 8, weight: .semibold))
+                        .appFont(fixed: 8, weight: .semibold)
                         .foregroundStyle(.white)
                         .frame(width: 18, height: 18)
                         .background(Circle().fill(reviewer.vote.tint))
@@ -361,7 +361,7 @@ struct PullRequestRow: View {
                 }
                 if overflow > 0 {
                     Text("+\(overflow)")
-                        .font(.system(size: 8, weight: .semibold))
+                        .appFont(fixed: 8, weight: .semibold)
                         .foregroundStyle(.secondary)
                         .frame(width: 18, height: 18)
                         .background(Circle().fill(Color.secondary.opacity(0.2)))

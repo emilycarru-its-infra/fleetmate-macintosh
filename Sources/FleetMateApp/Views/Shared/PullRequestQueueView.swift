@@ -44,9 +44,23 @@ final class PullRequestQueueModel: ObservableObject {
     /// chips for systems that aren't wired up at all.
     @Published private(set) var availableSources: Set<PullRequestSource> = []
 
+    /// How long a loaded queue stays fresh. Returning to the Dashboard shouldn't
+    /// refetch ~80 pull requests across two providers every time.
+    private static let freshness: TimeInterval = 5 * 60
+
+    var isFresh: Bool {
+        guard let lastLoaded else { return false }
+        return Date().timeIntervalSince(lastLoaded) < Self.freshness
+    }
+
     func load(appState: AppState, force: Bool = false) {
-        if isLoading && !force { return }
-        loadTask?.cancel()
+        if force {
+            loadTask?.cancel()
+            loadTask = Task { await self.performLoad(appState: appState) }
+            return
+        }
+        // Already loading, or loaded recently — leave the existing rows alone.
+        guard !isLoading, !isFresh else { return }
         loadTask = Task { await self.performLoad(appState: appState) }
     }
 
@@ -173,7 +187,7 @@ struct PullRequestQueueSection: View {
             withAnimation(.smooth(duration: 0.15)) { model.toggle(source) }
         }) {
             HStack(spacing: 4) {
-                Image(systemName: source.symbolName).appFont(fixed: 9)
+                BrandIcon(mark: source.brandMark, size: 10)
                 Text(source.shortName).appFont(.caption2, weight: .medium)
                 Text("\(count)")
                     .appFont(.caption2)
@@ -305,11 +319,10 @@ struct PullRequestRow: View {
                     .frame(width: 3)
                     .clipShape(RoundedRectangle(cornerRadius: 1.5))
 
-                Image(systemName: pullRequest.source.symbolName)
-                    .appFont(fixed: 12)
+                BrandIcon(mark: pullRequest.source.brandMark, size: 12)
                     .foregroundStyle(pullRequest.source.tint)
                     .frame(width: 16)
-                    .padding(.top, 1)
+                    .padding(.top, 2)
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
@@ -446,6 +459,16 @@ struct PullRequestRow: View {
 // MARK: - Presentation helpers
 
 extension PullRequestSource {
+    /// The provider's actual logo. SF Symbols has none for either, and the
+    /// generic stand-ins conveyed nothing: `infinity` is a maths symbol, not the
+    /// Azure DevOps mark.
+    var brandMark: BrandShape {
+        switch self {
+        case .azureDevOps: return BrandMark.azureDevOps
+        case .gitHub:      return BrandMark.gitHub
+        }
+    }
+
     var tint: Color {
         switch self {
         case .azureDevOps: return Color(red: 0.0, green: 0.47, blue: 0.83)

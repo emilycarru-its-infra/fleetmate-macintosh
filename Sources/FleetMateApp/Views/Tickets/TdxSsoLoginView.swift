@@ -55,12 +55,12 @@ struct TdxSsoLoginView: View {
                         .controlSize(.small)
                 }
                 Text(viewModel.currentUrl.isEmpty ? "Waiting..." : viewModel.currentUrl)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                 Spacer()
                 Text("\(viewModel.navigationLog.count) events")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
             }
             .padding(.horizontal)
@@ -88,9 +88,9 @@ struct TdxSsoLoginView: View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Sign in to TeamDynamix")
-                    .font(.headline)
+                    .appFont(.headline)
                 Text("Authenticate with your organization's identity provider")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
             }
             
@@ -118,10 +118,10 @@ struct TdxSsoLoginView: View {
             if !viewModel.currentUrl.isEmpty {
                 VStack(spacing: 4) {
                     Text("Current URL:")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                     Text(viewModel.currentUrl)
-                        .font(.system(.caption, design: .monospaced))
+                        .appFont(.caption, design: .monospaced)
                         .foregroundColor(.blue)
                         .textSelection(.enabled)
                         .padding(.horizontal)
@@ -131,10 +131,10 @@ struct TdxSsoLoginView: View {
             if let ssoUrl = viewModel.ssoService.ssoLoginUrl {
                 VStack(spacing: 4) {
                     Text("Login endpoint:")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                     Text(ssoUrl.absoluteString)
-                        .font(.system(.caption, design: .monospaced))
+                        .appFont(.caption, design: .monospaced)
                         .foregroundColor(.blue)
                         .textSelection(.enabled)
                         .padding(.horizontal)
@@ -146,11 +146,11 @@ struct TdxSsoLoginView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Navigation Log:")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundColor(.secondary)
                         ForEach(viewModel.navigationLog, id: \.self) { log in
                             Text(log)
-                                .font(.system(.caption, design: .monospaced))
+                                .appFont(.caption, design: .monospaced)
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -171,7 +171,7 @@ struct TdxSsoLoginView: View {
                 .foregroundColor(.orange)
             
             Text("Authentication Error")
-                .font(.headline)
+                .appFont(.headline)
             
             Text(message)
                 .foregroundColor(.secondary)

@@ -16,6 +16,10 @@ struct SettingsView: View {
                 .environmentObject(appState)
                 .tabItem { Label("Authentication", systemImage: "lock.shield") }
                 .tag(1)
+
+            AppearanceSettingsView()
+                .tabItem { Label("Appearance", systemImage: "textformat.size") }
+                .tag(2)
         }
         .frame(minWidth: 600, maxWidth: 700, minHeight: 700, idealHeight: 900, maxHeight: 1100)
     }
@@ -133,12 +137,12 @@ private struct GeneralSettingsTab: View {
         )) {
             HStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.title3)
+                    .appFont(.title3)
                     .foregroundStyle(.tint)
                     .frame(width: 24)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.body.weight(.medium))
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                    Text(title).appFont(.body, weight: .medium)
+                    Text(subtitle).appFont(.caption).foregroundStyle(.secondary)
                 }
             }
         }

@@ -15,7 +15,7 @@ struct UsersView: View {
             HStack {
                 VStack(alignment: .leading) {
                     Text("Users")
-                        .font(.largeTitle)
+                        .appFont(.largeTitle)
                         .fontWeight(.bold)
                     Text("Entra ID users")
                         .foregroundColor(.secondary)
@@ -149,14 +149,14 @@ struct UserRow: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Image(systemName: "person.circle.fill")
-                    .font(.title)
+                    .appFont(.title)
                     .foregroundColor(.accentColor)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(user.displayName ?? "Unknown")
-                        .font(.headline)
+                        .appFont(.headline)
                     Text(user.userPrincipalName ?? user.mail ?? "-")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
 
@@ -165,11 +165,11 @@ struct UserRow: View {
                 if user.accountEnabled == true {
                     Label("Active", systemImage: "checkmark.circle.fill")
                         .foregroundColor(.green)
-                        .font(.caption)
+                        .appFont(.caption)
                 } else {
                     Label("Disabled", systemImage: "xmark.circle.fill")
                         .foregroundColor(.red)
-                        .font(.caption)
+                        .appFont(.caption)
                 }
             }
 
@@ -177,11 +177,11 @@ struct UserRow: View {
                 HStack {
                     if let title = user.jobTitle {
                         Label(title, systemImage: "briefcase")
-                            .font(.caption)
+                            .appFont(.caption)
                     }
                     if let dept = user.department {
                         Label(dept, systemImage: "building.2")
-                            .font(.caption)
+                            .appFont(.caption)
                     }
                 }
                 .foregroundColor(.secondary)
@@ -190,12 +190,12 @@ struct UserRow: View {
             if let groups = user.memberOf, !groups.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Groups (\(groups.count))")
-                        .font(.caption)
+                        .appFont(.caption)
                         .fontWeight(.semibold)
                     FlowLayout(spacing: 4) {
                         ForEach(groups.prefix(10), id: \.id) { group in
                             Text(group.displayName ?? "Unknown")
-                                .font(.caption2)
+                                .appFont(.caption2)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(Color.accentColor.opacity(0.1))
@@ -203,7 +203,7 @@ struct UserRow: View {
                         }
                         if groups.count > 10 {
                             Text("+\(groups.count - 10) more")
-                                .font(.caption2)
+                                .appFont(.caption2)
                                 .foregroundColor(.secondary)
                         }
                     }

@@ -12,12 +12,12 @@ struct GiteaIssueSidebarView: View {
             HStack {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .medium))
+                        .appFont(fixed: 13, weight: .medium)
                 }
                 .buttonStyle(.plain)
 
                 Text("Gitea")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
 
                 Spacer()
@@ -38,7 +38,7 @@ struct GiteaIssueSidebarView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     // Title
                     Text(task.title)
-                        .font(.title3)
+                        .appFont(.title3)
                         .fontWeight(.semibold)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
@@ -48,7 +48,7 @@ struct GiteaIssueSidebarView: View {
                         StateBadge(state: task.state)
                         if let bucket = task.bucket {
                             Text(bucket)
-                                .font(.caption)
+                                .appFont(.caption)
                                 .padding(.horizontal, 8).padding(.vertical, 3)
                                 .background(Color.secondary.opacity(0.15))
                                 .cornerRadius(6)
@@ -61,7 +61,7 @@ struct GiteaIssueSidebarView: View {
                     if !task.assignees.isEmpty {
                         SidebarSection(title: "Assignees", icon: "person.2") {
                             ForEach(task.assignees, id: \.self) {
-                                Text($0).font(.subheadline)
+                                Text($0).appFont(.subheadline)
                             }
                         }
                     }
@@ -72,7 +72,7 @@ struct GiteaIssueSidebarView: View {
                             FlowLayout(spacing: 4) {
                                 ForEach(task.labels, id: \.self) { label in
                                     Text(label)
-                                        .font(.caption)
+                                        .appFont(.caption)
                                         .padding(.horizontal, 8).padding(.vertical, 3)
                                         .background(Color.green.opacity(0.12))
                                         .cornerRadius(10)
@@ -84,7 +84,7 @@ struct GiteaIssueSidebarView: View {
                     // Milestone / bucket
                     if let bucket = task.bucket {
                         SidebarSection(title: "Milestone", icon: "flag") {
-                            Text(bucket).font(.subheadline)
+                            Text(bucket).appFont(.subheadline)
                         }
                     }
 
@@ -98,8 +98,8 @@ struct GiteaIssueSidebarView: View {
 
                     // Dates
                     SidebarSection(title: "Dates", icon: "calendar") {
-                        LabeledContent("Created") { Text(task.createdAt, style: .date) }.font(.subheadline)
-                        LabeledContent("Updated") { Text(task.updatedAt, style: .date) }.font(.subheadline)
+                        LabeledContent("Created") { Text(task.createdAt, style: .date) }.appFont(.subheadline)
+                        LabeledContent("Updated") { Text(task.updatedAt, style: .date) }.appFont(.subheadline)
                     }
 
                     // Open in Gitea
@@ -111,7 +111,7 @@ struct GiteaIssueSidebarView: View {
                                 Image(systemName: "arrow.up.right")
                             }
                         }
-                        .font(.subheadline)
+                        .appFont(.subheadline)
                         .padding(10)
                         .background(Color.green.opacity(0.08))
                         .cornerRadius(8)

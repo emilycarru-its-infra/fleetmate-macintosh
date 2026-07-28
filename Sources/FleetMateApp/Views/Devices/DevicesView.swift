@@ -86,7 +86,7 @@ struct DevicesView: View {
                     }
                     Spacer()
                     Text("\(filteredDevices.count) of \(devices.count)")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
                 .padding(.horizontal)
@@ -123,7 +123,7 @@ struct DevicesView: View {
 
                         TableColumn(deviceSortHeader("Serial", field: .serial)) { device in
                             Text(device.serialNumber ?? "-")
-                                .font(.system(.body, design: .monospaced))
+                                .appFont(.body, design: .monospaced)
                                 .textSelection(.enabled)
                         }
                         .width(min: 100, ideal: 130)
@@ -482,7 +482,7 @@ struct DeviceActionsPanel: View {
             // Header
             HStack {
                 Text("Device Actions")
-                    .font(.headline)
+                    .appFont(.headline)
                 Spacer()
             }
             .padding()
@@ -491,18 +491,18 @@ struct DeviceActionsPanel: View {
             // Selected devices summary
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(selectedDevices.count) device(s) selected")
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                     .fontWeight(.medium)
                 
                 if selectedDevices.count <= 3 {
                     ForEach(selectedDevices, id: \.id) { device in
                         Text(device.deviceName ?? device.serialNumber ?? "Unknown")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundColor(.secondary)
                     }
                 } else {
                     Text("\(selectedDevices.prefix(2).compactMap { $0.deviceName ?? $0.serialNumber }.joined(separator: ", ")) and \(selectedDevices.count - 2) more...")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
             }
@@ -518,7 +518,7 @@ struct DeviceActionsPanel: View {
                             .scaleEffect(0.7)
                     }
                     Text(message)
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(message.contains("Error") ? .red : .green)
                 }
                 .padding(.horizontal)
@@ -536,7 +536,7 @@ struct DeviceActionsPanel: View {
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Force devices to check in with Intune and re-evaluate policies and app assignments.")
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundColor(.secondary)
                             
                             Button(action: onSync) {
@@ -559,7 +559,7 @@ struct DeviceActionsPanel: View {
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Immediately restart the selected devices. Active user sessions will be terminated.")
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundColor(.secondary)
                             
                             Button(action: { showRebootConfirmation = true }) {
@@ -583,7 +583,7 @@ struct DeviceActionsPanel: View {
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Remotely lock devices. For macOS, you can set a PIN that users must enter to unlock.")
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundColor(.secondary)
                             
                             TextField("PIN (optional, macOS only)", text: $lockPin)
@@ -610,7 +610,7 @@ struct DeviceActionsPanel: View {
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Remove company data and unenroll the selected devices. Personal data is left intact.")
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundColor(.secondary)
 
                             Button(action: { showRetireConfirmation = true }) {
@@ -634,11 +634,11 @@ struct DeviceActionsPanel: View {
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Factory-reset the selected devices. This cannot be undone.")
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundColor(.secondary)
 
                             Toggle("Keep user data", isOn: $wipeKeepUserData)
-                                .font(.caption)
+                                .appFont(.caption)
 
                             Button(action: { showWipeConfirmation = true }) {
                                 Label("Wipe Device", systemImage: "trash.fill")
@@ -661,7 +661,7 @@ struct DeviceActionsPanel: View {
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Trigger app reinstallation by initiating a device sync. Select an app to reinstall.")
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundColor(.secondary)
                             
                             HStack {
@@ -708,7 +708,7 @@ struct DeviceActionsPanel: View {
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Trigger OS update check on Windows devices. For macOS, updates are managed through update policies.")
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundColor(.secondary)
                             
                             Button(action: onSync) {
@@ -795,7 +795,7 @@ struct ComplianceBadge: View {
             Image(systemName: icon)
                 .foregroundColor(color)
             Text(state ?? "Unknown")
-                .font(.caption)
+                .appFont(.caption)
         }
     }
 }

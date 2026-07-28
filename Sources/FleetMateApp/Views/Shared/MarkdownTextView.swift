@@ -29,7 +29,7 @@ struct MarkdownTextView: View {
     var body: some View {
         if content.isEmpty {
             Text("No content")
-                .font(.body)
+                .appFont(.body)
                 .foregroundColor(.secondary)
                 .italic()
         } else if isHtml(content) {
@@ -57,12 +57,12 @@ private struct HtmlRenderedView: View {
     var body: some View {
         if let attributed = htmlToAttributedString(html) {
             Text(attributed)
-                .font(.body)
+                .appFont(.body)
                 .textSelection(.enabled)
         } else {
             // Fallback: strip tags
             Text(html.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression))
-                .font(.body)
+                .appFont(.body)
                 .textSelection(.enabled)
         }
     }
@@ -152,7 +152,7 @@ extension MarkdownUI.Theme {
         .taskListMarker { configuration in
             Image(systemName: configuration.isCompleted ? "checkmark.square.fill" : "square")
                 .foregroundColor(configuration.isCompleted ? .accentColor : .secondary)
-                .font(.system(size: 14))
+                .appFont(fixed: 14)
         }
 }
 
@@ -180,7 +180,7 @@ private struct CodeBlockWithCopy: View {
 
             Button(action: copyCode) {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 11))
+                    .appFont(fixed: 11)
                     .foregroundColor(copied ? .green : .secondary)
                     .padding(6)
                     .background(.ultraThinMaterial)
@@ -241,7 +241,7 @@ struct EditableMarkdownField: View {
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
             } else {
                 TextEditor(text: $text)
-                    .font(.system(.body, design: .monospaced))
+                    .appFont(.body, design: .monospaced)
                     .frame(minHeight: 120, maxHeight: 400)
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
             }
@@ -276,7 +276,7 @@ struct MentionTextEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             TextEditor(text: $text)
-                .font(.body)
+                .appFont(.body)
                 .frame(height: height)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
                 .onChange(of: text) { _, newValue in
@@ -293,10 +293,10 @@ struct MentionTextEditor: View {
                                         .foregroundColor(.secondary)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(member.displayName ?? "Unknown")
-                                            .font(.body)
+                                            .appFont(.body)
                                         if let email = member.uniqueName, email != member.displayName {
                                             Text(email)
-                                                .font(.caption)
+                                                .appFont(.caption)
                                                 .foregroundColor(.secondary)
                                         }
                                     }

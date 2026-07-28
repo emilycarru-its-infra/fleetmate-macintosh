@@ -53,7 +53,7 @@ struct CreateWorkItemView: View {
             // Header
             HStack {
                 Text("New DevOps Work Item")
-                    .font(.headline)
+                    .appFont(.headline)
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
@@ -136,14 +136,14 @@ struct CreateWorkItemView: View {
 
                 Section("Description") {
                     TextEditor(text: $description)
-                        .font(.system(.body, design: .monospaced))
+                        .appFont(.body, design: .monospaced)
                         .frame(minHeight: 100)
                 }
 
                 if let error = errorMessage {
                     Text(error)
                         .foregroundColor(.red)
-                        .font(.caption)
+                        .appFont(.caption)
                 }
             }
             .padding()
@@ -153,7 +153,7 @@ struct CreateWorkItemView: View {
             // Footer
             HStack {
                 Text("⌘Enter to create")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                 Spacer()
                 Button("Create") { createItem() }

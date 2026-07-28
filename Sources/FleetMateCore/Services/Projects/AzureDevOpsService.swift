@@ -16,6 +16,7 @@ public class AzureDevOpsService {
     private var sprintCache: [Sprint]?
     private var sprintCacheExpiry: Date = .distantPast
     private var defaultTeamCache: String?
+    private var identityCache: DevOpsIdentitySummary?
     private let cacheDuration: TimeInterval
 
     // URLSession
@@ -76,6 +77,7 @@ public class AzureDevOpsService {
         self.tokenExpiry = .distantPast
         self.sprintCache = nil
         self.defaultTeamCache = nil
+        self.identityCache = nil
     }
 
     // MARK: - REST API Helper
@@ -863,6 +865,277 @@ public class AzureDevOpsService {
             forProject: project
         )
         return response.value ?? []
+    }
+
+    // MARK: - My Pull Requests (organization-wide)
+
+    /// Resolve the signed-in user's Azure DevOps identity. Azure DevOps pull
+    /// request search criteria key off the identity GUID, not the UPN.
+    public func getConnectionData() async throws -> DevOpsConnectionData {
+        try await request("GET", path: "/_apis/connectionData?api-version=7.1-preview", orgLevel: true)
+    }
+
+    /// Cached identity of the signed-in user. Returns nils if it cannot be resolved,
+    /// which pushes `getMyPullRequests` onto its client-side matching fallback.
+    public func currentIdentity() async -> DevOpsIdentitySummary {
+        if let cached = identityCache { return cached }
+        do {
+            let data = try await getConnectionData()
+            let identity = data.authorizedUser ?? data.authenticatedUser
+            let summary = DevOpsIdentitySummary(
+                id: identity?.id,
+                displayName: identity?.displayName,
+                account: identity?.accountName
+            )
+            dbg.info("AzDO identity: id=\(summary.id ?? "nil") account=\(summary.account ?? "nil")", category: "azdo")
+            identityCache = summary
+            return summary
+        } catch {
+            dbg.error("AzDO connectionData failed: \(error)", category: "azdo")
+            return DevOpsIdentitySummary(id: nil, displayName: nil, account: nil)
+        }
+    }
+
+    /// The signed-in user's pull requests across **every project** in the
+    /// organization, split into "Created by me" and "Assigned to me" the same way
+    /// the Azure DevOps web queue does.
+    ///
+    /// - Parameters:
+    ///   - status: `active`, `completed`, `abandoned`, or `all`.
+    ///   - topPerQuery: Page size per project query.
+    ///   - includeCommentCounts: Fetch each PR's comment threads. One extra
+    ///     request per PR, issued concurrently; skip it for a faster first paint.
+    public func getMyPullRequests(
+        status: String = "active",
+        topPerQuery: Int = 100,
+        includeCommentCounts: Bool = true
+    ) async throws -> PullRequestQueue {
+        let identity = await currentIdentity()
+        let projects = try await listProjects()
+        dbg.info("AzDO getMyPullRequests across \(projects.count) projects (identity=\(identity.id ?? "unresolved"))", category: "azdo")
+
+        var queue = PullRequestQueue()
+
+        // Fan out per project — each project is an independent REST call.
+        let perProject = await withTaskGroup(of: [UnifiedPullRequest].self) { group in
+            for project in projects {
+                group.addTask {
+                    await self.pullRequestsForProject(project.name, identity: identity, status: status, top: topPerQuery)
+                }
+            }
+            var all: [UnifiedPullRequest] = []
+            for await result in group { all.append(contentsOf: result) }
+            return all
+        }
+
+        for pr in perProject { queue.insert(pr) }
+
+        if includeCommentCounts, !queue.pullRequests.isEmpty {
+            queue.pullRequests = await withThreadActivity(queue.pullRequests)
+        }
+
+        dbg.info("AzDO getMyPullRequests → \(queue.pullRequests.count) PRs", category: "azdo")
+        return queue
+    }
+
+    /// Fetch one project's slice of the queue. Never throws — a project the user
+    /// cannot read should not sink the whole queue.
+    private func pullRequestsForProject(
+        _ projectName: String,
+        identity: DevOpsIdentitySummary,
+        status: String,
+        top: Int
+    ) async -> [UnifiedPullRequest] {
+        var byId: [Int: UnifiedPullRequest] = [:]
+
+        func absorb(_ prs: [GitPullRequest], relation: PullRequestRelation) {
+            for pr in prs {
+                guard let unified = mapPullRequest(pr, project: projectName, relation: relation) else { continue }
+                if var existing = byId[pr.pullRequestId] {
+                    existing.relations.insert(relation)
+                    byId[pr.pullRequestId] = existing
+                } else {
+                    byId[pr.pullRequestId] = unified
+                }
+            }
+        }
+
+        if let identityId = identity.id, !identityId.isEmpty {
+            let encodedId = identityId.addingPercentEncoding(withAllowedCharacters: CharacterSet.urlQueryAllowed) ?? identityId
+            async let created = fetchProjectPullRequests(projectName, criteria: "&searchCriteria.creatorId=\(encodedId)", status: status, top: top)
+            async let reviewing = fetchProjectPullRequests(projectName, criteria: "&searchCriteria.reviewerId=\(encodedId)", status: status, top: top)
+            absorb(await created, relation: .createdByMe)
+            absorb(await reviewing, relation: .assignedToMe)
+        } else {
+            // Identity GUID unavailable — pull the project's PRs and match on the
+            // account name we do know.
+            let all = await fetchProjectPullRequests(projectName, criteria: "", status: status, top: top)
+            let mine = all.filter { matchesMe($0.createdBy, identity: identity) }
+            let reviewing = all.filter { pr in
+                (pr.reviewers ?? []).contains { reviewer in
+                    reviewer.isContainer != true && matchesReviewer(reviewer, identity: identity)
+                }
+            }
+            absorb(mine, relation: .createdByMe)
+            absorb(reviewing, relation: .assignedToMe)
+        }
+
+        return Array(byId.values)
+    }
+
+    /// One PR search against one project. Swallows failures — a project the user
+    /// cannot read should not sink the whole queue.
+    private func fetchProjectPullRequests(
+        _ projectName: String,
+        criteria: String,
+        status: String,
+        top: Int
+    ) async -> [GitPullRequest] {
+        let encodedProject = projectName.addingPercentEncoding(withAllowedCharacters: CharacterSet.urlPathAllowed) ?? projectName
+        do {
+            let response: GitPullRequestsResponse = try await request(
+                "GET",
+                path: "/_apis/git/pullrequests?searchCriteria.status=\(status)\(criteria)&$top=\(top)&api-version=7.0",
+                forProject: encodedProject
+            )
+            return response.value ?? []
+        } catch {
+            dbg.debug("AzDO PR query failed for \(projectName): \(error)", category: "azdo")
+            return []
+        }
+    }
+
+    private func matchesMe(_ ref: IdentityRef?, identity: DevOpsIdentitySummary) -> Bool {
+        guard let ref else { return false }
+        if let id = identity.id, let refId = ref.id, id.caseInsensitiveCompare(refId) == .orderedSame { return true }
+        if let account = identity.account, let unique = ref.uniqueName,
+           account.caseInsensitiveCompare(unique) == .orderedSame { return true }
+        if let name = identity.displayName, let display = ref.displayName,
+           name.caseInsensitiveCompare(display) == .orderedSame { return true }
+        return false
+    }
+
+    private func matchesReviewer(_ reviewer: GitPullRequestReviewer, identity: DevOpsIdentitySummary) -> Bool {
+        matchesMe(IdentityRef(displayName: reviewer.displayName, uniqueName: reviewer.uniqueName, id: reviewer.id), identity: identity)
+    }
+
+    /// Convert an Azure DevOps PR into the unified shape. Returns nil if the
+    /// payload is missing the repository context needed to build a web URL.
+    private func mapPullRequest(_ pr: GitPullRequest, project: String, relation: PullRequestRelation) -> UnifiedPullRequest? {
+        guard let repo = pr.repository?.name else { return nil }
+        let projectName = pr.repository?.project?.name ?? project
+
+        let state: PullRequestState
+        if pr.isDraft == true {
+            state = .draft
+        } else {
+            switch pr.status?.lowercased() {
+            case "completed":  state = .merged
+            case "abandoned":  state = .closed
+            default:           state = .open
+            }
+        }
+
+        let reviewers: [PullRequestReviewer] = (pr.reviewers ?? [])
+            .filter { $0.isContainer != true }
+            .map {
+                PullRequestReviewer(
+                    id: $0.id ?? $0.displayName ?? UUID().uuidString,
+                    displayName: $0.displayName ?? $0.uniqueName ?? "Unknown",
+                    vote: .fromAzureDevOps($0.vote),
+                    isRequired: $0.isRequired ?? false
+                )
+            }
+
+        return UnifiedPullRequest(
+            source: .azureDevOps,
+            number: pr.pullRequestId,
+            title: pr.title ?? "(untitled)",
+            authorName: pr.createdBy?.displayName ?? pr.createdBy?.uniqueName ?? "Unknown",
+            container: projectName,
+            repository: repo,
+            sourceBranch: pr.sourceBranch ?? "",
+            targetBranch: pr.targetBranch ?? "",
+            createdAt: PullRequestDateParser.parse(pr.creationDate),
+            updatedAt: PullRequestDateParser.parse(pr.closedDate), // refined by thread enrichment
+            state: state,
+            hasConflicts: pr.hasConflicts,
+            reviewers: reviewers,
+            webUrl: Self.pullRequestWebUrl(orgUrl: orgUrl, project: projectName, repository: repo, pullRequestId: pr.pullRequestId),
+            relations: [relation]
+        )
+    }
+
+    /// Comment threads carry both the count the queue displays and the only
+    /// "last touched" signal the PR list endpoint omits. One concurrent request
+    /// per PR fills in both.
+    private func withThreadActivity(_ prs: [UnifiedPullRequest]) async -> [UnifiedPullRequest] {
+        let summaries = await withTaskGroup(of: (String, ThreadActivity)?.self) { group in
+            for pr in prs where pr.source == .azureDevOps {
+                group.addTask {
+                    guard let activity = await self.threadActivity(pr) else { return nil }
+                    return (pr.id, activity)
+                }
+            }
+            var collected: [String: ThreadActivity] = [:]
+            for await result in group {
+                if let (id, activity) = result { collected[id] = activity }
+            }
+            return collected
+        }
+
+        return prs.map { pr in
+            guard let activity = summaries[pr.id] else { return pr }
+            var enriched = pr
+            enriched.commentCount = activity.commentThreadCount
+            enriched.updatedAt = activity.lastActivity
+            return enriched
+        }
+    }
+
+    private struct ThreadActivity {
+        let commentThreadCount: Int
+        let lastActivity: Date?
+    }
+
+    /// Human comment threads on a PR and when they were last touched. System
+    /// threads (the "added reviewer", "updated branch" noise) are excluded, which
+    /// is what makes the count match the one Azure DevOps shows in its queue.
+    private func threadActivity(_ pr: UnifiedPullRequest) async -> ThreadActivity? {
+        let encodedProject = pr.container.addingPercentEncoding(withAllowedCharacters: CharacterSet.urlPathAllowed) ?? pr.container
+        let encodedRepo = pr.repository.addingPercentEncoding(withAllowedCharacters: CharacterSet.urlPathAllowed) ?? pr.repository
+        do {
+            let response: GitPullRequestThreadsResponse = try await request(
+                "GET",
+                path: "/_apis/git/repositories/\(encodedRepo)/pullRequests/\(pr.number)/threads?api-version=7.0",
+                forProject: encodedProject
+            )
+            let threads = (response.value ?? []).filter { $0.isDeleted != true }
+
+            let commentThreads = threads.filter { thread in
+                (thread.comments ?? []).contains {
+                    $0.isDeleted != true && ($0.commentType ?? "text").lowercased() != "system"
+                }
+            }
+
+            // Every thread counts toward "last touched", including system ones —
+            // a pushed commit or a reviewer change is real activity.
+            let lastActivity = threads
+                .compactMap { PullRequestDateParser.parse($0.lastUpdatedDate ?? $0.publishedDate) }
+                .max()
+
+            return ThreadActivity(commentThreadCount: commentThreads.count, lastActivity: lastActivity)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Web URL for a pull request, e.g.
+    /// `https://dev.azure.com/org/Devices/_git/ReportMate/pullrequest/10716`.
+    public static func pullRequestWebUrl(orgUrl: String, project: String, repository: String, pullRequestId: Int) -> String {
+        let encodedProject = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        let encodedRepo = repository.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repository
+        return "\(orgUrl)/\(encodedProject)/_git/\(encodedRepo)/pullrequest/\(pullRequestId)"
     }
 
     /// Add an artifact link (commit, branch, PR, etc.) to a work item using JSON Patch.

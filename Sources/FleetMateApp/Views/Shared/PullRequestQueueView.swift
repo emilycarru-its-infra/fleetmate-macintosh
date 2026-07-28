@@ -12,13 +12,15 @@ final class PullRequestQueueModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var lastLoaded: Date?
 
-    /// Providers the user has turned off in the section's filter.
-    @Published var hiddenSources: Set<PullRequestSource> = []
+    /// The provider the queue is filtered to, or nil for all of them. Selecting
+    /// the active filter again clears it.
+    @Published var selectedSource: PullRequestSource?
 
     private var loadTask: Task<Void, Never>?
 
     var visiblePullRequests: [UnifiedPullRequest] {
-        queue.pullRequests.filter { !hiddenSources.contains($0.source) }
+        guard let selectedSource else { return queue.pullRequests }
+        return queue.pullRequests.filter { $0.source == selectedSource }
     }
 
     func section(_ relation: PullRequestRelation) -> [UnifiedPullRequest] {
@@ -28,7 +30,14 @@ final class PullRequestQueueModel: ObservableObject {
     }
 
     var errors: [PullRequestQueueError] {
-        queue.errors.filter { !hiddenSources.contains($0.source) }
+        guard let selectedSource else { return queue.errors }
+        return queue.errors.filter { $0.source == selectedSource }
+    }
+
+    /// How many PRs a given provider contributed, before filtering — the pills
+    /// show totals so the counts don't change as you click between them.
+    func count(for source: PullRequestSource) -> Int {
+        queue.pullRequests.filter { $0.source == source }.count
     }
 
     /// Which providers we actually attempted, so the section can hide filter
@@ -78,12 +87,9 @@ final class PullRequestQueueModel: ObservableObject {
         lastLoaded = Date()
     }
 
+    /// Select a provider to filter by; selecting the active one clears the filter.
     func toggle(_ source: PullRequestSource) {
-        if hiddenSources.contains(source) {
-            hiddenSources.remove(source)
-        } else {
-            hiddenSources.insert(source)
-        }
+        selectedSource = (selectedSource == source) ? nil : source
     }
 }
 
@@ -134,9 +140,15 @@ struct PullRequestQueueSection: View {
 
             Spacer()
 
-            ForEach(PullRequestSource.allCases, id: \.self) { source in
-                if model.availableSources.contains(source) {
-                    sourceChip(source)
+            // Source filters. Only worth showing when more than one provider is
+            // in play — a lone "GitHub" pill filters nothing.
+            if model.availableSources.count > 1 {
+                HStack(spacing: 6) {
+                    ForEach(PullRequestSource.allCases, id: \.self) { source in
+                        if model.availableSources.contains(source) {
+                            sourceChip(source)
+                        }
+                    }
                 }
             }
 
@@ -151,22 +163,38 @@ struct PullRequestQueueSection: View {
         }
     }
 
+    /// A filter pill: click to show only that provider, click it again to clear.
+    /// With no filter set every pill reads as unselected — the queue already
+    /// shows everything, so highlighting them all would imply otherwise.
     private func sourceChip(_ source: PullRequestSource) -> some View {
-        let isOn = !model.hiddenSources.contains(source)
-        let count = model.queue.pullRequests.filter { $0.source == source }.count
-        return Button(action: { model.toggle(source) }) {
+        let isSelected = model.selectedSource == source
+        let count = model.count(for: source)
+        return Button(action: {
+            withAnimation(.smooth(duration: 0.15)) { model.toggle(source) }
+        }) {
             HStack(spacing: 4) {
                 Image(systemName: source.symbolName).appFont(fixed: 9)
-                Text("\(count)").appFont(.caption2).monospacedDigit()
+                Text(source.shortName).appFont(.caption2, weight: .medium)
+                Text("\(count)")
+                    .appFont(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.75) : Color.secondary)
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 9)
             .padding(.vertical, 3)
-            .background(isOn ? source.tint.opacity(0.15) : Color.secondary.opacity(0.1))
-            .foregroundStyle(isOn ? source.tint : Color.secondary)
+            .background(isSelected ? source.tint : Color.secondary.opacity(0.12))
+            .foregroundStyle(isSelected ? Color.white : Color.primary)
             .clipShape(Capsule())
+            .overlay(
+                Capsule().strokeBorder(
+                    isSelected ? Color.clear : source.tint.opacity(0.35),
+                    lineWidth: 1
+                )
+            )
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help(isOn ? "Hide \(source.displayName)" : "Show \(source.displayName)")
+        .help(isSelected ? "Clear the \(source.displayName) filter" : "Show only \(source.displayName)")
     }
 
     // MARK: Groups
@@ -228,17 +256,32 @@ struct PullRequestQueueSection: View {
         }
     }
 
+    @ViewBuilder
     private var emptyState: some View {
         GroupBox {
             VStack(spacing: 6) {
-                Image(systemName: "checkmark.circle")
-                    .appFont(.title2)
-                    .foregroundStyle(.green)
-                Text("No open pull requests")
-                    .appFont(.callout)
-                Text("Nothing waiting on you across Azure DevOps or GitHub.")
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
+                if let filtered = model.selectedSource {
+                    // Empty because of the filter, not because the queue is clear —
+                    // saying "nothing waiting on you" here would be a lie.
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .appFont(.title2)
+                        .foregroundStyle(.secondary)
+                    Text("No \(filtered.displayName) pull requests")
+                        .appFont(.callout)
+                    Button("Clear filter") { model.toggle(filtered) }
+                        .buttonStyle(.plain)
+                        .appFont(.caption)
+                        .foregroundStyle(Color.accentColor)
+                } else {
+                    Image(systemName: "checkmark.circle")
+                        .appFont(.title2)
+                        .foregroundStyle(.green)
+                    Text("No open pull requests")
+                        .appFont(.callout)
+                    Text("Nothing waiting on you across Azure DevOps or GitHub.")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)

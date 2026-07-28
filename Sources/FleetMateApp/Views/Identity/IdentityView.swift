@@ -15,7 +15,7 @@ struct IdentityView: View {
             // Header with inline tab toggle
             HStack {
                 Text("Identity")
-                    .font(.largeTitle)
+                    .appFont(.largeTitle)
                     .fontWeight(.bold)
 
                 Picker("", selection: $selectedTab) {
@@ -79,7 +79,7 @@ struct GroupsContentView: View {
                 }
                 if !groups.isEmpty {
                     Text("\(filteredGroups.count) of \(groups.count)")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
                 Button(action: loadDeviceGroups) {

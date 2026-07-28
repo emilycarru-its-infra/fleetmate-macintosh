@@ -12,6 +12,17 @@ public class AzureDevOpsService {
     private var bearerToken: String?
     private var tokenExpiry: Date = .distantPast
 
+    /// Re-acquires a token silently when Azure DevOps rejects the current one.
+    ///
+    /// The service is handed its token from outside and had no way to recover on
+    /// its own: a 401 surfaced to the user as "SSO login required" even while a
+    /// silent `az` token was available for the asking. Set by AppState to the SSO
+    /// service's refresh; returns the new token and its expiry, or nil.
+    public var tokenRefreshHandler: (() async -> (token: String, expiry: Date)?)?
+
+    /// Guards against a burst of concurrent 401s each kicking off its own refresh.
+    private var refreshInFlight: Task<Bool, Never>?
+
     // Caches
     private var sprintCache: [Sprint]?
     private var sprintCacheExpiry: Date = .distantPast
@@ -71,6 +82,29 @@ public class AzureDevOpsService {
         dbg.info("AzDO Bearer token set, expires \(expiry)", category: "azdo-auth")
     }
 
+    /// Re-acquire a token through the refresh handler, coalescing concurrent
+    /// callers onto one attempt. A board that fans out several requests at once
+    /// would otherwise fire a refresh per 401.
+    private func refreshToken() async -> Bool {
+        if let existing = refreshInFlight {
+            return await existing.value
+        }
+        guard let handler = tokenRefreshHandler else { return false }
+
+        let task = Task<Bool, Never> { [weak self] in
+            guard let refreshed = await handler() else {
+                dbg.warn("AzDO token refresh failed", category: "azdo-auth")
+                return false
+            }
+            self?.setBearerToken(refreshed.token, expiry: refreshed.expiry)
+            return true
+        }
+        refreshInFlight = task
+        let ok = await task.value
+        refreshInFlight = nil
+        return ok
+    }
+
     /// Clear the Bearer token (called on sign-out)
     public func clearBearerToken() {
         self.bearerToken = nil
@@ -89,8 +123,17 @@ public class AzureDevOpsService {
         body: Data? = nil,
         contentType: String = "application/json",
         orgLevel: Bool = false,
-        forProject: String? = nil
+        forProject: String? = nil,
+        allowRetryAfterRefresh: Bool = true
     ) async throws -> T {
+        // Refresh proactively when the token is spent. Previously only emptiness
+        // was checked, so an expired token was sent anyway and came back 401 —
+        // reported to the user as "SSO login required" despite a silent token
+        // being one `az` call away.
+        if !hasValidToken, bearerToken != nil, allowRetryAfterRefresh {
+            _ = await refreshToken()
+        }
+
         guard let token = bearerToken, !token.isEmpty else {
             throw AzDevOpsError.notLoggedIn
         }
@@ -127,8 +170,30 @@ public class AzureDevOpsService {
         guard (200...299).contains(httpResponse.statusCode) else {
             let errBody = String(data: data, encoding: .utf8) ?? ""
             dbg.error("AzDO \(method) \(path) → \(httpResponse.statusCode): \(errBody.prefix(500))", category: "azdo")
-            if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
+
+            // A 401 here means the token we hold was rejected, which is recoverable:
+            // re-acquire silently and replay the request once. Only a refresh that
+            // fails is worth telling the user about.
+            if httpResponse.statusCode == 401, allowRetryAfterRefresh {
+                if await refreshToken() {
+                    dbg.info("AzDO retrying \(method) \(path) with a refreshed token", category: "azdo-auth")
+                    return try await request(
+                        method,
+                        path: path,
+                        body: body,
+                        contentType: contentType,
+                        orgLevel: orgLevel,
+                        forProject: forProject,
+                        allowRetryAfterRefresh: false
+                    )
+                }
                 throw AzDevOpsError.notLoggedIn
+            }
+
+            // 403 is authenticated-but-forbidden. Reporting it as "SSO login
+            // required" sent people to re-authenticate over a permissions problem.
+            if httpResponse.statusCode == 403 {
+                throw AzDevOpsError.forbidden(message: errBody)
             }
             throw AzDevOpsError.httpError(code: httpResponse.statusCode, message: errBody)
         }
@@ -1196,12 +1261,15 @@ public class AzureDevOpsService {
 
 public enum AzDevOpsError: Error, LocalizedError {
     case notLoggedIn
+    case forbidden(message: String)
     case httpError(code: Int, message: String)
     case invalidUrl(String)
     case invalidResponse
 
     public var errorDescription: String? {
         switch self {
+        case .forbidden:
+            return "Azure DevOps denied access to this item. Your sign-in is valid but lacks permission for it."
         case .notLoggedIn:
             return "Not authenticated to Azure DevOps. SSO login required."
         case .httpError(let code, let message):

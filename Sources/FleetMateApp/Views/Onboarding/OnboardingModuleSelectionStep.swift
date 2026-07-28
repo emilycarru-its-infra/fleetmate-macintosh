@@ -7,7 +7,7 @@ struct OnboardingModuleSelectionStep: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Choose Your Modules")
-                    .font(.title2.bold())
+                    .appFont(.title2, weight: .bold)
                 Text("Select the systems you want to connect. You can change this later in Settings.")
                     .foregroundStyle(.secondary)
             }
@@ -46,7 +46,7 @@ struct OnboardingModuleSelectionStep: View {
 
             if !wizardState.canGoNext {
                 Text("Select at least one module to continue.")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundStyle(.orange)
                     .padding(.horizontal, 24)
             }
@@ -57,12 +57,12 @@ struct OnboardingModuleSelectionStep: View {
         Toggle(isOn: isOn) {
             HStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.title3)
+                    .appFont(.title3)
                     .foregroundStyle(.tint)
                     .frame(width: 24)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.body.weight(.medium))
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                    Text(title).appFont(.body, weight: .medium)
+                    Text(subtitle).appFont(.caption).foregroundStyle(.secondary)
                 }
             }
         }

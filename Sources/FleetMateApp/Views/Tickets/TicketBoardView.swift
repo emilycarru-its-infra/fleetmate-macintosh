@@ -167,7 +167,7 @@ struct BoardColumn: View {
                     // Empty column drop zone
                     if tickets.isEmpty {
                         Text("Drop items here")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundColor(.secondary)
                             .frame(maxWidth: .infinity, minHeight: 60)
                     }
@@ -218,7 +218,7 @@ struct TicketCard: View {
             HStack {
                 if let id = ticket.id {
                     Text(verbatim: "#\(id)")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.accentColor)
                         .fontWeight(.medium)
                 }
@@ -230,7 +230,7 @@ struct TicketCard: View {
             
             // Title
             Text(ticket.title ?? "Untitled")
-                .font(.subheadline)
+                .appFont(.subheadline)
                 .fontWeight(.medium)
                 .lineLimit(2)
                 .foregroundColor(.primary)
@@ -244,7 +244,7 @@ struct TicketCard: View {
                     } icon: {
                         Image(systemName: "person")
                     }
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                 }
             }
@@ -253,9 +253,9 @@ struct TicketCard: View {
             if let responsible = ticket.responsibleFullName {
                 HStack(spacing: 4) {
                     Image(systemName: "person.fill")
-                        .font(.caption2)
+                        .appFont(.caption2)
                     Text(responsible)
-                        .font(.caption)
+                        .appFont(.caption)
                 }
                 .foregroundColor(.accentColor)
             }
@@ -284,7 +284,7 @@ struct PriorityBadge: View {
         }()
         
         Text(priority)
-            .font(.caption2)
+            .appFont(.caption2)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(color.opacity(0.2))

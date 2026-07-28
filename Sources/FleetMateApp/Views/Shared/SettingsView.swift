@@ -100,7 +100,7 @@ private struct GeneralSettingsTab: View {
                         enabled: enableDevOps,
                         icon: "square.stack.3d.up",
                         title: "Projects",
-                        subtitle: "Azure DevOps boards and work items",
+                        subtitle: "Azure DevOps boards and GitHub issues",
                         systemId: .devops,
                         onEnable: { /* DevOps needs org — open Auth edit */ },
                         onDisable: {

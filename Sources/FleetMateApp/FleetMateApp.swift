@@ -89,6 +89,11 @@ class AppState: ObservableObject {
     @Published var showDevOpsSsoLogin = false
     @Published var devOpsSsoAuthenticated = false
     @Published var devOpsSsoUserName: String?
+    /// UPN the DevOps token was issued to. Azure DevOps work is attributed to the
+    /// operator personally -- commits, PRs and work-item edits must carry a real
+    /// `@ecuad.ca` identity, never a shared or managed one -- so the panel shows
+    /// which account is signed in rather than just a display name.
+    @Published var devOpsSsoUserEmail: String?
     @Published var devOpsProjectReady = false
     private var devOpsSsoViewModel: DevOpsSsoLoginViewModel?
     
@@ -731,8 +736,11 @@ class AppState: ObservableObject {
         devOpsService.setBearerToken(accessToken, expiry: expiry)
         devOpsSsoAuthenticated = true
         devOpsSsoUserName = userName
+        devOpsSsoUserEmail = userEmail
         showDevOpsSsoLogin = false
-        authManager.update(.devops, state: .valid(user: userName, expiry: expiry))
+        // Prefer the UPN: it is the identity Azure DevOps actually attributes
+        // work to, and a display name alone cannot show that.
+        authManager.update(.devops, state: .valid(user: userEmail ?? userName, expiry: expiry))
 
         // Invalidate work items cache to reload with new auth
         invalidateWorkItemsCache()
@@ -769,6 +777,7 @@ class AppState: ObservableObject {
         devOpsService.clearBearerToken()
         devOpsSsoAuthenticated = false
         devOpsSsoUserName = nil
+        devOpsSsoUserEmail = nil
         authManager.update(.devops, state: .configured)
         invalidateWorkItemsCache()
     }

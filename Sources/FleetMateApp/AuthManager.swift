@@ -118,8 +118,8 @@ class AuthManager: ObservableObject {
             do {
                 // Attempt a lightweight Graph call
                 _ = try await graphService.getManagedDevices(limit: 1)
-                update(.graph,  state: .valid(user: "Service Credential", expiry: nil))
-                update(.intune, state: .valid(user: "Service Credential", expiry: nil))
+                update(.graph,  state: .valid(user: "az elevation", expiry: nil))
+                update(.intune, state: .valid(user: "az elevation", expiry: nil))
             } catch {
                 update(.graph,  state: .failed(message: error.localizedDescription))
                 update(.intune, state: .failed(message: error.localizedDescription))
@@ -131,7 +131,7 @@ class AuthManager: ObservableObject {
             update(.entra, state: .authenticating)
             do {
                 _ = try await graphService.searchGroups("test", limit: 1)
-                update(.entra, state: .valid(user: "Service Credential", expiry: nil))
+                update(.entra, state: .valid(user: "az elevation", expiry: nil))
             } catch {
                 update(.entra, state: .failed(message: error.localizedDescription))
             }

@@ -228,7 +228,12 @@ struct AuthSettingsView: View {
 
         case .devops:
             detailGrid {
-                detailRow("Auth method", "Secretless — az sign-in (MSAL cache)")
+                // Deliberately not phrased like the Graph rows' "Secretless — az
+                // elevation". Azure DevOps does NOT go through elevation and must
+                // not: every commit, pull request and work-item edit has to be
+                // attributed to the operator's own @example.com account, not to a
+                // managed identity. The token comes straight from `az login`.
+                detailRow("Auth method", "Your az sign-in — no elevation")
                 if let org = cfg.devopsOrganization {
                     detailRow("Organization", org)
                 } else {
@@ -239,8 +244,18 @@ struct AuthSettingsView: View {
                 } else if cfg.devopsOrganization != nil {
                     detailRow("Project", "auto-discovered", .secondary)
                 }
-                if let user = appState.devOpsSsoAuthenticated ? appState.devOpsSsoUserName : system.user {
-                    detailRow("Signed in as", user, .green)
+                // Show the UPN, not just a display name — the point is to make it
+                // visible *which* account DevOps will attribute work to.
+                let signedInAs = appState.devOpsSsoAuthenticated
+                    ? (appState.devOpsSsoUserEmail ?? appState.devOpsSsoUserName)
+                    : system.user
+                if let signedInAs {
+                    detailRow("Signed in as", signedInAs, .green)
+                }
+                if let name = appState.devOpsSsoUserName,
+                   appState.devOpsSsoUserEmail != nil,
+                   name != appState.devOpsSsoUserEmail {
+                    detailRow("Attributed to", name, .secondary)
                 }
                 if case .failed(let msg) = system.state {
                     detailRow("Error", msg, .red)

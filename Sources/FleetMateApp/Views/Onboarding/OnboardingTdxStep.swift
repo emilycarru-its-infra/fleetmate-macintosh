@@ -7,7 +7,7 @@ struct OnboardingTdxStep: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("TeamDynamix")
-                    .font(.title2.bold())
+                    .appFont(.title2, weight: .bold)
                 Text("Connect to TDX for ticket management.")
                     .foregroundStyle(.secondary)
             }
@@ -32,7 +32,7 @@ struct OnboardingTdxStep: View {
 
                     if wizardState.tdxAuthMode == .sso {
                         Label("SSO login will appear automatically when you open the Tickets tab.", systemImage: "info.circle")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundStyle(.secondary)
                     } else {
                         SecureField("BEID", text: $wizardState.tdxBeid)
@@ -40,7 +40,7 @@ struct OnboardingTdxStep: View {
                         SecureField("Web Services Key", text: $wizardState.tdxWebServicesKey)
                             .textFieldStyle(.roundedBorder)
                         Text("Found in TDX Admin > BEID and Web Services Key.")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundStyle(.tertiary)
                     }
                 }

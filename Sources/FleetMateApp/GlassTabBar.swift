@@ -26,9 +26,9 @@ struct GlassTabBar: View {
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: tab.icon)
-                            .font(.system(size: 11))
+                            .appFont(fixed: 11)
                         Text(tab.rawValue)
-                            .font(.system(size: 13, weight: selectedTab == tab ? .semibold : .regular))
+                            .appFont(fixed: 13, weight: selectedTab == tab ? .semibold : .regular)
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)

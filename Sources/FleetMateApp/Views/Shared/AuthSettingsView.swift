@@ -64,12 +64,12 @@ struct AuthSettingsView: View {
         HStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundColor(.orange)
-                .font(.title3)
+                .appFont(.title3)
             VStack(alignment: .leading, spacing: 2) {
                 Text("Service Principal Detected")
-                    .font(.headline)
+                    .appFont(.headline)
                 Text("One or more systems are authenticated as a Service Principal. Actions will appear as the app identity, not your user account.")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
             }
             Spacer()
@@ -88,7 +88,7 @@ struct AuthSettingsView: View {
                 Image(systemName: category.icon)
                     .foregroundColor(.secondary)
                 Text(category.displayName)
-                    .font(.headline)
+                    .appFont(.headline)
             }
             ForEach(systems, id: \.systemId) { system in
                 authSystemCard(system)
@@ -102,7 +102,7 @@ struct AuthSettingsView: View {
         HStack(alignment: .top, spacing: 14) {
             // Icon
             Image(systemName: system.systemId.icon)
-                .font(.title2)
+                .appFont(.title2)
                 .foregroundColor(colorForState(system.state))
                 .frame(width: 32)
                 .padding(.top, 2)
@@ -112,7 +112,7 @@ struct AuthSettingsView: View {
                 // Header row: name + status badge + action buttons
                 HStack(spacing: 8) {
                     Text(system.systemId.displayName)
-                        .font(.system(size: 13, weight: .semibold))
+                        .appFont(fixed: 13, weight: .semibold)
                     statusBadge(system.state)
                     Spacer()
                     actionButtons(for: system)
@@ -266,11 +266,11 @@ struct AuthSettingsView: View {
     private func detailRow(_ label: String, _ value: String, _ valueColor: Color = .secondary) -> some View {
         HStack(alignment: .top, spacing: 0) {
             Text(label)
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundColor(Color(NSColor.tertiaryLabelColor))
                 .frame(width: 130, alignment: .leading)
             Text(value)
-                .font(.system(.caption, design: .monospaced))
+                .appFont(.caption, design: .monospaced)
                 .foregroundColor(valueColor)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -282,11 +282,11 @@ struct AuthSettingsView: View {
             if let d = date {
                 HStack(alignment: .top, spacing: 0) {
                     Text("Last verified")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(Color(NSColor.tertiaryLabelColor))
                         .frame(width: 130, alignment: .leading)
                     Text("\(d, style: .relative) ago  (\(d, formatter: timeFormatter))")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(Color(NSColor.tertiaryLabelColor))
                 }
             }
@@ -338,7 +338,7 @@ struct AuthSettingsView: View {
                 .fill(colorForState(state))
                 .frame(width: 7, height: 7)
             Text(state.statusLabel)
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundColor(colorForState(state))
         }
         .padding(.horizontal, 6)
@@ -410,7 +410,7 @@ struct AuthSettingsView: View {
                     EmptyView()
                 } else {
                     Text("gh auth login")
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .foregroundColor(.secondary)
                         .fontDesign(.monospaced)
                 }
@@ -514,24 +514,24 @@ struct AuthSettingsView: View {
     private func editField(_ label: String, text: Binding<String>) -> some View {
         HStack(spacing: 0) {
             Text(label)
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundColor(Color(NSColor.tertiaryLabelColor))
                 .frame(width: 130, alignment: .leading)
             TextField("", text: text)
                 .textFieldStyle(.roundedBorder)
-                .font(.caption)
+                .appFont(.caption)
         }
     }
 
     private func editSecureField(_ label: String, text: Binding<String>) -> some View {
         HStack(spacing: 0) {
             Text(label)
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundColor(Color(NSColor.tertiaryLabelColor))
                 .frame(width: 130, alignment: .leading)
             SecureField("", text: text)
                 .textFieldStyle(.roundedBorder)
-                .font(.caption)
+                .appFont(.caption)
         }
     }
 

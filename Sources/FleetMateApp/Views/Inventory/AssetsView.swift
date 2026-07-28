@@ -252,7 +252,7 @@ struct AssetsView: View {
                 }
                 .popover(isPresented: $showColumnPicker, arrowEdge: .bottom) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Columns").font(.headline).padding(.bottom, 4)
+                        Text("Columns").appFont(.headline).padding(.bottom, 4)
                         ForEach(AssetSortField.allCases, id: \.self) { field in
                             Toggle(field.rawValue, isOn: Binding(
                                 get: { visibleColumns.contains(field) },
@@ -391,7 +391,7 @@ struct AssetsView: View {
                         .lineLimit(1)
                     if sortField == field {
                         Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                            .font(.caption2)
+                            .appFont(.caption2)
                             .foregroundColor(.accentColor)
                     }
                     Spacer(minLength: 0)
@@ -411,11 +411,11 @@ struct AssetsView: View {
         switch field {
         case .assetTag:
             Text(asset.assetTag ?? "-")
-                .font(.system(.body, design: .monospaced))
+                .appFont(.body, design: .monospaced)
                 .lineLimit(1)
         case .serial:
             Text(asset.serial ?? "-")
-                .font(.system(.body, design: .monospaced))
+                .appFont(.body, design: .monospaced)
                 .lineLimit(1)
         case .name:
             Text(asset.displayName ?? "-").lineLimit(1)
@@ -497,16 +497,16 @@ struct AssetDetailSidebar: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(asset.name ?? "Unnamed Asset")
-                        .font(.headline)
+                        .appFont(.headline)
                         .lineLimit(2)
                     if let tag = asset.assetTag {
                         HStack(spacing: 4) {
                             Text(tag)
-                                .font(.subheadline)
+                                .appFont(.subheadline)
                                 .foregroundColor(.secondary)
                             Button(action: { copyToClipboard(tag) }) {
                                 Image(systemName: "doc.on.doc")
-                                    .font(.caption)
+                                    .appFont(.caption)
                             }
                             .buttonStyle(.plain)
                             .help("Copy asset tag")
@@ -552,7 +552,7 @@ struct AssetDetailSidebar: View {
                         if !loadedStatusLabels.isEmpty {
                             HStack(alignment: .top) {
                                 Text("Status")
-                                    .font(.callout)
+                                    .appFont(.callout)
                                     .foregroundColor(.secondary)
                                     .frame(width: 110, alignment: .leading)
                                 Picker("", selection: Binding(
@@ -636,7 +636,7 @@ struct AssetDetailSidebar: View {
                     if let notes = asset.notes, !notes.isEmpty {
                         detailSection("Notes") {
                             Text(notes)
-                                .font(.callout)
+                                .appFont(.callout)
                                 .foregroundColor(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
@@ -672,7 +672,7 @@ struct AssetDetailSidebar: View {
                             }
                             if let error = saveError {
                                 Text(error)
-                                    .font(.caption)
+                                    .appFont(.caption)
                                     .foregroundColor(.red)
                                     .lineLimit(2)
                             }
@@ -712,7 +712,7 @@ struct AssetDetailSidebar: View {
     private func detailSection(_ title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.subheadline)
+                .appFont(.subheadline)
                 .fontWeight(.semibold)
                 .foregroundColor(.secondary)
                 .textCase(.uppercase)
@@ -725,16 +725,16 @@ struct AssetDetailSidebar: View {
         if let value = value, !value.isEmpty {
             HStack(alignment: .top) {
                 Text(label)
-                    .font(.callout)
+                    .appFont(.callout)
                     .foregroundColor(.secondary)
                     .frame(width: 110, alignment: .leading)
                 Text(value)
-                    .font(.callout)
+                    .appFont(.callout)
                     .textSelection(.enabled)
                 if copyable {
                     Button(action: { copyToClipboard(value) }) {
                         Image(systemName: "doc.on.doc")
-                            .font(.caption)
+                            .appFont(.caption)
                     }
                     .buttonStyle(.plain)
                     .help("Copy")
@@ -816,7 +816,7 @@ struct ReAllocateSheet: View {
             // Header
             HStack {
                 Text("Re-Allocate Asset")
-                    .font(.headline)
+                    .appFont(.headline)
                 Spacer()
                 Button("Cancel") { dismiss() }
             }
@@ -824,13 +824,13 @@ struct ReAllocateSheet: View {
             // Asset info
             HStack(spacing: 12) {
                 Image(systemName: "desktopcomputer")
-                    .font(.title2)
+                    .appFont(.title2)
                     .foregroundColor(.blue)
                 VStack(alignment: .leading) {
                     Text(asset.name ?? "Unnamed")
                         .fontWeight(.medium)
                     Text(asset.assetTag ?? "")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
             }
@@ -844,14 +844,14 @@ struct ReAllocateSheet: View {
                     Text(currentUser)
                         .fontWeight(.medium)
                 }
-                .font(.caption)
+                .appFont(.caption)
             }
 
             Divider()
 
             // User search
             Text("Assign to:")
-                .font(.subheadline)
+                .appFont(.subheadline)
                 .fontWeight(.semibold)
 
             HStack {
@@ -876,13 +876,13 @@ struct ReAllocateSheet: View {
                             Text(user.fullName)
                                 .fontWeight(.medium)
                             Text(user.username ?? "")
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundColor(.secondary)
                         }
                         Spacer()
                         if let dept = user.department?.name {
                             Text(dept)
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -899,7 +899,7 @@ struct ReAllocateSheet: View {
 
             if let error = errorMessage {
                 Text(error)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.red)
             }
 
@@ -920,7 +920,7 @@ struct ReAllocateSheet: View {
                     ProgressView()
                         .controlSize(.small)
                     Text("Processing re-allocation...")
-                        .font(.caption)
+                        .appFont(.caption)
                 }
             }
         }
@@ -1008,7 +1008,7 @@ struct StatusBadge: View {
                 .fill(color)
                 .frame(width: 8, height: 8)
             Text(status?.name ?? "Unknown")
-                .font(.callout)
+                .appFont(.callout)
         }
     }
 }

@@ -65,6 +65,9 @@ struct DashboardView: View {
     @State private var activityItems: [ActivityItem] = []
     @State private var snipeActivity: [SnipeActivityLog] = []
 
+    // "My pull requests" queue across Azure DevOps + GitHub
+    @StateObject private var pullRequestModel = PullRequestQueueModel()
+
     // Counts
     @State private var deviceCount = 0
     @State private var nonCompliantCount = 0
@@ -137,6 +140,10 @@ struct DashboardView: View {
         .onChange(of: appState.showOnboardingWizard) { _, s in if !s { refreshSection(.all) } }
         .onChange(of: appState.snipeSsoAuthenticated) { _, a in if a { refreshSection(.assets) } }
         .onChange(of: appState.secretsConfigured) { _, _ in refreshSection(.all) }
+        // DevOps PRs need the SSO bearer token, which usually lands after first paint.
+        .onChange(of: appState.devOpsSsoAuthenticated) { _, a in
+            if a { pullRequestModel.load(appState: appState, force: true) }
+        }
     }
 
     // MARK: - Split Layout (draggable)
@@ -148,6 +155,10 @@ struct DashboardView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         kpiGrid
+                        PullRequestQueueSection(model: pullRequestModel)
+                            .environmentObject(appState)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 16)
                         chartGrid
                             .padding(.horizontal, 16)
                             .padding(.bottom, 16)
@@ -673,11 +684,15 @@ struct DashboardView: View {
 
     private func refreshAll() async {
         appState.invalidateAllCaches()
+        pullRequestModel.load(appState: appState, force: true)
         await appState.preloadAllData()
         await loadAllSections()
     }
 
     private func loadAllSections() async {
+        // The PR queue runs on its own task so a slow provider never holds up
+        // the charts (and vice versa).
+        pullRequestModel.load(appState: appState)
         async let f: () = loadFleetHealth()
         async let r: () = loadReportMate()
         async let t: () = loadTicketsWork()

@@ -10,14 +10,14 @@ struct UserSidebarRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "person.circle.fill")
-                .font(.title2)
+                .appFont(.title2)
                 .foregroundColor(.accentColor)
             VStack(alignment: .leading, spacing: 1) {
                 Text(user.displayName ?? "Unknown")
-                    .font(.body)
+                    .appFont(.body)
                     .lineLimit(1)
                 Text(user.userPrincipalName ?? user.mail ?? "-")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
@@ -88,13 +88,13 @@ struct EntraUserInspector: View {
                 .foregroundColor(.accentColor)
             VStack(alignment: .leading, spacing: 3) {
                 Text(u.displayName ?? "Unknown")
-                    .font(.title2).bold()
+                    .appFont(.title2).bold()
                 Text(u.userPrincipalName ?? u.email)
-                    .font(.callout)
+                    .appFont(.callout)
                     .foregroundColor(.secondary)
                     .textSelection(.enabled)
                 if let title = u.jobTitle {
-                    Text(title).font(.caption).foregroundColor(.secondary)
+                    Text(title).appFont(.caption).foregroundColor(.secondary)
                 }
             }
             Spacer()
@@ -111,7 +111,7 @@ struct EntraUserInspector: View {
         return Label(enabled ? "Enabled" : "Disabled",
                      systemImage: enabled ? "checkmark.circle.fill" : "xmark.circle.fill")
             .foregroundColor(enabled ? .green : .red)
-            .font(.callout)
+            .appFont(.callout)
     }
 
     // MARK: Properties (full Azure-style)
@@ -182,10 +182,10 @@ struct EntraUserInspector: View {
                             .foregroundColor(.secondary)
                             .frame(width: 24)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(device.displayName ?? "Unknown").font(.body)
+                            Text(device.displayName ?? "Unknown").appFont(.body)
                             Text([device.operatingSystem, device.operatingSystemVersion]
                                 .compactMap { $0 }.joined(separator: " "))
-                                .font(.caption).foregroundColor(.secondary)
+                                .appFont(.caption).foregroundColor(.secondary)
                         }
                         Spacer()
                         if device.isCompliant == true {
@@ -218,9 +218,9 @@ struct EntraUserInspector: View {
                             .foregroundColor(.accentColor)
                             .frame(width: 24)
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(group.displayName ?? "Unknown").font(.body)
+                            Text(group.displayName ?? "Unknown").appFont(.body)
                             if let d = group.description, !d.isEmpty {
-                                Text(d).font(.caption).foregroundColor(.secondary).lineLimit(1)
+                                Text(d).appFont(.caption).foregroundColor(.secondary).lineLimit(1)
                             }
                         }
                         Spacer()
@@ -238,7 +238,7 @@ struct EntraUserInspector: View {
     private func propertySection(_ title: String, _ rows: [(String, String?)]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.headline)
+                .appFont(.headline)
             VStack(spacing: 0) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     propertyRow(label: row.0, value: row.1)
@@ -251,11 +251,11 @@ struct EntraUserInspector: View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
                 Text(label)
-                    .font(.callout)
+                    .appFont(.callout)
                     .foregroundColor(.secondary)
                     .frame(width: 210, alignment: .leading)
                 Text(value?.isEmpty == false ? value! : "—")
-                    .font(.callout)
+                    .appFont(.callout)
                     .foregroundColor(value?.isEmpty == false ? .primary : .secondary.opacity(0.6))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -276,7 +276,7 @@ struct EntraUserInspector: View {
 
     private func tagBadge(_ text: String, _ color: Color) -> some View {
         Text(text)
-            .font(.caption2)
+            .appFont(.caption2)
             .padding(.horizontal, 6).padding(.vertical, 2)
             .background(color.opacity(0.15), in: .rect(cornerRadius: 4))
             .foregroundColor(color)

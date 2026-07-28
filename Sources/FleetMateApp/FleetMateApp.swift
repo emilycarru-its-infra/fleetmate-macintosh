@@ -5,7 +5,8 @@ import FleetMateCore
 @main
 struct FleetMateApp: App {
     @StateObject private var appState = AppState()
-    
+    @AppStorage(AppFontScale.storageKey) private var fontScale: Double = AppFontScale.default
+
     init() {
         // Ensure app appears in Dock and can be activated
         NSApplication.shared.setActivationPolicy(.regular)
@@ -16,6 +17,7 @@ struct FleetMateApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(appState)
+                .appFontScale(fontScale)
                 .task {
                     await appState.preloadAllData()
                 }
@@ -38,6 +40,7 @@ struct FleetMateApp: App {
         Settings {
             SettingsView()
                 .environmentObject(appState)
+                .appFontScale(fontScale)
         }
         #endif
     }

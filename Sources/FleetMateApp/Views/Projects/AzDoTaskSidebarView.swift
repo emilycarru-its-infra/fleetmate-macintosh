@@ -113,8 +113,8 @@ struct AzDoTaskSidebarView: View {
                 VStack { Spacer(); ProgressView("Loading work item…"); Spacer() }
             } else if let error = loadError {
                 VStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle").font(.largeTitle).foregroundColor(.orange)
-                    Text(error).font(.body).foregroundColor(.secondary).multilineTextAlignment(.center)
+                    Image(systemName: "exclamationmark.triangle").appFont(.largeTitle).foregroundColor(.orange)
+                    Text(error).appFont(.body).foregroundColor(.secondary).multilineTextAlignment(.center)
                     Button("Retry") { loadDetail() }.buttonStyle(.bordered)
                     Spacer()
                 }.padding()
@@ -176,14 +176,14 @@ struct AzDoTaskSidebarView: View {
         HStack(spacing: 8) {
             Button(action: onClose) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .medium))
+                    .appFont(fixed: 14, weight: .medium)
             }
             .buttonStyle(.plain)
             .help("Close")
 
             if let id = workItemId {
                 Text("#\(id)")
-                    .font(.title3)
+                    .appFont(.title3)
                     .fontWeight(.bold)
                     .foregroundColor(.secondary)
                     .textSelection(.enabled)
@@ -195,7 +195,7 @@ struct AzDoTaskSidebarView: View {
 
             if let error = actionError {
                 Text(error)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.red)
                     .lineLimit(1)
             }
@@ -327,23 +327,23 @@ struct AzDoTaskSidebarView: View {
             Button(action: { onSelectWorkItem?(parent.id) }) {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.up")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                     if let parentType = parentFields.workItemType {
                         Text(parentType)
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundColor(.secondary)
                     }
                     Text("#\(parent.id)")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.accentColor)
                     Text(parentFields.title ?? "Parent")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.accentColor)
                         .lineLimit(1)
                     if let board = parentFields.boardColumn {
                         Text("· \(board)")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundColor(.secondary)
                     }
                 }
@@ -360,10 +360,10 @@ struct AzDoTaskSidebarView: View {
         if isEditing {
             TextField("Work item title", text: $editedTitle)
                 .textFieldStyle(.roundedBorder)
-                .font(.title2)
+                .appFont(.title2)
         } else {
             Text(fields?.title ?? task.title)
-                .font(.title2)
+                .appFont(.title2)
                 .fontWeight(.semibold)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
@@ -389,7 +389,7 @@ struct AzDoTaskSidebarView: View {
                             WorkItemStateBadge(state: fields?.state)
                             if let reason = fields?.reason {
                                 Text("(\(reason))")
-                                    .font(.subheadline)
+                                    .appFont(.subheadline)
                                     .foregroundColor(.secondary)
                             }
                         }
@@ -422,7 +422,7 @@ struct AzDoTaskSidebarView: View {
                         HStack(spacing: 6) {
                             PriorityIndicator(priority: fields?.priority)
                             Text(priorityLabel(fields?.priority))
-                                .font(.body)
+                                .appFont(.body)
                         }
                     }
                 }
@@ -443,7 +443,7 @@ struct AzDoTaskSidebarView: View {
                             Button(action: { editedDueDate = nil }) {
                                 Image(systemName: "xmark.circle.fill")
                                     .foregroundColor(.secondary)
-                                    .font(.caption)
+                                    .appFont(.caption)
                             }
                             .buttonStyle(.plain)
                             .help("Clear due date")
@@ -451,10 +451,10 @@ struct AzDoTaskSidebarView: View {
                     } else {
                         if let dateStr = fields?.dueDate, let date = parseISODate(dateStr) {
                             Text(date, style: .date)
-                                .font(.body)
+                                .appFont(.body)
                         } else {
                             Text("–")
-                                .font(.body)
+                                .appFont(.body)
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -481,7 +481,7 @@ struct AzDoTaskSidebarView: View {
                         }
                     } else {
                         Text(fields?.assignedTo?.displayName ?? "Unassigned")
-                            .font(.body)
+                            .appFont(.body)
                             .foregroundColor(fields?.assignedTo != nil ? .primary : .secondary)
                     }
                 }
@@ -501,7 +501,7 @@ struct AzDoTaskSidebarView: View {
                         }
                     } else {
                         Text(fields?.areaPath ?? "–")
-                            .font(.body)
+                            .appFont(.body)
                     }
                 }
 
@@ -520,7 +520,7 @@ struct AzDoTaskSidebarView: View {
                         }
                     } else {
                         Text(fields?.iterationPath ?? "–")
-                            .font(.body)
+                            .appFont(.body)
                     }
                 }
 
@@ -531,12 +531,12 @@ struct AzDoTaskSidebarView: View {
                     } else {
                         let tagList = parseTags(fields?.tags)
                         if tagList.isEmpty {
-                            Text("No tags").font(.body).foregroundColor(.secondary)
+                            Text("No tags").appFont(.body).foregroundColor(.secondary)
                         } else {
                             FlowLayout(spacing: 4) {
                                 ForEach(tagList, id: \.self) { tag in
                                     Text(tag)
-                                        .font(.subheadline)
+                                        .appFont(.subheadline)
                                         .padding(.horizontal, 8).padding(.vertical, 4)
                                         .background(Color.blue.opacity(0.12))
                                         .cornerRadius(10)
@@ -554,7 +554,7 @@ struct AzDoTaskSidebarView: View {
     private func metadataField<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
-                .font(.subheadline)
+                .appFont(.subheadline)
                 .fontWeight(.medium)
                 .foregroundColor(.secondary)
             content()
@@ -568,7 +568,7 @@ struct AzDoTaskSidebarView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Description")
-                    .font(.headline)
+                    .appFont(.headline)
                 if isEditing {
                     Picker("", selection: $showDescriptionPreview) {
                         Text("Edit").tag(false)
@@ -590,7 +590,7 @@ struct AzDoTaskSidebarView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text("No description provided.")
-                        .font(.body)
+                        .appFont(.body)
                         .foregroundColor(.secondary)
                         .italic()
                 }
@@ -604,13 +604,13 @@ struct AzDoTaskSidebarView: View {
     private var addCommentSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Add Comment")
-                .font(.headline)
+                .appFont(.headline)
 
             MentionTextEditor(text: $newCommentText, members: teamMembers)
 
             HStack {
                 Text("Supports Markdown · ⌘Enter to post")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                 Spacer()
                 Button("Send") { submitComment() }
@@ -628,11 +628,11 @@ struct AzDoTaskSidebarView: View {
     private var commentsFeedSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Comments (\(comments.count))")
-                .font(.headline)
+                .appFont(.headline)
 
             if comments.isEmpty {
                 Text("No comments yet.")
-                    .font(.body)
+                    .appFont(.body)
                     .foregroundColor(.secondary)
                     .italic()
                     .padding(.vertical, 4)
@@ -664,20 +664,20 @@ struct AzDoTaskSidebarView: View {
     private var effortSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Effort")
-                .font(.headline)
+                .appFont(.headline)
 
             if isEditing {
                 HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Original").font(.subheadline).foregroundColor(.secondary)
+                        Text("Original").appFont(.subheadline).foregroundColor(.secondary)
                         TextField("hrs", text: $editedOriginal).textFieldStyle(.roundedBorder).frame(width: 70)
                     }
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Remaining").font(.subheadline).foregroundColor(.secondary)
+                        Text("Remaining").appFont(.subheadline).foregroundColor(.secondary)
                         TextField("hrs", text: $editedRemaining).textFieldStyle(.roundedBorder).frame(width: 70)
                     }
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Completed").font(.subheadline).foregroundColor(.secondary)
+                        Text("Completed").appFont(.subheadline).foregroundColor(.secondary)
                         TextField("hrs", text: $editedCompleted).textFieldStyle(.roundedBorder).frame(width: 70)
                     }
                 }
@@ -693,9 +693,9 @@ struct AzDoTaskSidebarView: View {
 
     private func effortLabel(_ label: String, value: Double?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.subheadline).foregroundColor(.secondary)
+            Text(label).appFont(.subheadline).foregroundColor(.secondary)
             Text(value.map { String(format: "%.1fh", $0) } ?? "–")
-                .font(.body)
+                .appFont(.body)
                 .monospacedDigit()
         }
     }
@@ -707,7 +707,7 @@ struct AzDoTaskSidebarView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Repro Steps")
-                    .font(.headline)
+                    .appFont(.headline)
                 if isEditing {
                     Picker("", selection: $showReproPreview) {
                         Text("Edit").tag(false)
@@ -735,7 +735,7 @@ struct AzDoTaskSidebarView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Acceptance Criteria")
-                    .font(.headline)
+                    .appFont(.headline)
                 if isEditing {
                     Picker("", selection: $showAcceptancePreview) {
                         Text("Edit").tag(false)
@@ -763,7 +763,7 @@ struct AzDoTaskSidebarView: View {
         let nonArtifactRelations = relations.filter { $0.relationType != .artifact }
         VStack(alignment: .leading, spacing: 10) {
             Text("Relations (\(nonArtifactRelations.count))")
-                .font(.headline)
+                .appFont(.headline)
 
             let grouped = Dictionary(grouping: nonArtifactRelations, by: { $0.relationType })
             let order: [WorkItemRelation.RelationType] = [.parent, .child, .related, .predecessor, .successor, .other]
@@ -771,7 +771,7 @@ struct AzDoTaskSidebarView: View {
                 if let items = grouped[type], !items.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(relationTypeLabel(type))
-                            .font(.subheadline)
+                            .appFont(.subheadline)
                             .fontWeight(.semibold)
                             .foregroundColor(.secondary)
                             .textCase(.uppercase)
@@ -788,7 +788,7 @@ struct AzDoTaskSidebarView: View {
     private func relationRow(_ relation: WorkItemRelation) -> some View {
         HStack(spacing: 8) {
             Image(systemName: relationIcon(relation.relationType))
-                .font(.subheadline)
+                .appFont(.subheadline)
                 .foregroundColor(.secondary)
                 .frame(width: 16)
 
@@ -797,18 +797,18 @@ struct AzDoTaskSidebarView: View {
                 Button(action: { onSelectWorkItem?(id) }) {
                     HStack(spacing: 4) {
                         Text("#\(id)")
-                            .font(.body)
+                            .appFont(.body)
                             .foregroundColor(.accentColor)
                         if let info = linkedWorkItemInfo[id] {
                             if let title = info.title {
                                 Text(title)
-                                    .font(.body)
+                                    .appFont(.body)
                                     .foregroundColor(.accentColor)
                                     .lineLimit(1)
                             }
                             if let state = info.state {
                                 Text(state)
-                                    .font(.caption)
+                                    .appFont(.caption)
                                     .fontWeight(.medium)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
@@ -818,7 +818,7 @@ struct AzDoTaskSidebarView: View {
                             }
                             if let dateStr = info.changedDate {
                                 Text(relativeDate(dateStr))
-                                    .font(.caption)
+                                    .appFont(.caption)
                                     .foregroundColor(.secondary)
                             }
                         }
@@ -828,12 +828,12 @@ struct AzDoTaskSidebarView: View {
                 .help("Open in sidebar")
             } else if let name = relation.attributes?.name {
                 Text(name)
-                    .font(.body)
+                    .appFont(.body)
                     .lineLimit(1)
                 Spacer()
             } else if let url = relation.url {
                 Text(url.components(separatedBy: "/").suffix(3).joined(separator: "/"))
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                     .foregroundColor(.accentColor)
                     .lineLimit(1)
                 Spacer()
@@ -898,7 +898,7 @@ struct AzDoTaskSidebarView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Development")
-                    .font(.headline)
+                    .appFont(.headline)
                 Spacer()
                 Button(action: { openLinkCodePopover() }) {
                     Label("Link", systemImage: "plus")
@@ -914,7 +914,7 @@ struct AzDoTaskSidebarView: View {
             let artifactLinks = (workItem?.relations ?? []).filter { $0.relationType == .artifact }
             if artifactLinks.isEmpty {
                 Text("No linked commits, branches, or pull requests.")
-                    .font(.body)
+                    .appFont(.body)
                     .foregroundColor(.secondary)
                     .italic()
             } else {
@@ -935,31 +935,31 @@ struct AzDoTaskSidebarView: View {
 
         HStack(spacing: 8) {
             Image(systemName: artifactIcon(for: relation.url))
-                .font(.subheadline)
+                .appFont(.subheadline)
                 .foregroundColor(.accentColor)
                 .frame(width: 16)
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     Text(linkTypeName ?? artifactType)
-                        .font(.caption)
+                        .appFont(.caption)
                         .fontWeight(.semibold)
                         .foregroundColor(.secondary)
                         .textCase(.uppercase)
                 }
                 if let webUrl = webUrl, let urlObj = URL(string: webUrl) {
                     Link(displayName, destination: urlObj)
-                        .font(.body)
+                        .appFont(.body)
                         .lineLimit(1)
                         .help(webUrl)
                 } else {
                     Text(displayName)
-                        .font(.body)
+                        .appFont(.body)
                         .lineLimit(1)
                 }
                 if let comment = relation.attributes?.comment, !comment.isEmpty {
                     Text(comment)
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -1045,14 +1045,14 @@ struct AzDoTaskSidebarView: View {
     private var linkCodePopoverContent: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Link to Code")
-                .font(.headline)
+                .appFont(.headline)
 
             if linkRepos.isEmpty && isLoadingLinkData {
                 HStack { Spacer(); ProgressView(); Spacer() }
                     .frame(height: 60)
             } else if linkRepos.isEmpty {
                 Text("No repositories found.")
-                    .font(.body)
+                    .appFont(.body)
                     .foregroundColor(.secondary)
             } else {
                 // Repo picker
@@ -1104,12 +1104,12 @@ struct AzDoTaskSidebarView: View {
 
                 if let error = linkError {
                     Text(error)
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.red)
                 }
 
                 if isLinking {
-                    HStack { Spacer(); ProgressView().scaleEffect(0.7); Text("Linking…").font(.caption); Spacer() }
+                    HStack { Spacer(); ProgressView().scaleEffect(0.7); Text("Linking…").appFont(.caption); Spacer() }
                 }
             }
         }
@@ -1126,17 +1126,17 @@ struct AzDoTaskSidebarView: View {
                 case .branch:
                     let filtered = linkBranches.filter { query.isEmpty || $0.shortName.lowercased().contains(query) }
                     if filtered.isEmpty {
-                        Text(query.isEmpty ? "No branches found." : "No matching branches.").font(.body).foregroundColor(.secondary)
+                        Text(query.isEmpty ? "No branches found." : "No matching branches.").appFont(.body).foregroundColor(.secondary)
                     } else {
                         ForEach(filtered) { branch in
                             Button(action: { linkBranch(branch) }) {
                                 HStack(spacing: 8) {
                                     Image(systemName: "arrow.triangle.branch")
-                                        .font(.subheadline)
+                                        .appFont(.subheadline)
                                         .foregroundColor(.accentColor)
                                         .frame(width: 16)
                                     Text(branch.shortName)
-                                        .font(.body)
+                                        .appFont(.body)
                                         .lineLimit(1)
                                     Spacer()
                                 }
@@ -1155,27 +1155,27 @@ struct AzDoTaskSidebarView: View {
                         return msg.contains(query) || fullId.contains(query) || query.contains(fullId.prefix(7)) || author.contains(query)
                     }
                     if filtered.isEmpty {
-                        Text(query.isEmpty ? "No commits found." : "No matching commits.").font(.body).foregroundColor(.secondary)
+                        Text(query.isEmpty ? "No commits found." : "No matching commits.").appFont(.body).foregroundColor(.secondary)
                     } else {
                         ForEach(filtered) { commit in
                             Button(action: { linkCommit(commit) }) {
                                 HStack(spacing: 8) {
                                     Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                                        .font(.subheadline)
+                                        .appFont(.subheadline)
                                         .foregroundColor(.orange)
                                         .frame(width: 16)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(commit.comment ?? "No message")
-                                            .font(.body)
+                                            .appFont(.body)
                                             .lineLimit(1)
                                         HStack(spacing: 6) {
                                             Text(commit.shortId)
-                                                .font(.caption)
+                                                .appFont(.caption)
                                                 .monospacedDigit()
                                                 .foregroundColor(.secondary)
                                             if let author = commit.author?.name {
                                                 Text(author)
-                                                    .font(.caption)
+                                                    .appFont(.caption)
                                                     .foregroundColor(.secondary)
                                             }
                                         }
@@ -1197,31 +1197,31 @@ struct AzDoTaskSidebarView: View {
                         return title.contains(query) || branch.contains(query) || id.contains(query)
                     }
                     if filtered.isEmpty {
-                        Text(query.isEmpty ? "No pull requests found." : "No matching pull requests.").font(.body).foregroundColor(.secondary)
+                        Text(query.isEmpty ? "No pull requests found." : "No matching pull requests.").appFont(.body).foregroundColor(.secondary)
                     } else {
                         ForEach(filtered) { pr in
                             Button(action: { linkPR(pr) }) {
                                 HStack(spacing: 8) {
                                     Image(systemName: "arrow.triangle.pull")
-                                        .font(.subheadline)
+                                        .appFont(.subheadline)
                                         .foregroundColor(pr.status == "completed" ? .purple : .green)
                                         .frame(width: 16)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(pr.title ?? "Untitled PR")
-                                            .font(.body)
+                                            .appFont(.body)
                                             .lineLimit(1)
                                         HStack(spacing: 6) {
                                             Text("#\(pr.pullRequestId)")
-                                                .font(.caption)
+                                                .appFont(.caption)
                                                 .foregroundColor(.secondary)
                                             if let branch = pr.sourceBranch {
                                                 Text(branch)
-                                                    .font(.caption)
+                                                    .appFont(.caption)
                                                     .foregroundColor(.secondary)
                                             }
                                             if let status = pr.status {
                                                 Text(status.capitalized)
-                                                    .font(.caption)
+                                                    .appFont(.caption)
                                                     .foregroundColor(.secondary)
                                             }
                                         }
@@ -1355,7 +1355,7 @@ struct AzDoTaskSidebarView: View {
     private var datesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Dates")
-                .font(.headline)
+                .appFont(.headline)
 
             VStack(alignment: .leading, spacing: 6) {
                 azdoDateRow("Created", date: fields?.createdDate, by: fields?.createdBy)
@@ -1376,19 +1376,19 @@ struct AzDoTaskSidebarView: View {
     private func azdoDateRow(_ label: String, date: String?, by person: IdentityRef?) -> some View {
         HStack(spacing: 6) {
             Text(label)
-                .font(.subheadline)
+                .appFont(.subheadline)
                 .foregroundColor(.secondary)
                 .frame(width: 100, alignment: .leading)
             if let date = date, let parsed = parseISODate(date) {
                 Text(parsed, style: .relative)
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                     .foregroundColor(.secondary)
             } else {
-                Text("–").font(.subheadline).foregroundColor(.secondary)
+                Text("–").appFont(.subheadline).foregroundColor(.secondary)
             }
             if let name = person?.displayName {
                 Text("by \(name)")
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
@@ -1797,7 +1797,7 @@ private struct DevOpsCommentBubble: View {
             // Header: author top-left, actions + timestamp top-right
             HStack(alignment: .top, spacing: 6) {
                 Text(comment.createdBy?.displayName ?? "Unknown")
-                    .font(.caption)
+                    .appFont(.caption)
                     .fontWeight(.semibold)
 
                 Spacer()
@@ -1806,7 +1806,7 @@ private struct DevOpsCommentBubble: View {
                 if commentPermalink != nil {
                     Button(action: copyLink) {
                         Image(systemName: linkCopied ? "checkmark" : "link")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundColor(linkCopied ? .green : .secondary)
                     }
                     .buttonStyle(.plain)
@@ -1817,7 +1817,7 @@ private struct DevOpsCommentBubble: View {
                 if isOwnComment {
                     Button(action: startEditing) {
                         Image(systemName: "pencil")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
@@ -1825,7 +1825,7 @@ private struct DevOpsCommentBubble: View {
 
                     Button(action: { showDeleteConfirm = true }) {
                         Image(systemName: "trash")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
@@ -1840,7 +1840,7 @@ private struct DevOpsCommentBubble: View {
 
                 if let dateStr = comment.createdDate, let date = parseDate(dateStr) {
                     Text(date, style: .relative)
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
             }
@@ -1849,7 +1849,7 @@ private struct DevOpsCommentBubble: View {
             if isEditing {
                 VStack(alignment: .leading, spacing: 6) {
                     TextEditor(text: $editText)
-                        .font(.body)
+                        .appFont(.body)
                         .frame(height: 80)
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
                     HStack {
@@ -1879,7 +1879,7 @@ private struct DevOpsCommentBubble: View {
                         if let type = reaction.type,
                            let emoji = reactionEmojis.first(where: { $0.type == type })?.emoji {
                             Text("\(emoji) \(reaction.count ?? 0)")
-                                .font(.body)
+                                .appFont(.body)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
                                 .background(reaction.isCurrentUserEngaged == true ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.1))
@@ -1889,7 +1889,7 @@ private struct DevOpsCommentBubble: View {
                 }
                 Button(action: { showReactionPicker.toggle() }) {
                     Image(systemName: "face.smiling")
-                        .font(.body)
+                        .appFont(.body)
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.bordered)
@@ -1903,7 +1903,7 @@ private struct DevOpsCommentBubble: View {
                                 showReactionPicker = false
                             }
                             .buttonStyle(.plain)
-                            .font(.title2)
+                            .appFont(.title2)
                         }
                     }
                     .padding(10)

@@ -11,7 +11,7 @@ struct OnboardingSummaryStep: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Review & Save")
-                    .font(.title2.bold())
+                    .appFont(.title2, weight: .bold)
                 Text("Review your configuration before saving.")
                     .foregroundStyle(.secondary)
             }
@@ -57,10 +57,10 @@ struct OnboardingSummaryStep: View {
                                     HStack(spacing: 8) {
                                         Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
                                             .foregroundStyle(result.success ? .green : .red)
-                                        Text(result.service).font(.body.weight(.medium))
+                                        Text(result.service).appFont(.body, weight: .medium)
                                         Spacer()
                                         Text(result.message)
-                                            .font(.caption)
+                                            .appFont(.caption)
                                             .foregroundStyle(.secondary)
                                             .lineLimit(1)
                                     }
@@ -82,7 +82,7 @@ struct OnboardingSummaryStep: View {
 
                 if wizardState.isTesting {
                     ProgressView().controlSize(.small)
-                    Text("Testing...").font(.caption).foregroundStyle(.secondary)
+                    Text("Testing...").appFont(.caption).foregroundStyle(.secondary)
                 }
 
                 Button("Save & Finish", action: onFinish)
@@ -156,7 +156,7 @@ struct OnboardingSummaryStep: View {
                 HStack(spacing: 8) {
                     Image(systemName: icon)
                         .foregroundStyle(.tint)
-                    Text(title).font(.body.weight(.semibold))
+                    Text(title).appFont(.body, weight: .semibold)
                     testResultBadge(for: title)
                     Spacer()
                 }
@@ -164,11 +164,11 @@ struct OnboardingSummaryStep: View {
                 ForEach(rows, id: \.0) { label, value in
                     HStack {
                         Text(label)
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundStyle(.secondary)
                             .frame(width: 100, alignment: .trailing)
                         Text(value)
-                            .font(.caption.monospaced())
+                            .appFont(.caption, design: .monospaced)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Spacer()
@@ -186,7 +186,7 @@ struct OnboardingSummaryStep: View {
             Spacer()
             Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
                 .foregroundStyle(result.success ? .green : .red)
-                .font(.caption)
+                .appFont(.caption)
         }
     }
 

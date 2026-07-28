@@ -39,9 +39,9 @@ struct ContentView: View {
                         HStack(spacing: 4) {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .foregroundStyle(.orange)
-                                .font(.system(size: 11))
+                                .appFont(fixed: 11)
                             Text("SP")
-                                .font(.system(size: 10, weight: .bold))
+                                .appFont(fixed: 10, weight: .bold)
                                 .foregroundStyle(.orange)
                         }
                         .padding(.horizontal, 8)

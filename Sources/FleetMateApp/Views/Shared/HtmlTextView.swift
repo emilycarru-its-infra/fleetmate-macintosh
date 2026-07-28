@@ -19,11 +19,11 @@ struct HtmlTextView: View {
     var body: some View {
         if let attributed = htmlToAttributedString(html) {
             Text(attributed)
-                .font(.body)
+                .appFont(.body)
         } else {
             // Fallback: strip tags and show plain text
             Text(html.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression))
-                .font(.body)
+                .appFont(.body)
         }
     }
 

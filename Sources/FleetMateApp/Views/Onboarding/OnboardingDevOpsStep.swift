@@ -7,7 +7,7 @@ struct OnboardingDevOpsStep: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Azure DevOps")
-                    .font(.title2.bold())
+                    .appFont(.title2, weight: .bold)
                 Text("Connect to Azure DevOps for project boards and work items.")
                     .foregroundStyle(.secondary)
             }
@@ -29,7 +29,7 @@ struct OnboardingDevOpsStep: View {
                         .textFieldStyle(.roundedBorder)
                     if !wizardState.graphTenantId.isEmpty && wizardState.devopsTenantId.isEmpty {
                         Label("Will use the Microsoft Graph tenant ID if left blank.", systemImage: "info.circle")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }

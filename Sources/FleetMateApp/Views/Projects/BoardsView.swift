@@ -254,44 +254,25 @@ struct BoardsView: View {
                 }
             }
 
-            Toggle("Closed", isOn: $showClosed)
-                .toggleStyle(.checkbox)
-                .help("Include closed items")
-        }
-
-        ToolbarItemGroup(placement: .automatic) {
-            devOpsSsoSection
-
-            Text("\(filteredTasks.count)")
-                .appFont(.caption)
-                .foregroundColor(.secondary)
-                .monospacedDigit()
-                .help("Items shown")
-
-            if filters.hasActiveFilters {
-                Button(action: { filters.clearAll() }) {
-                    Label("Clear Filters", systemImage: "xmark.circle.fill")
-                        .foregroundStyle(.yellow)
-                }
-                .help("Clear filters")
-            }
-
+            // Filters, create and refresh sit with the other controls on the
+            // leading side rather than split across the window.
             Button(action: { showFilters.toggle() }) {
-                Label("Filters", systemImage: filters.hasActiveFilters
+                Label("Filters", systemImage: hasAnyActiveFilter
                     ? "line.3.horizontal.decrease.circle.fill"
                     : "line.3.horizontal.decrease.circle")
             }
             .disabled(allTasks.isEmpty)
+            .help("Filters")
             .popover(isPresented: $showFilters, arrowEdge: .bottom) {
-                FilterPanelView(filters: filters)
+                projectsFilterPopover
             }
 
-            if syncEnabled {
-                Button(action: syncTasks) {
-                    Label("Sync", systemImage: "arrow.triangle.2.circlepath")
+            if hasAnyActiveFilter {
+                Button(action: clearAllFilters) {
+                    Label("Clear Filters", systemImage: "xmark.circle.fill")
+                        .foregroundStyle(.yellow)
                 }
-                .disabled(isSyncing)
-                .help("Sync tasks to Planner / Markdown")
+                .help("Clear filters")
             }
 
             Menu {
@@ -316,43 +297,53 @@ struct BoardsView: View {
             .disabled(!canCreateIssue && !canCreateWorkItem && !canCreateProject)
             .help("New item")
 
+            if syncEnabled {
+                Button(action: syncTasks) {
+                    Label("Sync", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(isSyncing)
+                .help("Sync tasks to Planner / Markdown")
+            }
+
             Button(action: { loadTasks(); loadGhProjectInfo(); loadBoards() }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .disabled(isLoading || isLoadingGhInfo)
             .help("Refresh")
             .keyboardShortcut("r", modifiers: .command)
+
+            // A bare "8" said nothing. Spelling out what it counts costs a few
+            // points of width and removes the guesswork.
+            Text("\(filteredTasks.count) \(filteredTasks.count == 1 ? "item" : "items")")
+                .appFont(.caption)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .help("Items matching the current filters")
         }
     }
 
-    // MARK: - DevOps Auth Status
+    /// True when anything is narrowing the list, including the Closed toggle,
+    /// which now lives inside the popover rather than beside it.
+    private var hasAnyActiveFilter: Bool {
+        filters.hasActiveFilters || showClosed
+    }
 
-    @ViewBuilder
-    private var devOpsSsoSection: some View {
-        if appState.devOpsSsoAuthenticated, let userName = appState.devOpsSsoUserName {
-            HStack(spacing: 6) {
-                Image(systemName: "person.circle.fill")
-                    .foregroundColor(.secondary)
-                Text(userName)
-                    .appFont(.caption)
-                    .foregroundColor(.secondary)
-                Button(action: { appState.signOutDevOpsSso() }) {
-                    Image(systemName: "rectangle.portrait.and.arrow.right")
-                        .appFont(.caption)
-                }
-                .buttonStyle(.plain)
-                .help("Sign out of DevOps SSO")
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.08))
-            .cornerRadius(6)
-        } else if appState.isDevOpsSsoConfigured {
-            Button(action: { appState.triggerDevOpsSsoLogin() }) {
-                Label("Sign In", systemImage: "person.badge.key")
-            }
-            .controlSize(.small)
-            .help("Sign in with DevOps SSO")
+    private func clearAllFilters() {
+        filters.clearAll()
+        showClosed = false
+    }
+
+    /// Filter popover: the shared category panel plus the Projects-specific
+    /// Closed toggle, which is a filter like any other and does not need its own
+    /// permanent slot in the toolbar.
+    private var projectsFilterPopover: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Toggle("Include closed items", isOn: $showClosed)
+                .toggleStyle(.checkbox)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            Divider()
+            FilterPanelView(filters: filters)
         }
     }
 

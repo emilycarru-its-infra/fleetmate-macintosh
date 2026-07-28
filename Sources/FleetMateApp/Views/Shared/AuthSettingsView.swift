@@ -136,6 +136,14 @@ struct AuthSettingsView: View {
 
     // MARK: - Per-System Detail
 
+    /// Graph/Intune/Entra authenticate secretlessly: by default through the `az`
+    /// elevation model (a managed-identity token minted inside an ephemeral
+    /// container), or in break-glass `direct` mode with a delegated token from
+    /// your own `az login`. There is no service-principal client secret.
+    private func graphAuthMethod(_ cfg: FleetMateConfig) -> String {
+        cfg.graphUsesAze ? "Secretless — az elevation" : "Delegated az token (your sign-in)"
+    }
+
     @ViewBuilder
     private func systemDetail(for system: AuthSystemStatus) -> some View {
         let cfg = appState.config
@@ -143,31 +151,24 @@ struct AuthSettingsView: View {
 
         case .intune:
             detailGrid {
-                detailRow("Auth method", "Service Principal (client credentials)")
-                if let t  = cfg.graphTenantId   { detailRow("Tenant ID",  shortId(t)) }
-                if let id = cfg.devicesGraphId  { detailRow("App (client) ID", shortId(id)) }
-                detailRow("Client secret", cfg.devicesGraphSecret != nil ? "● configured" : "missing",
-                          cfg.devicesGraphSecret != nil ? .green : .red)
+                detailRow("Auth method", graphAuthMethod(cfg))
+                if cfg.graphUsesAze { detailRow("Identity", "DevOps-Devices (managed identity)") }
                 if let user = system.user { detailRow("Probed as", user) }
                 checkedRow(system.lastChecked)
             }
 
         case .graph:
             detailGrid {
-                detailRow("Auth method", "Service Principal (client credentials)")
-                if let t  = cfg.graphTenantId    { detailRow("Tenant ID",    shortId(t)) }
-                if let id = cfg.devicesGraphId   { detailRow("Devices app",  shortId(id)) }
-                if let id = cfg.systemsGraphId   { detailRow("Identity app", shortId(id)) }
+                detailRow("Auth method", graphAuthMethod(cfg))
+                if cfg.graphUsesAze { detailRow("Identity", "DevOps-Devices / DevOps-Identity") }
+                if let user = system.user { detailRow("Probed as", user) }
                 checkedRow(system.lastChecked)
             }
 
         case .entra:
             detailGrid {
-                detailRow("Auth method", "Service Principal (client credentials)")
-                if let t  = cfg.graphTenantId   { detailRow("Tenant ID",  shortId(t)) }
-                if let id = cfg.systemsGraphId  { detailRow("App (client) ID", shortId(id)) }
-                detailRow("Client secret", cfg.systemsGraphSecret != nil ? "● configured" : "missing",
-                          cfg.systemsGraphSecret != nil ? .green : .red)
+                detailRow("Auth method", graphAuthMethod(cfg))
+                if cfg.graphUsesAze { detailRow("Identity", "DevOps-Identity (managed identity)") }
                 if let user = system.user { detailRow("Probed as", user) }
                 checkedRow(system.lastChecked)
             }

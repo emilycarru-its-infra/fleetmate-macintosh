@@ -151,7 +151,7 @@ struct GroupsContentView: View {
             isLoading = true
             defer { isLoading = false }
             do {
-                let fetchedGroups = try await appState.graphService.searchGroups("Devices-", limit: 100)
+                let fetchedGroups = try await appState.graphService.searchGroups("Devices-", limit: 999)
                 appState.updateGroupsCache(fetchedGroups)
             } catch {
                 appState.errorMessage = "Failed to load device groups: \(error.localizedDescription)"
@@ -188,71 +188,86 @@ struct GroupsContentView: View {
 }
 
 /// Users content (extracted from UsersView, without its own header)
+/// Contacts-style master/detail: a searchable user list on the left, the full
+/// Entra profile inspector on the right.
 struct UsersContentView: View {
     @EnvironmentObject var appState: AppState
     @State private var searchText = ""
     @State private var searchResults: [EntraUser] = []
     @State private var isLoading = false
-    @State private var selectedUser: EntraUser?
+    @State private var selectedId: String?
+
+    private func rowId(_ u: EntraUser) -> String {
+        u.id ?? u.userPrincipalName ?? u.displayName ?? ""
+    }
+
+    private var selectedUser: EntraUser? {
+        searchResults.first { rowId($0) == selectedId }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Search
+        HSplitView {
+            sidebar
+                .frame(minWidth: 260, idealWidth: 300, maxWidth: 400)
+            detail
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var sidebar: some View {
+        VStack(spacing: 0) {
             HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("Search by email or name...", text: $searchText)
+                Image(systemName: "magnifyingglass").foregroundColor(.secondary)
+                TextField("Search users…", text: $searchText)
                     .textFieldStyle(.plain)
                     .onSubmit { searchUser() }
-                Button("Search") { searchUser() }
-                    .disabled(searchText.isEmpty || isLoading)
+                if isLoading { ProgressView().controlSize(.small) }
             }
             .padding(8)
             .background(Color.secondary.opacity(0.1))
             .cornerRadius(8)
-            .padding(.horizontal)
+            .padding(10)
+
+            Divider()
 
             if !appState.config.isGraphConfigured {
-                VStack {
-                    ContentUnavailableView(
-                        "Not Configured",
-                        systemImage: "gear.badge.xmark",
-                        description: Text("Microsoft Graph is not configured. Set GRAPH_TENANT_ID and GRAPH_CLIENT_ID in your config.")
-                    )
-                    Spacer()
-                }
-            } else if isLoading {
-                VStack {
-                    ProgressView("Searching...")
-                        .padding(.top, 50)
-                    Spacer()
-                }
-            } else if searchResults.isEmpty && !searchText.isEmpty {
-                VStack {
-                    ContentUnavailableView(
-                        "No Results",
-                        systemImage: "person.slash",
-                        description: Text("No users found matching '\(searchText)'")
-                    )
-                    .padding(.top, 30)
-                    Spacer()
-                }
+                centered(ContentUnavailableView(
+                    "Not Configured",
+                    systemImage: "gear.badge.xmark",
+                    description: Text("Microsoft Graph is not configured.")))
             } else if searchResults.isEmpty {
-                VStack {
-                    ContentUnavailableView(
-                        "Search for Users",
-                        systemImage: "person.crop.circle.badge.questionmark",
-                        description: Text("Enter an email address or name to search for users")
-                    )
-                    .padding(.top, 30)
-                    Spacer()
-                }
+                centered(ContentUnavailableView(
+                    searchText.isEmpty ? "Search for Users" : "No Results",
+                    systemImage: searchText.isEmpty ? "person.crop.circle.badge.questionmark" : "person.slash",
+                    description: Text(searchText.isEmpty
+                        ? "Enter a name or email to search Entra."
+                        : "No users match “\(searchText)”.")))
             } else {
-                List(searchResults, id: \.id, selection: $selectedUser) { user in
-                    UserRow(user: user)
+                List(selection: $selectedId) {
+                    ForEach(searchResults) { user in
+                        UserSidebarRow(user: user).tag(rowId(user))
+                    }
                 }
+                .listStyle(.inset)
             }
         }
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        if let user = selectedUser {
+            EntraUserInspector(user: user)
+                .id(rowId(user))
+        } else {
+            centered(ContentUnavailableView(
+                "No User Selected",
+                systemImage: "person.text.rectangle",
+                description: Text("Select a user to see their full Entra profile.")))
+        }
+    }
+
+    private func centered<C: View>(_ content: C) -> some View {
+        content.frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func searchUser() {
@@ -261,16 +276,16 @@ struct UsersContentView: View {
             isLoading = true
             defer { isLoading = false }
             do {
-                // Try exact lookup first (for UPN or ID)
                 if searchText.contains("@") || UUID(uuidString: searchText) != nil {
-                    if let user = try await appState.graphService.getUser(searchText, includeGroups: true) {
+                    if let user = try await appState.graphService.getUser(searchText) {
                         searchResults = [user]
+                        selectedId = rowId(user)
                         return
                     }
                 }
-                // Fuzzy search by display name / UPN prefix
-                let users = try await appState.graphService.searchUsers(searchText, limit: 25)
+                let users = try await appState.graphService.searchUsers(searchText, limit: 50)
                 searchResults = users
+                selectedId = users.first.map(rowId)
             } catch {
                 appState.errorMessage = "Failed to search users: \(error.localizedDescription)"
                 searchResults = []

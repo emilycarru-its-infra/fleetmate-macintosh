@@ -25,9 +25,9 @@ struct DevOpsSsoLoginView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Sign in to Azure DevOps")
-                        .font(.headline)
+                        .appFont(.headline)
                     Text("Authenticate with your organization's identity provider")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
                 Spacer()
@@ -76,12 +76,12 @@ struct DevOpsSsoLoginView: View {
                         .controlSize(.small)
                 }
                 Text(viewModel.currentUrl.isEmpty ? "Waiting..." : viewModel.currentUrl)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                 Spacer()
                 Text("\(viewModel.navigationLog.count) events")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
             }
             .padding(.horizontal)
@@ -109,7 +109,7 @@ struct DevOpsSsoLoginView: View {
                 .font(.system(size: 48))
                 .foregroundColor(.orange)
             Text("Authentication Error")
-                .font(.headline)
+                .appFont(.headline)
             Text(message)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)

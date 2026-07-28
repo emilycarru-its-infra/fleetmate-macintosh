@@ -26,7 +26,14 @@ public class SnipeService {
     }
 
     /// True when SSO is preferred but not yet authenticated
+    /// Whether the browser cookie-SSO flow is worth attempting.
+    ///
+    /// It is not, once an OIDC audience is configured: the fork's OIDC guard
+    /// authenticates every API call from the operator's Entra session, so the
+    /// cookie flow adds nothing and merely burns ~40s of launch timing out
+    /// before reporting a failure that never mattered.
     public var shouldAttemptSso: Bool {
+        guard !usesOidc else { return false }
         return !baseUrl.isEmpty && !ssoAuthenticated
     }
 

@@ -76,6 +76,26 @@ class AuthManager: ObservableObject {
             systems[id]?.user = user
         }
     }
+
+    /// Report that an *optional* auth path failed — a silent browser-SSO attempt,
+    /// say — without contradicting a system that is already authenticated by some
+    /// other means.
+    ///
+    /// These systems have more than one way in: Snipe-IT and ReportMate ride an
+    /// OIDC bearer, and TeamDynamix a service-account JWT (its API supports no
+    /// Entra/OAuth login at all, so browser SSO can never be the answer there).
+    /// The cookie-SSO attempt runs anyway and, on failure, used to overwrite a
+    /// perfectly good `.valid` with "Failed: Silent SSO failed" — the panel
+    /// claiming TDX was broken while the row underneath said "signed in as
+    /// Service Account" in green.
+    func reportOptionalAuthFailure(_ id: AuthSystemId, message: String) {
+        guard let current = systems[id]?.state else { return }
+        if current.isHealthy {
+            dbg.info("\(id.rawValue): optional SSO path failed (\(message)) — keeping the working auth state", category: "auth")
+            return
+        }
+        update(id, state: .failed(message: message))
+    }
     
     // MARK: - Queries
     
@@ -146,7 +166,20 @@ class AuthManager: ObservableObject {
         
         // Snipe-IT
         if systems[.snipe] != nil {
-            if snipeService.ssoAuthenticated {
+            if snipeService.usesOidc {
+                // OIDC bearer minted from the operator's Entra session — the
+                // default since the fork's OIDC guard shipped. This branch used
+                // to be missing entirely, so a Snipe on OIDC was never probed:
+                // it sat at .configured until the (irrelevant) cookie-SSO attempt
+                // timed out and painted it red, while the API was working fine.
+                update(.snipe, state: .authenticating)
+                do {
+                    _ = try await snipeService.getAllAssets()
+                    update(.snipe, state: .valid(user: "SSO bearer (OIDC)", expiry: nil))
+                } catch {
+                    update(.snipe, state: .failed(message: error.localizedDescription))
+                }
+            } else if snipeService.ssoAuthenticated {
                 // SSO mode — already authenticated via cookies
                 update(.snipe, state: .valid(user: snipeService.ssoUserName ?? "SSO User", expiry: nil))
             } else if !snipeService.apiKey.isEmpty {

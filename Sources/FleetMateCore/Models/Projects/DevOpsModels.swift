@@ -482,10 +482,14 @@ public struct GitPullRequest: Codable, Identifiable {
     public let status: String?
     public let createdBy: IdentityRef?
     public let creationDate: String?
+    public let closedDate: String?
     public let sourceRefName: String?
     public let targetRefName: String?
     public let url: String?
     public let repository: GitRepository?
+    public let isDraft: Bool?
+    public let mergeStatus: String?
+    public let reviewers: [GitPullRequestReviewer]?
 
     public var id: Int { pullRequestId }
 
@@ -495,9 +499,103 @@ public struct GitPullRequest: Codable, Identifiable {
             ref.hasPrefix("refs/heads/") ? String(ref.dropFirst("refs/heads/".count)) : ref
         }
     }
+
+    /// Short target branch name.
+    public var targetBranch: String? {
+        targetRefName.map { ref in
+            ref.hasPrefix("refs/heads/") ? String(ref.dropFirst("refs/heads/".count)) : ref
+        }
+    }
+
+    /// True when Azure DevOps has detected merge conflicts against the target.
+    public var hasConflicts: Bool { mergeStatus?.lowercased() == "conflicts" }
+}
+
+public struct GitPullRequestReviewer: Codable {
+    public let id: String?
+    public let displayName: String?
+    public let uniqueName: String?
+    public let vote: Int?
+    public let isRequired: Bool?
+    public let isContainer: Bool?
 }
 
 public struct GitPullRequestsResponse: Codable {
     public let count: Int?
     public let value: [GitPullRequest]?
+}
+
+// MARK: - Pull Request Threads (comment counts)
+
+public struct GitPullRequestThread: Codable {
+    public let id: Int?
+    public let isDeleted: Bool?
+    public let status: String?
+    public let publishedDate: String?
+    public let lastUpdatedDate: String?
+    public let comments: [GitPullRequestComment]?
+}
+
+public struct GitPullRequestComment: Codable {
+    public let id: Int?
+    public let commentType: String?
+    public let isDeleted: Bool?
+    public let publishedDate: String?
+    public let lastUpdatedDate: String?
+}
+
+public struct GitPullRequestThreadsResponse: Codable {
+    public let count: Int?
+    public let value: [GitPullRequestThread]?
+}
+
+// MARK: - Connection Data (who am I?)
+
+/// Response from `/_apis/connectionData` — used to resolve the signed-in user's
+/// Azure DevOps identity GUID, which PR search criteria require.
+public struct DevOpsConnectionData: Codable {
+    public let authenticatedUser: DevOpsConnectionIdentity?
+    public let authorizedUser: DevOpsConnectionIdentity?
+}
+
+public struct DevOpsConnectionIdentity: Codable {
+    public let id: String?
+    public let providerDisplayName: String?
+    public let customDisplayName: String?
+    public let properties: DevOpsConnectionProperties?
+
+    public var displayName: String? { customDisplayName ?? providerDisplayName }
+
+    /// The account (usually UPN/email) carried in the identity's property bag.
+    public var accountName: String? { properties?.Account?.value }
+}
+
+public struct DevOpsConnectionProperties: Codable {
+    // swiftlint:disable:next identifier_name
+    public let Account: DevOpsConnectionPropertyValue?
+}
+
+public struct DevOpsConnectionPropertyValue: Codable {
+    public let value: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case value = "$value"
+    }
+}
+
+/// The signed-in Azure DevOps user, distilled to the fields queries need.
+public struct DevOpsIdentitySummary: Sendable {
+    /// Azure DevOps identity GUID — what PR `searchCriteria` keys off.
+    public let id: String?
+    public let displayName: String?
+    /// Usually the UPN / email.
+    public let account: String?
+
+    public init(id: String?, displayName: String?, account: String?) {
+        self.id = id
+        self.displayName = displayName
+        self.account = account
+    }
+
+    public var isResolved: Bool { !(id ?? "").isEmpty }
 }

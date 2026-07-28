@@ -130,10 +130,10 @@ struct BoardsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            unifiedToolbar
-            Divider()
             contentArea
         }
+        .searchable(text: $searchText, prompt: "Search tasks...")
+        .toolbar { projectsToolbar }
         .task {
             if allTasks.isEmpty {
                 loadTasks()
@@ -189,169 +189,140 @@ struct BoardsView: View {
         }
     }
 
-    // MARK: - Unified Two-Row Toolbar
+    // MARK: - Toolbar
+    //
+    // Lives in `.toolbar` rather than an HStack in the view body. That is what
+    // gets the window's glass treatment on macOS 26 and keeps Projects looking
+    // like Tickets, which already moved; the in-body version rendered as a flat
+    // strip of controls under the toolbar instead of part of it.
 
-    private var unifiedToolbar: some View {
-        VStack(spacing: 6) {
-            // Row 1: View mode, provider, group by, board selection, closed toggle
-            HStack(spacing: 8) {
-                Picker("", selection: $viewMode) {
-                    Text("Board").tag(BoardsViewMode.board)
-                    Text("List").tag(BoardsViewMode.list)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 120)
+    @ToolbarContentBuilder
+    private var projectsToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .navigation) {
+            SegmentedPill(
+                selection: $viewMode,
+                options: [.list, .board],
+                label: { $0 == .list ? "List" : "Board" }
+            )
 
-                Divider().frame(height: 20)
-
-                Picker("Provider", selection: $filterProvider) {
-                    Text("Backend").tag(nil as String?)
-                    Text("DevOps").tag("azdevops" as String?)
-                    Text("GitHub").tag("github" as String?)
-                    Text("Gitea").tag("gitea" as String?)
-                    Text("TDX").tag("tdx" as String?)
-                }
-                .pickerStyle(.menu)
-                .frame(width: 140)
-                .labelsHidden()
-                .onChange(of: filterProvider) { loadTasks() }
-                .onChange(of: appState.devOpsProjectReady) { _, ready in
-                    if ready { loadTasks(); loadBoards() }
-                }
-
-                Picker("Group", selection: $groupBy) {
-                    ForEach(GroupByOption.allCases, id: \.self) { opt in
-                        Text(opt.rawValue).tag(opt)
-                    }
-                }
-                .pickerStyle(.menu)
-                .frame(width: 140)
-                .onChange(of: groupBy) { _, newValue in
-                    if newValue == .column && availableBoards.isEmpty {
-                        loadBoards()
-                    }
-                }
-
-                if groupBy == .column {
-                    if isLoadingBoards {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(width: 20)
-                    } else if !availableBoards.isEmpty {
-                        Picker("Board", selection: $selectedBoardName) {
-                            Text("Select board…").tag(nil as String?)
-                            ForEach(availableBoards) { board in
-                                Text(board.name ?? "Unknown").tag(board.name as String?)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 180)
-                        .labelsHidden()
-                        .onChange(of: selectedBoardName) { loadBoardColumns() }
-                    }
-                }
-
-                Toggle("Closed", isOn: $showClosed)
-                    .toggleStyle(.checkbox)
-                    .appFont(.subheadline)
-
-                Spacer()
-
-                devOpsSsoSection
+            Picker("Provider", selection: $filterProvider) {
+                Text("Backend").tag(nil as String?)
+                Text("DevOps").tag("azdevops" as String?)
+                Text("GitHub").tag("github" as String?)
+                Text("Gitea").tag("gitea" as String?)
+                Text("TDX").tag("tdx" as String?)
+            }
+            .pickerStyle(.menu)
+            .frame(width: 120)
+            .labelsHidden()
+            .help("Filter by backend")
+            .onChange(of: filterProvider) { loadTasks() }
+            .onChange(of: appState.devOpsProjectReady) { _, ready in
+                if ready { loadTasks(); loadBoards() }
             }
 
-            // Row 2: Filters, actions, search
-            HStack(spacing: 8) {
-                if !allTasks.isEmpty {
-                    Button(action: { showFilters.toggle() }) {
-                        Image(systemName: filters.hasActiveFilters
-                            ? "line.3.horizontal.decrease.circle.fill"
-                            : "line.3.horizontal.decrease.circle")
-                    }
-                    .help("Filters")
-                    .popover(isPresented: $showFilters, arrowEdge: .bottom) {
-                        FilterPanelView(filters: filters)
-                    }
+            Picker("Group", selection: $groupBy) {
+                ForEach(GroupByOption.allCases, id: \.self) { opt in
+                    Text(opt.rawValue).tag(opt)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 130)
+            .labelsHidden()
+            .help("Group by")
+            .onChange(of: groupBy) { _, newValue in
+                if newValue == .column && availableBoards.isEmpty {
+                    loadBoards()
+                }
+            }
 
-                    if filters.hasActiveFilters {
-                        Button(action: { filters.clearAll() }) {
-                            Image(systemName: "xmark.circle")
+            if groupBy == .column {
+                if isLoadingBoards {
+                    ProgressView().controlSize(.small)
+                } else if !availableBoards.isEmpty {
+                    Picker("Board", selection: $selectedBoardName) {
+                        Text("Select board\u{2026}").tag(nil as String?)
+                        ForEach(availableBoards) { board in
+                            Text(board.name ?? "Unknown").tag(board.name as String?)
                         }
-                        .buttonStyle(.bordered)
-                        .tint(.yellow)
-                        .controlSize(.small)
-                        .help("Clear filters")
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 150)
+                    .labelsHidden()
+                    .help("Board")
+                    .onChange(of: selectedBoardName) { loadBoardColumns() }
+                }
+            }
+
+            Toggle("Closed", isOn: $showClosed)
+                .toggleStyle(.checkbox)
+                .help("Include closed items")
+        }
+
+        ToolbarItemGroup(placement: .automatic) {
+            devOpsSsoSection
+
+            Text("\(filteredTasks.count)")
+                .appFont(.caption)
+                .foregroundColor(.secondary)
+                .monospacedDigit()
+                .help("Items shown")
+
+            if filters.hasActiveFilters {
+                Button(action: { filters.clearAll() }) {
+                    Label("Clear Filters", systemImage: "xmark.circle.fill")
+                        .foregroundStyle(.yellow)
+                }
+                .help("Clear filters")
+            }
+
+            Button(action: { showFilters.toggle() }) {
+                Label("Filters", systemImage: filters.hasActiveFilters
+                    ? "line.3.horizontal.decrease.circle.fill"
+                    : "line.3.horizontal.decrease.circle")
+            }
+            .disabled(allTasks.isEmpty)
+            .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+                FilterPanelView(filters: filters)
+            }
+
+            if syncEnabled {
+                Button(action: syncTasks) {
+                    Label("Sync", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(isSyncing)
+                .help("Sync tasks to Planner / Markdown")
+            }
+
+            Menu {
+                if canCreateWorkItem {
+                    Button(action: { showCreateWorkItem = true }) {
+                        Label("DevOps Work Item", systemImage: "building.2")
                     }
                 }
-
-                Spacer()
-
-                if syncEnabled {
-                    Button(action: syncTasks) {
-                        Image(systemName: "arrow.triangle.2.circlepath")
+                if canCreateIssue {
+                    Button(action: { showCreateIssue = true }) {
+                        Label("GitHub Issue", systemImage: "chevron.left.forwardslash.chevron.right")
                     }
-                    .disabled(isSyncing)
-                    .help("Sync tasks to Planner / Markdown")
                 }
-
+                Divider()
                 Button(action: { showCreateProject = true }) {
-                    Image(systemName: "folder.badge.plus")
+                    Label("GitHub Project", systemImage: "folder.badge.plus")
                 }
                 .disabled(!canCreateProject)
-                .help(canCreateProject ? "New GitHub Project" : "Set organization in GitHub config")
-
-                Button(action: { loadTasks(); loadGhProjectInfo(); loadBoards() }) {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .disabled(isLoading || isLoadingGhInfo)
-                .help("Refresh")
-                .keyboardShortcut("r", modifiers: .command)
-
-                HStack(spacing: 4) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                    TextField("Search...", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .frame(width: 140)
-                    if !searchText.isEmpty {
-                        Button(action: { searchText = "" }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.secondary.opacity(0.1))
-                .cornerRadius(8)
-
-                Text("\(filteredTasks.count)")
-                    .appFont(.caption)
-                    .foregroundColor(.secondary)
-                    .monospacedDigit()
-                    .frame(minWidth: 24, alignment: .trailing)
-
-                Menu {
-                    if canCreateWorkItem {
-                        Button(action: { showCreateWorkItem = true }) {
-                            Label("DevOps Work Item", systemImage: "building.2")
-                        }
-                    }
-                    if canCreateIssue {
-                        Button(action: { showCreateIssue = true }) {
-                            Label("GitHub Issue", systemImage: "chevron.left.forwardslash.chevron.right")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .disabled(!canCreateIssue && !canCreateWorkItem)
-                .help("New item")
+            } label: {
+                Label("New", systemImage: "plus")
             }
+            .disabled(!canCreateIssue && !canCreateWorkItem && !canCreateProject)
+            .help("New item")
+
+            Button(action: { loadTasks(); loadGhProjectInfo(); loadBoards() }) {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .disabled(isLoading || isLoadingGhInfo)
+            .help("Refresh")
+            .keyboardShortcut("r", modifiers: .command)
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
     }
 
     // MARK: - DevOps Auth Status

@@ -6,6 +6,16 @@ enum IdentityTab: String, CaseIterable {
     case users = "Users"
 }
 
+/// How many `Devices-` groups to pull.
+///
+/// One constant because three call sites used to disagree — the launch preload
+/// fetched 100 while the view's own refresh asked for 999. The preload won, since
+/// it populated the cache first and left it valid, so the list silently capped at
+/// "100 of 100" no matter what the view requested.
+enum DeviceGroupFetch {
+    static let limit = 1000
+}
+
 struct IdentityView: View {
     @EnvironmentObject var appState: AppState
     @State private var selectedTab: IdentityTab = .groups
@@ -134,7 +144,7 @@ struct GroupsContentView: View {
             isLoading = true
             defer { isLoading = false }
             do {
-                let fetchedGroups = try await appState.graphService.searchGroups("Devices-", limit: 999)
+                let fetchedGroups = try await appState.graphService.searchGroups("Devices-", limit: DeviceGroupFetch.limit)
                 appState.updateGroupsCache(fetchedGroups)
             } catch {
                 appState.errorMessage = "Failed to load device groups: \(error.localizedDescription)"

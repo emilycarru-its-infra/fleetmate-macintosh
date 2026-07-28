@@ -66,8 +66,9 @@ struct DashboardView: View {
     @State private var activityItems: [ActivityItem] = []
     @State private var snipeActivity: [SnipeActivityLog] = []
 
-    // "My pull requests" queue across Azure DevOps + GitHub
-    @StateObject private var pullRequestModel = PullRequestQueueModel()
+    // "My pull requests" queue across Azure DevOps + GitHub. Owned by AppState so
+    // it outlives this view — see AppState.pullRequestQueue.
+    private var pullRequestModel: PullRequestQueueModel { appState.pullRequestQueue }
 
     // Counts
     @State private var deviceCount = 0

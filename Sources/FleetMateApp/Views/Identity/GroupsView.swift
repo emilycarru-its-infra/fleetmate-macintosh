@@ -31,7 +31,7 @@ struct GroupsView: View {
             HStack {
                 VStack(alignment: .leading) {
                     Text("Device Groups")
-                        .font(.largeTitle)
+                        .appFont(.largeTitle)
                         .fontWeight(.bold)
                     Text("Entra ID device groups (Devices-*)")
                         .foregroundColor(.secondary)
@@ -59,7 +59,7 @@ struct GroupsView: View {
                 }
                 if !groups.isEmpty {
                     Text("\(filteredGroups.count) of \(groups.count)")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
             }
@@ -283,10 +283,10 @@ struct GroupDisclosureRow: View {
                     
                     VStack(alignment: .leading, spacing: 2) {
                         Text(group.displayName ?? "-")
-                            .font(.headline)
+                            .appFont(.headline)
                         if let description = group.description, !description.isEmpty {
                             Text(description)
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
@@ -313,10 +313,10 @@ struct GroupDisclosureRow: View {
                     // Group ID with copy button
                     HStack {
                         Text("Group ID:")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundColor(.secondary)
                         Text(group.id ?? "-")
-                            .font(.system(.caption, design: .monospaced))
+                            .appFont(.caption, design: .monospaced)
                             .textSelection(.enabled)
                         Button(action: {
                             if let id = group.id {
@@ -325,7 +325,7 @@ struct GroupDisclosureRow: View {
                             }
                         }) {
                             Image(systemName: "doc.on.doc")
-                                .font(.caption)
+                                .appFont(.caption)
                         }
                         .buttonStyle(.plain)
                         .help("Copy Group ID")
@@ -338,19 +338,19 @@ struct GroupDisclosureRow: View {
                             ProgressView()
                                 .scaleEffect(0.7)
                             Text("Loading members...")
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundColor(.secondary)
                         }
                         .padding(.leading, 24)
                     } else if devices.isEmpty {
                         Text("No device members")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundColor(.secondary)
                             .padding(.leading, 24)
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Members (\(devices.count))")
-                                .font(.caption)
+                                .appFont(.caption)
                                 .fontWeight(.medium)
                                 .foregroundColor(.secondary)
                             
@@ -383,27 +383,27 @@ struct DeviceMemberRow: View {
             
             VStack(alignment: .leading, spacing: 1) {
                 Text(device.displayName ?? "-")
-                    .font(.caption)
+                    .appFont(.caption)
                     .textSelection(.enabled)
                 
                 HStack(spacing: 8) {
                     if let os = device.operatingSystem {
                         Text(os)
-                            .font(.caption2)
+                            .appFont(.caption2)
                             .foregroundColor(.secondary)
                     }
                     if device.isCompliant == true {
                         Label("Compliant", systemImage: "checkmark.circle.fill")
-                            .font(.caption2)
+                            .appFont(.caption2)
                             .foregroundColor(.green)
                     } else if device.isCompliant == false {
                         Label("Non-compliant", systemImage: "xmark.circle.fill")
-                            .font(.caption2)
+                            .appFont(.caption2)
                             .foregroundColor(.red)
                     }
                     if device.isManaged == true {
                         Text("Managed")
-                            .font(.caption2)
+                            .appFont(.caption2)
                             .foregroundColor(.secondary)
                     }
                 }
@@ -435,7 +435,7 @@ struct GroupTypeBadge: View {
         HStack(spacing: 4) {
             if group.securityEnabled == true {
                 Text("Security")
-                    .font(.caption2)
+                    .appFont(.caption2)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Color.blue.opacity(0.2))
@@ -443,7 +443,7 @@ struct GroupTypeBadge: View {
             }
             if group.mailEnabled == true {
                 Text("Mail")
-                    .font(.caption2)
+                    .appFont(.caption2)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Color.green.opacity(0.2))
@@ -451,7 +451,7 @@ struct GroupTypeBadge: View {
             }
             if let types = group.groupTypes, types.contains("Unified") {
                 Text("M365")
-                    .font(.caption2)
+                    .appFont(.caption2)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Color.orange.opacity(0.2))

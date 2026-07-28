@@ -52,15 +52,15 @@ struct DeviceDetailView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Image(systemName: deviceIcon)
-                    .font(.title)
+                    .appFont(.title)
                     .foregroundColor(.accentColor)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(device.deviceName ?? "Unknown Device")
-                        .font(.title2)
+                        .appFont(.title2)
                         .fontWeight(.bold)
                         .textSelection(.enabled)
                     Text(device.managedDeviceName ?? device.serialNumber ?? "")
-                        .font(.subheadline)
+                        .appFont(.subheadline)
                         .foregroundColor(.secondary)
                         .textSelection(.enabled)
                 }
@@ -70,7 +70,7 @@ struct DeviceDetailView: View {
             
             if let error = errorMessage {
                 Text(error)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.red)
             }
         }
@@ -146,24 +146,24 @@ struct DeviceDetailView: View {
             if isLoadingCompliance {
                 HStack {
                     ProgressView().scaleEffect(0.6)
-                    Text("Loading compliance policies...").font(.caption).foregroundColor(.secondary)
+                    Text("Loading compliance policies...").appFont(.caption).foregroundColor(.secondary)
                 }
             } else if !compliancePolicies.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Compliance Policies")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                         .padding(.top, 4)
                     ForEach(compliancePolicies, id: \.id) { policy in
                         HStack(spacing: 6) {
                             Image(systemName: policyStateIcon(policy.state))
                                 .foregroundColor(policyStateColor(policy.state))
-                                .font(.caption)
+                                .appFont(.caption)
                             Text(policy.displayName ?? "Unknown Policy")
-                                .font(.caption)
+                                .appFont(.caption)
                             Spacer()
                             Text(policy.state ?? "Unknown")
-                                .font(.caption2)
+                                .appFont(.caption2)
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -179,25 +179,25 @@ struct DeviceDetailView: View {
             if isLoadingGroups {
                 HStack {
                     ProgressView().scaleEffect(0.6)
-                    Text("Loading groups...").font(.caption).foregroundColor(.secondary)
+                    Text("Loading groups...").appFont(.caption).foregroundColor(.secondary)
                 }
             } else if groupMemberships.isEmpty {
                 Text("No group memberships found")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
             } else {
                 ForEach(groupMemberships, id: \.id) { group in
                     HStack(spacing: 6) {
                         Image(systemName: "person.3.fill")
                             .foregroundColor(.accentColor)
-                            .font(.caption)
+                            .appFont(.caption)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(group.displayName ?? "Unknown Group")
-                                .font(.caption)
+                                .appFont(.caption)
                                 .fontWeight(.medium)
                             if let desc = group.description, !desc.isEmpty {
                                 Text(desc)
-                                    .font(.caption2)
+                                    .appFont(.caption2)
                                     .foregroundColor(.secondary)
                                     .lineLimit(1)
                             }
@@ -215,34 +215,34 @@ struct DeviceDetailView: View {
             if isLoadingApps {
                 HStack {
                     ProgressView().scaleEffect(0.6)
-                    Text("Loading apps...").font(.caption).foregroundColor(.secondary)
+                    Text("Loading apps...").appFont(.caption).foregroundColor(.secondary)
                 }
             } else if detectedApps.isEmpty {
                 Text("No detected apps found")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
             } else {
                 Text("\(detectedApps.count) apps detected")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                 ForEach(detectedApps.prefix(50), id: \.id) { app in
                     HStack(spacing: 6) {
                         Image(systemName: "app.fill")
                             .foregroundColor(.accentColor)
-                            .font(.caption2)
+                            .appFont(.caption2)
                         Text(app.displayName ?? "Unknown")
-                            .font(.caption)
+                            .appFont(.caption)
                         Spacer()
                         if let version = app.version, !version.isEmpty {
                             Text(version)
-                                .font(.caption2)
+                                .appFont(.caption2)
                                 .foregroundColor(.secondary)
                         }
                     }
                 }
                 if detectedApps.count > 50 {
                     Text("... and \(detectedApps.count - 50) more")
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .foregroundColor(.secondary)
                 }
             }
@@ -394,7 +394,7 @@ struct DetailSection<Content: View>: View {
                 Image(systemName: icon)
                     .foregroundColor(.accentColor)
                 Text(title)
-                    .font(.headline)
+                    .appFont(.headline)
             }
             
             VStack(alignment: .leading, spacing: 4) {
@@ -414,16 +414,16 @@ struct DeviceDetailRow: View {
         if let value = value, !value.isEmpty {
             HStack(alignment: .top) {
                 Text(label)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                     .frame(width: 140, alignment: .leading)
                 if monospaced {
                     Text(value)
-                        .font(.system(.caption, design: .monospaced))
+                        .appFont(.caption, design: .monospaced)
                         .textSelection(.enabled)
                 } else {
                     Text(value)
-                        .font(.caption)
+                        .appFont(.caption)
                         .textSelection(.enabled)
                 }
                 Spacer()

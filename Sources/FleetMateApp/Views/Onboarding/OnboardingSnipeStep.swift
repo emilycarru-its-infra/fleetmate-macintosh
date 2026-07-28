@@ -7,7 +7,7 @@ struct OnboardingSnipeStep: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Snipe-IT")
-                    .font(.title2.bold())
+                    .appFont(.title2, weight: .bold)
                 Text("Connect to your Snipe-IT instance for asset inventory.")
                     .foregroundStyle(.secondary)
             }
@@ -30,13 +30,13 @@ struct OnboardingSnipeStep: View {
 
                     if wizardState.snipeAuthMode == .sso {
                         Label("SSO login happens automatically via Platform SSO when you open the Inventory tab.", systemImage: "info.circle")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundStyle(.secondary)
                     } else {
                         SecureField("API Key", text: $wizardState.snipeApiKey)
                             .textFieldStyle(.roundedBorder)
                         Text("Generate an API key in Snipe-IT under your user profile > API Keys.")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundStyle(.tertiary)
                     }
                 }

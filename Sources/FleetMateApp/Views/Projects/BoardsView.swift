@@ -253,7 +253,7 @@ struct BoardsView: View {
 
                 Toggle("Closed", isOn: $showClosed)
                     .toggleStyle(.checkbox)
-                    .font(.subheadline)
+                    .appFont(.subheadline)
 
                 Spacer()
 
@@ -327,7 +327,7 @@ struct BoardsView: View {
                 .cornerRadius(8)
 
                 Text("\(filteredTasks.count)")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                     .monospacedDigit()
                     .frame(minWidth: 24, alignment: .trailing)
@@ -363,11 +363,11 @@ struct BoardsView: View {
                 Image(systemName: "person.circle.fill")
                     .foregroundColor(.secondary)
                 Text(userName)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                 Button(action: { appState.signOutDevOpsSso() }) {
                     Image(systemName: "rectangle.portrait.and.arrow.right")
-                        .font(.caption)
+                        .appFont(.caption)
                 }
                 .buttonStyle(.plain)
                 .help("Sign out of DevOps SSO")
@@ -410,7 +410,7 @@ struct BoardsView: View {
                                 .fill(Color.secondary.opacity(0.08))
                                 .frame(width: 12)
                             Image(systemName: showDetailSidebar ? "chevron.compact.right" : "chevron.compact.left")
-                                .font(.system(size: 14, weight: .semibold))
+                                .appFont(fixed: 14, weight: .semibold)
                                 .foregroundColor(.secondary.opacity(0.6))
                         }
                     }
@@ -601,7 +601,7 @@ struct BoardsView: View {
                                 .fill(Color.secondary.opacity(0.08))
                                 .frame(width: 12)
                             Image(systemName: showDetailSidebar ? "chevron.compact.right" : "chevron.compact.left")
-                                .font(.system(size: 14, weight: .semibold))
+                                .appFont(fixed: 14, weight: .semibold)
                                 .foregroundColor(.secondary.opacity(0.6))
                         }
                     }
@@ -725,7 +725,7 @@ struct BoardsView: View {
                     .font(.system(size: 40))
                     .foregroundColor(.secondary.opacity(0.4))
                 Text("No Task Selected")
-                    .font(.headline)
+                    .appFont(.headline)
                     .foregroundColor(.secondary)
                 Spacer()
             }
@@ -1479,7 +1479,7 @@ struct TaskListRow: View {
                         PriorityIndicator(priority: p)
                     }
                     Text(task.state.displayName)
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(stateColor.opacity(0.15))
@@ -1489,7 +1489,7 @@ struct TaskListRow: View {
                 HStack(spacing: 8) {
                     if let wiType = task.metadata["workItemType"] {
                         Text(wiType)
-                            .font(.caption2)
+                            .appFont(.caption2)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(Color.accentColor.opacity(0.12))
@@ -1497,19 +1497,19 @@ struct TaskListRow: View {
                     }
                     if let area = task.metadata["areaPath"] {
                         Text(area)
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                     }
                     if let bucket = task.bucket {
                         Text(bucket)
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                     }
                     ForEach(task.labels.prefix(3), id: \.self) { label in
                         Text(label)
-                            .font(.caption2)
+                            .appFont(.caption2)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(Color.secondary.opacity(0.15))
@@ -1519,9 +1519,9 @@ struct TaskListRow: View {
                         Spacer()
                         HStack(spacing: 2) {
                             Image(systemName: "person")
-                                .font(.caption2)
+                                .appFont(.caption2)
                             Text(task.assignees.prefix(2).joined(separator: ", "))
-                                .font(.caption)
+                                .appFont(.caption)
                         }
                         .foregroundColor(.secondary)
                     }
@@ -1578,7 +1578,7 @@ struct KanbanColumn<MenuContent: View>: View {
                         ForEach(groupedByProvider, id: \.provider) { group in
                             HStack {
                                 Text(providerDisplayName(group.provider))
-                                    .font(.caption2)
+                                    .appFont(.caption2)
                                     .fontWeight(.semibold)
                                     .foregroundColor(.secondary)
                                     .tracking(0.5)
@@ -1612,7 +1612,7 @@ struct KanbanColumn<MenuContent: View>: View {
                     // Empty column drop zone
                     if tasks.isEmpty {
                         Text("Drop items here")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundColor(.secondary)
                             .frame(maxWidth: .infinity, minHeight: 60)
                     }
@@ -1668,27 +1668,27 @@ struct TaskCard: View {
             HStack(spacing: 6) {
                 if let wiType = task.metadata["workItemType"] {
                     Text(wiType)
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
                         .background(Color.accentColor.opacity(0.12))
                         .cornerRadius(3)
                 }
                 Text(task.provider)
-                    .font(.caption2)
+                    .appFont(.caption2)
                     .foregroundColor(.secondary)
             }
             // Area path
             if let area = task.metadata["areaPath"] {
                 Text(area)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
             // Iteration
             if let iter = task.metadata["iterationPath"] ?? task.bucket {
                 Text(iter)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
@@ -1696,7 +1696,7 @@ struct TaskCard: View {
                 HStack(spacing: 4) {
                     ForEach(task.labels.prefix(3), id: \.self) { label in
                         Text(label)
-                            .font(.caption2)
+                            .appFont(.caption2)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color.secondary.opacity(0.2))
@@ -1707,10 +1707,10 @@ struct TaskCard: View {
             if !task.assignees.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: "person")
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .foregroundColor(.secondary)
                     Text(task.assignees.joined(separator: ", "))
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }

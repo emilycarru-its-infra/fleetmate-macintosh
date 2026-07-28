@@ -50,7 +50,7 @@ struct CreateIssueView: View {
             // Header
             HStack {
                 Text("New Issue")
-                    .font(.title2)
+                    .appFont(.title2)
                     .fontWeight(.bold)
                 Spacer()
                 Button("Cancel") { dismiss() }
@@ -83,11 +83,11 @@ struct CreateIssueView: View {
                         if config.repo == nil || config.repo?.isEmpty == true {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Repository")
-                                    .font(.headline)
+                                    .appFont(.headline)
                                 if availableRepos.isEmpty {
                                     Text("No repositories found for \(owner)")
                                         .foregroundColor(.secondary)
-                                        .font(.caption)
+                                        .appFont(.caption)
                                 } else {
                                     Picker("Repository", selection: $selectedRepo) {
                                         Text("Select a repository...").tag(nil as String?)
@@ -106,7 +106,7 @@ struct CreateIssueView: View {
                         // Title
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Title")
-                                .font(.headline)
+                                .appFont(.headline)
                             TextField("Issue title", text: $title)
                                 .textFieldStyle(.roundedBorder)
                         }
@@ -115,7 +115,7 @@ struct CreateIssueView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Text("Description")
-                                    .font(.headline)
+                                    .appFont(.headline)
                                 Spacer()
                                 Picker("", selection: $showMarkdownPreview) {
                                     Text("Write").tag(false)
@@ -140,7 +140,7 @@ struct CreateIssueView: View {
                                 )
                             } else {
                                 TextEditor(text: $bodyText)
-                                    .font(.system(.body, design: .monospaced))
+                                    .appFont(.body, design: .monospaced)
                                     .frame(minHeight: 150, maxHeight: 250)
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 8)
@@ -149,7 +149,7 @@ struct CreateIssueView: View {
                             }
 
                             Text("Supports Markdown: **bold**, *italic*, `code`, [links](url), lists, headers")
-                                .font(.caption)
+                                .appFont(.caption)
                                 .foregroundColor(.secondary)
                         }
 
@@ -162,7 +162,7 @@ struct CreateIssueView: View {
                                 if assignableUsers.isEmpty {
                                     Text("No assignable users")
                                         .foregroundColor(.secondary)
-                                        .font(.caption)
+                                        .appFont(.caption)
                                 } else {
                                     ForEach(assignableUsers, id: \.id) { user in
                                         Toggle(user.login, isOn: Binding(
@@ -170,7 +170,7 @@ struct CreateIssueView: View {
                                             set: { if $0 { selectedAssigneeIds.insert(user.id) } else { selectedAssigneeIds.remove(user.id) } }
                                         ))
                                         .toggleStyle(.checkbox)
-                                        .font(.subheadline)
+                                        .appFont(.subheadline)
                                     }
                                 }
                             }
@@ -180,7 +180,7 @@ struct CreateIssueView: View {
                                 if repoLabels.isEmpty {
                                     Text("No labels")
                                         .foregroundColor(.secondary)
-                                        .font(.caption)
+                                        .appFont(.caption)
                                 } else {
                                     FlowLayout(spacing: 6) {
                                         ForEach(repoLabels, id: \.id) { label in
@@ -231,7 +231,7 @@ struct CreateIssueView: View {
                         // Add to project toggle
                         if projectId != nil {
                             Toggle("Add to current project", isOn: $addToProject)
-                                .font(.subheadline)
+                                .appFont(.subheadline)
                         }
                     }
                     .padding()
@@ -244,7 +244,7 @@ struct CreateIssueView: View {
                     if let error = errorMessage {
                         Label(error, systemImage: "exclamationmark.triangle")
                             .foregroundColor(.red)
-                            .font(.caption)
+                            .appFont(.caption)
                             .lineLimit(2)
                     }
                     Spacer()
@@ -274,7 +274,7 @@ struct CreateIssueView: View {
     private func metadataSection(_ title: String, icon: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Label(title, systemImage: icon)
-                .font(.subheadline)
+                .appFont(.subheadline)
                 .fontWeight(.semibold)
                 .foregroundColor(.secondary)
             content()
@@ -382,7 +382,7 @@ private struct LabelChip: View {
 
     var body: some View {
         Text(name)
-            .font(.caption)
+            .appFont(.caption)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(chipColor.opacity(isSelected ? 0.3 : 0.1))

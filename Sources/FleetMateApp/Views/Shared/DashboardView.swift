@@ -51,6 +51,7 @@ struct KPI: Identifiable {
 struct DashboardView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.appFontScale) private var fontScale
     @AppStorage("settings.selectedTab") private var settingsSelectedTab: Int = 0
 
     // Section data
@@ -232,7 +233,7 @@ struct DashboardView: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Dashboard")
-                    .font(.largeTitle.bold())
+                    .appFont(.largeTitle, weight: .bold)
                 Text("Fleet overview across all connected systems")
                     .foregroundStyle(.secondary)
             }
@@ -250,7 +251,7 @@ struct DashboardView: View {
             VStack(spacing: 12) {
                 Image(systemName: "cable.connector")
                     .font(.system(size: 36)).foregroundStyle(.secondary)
-                Text("No services connected").font(.headline)
+                Text("No services connected").appFont(.headline)
                 Text("Run the setup wizard to connect your IT systems.")
                     .foregroundStyle(.secondary)
                 Button("Run Setup Wizard") {
@@ -275,7 +276,7 @@ struct DashboardView: View {
                 ForEach(pills, id: \.self) { pill in
                     Button(action: { navigate(to: pill.tab) }) {
                         Text(pill.text)
-                            .font(.caption).fontWeight(.medium)
+                            .appFont(.caption).fontWeight(.medium)
                             .padding(.horizontal, 10).padding(.vertical, 4)
                             .background(pill.color.opacity(0.12))
                             .foregroundStyle(pill.color)
@@ -398,7 +399,7 @@ struct DashboardView: View {
                             donutChart(ticketStatusSlices, size: 180)
                             if slaViolatedCount > 0 {
                                 Text("\(slaViolatedCount) SLA violated")
-                                    .font(.caption2).foregroundStyle(.red)
+                                    .appFont(.caption2).foregroundStyle(.red)
                             }
                         }
                     }
@@ -424,7 +425,7 @@ struct DashboardView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             donutChart(workItemSlices, size: 180)
                             if !sprintInfo.isEmpty {
-                                Text(sprintInfo).font(.caption2).foregroundStyle(.secondary)
+                                Text(sprintInfo).appFont(.caption2).foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -471,7 +472,7 @@ struct DashboardView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             donutChart(assetStatusSlices, size: 180, tab: .inventory)
                             Text("\(deployedCount) deployed - \(unassignedCount) unassigned")
-                                .font(.caption2).foregroundStyle(.secondary)
+                                .appFont(.caption2).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -484,7 +485,7 @@ struct DashboardView: View {
     private var activityFeedSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Recent Activity").font(.headline)
+                Text("Recent Activity").appFont(.headline)
                 Spacer()
                 if isAnyLoading { ProgressView().controlSize(.mini) }
             }
@@ -510,7 +511,7 @@ struct DashboardView: View {
                     }
                 } else if filteredActivityItems.isEmpty {
                     Text(activityItems.isEmpty ? "Activity will appear once data loads." : "No activity for this filter.")
-                        .foregroundStyle(.secondary).font(.callout)
+                        .foregroundStyle(.secondary).appFont(.callout)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 8)
                 } else {
@@ -520,21 +521,21 @@ struct DashboardView: View {
                                 Button(action: { navigate(to: item.tab, deviceId: item.deviceId, ticketId: item.ticketId) }) {
                                     HStack(spacing: 4) {
                                         Image(systemName: item.icon)
-                                            .font(.system(size: 11))
+                                            .appFont(fixed: 11)
                                             .foregroundStyle(.secondary)
                                             .frame(width: 14)
                                         Text(item.name)
-                                            .font(.system(size: 12))
+                                            .appFont(fixed: 12)
                                             .lineLimit(1)
                                             .foregroundStyle(.primary)
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                         Text(item.detail)
-                                            .font(.system(size: 11))
+                                            .appFont(fixed: 11)
                                             .lineLimit(1)
                                             .foregroundStyle(.secondary)
                                             .frame(width: 80, alignment: .leading)
                                         Text(item.time)
-                                            .font(.caption2)
+                                            .appFont(.caption2)
                                             .foregroundStyle(.tertiary)
                                             .fixedSize()
                                     }
@@ -559,7 +560,7 @@ struct DashboardView: View {
         let isSelected = activityFilter == tab
         return Button(action: { activityFilter = tab }) {
             Text(label)
-                .font(.caption).fontWeight(.medium)
+                .appFont(.caption).fontWeight(.medium)
                 .padding(.horizontal, 10).padding(.vertical, 4)
                 .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.12))
                 .foregroundStyle(isSelected ? Color.white : Color.primary)
@@ -594,9 +595,9 @@ struct DashboardView: View {
                 HStack {
                     Button(action: { navigate(to: tab) }) {
                         HStack(spacing: 4) {
-                            Text(title).font(.subheadline.bold())
+                            Text(title).appFont(.subheadline, weight: .bold)
                             Image(systemName: "chevron.right")
-                                .font(.caption2).foregroundStyle(.tertiary)
+                                .appFont(.caption2).foregroundStyle(.tertiary)
                         }
                     }
                     .buttonStyle(.plain)
@@ -619,7 +620,7 @@ struct DashboardView: View {
             .annotation(position: .overlay) {
                 if slice.value > 0 {
                     Text("\(slice.value)")
-                        .font(.caption2.bold())
+                        .appFont(.caption2, weight: .bold)
                         .foregroundStyle(.white)
                 }
             }
@@ -653,7 +654,7 @@ struct DashboardView: View {
             .foregroundStyle(by: .value("Category", bar.label))
             .annotation(position: .trailing, alignment: .leading) {
                 if bar.value > 0 {
-                    Text("\(bar.value)").font(.caption2).foregroundStyle(.secondary)
+                    Text("\(bar.value)").appFont(.caption2).foregroundStyle(.secondary)
                 }
             }
         }
@@ -661,22 +662,24 @@ struct DashboardView: View {
         .chartLegend(.hidden)
         .chartXAxis(.hidden)
         .chartYAxis {
-            AxisMarks { _ in AxisValueLabel().font(.caption2) }
+            // AxisValueLabel is chart content, not a View, so it takes a resolved
+            // Font rather than the .appFont modifier.
+            AxisMarks { _ in AxisValueLabel().font(AppTextStyle.caption2.font(scale: fontScale)) }
         }
         .frame(height: max(height, CGFloat(bars.count) * 28))
     }
 
     private func emptyState(_ msg: String) -> some View {
         Text(msg)
-            .font(.callout).foregroundStyle(.tertiary)
+            .appFont(.callout).foregroundStyle(.tertiary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 20)
     }
 
     private func miniStat(_ label: String, _ value: String, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(value).font(.title3.bold().monospacedDigit()).foregroundStyle(color)
-            Text(label).font(.caption2).foregroundStyle(.secondary)
+            Text(value).appFont(.title3, weight: .bold).monospacedDigit().foregroundStyle(color)
+            Text(label).appFont(.caption2).foregroundStyle(.secondary)
         }
     }
 
@@ -1034,11 +1037,11 @@ struct TreemapChart: View {
                                 if rect.width > 40 && rect.height > 30 {
                                     VStack(spacing: 1) {
                                         Text(slice.label)
-                                            .font(.caption2.bold())
+                                            .appFont(.caption2, weight: .bold)
                                             .lineLimit(1)
                                             .minimumScaleFactor(0.7)
                                         Text("\(slice.value)")
-                                            .font(.caption2)
+                                            .appFont(.caption2)
                                     }
                                     .foregroundStyle(.white)
                                 }
@@ -1055,8 +1058,8 @@ struct TreemapChart: View {
                         let tx = min(max(hoveredRect.midX, 55), geo.size.width - 55)
                         let ty = hoveredRect.minY > 44 ? hoveredRect.minY - 28 : hoveredRect.maxY + 28
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(slice.label).font(.caption.bold())
-                            Text("\(slice.value)  ·  \(pct)%").font(.caption).foregroundStyle(.secondary)
+                            Text(slice.label).appFont(.caption, weight: .bold)
+                            Text("\(slice.value)  ·  \(pct)%").appFont(.caption).foregroundStyle(.secondary)
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
@@ -1075,7 +1078,7 @@ struct TreemapChart: View {
                     HStack(spacing: 4) {
                         Circle().fill(slice.color).frame(width: 7, height: 7)
                         Text("\(slice.label) (\(slice.value))")
-                            .font(.caption2).foregroundStyle(.secondary)
+                            .appFont(.caption2).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -1145,7 +1148,7 @@ struct KPICard: View {
             GroupBox {
                 HStack(spacing: 10) {
                     Image(systemName: kpi.icon)
-                        .font(.title3)
+                        .appFont(.title3)
                         .foregroundStyle(kpi.color)
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 3) {
@@ -1153,10 +1156,10 @@ struct KPICard: View {
                             SkeletonView(width: 60, height: 22, cornerRadius: 4)
                         } else {
                             Text(kpi.value)
-                                .font(.title2.bold().monospacedDigit())
+                                .appFont(.title2, weight: .bold).monospacedDigit()
                         }
                         Text(kpi.title)
-                            .font(.caption2)
+                            .appFont(.caption2)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()

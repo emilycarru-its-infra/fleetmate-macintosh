@@ -15,9 +15,9 @@ struct OnboardingWelcomeStep: View {
 
             VStack(spacing: 8) {
                 Text("Welcome to FleetMate")
-                    .font(.title.bold())
+                    .appFont(.title, weight: .bold)
                 Text("Unified fleet management for macOS")
-                    .font(.title3)
+                    .appFont(.title3)
                     .foregroundStyle(.secondary)
             }
 
@@ -42,7 +42,7 @@ struct OnboardingWelcomeStep: View {
             }
 
             Text("You can run this wizard again from Settings at any time.")
-                .font(.caption)
+                .appFont(.caption)
                 .foregroundStyle(.tertiary)
                 .padding(.bottom, 8)
 

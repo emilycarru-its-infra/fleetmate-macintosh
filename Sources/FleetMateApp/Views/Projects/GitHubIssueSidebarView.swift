@@ -65,8 +65,8 @@ struct GitHubIssueSidebarView: View {
                 VStack { Spacer(); ProgressView("Loading issue…"); Spacer() }
             } else if let error = loadError {
                 VStack(spacing: 12) {
-                    Image(systemName: "exclamationmark.triangle").font(.title).foregroundColor(.orange)
-                    Text(error).font(.caption).foregroundColor(.secondary).multilineTextAlignment(.center)
+                    Image(systemName: "exclamationmark.triangle").appFont(.title).foregroundColor(.orange)
+                    Text(error).appFont(.caption).foregroundColor(.secondary).multilineTextAlignment(.center)
                     Button("Retry") { loadDetail() }.buttonStyle(.bordered)
                     Spacer()
                 }
@@ -110,7 +110,7 @@ struct GitHubIssueSidebarView: View {
         HStack(spacing: 8) {
             Button(action: onClose) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .medium))
+                    .appFont(fixed: 13, weight: .medium)
             }
             .buttonStyle(.plain)
             .help("Close")
@@ -118,7 +118,7 @@ struct GitHubIssueSidebarView: View {
             // Issue number + state
             if let number = detail?.number ?? issueNumber {
                 Text("#\(number)")
-                    .font(.headline)
+                    .appFont(.headline)
                     .fontWeight(.bold)
                     .foregroundColor(.secondary)
                     .textSelection(.enabled)
@@ -128,7 +128,7 @@ struct GitHubIssueSidebarView: View {
                 StateBadge(state: detail.state == "open" ? .open : .closed)
                 if detail.locked {
                     Label("Locked", systemImage: "lock.fill")
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .foregroundColor(.orange)
                         .labelStyle(.iconOnly)
                 }
@@ -138,7 +138,7 @@ struct GitHubIssueSidebarView: View {
 
             if let error = actionError {
                 Text(error)
-                    .font(.caption2)
+                    .appFont(.caption2)
                     .foregroundColor(.red)
                     .lineLimit(1)
             }
@@ -163,7 +163,7 @@ struct GitHubIssueSidebarView: View {
             if isEditingTitle {
                 TextField("Issue title", text: $editedTitle)
                     .textFieldStyle(.roundedBorder)
-                    .font(.title3)
+                    .appFont(.title3)
                 HStack {
                     Button("Save") {
                         saveTitle()
@@ -178,7 +178,7 @@ struct GitHubIssueSidebarView: View {
             } else {
                 HStack(alignment: .top) {
                     Text(detail?.title ?? task.title)
-                        .font(.title3)
+                        .appFont(.title3)
                         .fontWeight(.semibold)
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
@@ -189,7 +189,7 @@ struct GitHubIssueSidebarView: View {
                             isEditingTitle = true
                         }) {
                             Image(systemName: "pencil")
-                                .font(.caption)
+                                .appFont(.caption)
                         }
                         .buttonStyle(.plain)
                         .help("Edit title")
@@ -206,7 +206,7 @@ struct GitHubIssueSidebarView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Label("Description", systemImage: "text.alignleft")
-                    .font(.caption)
+                    .appFont(.caption)
                     .fontWeight(.semibold)
                     .foregroundColor(.secondary)
                 Spacer()
@@ -217,7 +217,7 @@ struct GitHubIssueSidebarView: View {
                         isEditingBody = true
                     }) {
                         Image(systemName: "pencil")
-                            .font(.caption)
+                            .appFont(.caption)
                     }
                     .buttonStyle(.plain)
                 }
@@ -243,7 +243,7 @@ struct GitHubIssueSidebarView: View {
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
                 } else {
                     TextEditor(text: $editedBody)
-                        .font(.system(.body, design: .monospaced))
+                        .appFont(.body, design: .monospaced)
                         .frame(minHeight: 100, maxHeight: 300)
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.2)))
                 }
@@ -262,7 +262,7 @@ struct GitHubIssueSidebarView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text("No description provided.")
-                        .font(.body)
+                        .appFont(.body)
                         .foregroundColor(.secondary)
                         .italic()
                 }
@@ -279,11 +279,11 @@ struct GitHubIssueSidebarView: View {
             metadataRow(icon: "person.2", title: "Assignees") {
                 let names = detail?.assignees.map(\.login) ?? task.assignees
                 if names.isEmpty {
-                    Text("No assignees").font(.subheadline).foregroundColor(.secondary)
+                    Text("No assignees").appFont(.subheadline).foregroundColor(.secondary)
                 } else {
                     HStack(spacing: 4) {
                         ForEach(names, id: \.self) {
-                            Text($0).font(.subheadline)
+                            Text($0).appFont(.subheadline)
                                 .padding(.horizontal, 6).padding(.vertical, 2)
                                 .background(Color.secondary.opacity(0.1)).cornerRadius(4)
                         }
@@ -295,13 +295,13 @@ struct GitHubIssueSidebarView: View {
             metadataRow(icon: "tag", title: "Labels") {
                 let labels = detail?.labels.map(\.name) ?? task.labels
                 if labels.isEmpty {
-                    Text("No labels").font(.subheadline).foregroundColor(.secondary)
+                    Text("No labels").appFont(.subheadline).foregroundColor(.secondary)
                 } else {
                     FlowLayout(spacing: 4) {
                         ForEach(labels, id: \.self) { label in
                             let hex = detail?.labels.first(where: { $0.name == label })?.color
                             Text(label)
-                                .font(.caption)
+                                .appFont(.caption)
                                 .padding(.horizontal, 8).padding(.vertical, 3)
                                 .background(
                                     hex.map { Color(hex: $0) }?.opacity(0.25) ?? Color.accentColor.opacity(0.15)
@@ -318,14 +318,14 @@ struct GitHubIssueSidebarView: View {
                     HStack(spacing: 4) {
                         Image(systemName: ms.state == "open" ? "flag" : "flag.fill")
                             .foregroundColor(ms.state == "open" ? .primary : .secondary)
-                            .font(.caption)
-                        Text(ms.title).font(.subheadline)
+                            .appFont(.caption)
+                        Text(ms.title).appFont(.subheadline)
                         if let due = ms.dueOn {
-                            Text("· due \(due, style: .date)").font(.caption).foregroundColor(.secondary)
+                            Text("· due \(due, style: .date)").appFont(.caption).foregroundColor(.secondary)
                         }
                     }
                 } else {
-                    Text("No milestone").font(.subheadline).foregroundColor(.secondary)
+                    Text("No milestone").appFont(.subheadline).foregroundColor(.secondary)
                 }
             }
 
@@ -337,7 +337,7 @@ struct GitHubIssueSidebarView: View {
                             Image(systemName: pr.mergedAt != nil ? "arrow.triangle.merge" : "arrow.triangle.pull")
                             Text(prUrl.components(separatedBy: "/").last ?? prUrl)
                         }
-                        .font(.subheadline)
+                        .appFont(.subheadline)
                     }
                 }
             }
@@ -345,7 +345,7 @@ struct GitHubIssueSidebarView: View {
             // Created by
             if let user = detail?.user {
                 metadataRow(icon: "person", title: "Opened by") {
-                    Text(user.login).font(.subheadline).textSelection(.enabled)
+                    Text(user.login).appFont(.subheadline).textSelection(.enabled)
                 }
             }
 
@@ -353,10 +353,10 @@ struct GitHubIssueSidebarView: View {
             metadataRow(icon: "calendar", title: "Dates") {
                 VStack(alignment: .leading, spacing: 2) {
                     if let d = detail {
-                        Text("Created \(d.createdAt, style: .relative)").font(.caption).foregroundColor(.secondary)
-                        Text("Updated \(d.updatedAt, style: .relative)").font(.caption).foregroundColor(.secondary)
+                        Text("Created \(d.createdAt, style: .relative)").appFont(.caption).foregroundColor(.secondary)
+                        Text("Updated \(d.updatedAt, style: .relative)").appFont(.caption).foregroundColor(.secondary)
                         if let closed = d.closedAt {
-                            Text("Closed \(closed, style: .relative)").font(.caption).foregroundColor(.secondary)
+                            Text("Closed \(closed, style: .relative)").appFont(.caption).foregroundColor(.secondary)
                         }
                     }
                 }
@@ -368,11 +368,11 @@ struct GitHubIssueSidebarView: View {
     private func metadataRow<Content: View>(icon: String, title: String, @ViewBuilder content: () -> Content) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 12))
+                .appFont(fixed: 12)
                 .foregroundColor(.secondary)
                 .frame(width: 16)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.caption).foregroundColor(.secondary).fontWeight(.medium)
+                Text(title).appFont(.caption).foregroundColor(.secondary).fontWeight(.medium)
                 content()
             }
         }
@@ -384,13 +384,13 @@ struct GitHubIssueSidebarView: View {
     private var commentsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Comments (\(comments.count))", systemImage: "bubble.left.and.bubble.right")
-                .font(.caption)
+                .appFont(.caption)
                 .fontWeight(.semibold)
                 .foregroundColor(.secondary)
 
             if comments.isEmpty {
                 Text("No comments yet.")
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                     .foregroundColor(.secondary)
                     .italic()
             } else {
@@ -407,18 +407,18 @@ struct GitHubIssueSidebarView: View {
     private var addCommentSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Add Comment", systemImage: "plus.bubble")
-                .font(.caption)
+                .appFont(.caption)
                 .fontWeight(.semibold)
                 .foregroundColor(.secondary)
 
             TextEditor(text: $newCommentText)
-                .font(.body)
+                .appFont(.body)
                 .frame(minHeight: 80, maxHeight: 200)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
 
             HStack {
                 Text("Supports Markdown")
-                    .font(.caption2)
+                    .appFont(.caption2)
                     .foregroundColor(.secondary)
                 Spacer()
                 Button(action: submitComment) {
@@ -438,11 +438,11 @@ struct GitHubIssueSidebarView: View {
             Button(action: { showDangerZone.toggle() }) {
                 HStack {
                     Label("Actions", systemImage: "ellipsis.circle")
-                        .font(.caption)
+                        .appFont(.caption)
                         .fontWeight(.semibold)
                         .foregroundColor(.secondary)
                     Image(systemName: showDangerZone ? "chevron.up" : "chevron.down")
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .foregroundColor(.secondary)
                 }
             }
@@ -707,10 +707,10 @@ private struct CommentBubble: View {
                     .foregroundColor(.secondary)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(comment.user?.login ?? "Unknown")
-                        .font(.subheadline)
+                        .appFont(.subheadline)
                         .fontWeight(.medium)
                     Text(comment.createdAt, style: .relative)
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
             }

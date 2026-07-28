@@ -609,11 +609,11 @@ struct TicketsView: View {
                 Image(systemName: "person.circle.fill")
                     .foregroundColor(.secondary)
                 Text(userName)
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                 Button(action: { appState.signOutTdxSso() }) {
                     Image(systemName: "rectangle.portrait.and.arrow.right")
-                        .font(.caption)
+                        .appFont(.caption)
                 }
                 .buttonStyle(.plain)
                 .help("Sign out of TDX SSO")
@@ -765,7 +765,7 @@ struct TicketsView: View {
                             ForEach(Array(filteredTickets.enumerated()), id: \.element.id) { idx, ticket in
                                 HStack(spacing: 0) {
                                     Text(verbatim: "#\(ticket.id ?? 0)")
-                                        .font(.system(.body, design: .monospaced))
+                                        .appFont(.body, design: .monospaced)
                                         .frame(width: colW(.id) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
                                     Text(ticket.title ?? "-")
@@ -789,12 +789,12 @@ struct TicketsView: View {
                                     Text(formatDateString(ticket.modifiedDate))
                                         .frame(width: colW(.modified) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
-                                        .font(.caption)
+                                        .appFont(.caption)
                                         .foregroundColor(.secondary)
                                     Text(formatDateString(ticket.createdDate))
                                         .frame(width: colW(.created) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
-                                        .font(.caption)
+                                        .appFont(.caption)
                                         .foregroundColor(.secondary)
                                     Spacer(minLength: 0)
                                 }
@@ -851,7 +851,7 @@ struct TicketsView: View {
                     .foregroundColor(.primary)
                 if sortField == field {
                     Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .foregroundColor(.accentColor)
                 }
                 Spacer(minLength: 0)
@@ -906,10 +906,10 @@ struct TicketsView: View {
                     .foregroundColor(.secondary.opacity(0.5))
                     .padding(.bottom, 8)
                 Text("No Ticket Selected")
-                    .font(.headline)
+                    .appFont(.headline)
                     .foregroundColor(.secondary)
                 Text("Select a ticket to view details")
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                     .foregroundColor(.secondary.opacity(0.7))
                 Spacer()
             }
@@ -929,7 +929,7 @@ struct TicketsView: View {
                     NSPasteboard.general.setString(ticketNum, forType: .string)
                 }) {
                     Text(verbatim: "#\(ticket.id ?? 0)")
-                        .font(.title2)
+                        .appFont(.title2)
                         .fontWeight(.bold)
                         .foregroundColor(.accentColor)
                 }
@@ -945,7 +945,7 @@ struct TicketsView: View {
                     NSPasteboard.general.setString(url, forType: .string)
                 }) {
                     Image(systemName: "link")
-                        .font(.body)
+                        .appFont(.body)
                 }
                 .buttonStyle(.plain)
                 .help("Copy ticket link")
@@ -960,7 +960,7 @@ struct TicketsView: View {
                     }
                 }) {
                     Image(systemName: "globe")
-                        .font(.body)
+                        .appFont(.body)
                 }
                 .buttonStyle(.plain)
                 .help("Open ticket in web browser")
@@ -970,7 +970,7 @@ struct TicketsView: View {
                 if hasEdits {
                     Button(action: { discardEdits(ticket: ticket) }) {
                         Text("Discard")
-                            .font(.caption)
+                            .appFont(.caption)
                     }
                     .buttonStyle(.bordered)
                     .tint(.red.opacity(0.7))
@@ -1031,7 +1031,7 @@ struct TicketsView: View {
 
             // Editable title
             TextField("Title", text: $editTitle)
-                .font(.title3)
+                .appFont(.title3)
                 .fontWeight(.semibold)
                 .textFieldStyle(.plain)
                 .onChange(of: editTitle) { _, _ in trackEdits(ticket: ticket) }
@@ -1043,12 +1043,12 @@ struct TicketsView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.red)
                     Text(errMsg)
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.red)
                     Spacer()
                     Button(action: { saveErrorMessage = nil }) {
                         Image(systemName: "xmark")
-                            .font(.caption2)
+                            .appFont(.caption2)
                     }
                     .buttonStyle(.plain)
                 }
@@ -1064,7 +1064,7 @@ struct TicketsView: View {
                 // Status
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Status")
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .foregroundColor(.secondary)
                     Picker("", selection: Binding(
                         get: { editStatusId ?? ticket.statusId ?? 0 },
@@ -1081,7 +1081,7 @@ struct TicketsView: View {
                 // Priority
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Priority")
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .foregroundColor(.secondary)
                     Picker("", selection: Binding(
                         get: { editPriorityId ?? ticket.priorityId ?? 0 },
@@ -1098,7 +1098,7 @@ struct TicketsView: View {
                 // Classification
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Classification")
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .foregroundColor(.secondary)
                     Picker("", selection: Binding(
                         get: { editClassification ?? ticket.classification ?? 0 },
@@ -1120,7 +1120,7 @@ struct TicketsView: View {
                 // Form
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Form")
-                        .font(.caption2)
+                        .appFont(.caption2)
                         .foregroundColor(.secondary)
                     Picker("", selection: Binding(
                         get: { editFormId ?? ticket.formId ?? 0 },
@@ -1183,12 +1183,12 @@ struct TicketsView: View {
                                 }
                             } label: {
                                 Image(systemName: "chevron.down")
-                                    .font(.caption)
+                                    .appFont(.caption)
                             }
                             .menuStyle(.borderedButton)
                             .controlSize(.small)
                             Text(editResponsibleName.isEmpty ? "-" : editResponsibleName)
-                                .font(.body)
+                                .appFont(.body)
                                 .lineLimit(1)
                             Spacer()
                         }
@@ -1212,7 +1212,7 @@ struct TicketsView: View {
                             )
                             Toggle("Notify new responsible", isOn: $notifyNewResponsible)
                                 .toggleStyle(.checkbox)
-                                .font(.caption)
+                                .appFont(.caption)
                         }
                         .padding(.leading, 104)
                     }
@@ -1290,12 +1290,12 @@ struct TicketsView: View {
                                 }
                             }) {
                                 Image(systemName: isChangingRequestor ? "xmark" : "pencil")
-                                    .font(.caption)
+                                    .appFont(.caption)
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                             Text(editRequestorName.isEmpty ? "-" : editRequestorName)
-                                .font(.body)
+                                .appFont(.body)
                                 .lineLimit(1)
                             Spacer()
                         }
@@ -1339,7 +1339,7 @@ struct TicketsView: View {
     private func fieldRow<Content: View>(label: String, @ViewBuilder content: () -> Content) -> some View {
         HStack(alignment: .top, spacing: 4) {
             Text(label)
-                .font(.body)
+                .appFont(.body)
                 .foregroundColor(.secondary)
                 .frame(width: 100, alignment: .leading)
             content()
@@ -1360,11 +1360,11 @@ struct TicketsView: View {
             // Search field
             HStack(spacing: 4) {
                 Image(systemName: "magnifyingglass")
-                    .font(.caption)
+                    .appFont(.caption)
                     .foregroundColor(.secondary)
                 TextField("Search...", text: searchText)
                     .textFieldStyle(.plain)
-                    .font(.caption)
+                    .appFont(.caption)
                     .onChange(of: searchText.wrappedValue) { _, newValue in
                         if newValue.count >= 2 {
                             searchPeopleDebounced(text: newValue, results: searchResults, isSearching: isSearching, showResults: showResults)
@@ -1386,11 +1386,11 @@ struct TicketsView: View {
                         Button(action: { onSelect(person) }) {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(person.fullName ?? "")
-                                    .font(.caption)
+                                    .appFont(.caption)
                                     .foregroundColor(.primary)
                                 if let email = person.primaryEmail, !email.isEmpty {
                                     Text(email)
-                                        .font(.caption2)
+                                        .appFont(.caption2)
                                         .foregroundColor(.secondary)
                                 }
                             }
@@ -1443,7 +1443,7 @@ struct TicketsView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("Description")
-                    .font(.body)
+                    .appFont(.body)
                     .fontWeight(.medium)
                     .foregroundColor(.secondary)
                 Spacer()
@@ -1480,7 +1480,7 @@ struct TicketsView: View {
             }
             if isEditingDescription {
                 TextEditor(text: $editDescription)
-                    .font(.body)
+                    .appFont(.body)
                     .frame(minHeight: 80, maxHeight: 300)
                     .focused($descriptionFocused)
                     .overlay(
@@ -1491,7 +1491,7 @@ struct TicketsView: View {
                 let text = editDescription.trimmingCharacters(in: .whitespacesAndNewlines)
                 if text.isEmpty {
                     Text("No description")
-                        .font(.body)
+                        .appFont(.body)
                         .foregroundColor(.secondary.opacity(0.6))
                         .italic()
                         .padding(8)
@@ -1500,7 +1500,7 @@ struct TicketsView: View {
                         .cornerRadius(6)
                 } else {
                     Text(text)
-                        .font(.body)
+                        .appFont(.body)
                         .textSelection(.enabled)
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1516,9 +1516,9 @@ struct TicketsView: View {
     private func addCommentSection(ticket: TdxTicket) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Add Comment")
-                .font(.headline)
+                .appFont(.headline)
             TextEditor(text: $newComment)
-                .font(.body)
+                .appFont(.body)
                 .frame(height: 80)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
@@ -1528,7 +1528,7 @@ struct TicketsView: View {
             HStack {
                 Toggle("Private", isOn: $isCommentPrivate)
                     .toggleStyle(.checkbox)
-                    .font(.body)
+                    .appFont(.body)
                 Spacer()
                 Button("Post Comment") {
                     Task {
@@ -1544,23 +1544,23 @@ struct TicketsView: View {
             // Notify options
             VStack(alignment: .leading, spacing: 4) {
                 Text("Notify:")
-                    .font(.body)
+                    .appFont(.body)
                     .foregroundColor(.secondary)
                 if let requestor = ticket.requestorName, !requestor.isEmpty {
                     Toggle("Requestor: \(requestor)", isOn: $notifyRequestor)
                         .toggleStyle(.checkbox)
-                        .font(.body)
+                        .appFont(.body)
                 }
                 if let responsible = ticket.responsibleFullName, !responsible.isEmpty,
                    ticket.responsibleUid != ticket.requestorUid {
                     Toggle("Responsible: \(responsible)", isOn: $notifyResponsible)
                         .toggleStyle(.checkbox)
-                        .font(.body)
+                        .appFont(.body)
                 }
                 if let group = ticket.responsibleGroupName, !group.isEmpty {
                     Toggle("Group: \(group)", isOn: $notifyGroup)
                         .toggleStyle(.checkbox)
-                        .font(.body)
+                        .appFont(.body)
                 }
             }
         }
@@ -1572,7 +1572,7 @@ struct TicketsView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Activity")
-                    .font(.headline)
+                    .appFont(.headline)
                 Spacer()
                 Picker("", selection: $feedFilter) {
                     Text("Comments").tag(FeedFilterType.comments)
@@ -1914,7 +1914,7 @@ struct TicketsView: View {
     private func setParentSheet(ticket: TdxTicket) -> some View {
         VStack(spacing: 16) {
             Text("Set Parent Ticket")
-                .font(.headline)
+                .appFont(.headline)
             TextField("Parent Ticket ID", text: $parentTicketIdText)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 200)
@@ -2140,11 +2140,11 @@ struct DetailRow: View {
     var body: some View {
         HStack(alignment: .top) {
             Text(label)
-                .font(.body)
+                .appFont(.body)
                 .foregroundColor(.secondary)
                 .frame(width: 100, alignment: .leading)
             Text(value)
-                .font(.body)
+                .appFont(.body)
                 .textSelection(.enabled)
             Spacer()
         }
@@ -2160,13 +2160,13 @@ struct FeedEntryRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top) {
                 Text(entry.createdFullName ?? "Unknown")
-                    .font(.body)
+                    .appFont(.body)
                     .fontWeight(.semibold)
                     .foregroundColor(.secondary)
                 Spacer()
                 if entry.isPrivate == true {
                     Text("Private")
-                        .font(.caption)
+                        .appFont(.caption)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color.secondary.opacity(0.15))
@@ -2174,12 +2174,12 @@ struct FeedEntryRow: View {
                 }
                 if let dateStr = entry.createdDate, let date = TicketsView.parseDate(dateStr) {
                     Text(formatRelativeDate(date))
-                        .font(.callout)
+                        .appFont(.callout)
                         .foregroundColor(.secondary)
                 }
                 Button(action: { copyEntryToClipboard() }) {
                     Image(systemName: "doc.on.doc")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -2188,7 +2188,7 @@ struct FeedEntryRow: View {
 
             if let body = entry.body, !body.isEmpty {
                 Text(TicketsView.decodeHtml(body))
-                    .font(.body)
+                    .appFont(.body)
                     .foregroundColor(.primary)
                     .textSelection(.enabled)
             }
@@ -2205,18 +2205,18 @@ struct FeedEntryRow: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack {
                                     Text(reply.createdFullName ?? "Unknown")
-                                        .font(.callout)
+                                        .appFont(.callout)
                                         .fontWeight(.semibold)
                                         .foregroundColor(.secondary)
                                     Spacer()
                                     if let dateStr = reply.createdDate, let date = TicketsView.parseDate(dateStr) {
                                         Text(formatRelativeDate(date))
-                                            .font(.caption)
+                                            .appFont(.caption)
                                             .foregroundColor(.secondary)
                                     }
                                     Button(action: { copyReplyToClipboard(reply) }) {
                                         Image(systemName: "doc.on.doc")
-                                            .font(.caption2)
+                                            .appFont(.caption2)
                                             .foregroundColor(.secondary)
                                     }
                                     .buttonStyle(.plain)
@@ -2224,7 +2224,7 @@ struct FeedEntryRow: View {
                                 }
                                 if let body = reply.body, !body.isEmpty {
                                     Text(TicketsView.decodeHtml(body))
-                                        .font(.callout)
+                                        .appFont(.callout)
                                         .foregroundColor(.secondary)
                                         .textSelection(.enabled)
                                 }
@@ -2287,7 +2287,7 @@ struct TicketStatusBadge: View {
                 .fill(color)
                 .frame(width: 8, height: 8)
             Text(statusName ?? "Unknown")
-                .font(.body)
+                .appFont(.body)
         }
     }
 }
@@ -2302,7 +2302,7 @@ struct ViewModePill: View {
         HStack(spacing: 0) {
             ForEach([TicketViewMode.table, .board], id: \.self) { mode in
                 Text(mode == .table ? "List" : "Board")
-                    .font(.system(size: 12, weight: selection == mode ? .semibold : .regular))
+                    .appFont(fixed: 12, weight: selection == mode ? .semibold : .regular)
                     .foregroundStyle(selection == mode ? .primary : .secondary)
                     .frame(width: 56, height: 24)
                     .background {

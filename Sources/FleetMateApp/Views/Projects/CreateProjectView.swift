@@ -19,7 +19,7 @@ struct CreateProjectView: View {
             // Header
             HStack {
                 Text("New Project")
-                    .font(.title2)
+                    .appFont(.title2)
                     .fontWeight(.bold)
                 Spacer()
                 Button("Cancel") { dismiss() }
@@ -32,19 +32,19 @@ struct CreateProjectView: View {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Project Name")
-                        .font(.headline)
+                        .appFont(.headline)
                     TextField("Enter project name", text: $title)
                         .textFieldStyle(.roundedBorder)
                 }
 
                 Text("Owner: \(owner)")
-                    .font(.subheadline)
+                    .appFont(.subheadline)
                     .foregroundColor(.secondary)
 
                 if let error = errorMessage {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .foregroundColor(.red)
-                        .font(.caption)
+                        .appFont(.caption)
                 }
             }
             .padding()

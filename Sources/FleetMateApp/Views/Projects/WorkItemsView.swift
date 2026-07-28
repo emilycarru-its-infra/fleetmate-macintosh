@@ -33,7 +33,7 @@ struct WorkItemsView: View {
             HStack {
                 VStack(alignment: .leading) {
                     Text("Tasks")
-                        .font(.largeTitle)
+                        .appFont(.largeTitle)
                         .fontWeight(.bold)
                     Text("Tasks from DevOps, Planner, GitHub, etc.")
                         .foregroundColor(.secondary)
@@ -94,7 +94,7 @@ struct WorkItemsView: View {
                 Table(filteredItems) {
                     TableColumn("ID") { item in
                         Text("#\(item.id)")
-                            .font(.system(.body, design: .monospaced))
+                            .appFont(.body, design: .monospaced)
                     }
                     .width(min: 60, ideal: 80)
 
@@ -168,7 +168,7 @@ struct WorkItemTypeBadge: View {
             Image(systemName: icon)
                 .foregroundColor(color)
             Text(type ?? "Unknown")
-                .font(.caption)
+                .appFont(.caption)
         }
     }
 }
@@ -191,7 +191,7 @@ struct WorkItemStateBadge: View {
                 .fill(color)
                 .frame(width: 8, height: 8)
             Text(state ?? "Unknown")
-                .font(.caption)
+                .appFont(.caption)
         }
     }
 }

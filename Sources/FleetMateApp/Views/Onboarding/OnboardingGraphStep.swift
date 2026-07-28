@@ -7,7 +7,7 @@ struct OnboardingGraphStep: View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Microsoft Graph")
-                    .font(.title2.bold())
+                    .appFont(.title2, weight: .bold)
                 Text("Connect to Intune for device management and Entra ID for identity.")
                     .foregroundStyle(.secondary)
             }
@@ -19,7 +19,7 @@ struct OnboardingGraphStep: View {
                     TextField("Azure AD Tenant ID", text: $wizardState.graphTenantId)
                         .textFieldStyle(.roundedBorder)
                     Text("GUID from Azure Portal > Azure Active Directory > Overview")
-                        .font(.caption)
+                        .appFont(.caption)
                         .foregroundStyle(.tertiary)
                 }
 
@@ -33,7 +33,7 @@ struct OnboardingGraphStep: View {
 
                     if wizardState.graphAuthMode == .sso {
                         Label("Uses Azure CLI. Run **az login** in Terminal before use.", systemImage: "info.circle")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundStyle(.secondary)
                     } else {
                         GroupBox("Devices Service Principal") {
@@ -57,7 +57,7 @@ struct OnboardingGraphStep: View {
                         }
 
                         Text("At least one service principal is required.")
-                            .font(.caption)
+                            .appFont(.caption)
                             .foregroundStyle(.tertiary)
                     }
                 }

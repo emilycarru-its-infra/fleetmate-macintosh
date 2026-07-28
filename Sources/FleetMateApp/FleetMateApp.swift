@@ -107,6 +107,16 @@ class AppState: ObservableObject {
     @Published var cachedUsers: [SnipeUser] = []
     @Published var cachedEntraUsers: [EntraUser] = []
     @Published var cachedGroups: [EntraGroup] = []
+
+    /// The dashboard's pull request queue.
+    ///
+    /// Owned here rather than by DashboardView because ContentView swaps
+    /// `tabContent` wholesale on every tab change, which destroys the view and
+    /// any @StateObject it holds. The queue would come back empty and refetch
+    /// each time you returned to the Dashboard — a visible flash of "DevOps 0 /
+    /// GitHub 0" and a spinner where a populated list had been. Living on
+    /// AppState, it survives tab switches like the other caches.
+    let pullRequestQueue = PullRequestQueueModel()
     
     // Cache timestamps
     private var devicesCacheTime: Date?

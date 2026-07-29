@@ -6,32 +6,22 @@ enum IdentityTab: String, CaseIterable {
     case users = "Users"
 }
 
+/// How many `Devices-` groups to pull.
+///
+/// One constant because three call sites used to disagree — the launch preload
+/// fetched 100 while the view's own refresh asked for 999. The preload won, since
+/// it populated the cache first and left it valid, so the list silently capped at
+/// "100 of 100" no matter what the view requested.
+enum DeviceGroupFetch {
+    static let limit = 1000
+}
+
 struct IdentityView: View {
     @EnvironmentObject var appState: AppState
     @State private var selectedTab: IdentityTab = .groups
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header with inline tab toggle
-            HStack {
-                Text("Identity")
-                    .appFont(.largeTitle)
-                    .fontWeight(.bold)
-
-                Picker("", selection: $selectedTab) {
-                    Text("Groups").tag(IdentityTab.groups)
-                    Text("Users").tag(IdentityTab.users)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 180)
-
-                Spacer()
-            }
-            .padding(.horizontal)
-            .padding(.top, 12)
-            .padding(.bottom, 6)
-
-            // Content
             switch selectedTab {
             case .groups:
                 GroupsContentView()
@@ -39,6 +29,21 @@ struct IdentityView: View {
             case .users:
                 UsersContentView()
                     .environmentObject(appState)
+            }
+        }
+        // The Groups/Users switcher belongs in the window toolbar, like the view
+        // pickers in Tickets and Projects. Inline it rendered as a flat blue
+        // segmented control next to a large "Identity" heading — the only tab
+        // still repeating its own name in the body, which the tab bar already
+        // shows.
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                SegmentedPill(
+                    selection: $selectedTab,
+                    options: IdentityTab.allCases,
+                    label: { $0.rawValue },
+                    segmentWidth: 62
+                )
             }
         }
     }
@@ -64,34 +69,6 @@ struct GroupsContentView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Search/Filter + Refresh
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("Filter groups...", text: $searchText)
-                    .textFieldStyle(.plain)
-                if !searchText.isEmpty {
-                    Button(action: { searchText = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-                if !groups.isEmpty {
-                    Text("\(filteredGroups.count) of \(groups.count)")
-                        .appFont(.caption)
-                        .foregroundColor(.secondary)
-                }
-                Button(action: loadDeviceGroups) {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(isLoading)
-            }
-            .padding(8)
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(8)
-            .padding(.horizontal)
-
             if !appState.config.isSystemsGraphConfigured {
                 VStack {
                     ContentUnavailableView(
@@ -138,6 +115,22 @@ struct GroupsContentView: View {
                 .listStyle(.plain)
             }
         }
+        .searchable(text: $searchText, prompt: "Filter groups…")
+        .toolbar {
+            ToolbarItemGroup(placement: .automatic) {
+                if !groups.isEmpty {
+                    Text("\(filteredGroups.count) of \(groups.count)")
+                        .appFont(.caption)
+                        .monospacedDigit()
+                        .foregroundColor(.secondary)
+                }
+                Button(action: loadDeviceGroups) {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(isLoading)
+                .keyboardShortcut("r", modifiers: .command)
+            }
+        }
         .task {
             if !appState.isGroupsCacheValid {
                 loadDeviceGroups()
@@ -151,7 +144,7 @@ struct GroupsContentView: View {
             isLoading = true
             defer { isLoading = false }
             do {
-                let fetchedGroups = try await appState.graphService.searchGroups("Devices-", limit: 999)
+                let fetchedGroups = try await appState.graphService.searchGroups("Devices-", limit: DeviceGroupFetch.limit)
                 appState.updateGroupsCache(fetchedGroups)
             } catch {
                 appState.errorMessage = "Failed to load device groups: \(error.localizedDescription)"
@@ -212,24 +205,19 @@ struct UsersContentView: View {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        // Entra is queried on submit rather than per keystroke, so the field
+        // keeps its Return-to-search behaviour now that it lives in the toolbar.
+        .searchable(text: $searchText, prompt: "Search users…")
+        .onSubmit(of: .search) { searchUser() }
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                if isLoading { ProgressView().controlSize(.small) }
+            }
+        }
     }
 
     private var sidebar: some View {
         VStack(spacing: 0) {
-            HStack {
-                Image(systemName: "magnifyingglass").foregroundColor(.secondary)
-                TextField("Search users…", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .onSubmit { searchUser() }
-                if isLoading { ProgressView().controlSize(.small) }
-            }
-            .padding(8)
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(8)
-            .padding(10)
-
-            Divider()
-
             if !appState.config.isGraphConfigured {
                 centered(ContentUnavailableView(
                     "Not Configured",

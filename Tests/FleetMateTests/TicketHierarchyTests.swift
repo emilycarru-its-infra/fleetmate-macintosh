@@ -33,6 +33,29 @@ final class TicketHierarchyTests: XCTestCase {
         XCTAssertEqual(ticket.ageLabel, "16d")
     }
 
+    func testLastActivityMeasuresFromTheModifiedDateNotCreation() throws {
+        // The board card shows this, not age: an old ticket touched today is
+        // healthy, a young one untouched for three weeks is not.
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let modified = Calendar.current.date(byAdding: .day, value: -3, to: Date())!
+        let data = try JSONSerialization.data(withJSONObject: [
+            "ID": 1, "DaysOld": 400, "ModifiedDate": formatter.string(from: modified)
+        ])
+        let ticket = try JSONDecoder().decode(TdxTicket.self, from: data)
+
+        XCTAssertEqual(ticket.ageInDays, 400)
+        XCTAssertEqual(ticket.daysSinceLastActivity, 3)
+        XCTAssertEqual(ticket.lastActivityLabel, "3d")
+    }
+
+    func testLastActivityFallsBackToAgeWhenNeverModified() throws {
+        let data = try JSONSerialization.data(withJSONObject: ["ID": 1, "DaysOld": 12])
+        let ticket = try JSONDecoder().decode(TdxTicket.self, from: data)
+
+        XCTAssertEqual(ticket.daysSinceLastActivity, 12)
+    }
+
     func testAgeIsBlankWhenNothingSaysWhenItOpened() throws {
         let data = try JSONSerialization.data(withJSONObject: ["ID": 1])
         let ticket = try JSONDecoder().decode(TdxTicket.self, from: data)

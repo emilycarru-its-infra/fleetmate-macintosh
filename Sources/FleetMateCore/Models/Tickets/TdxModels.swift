@@ -75,6 +75,22 @@ public struct TdxTicket: Codable, Identifiable, Sendable, Equatable, Hashable {
         return "\(days)d"
     }
 
+    /// Days since anything last happened on the ticket.
+    ///
+    /// On a board card this is the more useful number than age: it answers
+    /// "how long has this been sitting untouched", which is what a stalled
+    /// ticket looks like. Age only says when it arrived.
+    public var daysSinceLastActivity: Int? {
+        guard let modifiedDate,
+              let modified = TdxTicket.parseDate(modifiedDate) else { return ageInDays }
+        return Calendar.current.dateComponents([.day], from: modified, to: Date()).day
+    }
+
+    public var lastActivityLabel: String {
+        guard let days = daysSinceLastActivity else { return "-" }
+        return "\(days)d"
+    }
+
     static func parseDate(_ value: String) -> Date? {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

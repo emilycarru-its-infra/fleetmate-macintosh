@@ -216,8 +216,13 @@ struct AuthSettingsView: View {
                 let aApp = cfg.tdxAssetsAppId ?? cfg.tdxAppId
                 if let a = tApp { detailRow("Ticketing app ID", String(a)) }
                 if let a = aApp, a != tApp { detailRow("Assets app ID", String(a)) }
-                if let user = appState.tdxSsoAuthenticated ? appState.tdxAuthenticatedUserName : system.user {
-                    detailRow("SSO signed in as", user, .green)
+                // Say who writes will be attributed to, rather than implying a
+                // signed-in user when the service account is doing the work.
+                if appState.tdxService.actingIdentityIsUser {
+                    let who = appState.tdxMe?.fullName ?? appState.tdxAuthenticatedUserName ?? "signed-in user"
+                    detailRow("Acting as", who, .green)
+                } else {
+                    detailRow("Acting as", "Service account — edits will not show your name", .orange)
                 }
                 if cfg.tdxBeid != nil {
                     detailRow("Service account", cfg.tdxUsername ?? "configured", .secondary)

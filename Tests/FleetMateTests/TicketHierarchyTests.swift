@@ -11,6 +11,36 @@ final class TicketHierarchyTests: XCTestCase {
         return try JSONDecoder().decode(TdxTicket.self, from: data)
     }
 
+    func testAgePrefersTheServerCountAndStaysInDays() throws {
+        let data = try JSONSerialization.data(withJSONObject: ["ID": 1, "DaysOld": 412])
+        let ticket = try JSONDecoder().decode(TdxTicket.self, from: data)
+
+        XCTAssertEqual(ticket.ageInDays, 412)
+        // Never "1 yr" — a queue is read in days.
+        XCTAssertEqual(ticket.ageLabel, "412d")
+    }
+
+    func testAgeFallsBackToCreatedDateWhenDaysOldIsAbsent() throws {
+        let created = Calendar.current.date(byAdding: .day, value: -16, to: Date())!
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let data = try JSONSerialization.data(withJSONObject: [
+            "ID": 1, "CreatedDate": formatter.string(from: created)
+        ])
+        let ticket = try JSONDecoder().decode(TdxTicket.self, from: data)
+
+        XCTAssertEqual(ticket.ageInDays, 16)
+        XCTAssertEqual(ticket.ageLabel, "16d")
+    }
+
+    func testAgeIsBlankWhenNothingSaysWhenItOpened() throws {
+        let data = try JSONSerialization.data(withJSONObject: ["ID": 1])
+        let ticket = try JSONDecoder().decode(TdxTicket.self, from: data)
+
+        XCTAssertNil(ticket.ageInDays)
+        XCTAssertEqual(ticket.ageLabel, "-")
+    }
+
     func testParentIdOfZeroMeansNoParent() throws {
         XCTAssertNil(try ticket(1).parentTicketId)
         XCTAssertEqual(try ticket(2, parent: 1).parentTicketId, 1)

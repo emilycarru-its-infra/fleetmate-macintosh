@@ -152,8 +152,6 @@ struct PullRequestQueueSection: View {
                 ProgressView().controlSize(.mini)
             }
 
-            Spacer()
-
             // Source filters. Only worth showing when more than one provider is
             // in play — a lone "GitHub" pill filters nothing.
             if model.availableSources.count > 1 {
@@ -174,6 +172,8 @@ struct PullRequestQueueSection: View {
             .foregroundStyle(.secondary)
             .help("Refresh pull requests")
             .disabled(model.isLoading)
+
+            Spacer()
         }
     }
 

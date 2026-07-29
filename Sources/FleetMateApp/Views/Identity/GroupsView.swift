@@ -219,7 +219,7 @@ struct GroupsView: View {
             defer { isLoading = false }
 
             do {
-                let fetchedGroups = try await appState.graphService.searchGroups("Devices-", limit: 100)
+                let fetchedGroups = try await appState.graphService.searchGroups("Devices-", limit: DeviceGroupFetch.limit)
                 appState.updateGroupsCache(fetchedGroups)
             } catch {
                 appState.errorMessage = "Failed to load device groups: \(error.localizedDescription)"

@@ -11,7 +11,6 @@ private struct WindowWidthKey: PreferenceKey {
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
-    @State private var selectedTab: AppTab = .dashboard
     @State private var hasAutoPromptedSso = false
     @State private var hasAutoPromptedDevOpsSso = false
     @State private var hasAutoPromptedSnipeSso = false
@@ -20,6 +19,8 @@ struct ContentView: View {
     private var availableTabs: [AppTab] {
         AppTab.enabledTabs(config: appState.config)
     }
+
+    private var selectedTab: AppTab { appState.selectedTab }
 
     var body: some View {
         tabContent
@@ -32,7 +33,7 @@ struct ContentView: View {
             .onPreferenceChange(WindowWidthKey.self) { windowWidth = $0 }
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    GlassTabBar(selectedTab: $selectedTab, tabs: availableTabs, availableWidth: windowWidth)
+                    GlassTabBar(selectedTab: $appState.selectedTab, tabs: availableTabs, availableWidth: windowWidth)
                 }
                 if appState.authManager.hasServicePrincipalWarning {
                     ToolbarItem(placement: .automatic) {
@@ -67,7 +68,7 @@ struct ContentView: View {
                     appState.attemptSilentSnipeSso()
                 }
             }
-            .onChange(of: selectedTab) { _, newTab in
+            .onChange(of: appState.selectedTab) { _, newTab in
                 // Re-attempt silent SSO when navigating to a tab that needs auth.
                 // No interactive popups — all web auth is silent/headless only.
                 if newTab == .tickets,
@@ -94,7 +95,7 @@ struct ContentView: View {
             }
             .onChange(of: appState.navigateToTab) { _, newTab in
                 if let tab = newTab {
-                    selectedTab = tab
+                    appState.selectedTab = tab
                     appState.navigateToTab = nil
                 }
             }
@@ -110,7 +111,7 @@ struct ContentView: View {
 
     private func validateSelectedTab() {
         if !selectedTab.isEnabled(config: appState.config) {
-            selectedTab = .dashboard
+            appState.selectedTab = .dashboard
         }
     }
 

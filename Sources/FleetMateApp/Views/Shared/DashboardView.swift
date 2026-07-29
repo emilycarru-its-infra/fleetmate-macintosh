@@ -133,6 +133,9 @@ struct DashboardView: View {
         }
         .frame(maxHeight: .infinity)
         .toolbar { dashboardToolbar }
+        .onAppCommand { command in
+            if command == .refresh { Task { await refreshAll() } }
+        }
         .task { await loadAllSections() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in }
         .onChange(of: appState.cachedDevices.count) { _, _ in refreshSection(.devices) }
@@ -214,7 +217,6 @@ struct DashboardView: View {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .disabled(isAnyLoading)
-            .keyboardShortcut("r", modifiers: .command)
 
             Button(action: { showAuthPopover.toggle() }) {
                 Label("Authentication", systemImage: "lock.shield")

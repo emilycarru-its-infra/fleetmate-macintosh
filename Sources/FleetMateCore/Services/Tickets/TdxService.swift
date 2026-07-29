@@ -331,6 +331,20 @@ public class TdxService {
         }
     }
 
+    /// Unwrap an optional that was boxed by `as Any`.
+    ///
+    /// Callers build the sparse update dictionary with `dict["X"] = someInt? as Any`,
+    /// which stores `Optional<Int>.none` rather than dropping the key.
+    /// `JSONSerialization` rejects that value outright, so a cleared field would
+    /// throw before the request was ever sent. Clearing a field is legitimate —
+    /// it becomes an explicit JSON null.
+    private static func jsonValue(_ value: Any) -> Any {
+        let mirror = Mirror(reflecting: value)
+        guard mirror.displayStyle == .optional else { return value }
+        guard let wrapped = mirror.children.first else { return NSNull() }
+        return jsonValue(wrapped.value)
+    }
+
     public func updateTicket(id: Int, updates: [String: Any], notifyNewResponsible: Bool = false) async throws -> TdxTicket? {
         guard let headers = await headers() else { return nil }
 
@@ -340,8 +354,21 @@ public class TdxService {
         }
         dbg.info("TDX PATCH updateTicket \(id) fields: \(updates.keys.sorted())", category: "tdx")
 
+        // TDX's PATCH takes an RFC 6902 JsonPatchDocument — an *array* of
+        // operations, not an object of field/value pairs. Posting the bare
+        // dictionary is what produced:
+        //   "patch must not be null. Errors: The JsonPatchDocument was
+        //    malformed and could not be parsed."
+        let operations: [[String: Any]] = updates
+            .sorted { $0.key < $1.key }
+            .map { ["op": "replace", "path": "/\($0.key)", "value": Self.jsonValue($0.value)] }
+
+        var request = try URLRequest(url: url, method: .patch, headers: headers)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: operations)
+
         return try await withCheckedThrowingContinuation { continuation in
-            activeSession.request(url, method: .patch, parameters: updates, encoding: JSONEncoding.default, headers: headers)
+            activeSession.request(request)
                 .validate()
                 .responseDecodable(of: TdxTicket.self) { response in
                     switch response.result {

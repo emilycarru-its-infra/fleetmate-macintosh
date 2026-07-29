@@ -10,31 +10,45 @@ struct TicketAttachmentsView: View {
 
     @State private var busyId: String?
     @State private var errorMessage: String?
+    /// Folded by default — the file list is reference material, and on a busy
+    /// ticket it pushes the comment box and activity below the fold.
+    @State private var isExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Attachments")
-                    .appFont(.headline)
-                Text(verbatim: "\(attachments.count)")
-                    .appFont(.caption)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Color.secondary.opacity(0.18))
-                    .foregroundColor(.secondary)
-                    .clipShape(Capsule())
-                Spacer()
+            Button(action: { withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() } }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .appFont(.caption)
+                        .foregroundColor(.secondary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    Text("Attachments")
+                        .appFont(.headline)
+                    Text(verbatim: "\(attachments.count)")
+                        .appFont(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.18))
+                        .foregroundColor(.secondary)
+                        .clipShape(Capsule())
+                    Spacer()
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Hide attachments" : "Show \(attachments.count) attachment\(attachments.count == 1 ? "" : "s")")
 
-            if let errorMessage {
-                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                    .appFont(.caption)
-                    .foregroundColor(.red)
-            }
+            if isExpanded {
+                if let errorMessage {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                        .appFont(.caption)
+                        .foregroundColor(.red)
+                }
 
-            VStack(spacing: 6) {
-                ForEach(attachments) { attachment in
-                    row(for: attachment)
+                VStack(spacing: 6) {
+                    ForEach(attachments) { attachment in
+                        row(for: attachment)
+                    }
                 }
             }
         }

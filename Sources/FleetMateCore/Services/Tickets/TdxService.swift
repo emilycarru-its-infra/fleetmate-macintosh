@@ -49,6 +49,17 @@ public class TdxService {
         guard let token = ssoToken, !token.isEmpty else { return false }
         return Date() < ssoTokenExpiry
     }
+
+    /// True when the held SSO token is a real API JWT rather than a marker for
+    /// a scraped web session. Only a JWT can be sent as a Bearer credential.
+    public var hasUserJwt: Bool {
+        guard let token = ssoToken, Date() < ssoTokenExpiry else { return false }
+        return token.hasPrefix("eyJ") && token.split(separator: ".").count == 3
+    }
+
+    /// Who writes will be attributed to: the signed-in person, or the service
+    /// account. Surfaced so the UI can say which, rather than implying one.
+    public var actingIdentityIsUser: Bool { hasUserJwt }
     
     /// The authenticated SSO user's display name
     public var authenticatedUserName: String? {
@@ -139,15 +150,24 @@ public class TdxService {
         let authMethod = config.tdxAuthMethod
         dbg.debug("TDX getAccessToken (method=\(authMethod), ssoValid=\(ssoToken != nil && Date() < ssoTokenExpiry))", category: "tdx-auth")
         
-        // Browser-SSO is an explicit opt-in only. TDX's Web API has no inbound
-        // SSO/OAuth path, so the "SSO token" is a value scraped from a WKWebView
-        // session, not a portable API JWT — sending it as a Bearer token makes
-        // the API return 400. `.auto` must therefore NOT prefer it (that was the
-        // "Auto → SSO (active)" failure); it falls through to the service-account
-        // loginadmin path below. See the TDX auth-ceiling notes.
+        // Prefer a real user JWT whenever we hold one, including under `.auto`.
+        //
+        // This used to be browser-SSO-only, because the "SSO token" was scraped
+        // from a TDNext web session and the API answered 400 to it. That was a
+        // symptom of pointing the login flow at the web UI: the Web API does
+        // have an inbound SSO path at `/api/auth/loginsso`, and it hands back a
+        // genuine Bearer JWT. Using it is what makes edits appear under the
+        // person who made them instead of the API service account.
+        if hasUserJwt {
+            dbg.info("TDX using SSO user token (expires in \(Int(ssoTokenExpiry.timeIntervalSinceNow))s)", category: "tdx-auth")
+            return ssoToken
+        }
+
         if authMethod == .browserSSO {
+            // Explicitly opted into acting as yourself — falling back to the
+            // service account here would silently misattribute every write.
             if let token = ssoToken, !token.isEmpty, Date() < ssoTokenExpiry {
-                dbg.info("TDX using SSO token (expires in \(Int(ssoTokenExpiry.timeIntervalSinceNow))s)", category: "tdx-auth")
+                dbg.info("TDX using SSO session token", category: "tdx-auth")
                 return token
             }
             dbg.warn("TDX browserSSO required but no valid SSO token", category: "tdx-auth")
@@ -559,6 +579,50 @@ public class TdxService {
     //
     // Existing threads *are* readable — see `getTicketFeed(includeReplies:)`.
     // The UI offers quoting into a new comment instead.
+
+    // MARK: - Attachments
+
+    /// Download an attachment's bytes.
+    ///
+    /// Attachments are listed inline on the ticket; this fetches the content
+    /// each one points at via its `ContentUri`.
+    public func downloadAttachment(id: String) async throws -> Data? {
+        guard let headers = await headers() else { return nil }
+
+        let url = config.tdxGlobalUrl("attachments/\(id)/content")
+        dbg.info("TDX downloadAttachment → GET \(url)", category: "tdx")
+
+        return try await withCheckedThrowingContinuation { continuation in
+            activeSession.request(url, headers: headers)
+                .validate()
+                .responseData { response in
+                    switch response.result {
+                    case .success(let data):
+                        continuation.resume(returning: data)
+                    case .failure(let error):
+                        dbg.warn("TDX attachment \(id) failed (\(response.response?.statusCode ?? 0))", category: "tdx")
+                        continuation.resume(throwing: error)
+                    }
+                }
+        }
+    }
+
+    /// Download an attachment into a temporary file and return its path, ready
+    /// to hand to Quick Look or the Finder.
+    public func stageAttachment(_ attachment: TdxAttachment) async throws -> URL? {
+        guard let data = try await downloadAttachment(id: attachment.id) else { return nil }
+
+        // Keep the original filename so the right app opens it, but scope it to
+        // a per-attachment directory so two files named image001.png don't
+        // overwrite each other.
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FleetMate-Attachments/\(attachment.id)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let fileURL = directory.appendingPathComponent(attachment.displayName)
+        try data.write(to: fileURL, options: .atomic)
+        return fileURL
+    }
 
     /// Fetch a single feed entry with its replies.
     public func getFeedEntry(id: Int) async throws -> TdxFeedEntry? {

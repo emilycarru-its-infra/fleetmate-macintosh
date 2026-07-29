@@ -1054,6 +1054,10 @@ struct TicketsView: View {
                     Divider()
                     Spacer().frame(height: 10)
                     detailFields(ticket: ticket)
+                    if !ticket.attachmentList.isEmpty {
+                        Divider().padding(.vertical, 8)
+                        TicketAttachmentsView(attachments: ticket.attachmentList)
+                    }
                     Divider().padding(.vertical, 8)
                     addCommentSection(ticket: ticket)
                     Divider().padding(.vertical, 8)
@@ -2337,11 +2341,27 @@ struct FeedEntryRow: View {
     /// answers — the same shape children take on the board, so the two views
     /// read the same way.
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 0) {
             commentCard(entry, isReply: false)
-            ForEach(entry.replyList, id: \.id) { reply in
-                commentCard(reply, isReply: true)
-                    .padding(.leading, 24)
+
+            if !entry.replyList.isEmpty {
+                // A continuous rail down the left ties the replies to the
+                // comment they answer. Separate floating cards read as
+                // unrelated messages that happen to be adjacent.
+                HStack(alignment: .top, spacing: 0) {
+                    Rectangle()
+                        .fill(Color.accentColor.opacity(0.35))
+                        .frame(width: 2)
+                        .padding(.leading, 16)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(entry.replyList, id: \.id) { reply in
+                            commentCard(reply, isReply: true)
+                        }
+                    }
+                    .padding(.leading, 10)
+                }
+                .padding(.top, 1)
             }
         }
     }
@@ -2397,14 +2417,16 @@ struct FeedEntryRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(isReply
+                    ? Color.secondary.opacity(0.07)
+                    : Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
+                .stroke(Color.secondary.opacity(isReply ? 0.10 : 0.18), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.08), radius: 2, x: 0, y: 1)
     }
 
     private func copyToClipboard(_ item: TdxFeedEntry) {

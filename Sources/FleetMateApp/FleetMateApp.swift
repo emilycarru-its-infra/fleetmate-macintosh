@@ -220,7 +220,27 @@ class AppState: ObservableObject {
             snipeService = SnipeService(config: config)
             reportMateService = ReportMateService(config: config)
             errorMessage = nil
-            
+
+            // Rebuilding devOpsService above threw away its bearer token and
+            // refresh handler while devOpsSsoAuthenticated stayed true, so
+            // nothing re-triggered SSO — every later call failed with "SSO login
+            // required". This runs on any config save, including the one that
+            // first sets the DevOps organization. Carry the live session over.
+            installDevOpsTokenRefresh()
+            if devOpsSsoAuthenticated {
+                Task { @MainActor in
+                    if let result = try? await self.devOpsSsoService.refreshAccessToken(),
+                       result.success, let token = result.accessToken {
+                        self.devOpsService.setBearerToken(
+                            token,
+                            expiry: Date().addingTimeInterval(TimeInterval(result.expiresIn ?? 3600))
+                        )
+                    } else {
+                        self.devOpsSsoAuthenticated = false
+                    }
+                }
+            }
+
             // Re-bootstrap auth manager with updated config
             authManager.bootstrapFromConfig(with: config)
             
@@ -744,6 +764,7 @@ class AppState: ObservableObject {
     func handleDevOpsSsoSuccess(accessToken: String, expiry: Date, userName: String?, userEmail: String?) {
         // Inject token into the REST API service
         devOpsService.setBearerToken(accessToken, expiry: expiry)
+        installDevOpsTokenRefresh()
         devOpsSsoAuthenticated = true
         devOpsSsoUserName = userName
         devOpsSsoUserEmail = userEmail
@@ -778,6 +799,30 @@ class AppState: ObservableObject {
         if let error = error {
             errorMessage = "DevOps SSO login failed: \(error)"
             authManager.update(.devops, state: .failed(message: error))
+        }
+    }
+
+    /// Let the REST service re-acquire a token by itself when Azure DevOps
+    /// rejects the one it holds.
+    ///
+    /// Without this a 401 mid-session was terminal for the request: the board
+    /// stayed populated from cache while opening any item reported "Not
+    /// authenticated to Azure DevOps. SSO login required." — even though the
+    /// `az` sign-in behind it was still good and a fresh token was available
+    /// silently.
+    func installDevOpsTokenRefresh() {
+        devOpsService.tokenRefreshHandler = { [weak self] in
+            guard let self else { return nil }
+            do {
+                let result = try await self.devOpsSsoService.refreshAccessToken()
+                guard result.success, let token = result.accessToken else { return nil }
+                let expiry = Date().addingTimeInterval(TimeInterval(result.expiresIn ?? 3600))
+                dbg.info("DevOps token re-acquired after rejection", category: "devops-sso")
+                return (token, expiry)
+            } catch {
+                dbg.warn("DevOps token re-acquisition failed: \(error)", category: "devops-sso")
+                return nil
+            }
         }
     }
 

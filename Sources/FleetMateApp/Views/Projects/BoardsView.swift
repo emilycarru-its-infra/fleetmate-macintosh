@@ -23,10 +23,10 @@ enum GroupByOption: String, CaseIterable {
 struct BoardsView: View {
     @EnvironmentObject var appState: AppState
 
-    // View state
+    // View state. Anything genuinely transient — what you typed, what you
+    // selected, which sheet is open — stays here. Loaded data lives on AppState
+    // (see below) so a tab switch doesn't throw it away.
     @State private var viewMode: BoardsViewMode = .board
-    @State private var allTasks: [UnifiedTask] = []
-    @State private var buckets: [String] = []
     @State private var isLoading = false
     @State private var searchText = ""
     @State private var filterProvider: String? = nil
@@ -38,25 +38,11 @@ struct BoardsView: View {
     @State private var isSyncing = false
     @State private var showSyncAlert = false
     @State private var syncMessage = ""
-    @State private var syncEnabled = false
+    @State private var isLoadingBoards = false
+    @State private var isLoadingGhInfo = false
 
     // Detail sidebar toggle
     @State private var showDetailSidebar = true
-
-    // Azure DevOps board selection
-    @State private var availableBoards: [Board] = []
-    @State private var selectedBoardName: String? = nil
-    @State private var boardColumnDefs: [BoardColumnDefinition] = []
-    @State private var isLoadingBoards = false
-    @State private var boardAllowedTypes: Set<String> = []
-    @State private var boardProjectMap: [String: String] = [:]  // board name → project name
-    @State private var boardTeamMap: [String: String] = [:]    // board name → team name
-
-    // GitHub Projects info (for New Issue / New Project)
-    @State private var currentProjectId: String? = nil
-    @State private var currentGhConfig: GitHubProviderConfig? = nil
-    @State private var projectStatusField: GitHubProjectField? = nil
-    @State private var isLoadingGhInfo = false
 
     // Create sheets
     @State private var showCreateIssue = false
@@ -64,15 +50,88 @@ struct BoardsView: View {
     @State private var showCreateWorkItem = false
     @State private var createAlikeSource: UnifiedTask? = nil
 
-    // Cached team members for context menu "Assign To" submenu
-    @State private var cachedTeamMembers: [IdentityRef] = []
+    // MARK: - Loaded data (backed by AppState.projects)
+    //
+    // These read and write through to the shared cache, so the names below are
+    // unchanged from when they were @State — the difference is that they now
+    // outlive the view.
 
-    // Cached context menu data
-    @State private var cachedAreaPaths: [String] = []
-    @State private var cachedIterationPaths: [String] = []
-    @State private var cachedWorkItemTypes: [WorkItemTypeDefinition] = []
-    @State private var cachedRepositories: [GitRepository] = []
-    @State private var cachedStatesPerType: [String: [String]] = [:]  // workItemType → valid states
+    private var allTasks: [UnifiedTask] {
+        get { appState.projects.allTasks }
+        nonmutating set { appState.projects.allTasks = newValue }
+    }
+    private var buckets: [String] {
+        get { appState.projects.buckets }
+        nonmutating set { appState.projects.buckets = newValue }
+    }
+    private var syncEnabled: Bool {
+        get { appState.projects.syncEnabled }
+        nonmutating set { appState.projects.syncEnabled = newValue }
+    }
+    private var availableBoards: [Board] {
+        get { appState.projects.availableBoards }
+        nonmutating set { appState.projects.availableBoards = newValue }
+    }
+    private var selectedBoardName: String? {
+        get { appState.projects.selectedBoardName }
+        nonmutating set { appState.projects.selectedBoardName = newValue }
+    }
+    /// The board Picker needs a real Binding, which a computed property can't provide.
+    private var selectedBoardNameBinding: Binding<String?> {
+        Binding(get: { selectedBoardName }, set: { selectedBoardName = $0 })
+    }
+    private var boardColumnDefs: [BoardColumnDefinition] {
+        get { appState.projects.boardColumnDefs }
+        nonmutating set { appState.projects.boardColumnDefs = newValue }
+    }
+    private var boardAllowedTypes: Set<String> {
+        get { appState.projects.boardAllowedTypes }
+        nonmutating set { appState.projects.boardAllowedTypes = newValue }
+    }
+    private var boardProjectMap: [String: String] {
+        get { appState.projects.boardProjectMap }
+        nonmutating set { appState.projects.boardProjectMap = newValue }
+    }
+    private var boardTeamMap: [String: String] {
+        get { appState.projects.boardTeamMap }
+        nonmutating set { appState.projects.boardTeamMap = newValue }
+    }
+    private var currentProjectId: String? {
+        get { appState.projects.currentProjectId }
+        nonmutating set { appState.projects.currentProjectId = newValue }
+    }
+    private var currentGhConfig: GitHubProviderConfig? {
+        get { appState.projects.currentGhConfig }
+        nonmutating set { appState.projects.currentGhConfig = newValue }
+    }
+    private var projectStatusField: GitHubProjectField? {
+        get { appState.projects.projectStatusField }
+        nonmutating set { appState.projects.projectStatusField = newValue }
+    }
+    private var cachedTeamMembers: [IdentityRef] {
+        get { appState.projects.teamMembers }
+        nonmutating set { appState.projects.teamMembers = newValue }
+    }
+    private var cachedAreaPaths: [String] {
+        get { appState.projects.areaPaths }
+        nonmutating set { appState.projects.areaPaths = newValue }
+    }
+    private var cachedIterationPaths: [String] {
+        get { appState.projects.iterationPaths }
+        nonmutating set { appState.projects.iterationPaths = newValue }
+    }
+    private var cachedWorkItemTypes: [WorkItemTypeDefinition] {
+        get { appState.projects.workItemTypes }
+        nonmutating set { appState.projects.workItemTypes = newValue }
+    }
+    private var cachedRepositories: [GitRepository] {
+        get { appState.projects.repositories }
+        nonmutating set { appState.projects.repositories = newValue }
+    }
+    private var cachedStatesPerType: [String: [String]] {
+        get { appState.projects.statesPerType }
+        nonmutating set { appState.projects.statesPerType = newValue }
+    }
 
     // Computed: can we create GitHub issues? (need owner + repo)
     private var canCreateIssue: Bool {
@@ -135,12 +194,20 @@ struct BoardsView: View {
         .searchable(text: $searchText, prompt: "Search tasks...")
         .toolbar { projectsToolbar }
         .task {
-            if allTasks.isEmpty {
+            // Only load when nothing has ever loaded. Previously this keyed off
+            // `allTasks.isEmpty`, which refetched on every visit because the
+            // state died with the view — and refetched forever when the board
+            // genuinely had no items.
+            if appState.projects.loadedAt == nil {
                 loadTasks()
                 loadGhProjectInfo()
                 loadBoards()
                 loadTeamMembersForMenu()
                 loadContextMenuData()
+            } else {
+                // Warm cache: no fetch, but the filter categories are derived
+                // from the task list and do die with the view, so rebuild them.
+                filters.buildFromTasks(allTasks)
             }
         }
         .alert("Sync Complete", isPresented: $showSyncAlert) {
@@ -240,7 +307,7 @@ struct BoardsView: View {
                 if isLoadingBoards {
                     ProgressView().controlSize(.small)
                 } else if !availableBoards.isEmpty {
-                    Picker("Board", selection: $selectedBoardName) {
+                    Picker("Board", selection: selectedBoardNameBinding) {
                         Text("Select board\u{2026}").tag(nil as String?)
                         ForEach(availableBoards) { board in
                             Text(board.name ?? "Unknown").tag(board.name as String?)
@@ -727,6 +794,7 @@ struct BoardsView: View {
                     allTasks = await registry.listTasks(filter: filter)
                 }
                 dbg.info("BoardsView: loaded \(allTasks.count) total tasks", category: "boards")
+                appState.projects.loadedAt = Date()
                 filters.buildFromTasks(allTasks)
                 for (provider, count) in Dictionary(grouping: allTasks, by: \.provider).mapValues(\.count) {
                     dbg.info("  provider '\(provider)': \(count) tasks", category: "boards")
@@ -1401,25 +1469,10 @@ struct BoardsView: View {
 
     // MARK: - Registry Creation
 
+    /// Registry construction lives on AppState so the launch preload can build
+    /// the same set of providers without going through this view.
     private func createRegistry(config: FleetMateConfig) async -> TaskProviderRegistry {
-        dbg.info("createRegistry starting — devOpsService.hasValidToken=\(appState.devOpsService.hasValidToken) org=\(config.devopsOrganization ?? "nil") project=\(config.devopsProject ?? "nil")", category: "boards")
-        let registry = TaskProviderRegistry()
-        let azdo   = AzureDevOpsTaskProvider(service: appState.devOpsService, config: config)
-        let github = GitHubProjectsTaskProvider(config: config.tasks?.providers.github ?? GitHubProviderConfig())
-        let gitea  = GiteaTaskProvider(config: config)
-
-        await registry.registerProvider(azdo)
-        await registry.registerProvider(github)
-        await registry.registerProvider(gitea)
-
-        dbg.info("Registered providers: azdo.enabled=\(await azdo.isEnabled) github.enabled=\(await github.isEnabled) gitea.enabled=\(await gitea.isEnabled)", category: "boards")
-
-        // Use the registry's built-in authenticateAll() which isolates per-provider failures
-        let authResults = await registry.authenticateAll()
-        for (id, success) in authResults {
-            dbg.info("Provider \(id) auth: \(success ? "OK" : "FAILED")", category: "boards")
-        }
-        return registry
+        await appState.makeTaskRegistry(config: config)
     }
 }
 

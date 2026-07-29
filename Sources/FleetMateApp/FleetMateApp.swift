@@ -11,6 +11,12 @@ struct FleetMateApp: App {
         // Ensure app appears in Dock and can be activated
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
+
+        // FleetMate is one window with six modes, not a document app. Leaving
+        // automatic tabbing on put "Show Tab Bar" and "Show All Tabs" (⌘\) at
+        // the top of the View menu, promising document tabs that don't exist —
+        // directly above the ⌘1–⌘6 items that do the switching.
+        NSWindow.allowsAutomaticWindowTabbing = false
     }
 
     var body: some Scene {
@@ -25,15 +31,7 @@ struct FleetMateApp: App {
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
-            CommandGroup(replacing: .newItem) { }
-            
-            // Standard Edit menu with Cut/Copy/Paste/Select All
-            CommandGroup(after: .pasteboard) {
-                Button("Select All") {
-                    NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
-                }
-                .keyboardShortcut("a", modifiers: .command)
-            }
+            FleetMateCommands(appState: appState)
         }
 
         #if os(macOS)
@@ -66,7 +64,16 @@ class AppState: ObservableObject {
     @Published var showOnboardingWizard = false
 
     // MARK: - Tab Navigation (set by Dashboard to switch tabs)
+
+    /// The visible tab. Lives here rather than in `ContentView` so the ⌘1–⌘6
+    /// menu commands, which are built in the `App` scene, can both read it (to
+    /// decide whether ⌘N means "ticket" or "work item") and set it.
+    @Published var selectedTab: AppTab = .dashboard
     @Published var navigateToTab: AppTab?
+    /// The most recent menu command, for the visible tab to act on.
+    /// See `AppCommand` for why this is a broadcast rather than a direct call.
+    @Published var pendingCommand: AppCommandRequest?
+
     @Published var navigateToDeviceId: String?
     @Published var navigateToTicketId: Int?
     @Published var navigateToFilter: String?
@@ -260,8 +267,15 @@ class AppState: ObservableObject {
         }
     }
     
+    // MARK: - Menu Commands
+
+    /// Broadcast a menu command to whichever tab is on screen.
+    func perform(_ command: AppCommand) {
+        pendingCommand = AppCommandRequest(command: command)
+    }
+
     // MARK: - Cache Helpers
-    
+
     /// Check if cache is valid (not expired)
     func isCacheValid(_ cacheTime: Date?) -> Bool {
         guard let cacheTime = cacheTime else { return false }

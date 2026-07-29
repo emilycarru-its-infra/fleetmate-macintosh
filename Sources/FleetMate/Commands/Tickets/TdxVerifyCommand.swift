@@ -150,7 +150,6 @@ struct VerifySubcommand: AsyncParsableCommand {
         Write checks will modify ticket #\(ticketId) on the live service desk:
           • re-save its title (same value, but this records an edit in its history)
           • post a private comment
-          • post a threaded reply to that comment
 
         """.yellow)
         print("Continue? [y/N] ", terminator: "")
@@ -159,8 +158,6 @@ struct VerifySubcommand: AsyncParsableCommand {
     }
 
     private func runWriteChecks(service: TdxService, appId: Int, ticketId: Int, results: Results) async {
-        var commentId: Int?
-
         await check(results, "Update ticket", "PATCH /api/\(appId)/tickets/\(ticketId)") {
             guard let existing = try await service.getTicket(id: ticketId) else {
                 throw VerifyError.message("ticket #\(ticketId) not found")
@@ -181,28 +178,11 @@ struct VerifySubcommand: AsyncParsableCommand {
                 comment: "FleetMate API verification — safe to ignore.",
                 isPrivate: true
             ) else { throw VerifyError.message("no feed entry returned") }
-            commentId = entry.id
             return "feed entry \(entry.id ?? 0)"
         }
 
-        await check(results, "Reply in thread", "POST /api/feed/{id}/comment") {
-            guard let parentId = commentId else {
-                throw VerifyError.message("no comment to reply to")
-            }
-            guard let reply = try await service.replyToFeedEntry(
-                feedEntryId: parentId,
-                comment: "FleetMate API verification reply — safe to ignore.",
-                isPrivate: true
-            ) else { throw VerifyError.message("no reply returned") }
-
-            // A reply that posts but doesn't thread is still a failure.
-            let parent = try await service.getFeedEntry(id: parentId)
-            let threaded = parent?.replyList.contains { $0.id == reply.id } ?? false
-            guard threaded else {
-                throw VerifyError.message("reply \(reply.id ?? 0) posted but is not nested under \(parentId)")
-            }
-            return "reply \(reply.id ?? 0) nested under \(parentId)"
-        }
+        // There is deliberately no threaded-reply check: TDX exposes no route
+        // that posts one. See the note in TdxService above `getFeedEntry`.
     }
 
     // MARK: - Plumbing

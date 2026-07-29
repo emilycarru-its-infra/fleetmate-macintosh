@@ -12,7 +12,8 @@ struct TdxCommand: AsyncParsableCommand {
             TicketSubcommand.self,
             CreateTicketSubcommand.self,
             CommentSubcommand.self,
-            StatusesSubcommand.self
+            StatusesSubcommand.self,
+            VerifySubcommand.self
         ],
         defaultSubcommand: TicketsSubcommand.self
     )
@@ -288,14 +289,12 @@ struct CommentSubcommand: AsyncParsableCommand {
             throw ExitCode.failure
         }
 
-        let success = try await service.addComment(ticketId: id, comment: comment, isPrivate: privateComment)
-
-        if success {
-            print("\n" + "Comment added to ticket #\(id)".green.bold + "\n")
-        } else {
-            print("Failed to add comment".red)
+        guard let entry = try await service.addComment(ticketId: id, comment: comment, isPrivate: privateComment) else {
+            print("Failed to add comment — not authenticated".red)
             throw ExitCode.failure
         }
+
+        print("\n" + "Comment added to ticket #\(id) (feed entry \(entry.id ?? 0))".green.bold + "\n")
     }
 }
 

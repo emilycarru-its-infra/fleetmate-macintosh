@@ -38,6 +38,7 @@ public struct TdxTicket: Codable, Identifiable, Sendable, Equatable, Hashable {
     public let responsibleGroupName: String?
     public let createdDate: String?
     public let modifiedDate: String?
+    public let daysOld: Int?
     public let goesOffHoldDate: String?
     public let respondByDate: String?
     public let slaViolated: Bool?
@@ -49,6 +50,32 @@ public struct TdxTicket: Codable, Identifiable, Sendable, Equatable, Hashable {
     public let locationId: Int?
     public let locationRoomId: Int?
     public let uri: String?
+
+    /// How long the ticket has been open, in whole days.
+    ///
+    /// Always days, never "1 month" — for a queue, "47d" says something that
+    /// "2 months ago" rounds away. TDX supplies `DaysOld` on both the single
+    /// ticket and search payloads; the fallback covers responses that omit it.
+    public var ageInDays: Int? {
+        if let daysOld { return daysOld }
+        guard let createdDate,
+              let created = TdxTicket.parseDate(createdDate) else { return nil }
+        return Calendar.current.dateComponents([.day], from: created, to: Date()).day
+    }
+
+    /// Compact age for a column or badge: `16d`.
+    public var ageLabel: String {
+        guard let days = ageInDays else { return "-" }
+        return "\(days)d"
+    }
+
+    static func parseDate(_ value: String) -> Date? {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: value)
+    }
 
     /// The parent ticket's ID, or nil when the ticket has no parent.
     ///
@@ -95,6 +122,7 @@ public struct TdxTicket: Codable, Identifiable, Sendable, Equatable, Hashable {
         case responsibleGroupName = "ResponsibleGroupName"
         case createdDate = "CreatedDate"
         case modifiedDate = "ModifiedDate"
+        case daysOld = "DaysOld"
         case goesOffHoldDate = "GoesOffHoldDate"
         case respondByDate = "RespondByDate"
         case slaViolated = "SlaViolated"

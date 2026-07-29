@@ -431,7 +431,14 @@ class AppState: ObservableObject {
                     }
                 }
             }
-            
+
+            // Resolve who "me" is in TDX, so Assign to me is ready on first use
+            if config.isTdxConfigured && tdxMe == nil {
+                group.addTask { @MainActor in
+                    await self.resolveTdxMe()
+                }
+            }
+
             // Preload groups
             if config.isSystemsGraphConfigured && !isGroupsCacheValid {
                 group.addTask { @MainActor in
@@ -722,8 +729,48 @@ class AppState: ObservableObject {
         tdxService.clearSsoToken()
         tdxSsoAuthenticated = false
         tdxAuthenticatedUserName = nil
+        tdxMe = nil
         authManager.update(.tdx, state: .configured)
         invalidateTicketsCache()
+    }
+
+    // MARK: - TDX Identity ("me")
+
+    /// The TDX person record for whoever is driving the app.
+    ///
+    /// TDX's Web API always authenticates as the service account, so the session
+    /// itself can't say who you are. This is resolved separately from the
+    /// signed-in Azure identity and is what "Assign to me" acts on.
+    @Published var tdxMe: TdxPerson?
+
+    /// Email addresses to try when resolving `tdxMe`, best first.
+    private func tdxIdentityCandidates() async -> [String] {
+        var candidates: [String] = []
+        if let email = devOpsSsoUserEmail, !email.isEmpty { candidates.append(email) }
+        if let account = await devOpsService.currentIdentity().account, !account.isEmpty {
+            candidates.append(account)
+        }
+        if let name = tdxAuthenticatedUserName, name.contains("@") { candidates.append(name) }
+        return candidates
+    }
+
+    /// Resolve and cache the current user's TDX person record. Cheap to call
+    /// repeatedly — it returns immediately once resolved.
+    func resolveTdxMe() async {
+        guard tdxMe == nil, config.isTdxConfigured else { return }
+
+        for email in await tdxIdentityCandidates() {
+            do {
+                if let person = try await tdxService.findPerson(email: email) {
+                    dbg.info("TDX identity resolved: \(person.fullName ?? "?") via \(email)", category: "tdx")
+                    tdxMe = person
+                    return
+                }
+            } catch {
+                dbg.warn("TDX identity lookup failed for \(email): \(error.localizedDescription)", category: "tdx")
+            }
+        }
+        dbg.warn("TDX identity unresolved — no signed-in email matched a TDX person", category: "tdx")
     }
     
     // MARK: - Azure DevOps SSO Authentication

@@ -140,9 +140,13 @@ struct TicketsView: View {
 
     // Column widths
     @State private var columnWidths: [TicketSortField: CGFloat] = [
-        .id: 100, .title: 250, .status: 110, .priority: 90,
+        .id: 130, .title: 250, .status: 110, .priority: 90,
         .requestor: 130, .responsible: 130, .modified: 120, .created: 120,
     ]
+
+    // Parent/child outline — collapsed is the exception, so an empty set means
+    // every parent starts expanded.
+    @State private var collapsedTicketIds: Set<Int> = []
 
     // Comment state
     @State private var newComment = ""
@@ -189,6 +193,7 @@ struct TicketsView: View {
     @State private var notifyNewResponsible = true
     // Actions menu
     @State private var showActionsMenu = false
+    @State private var showCreateTicket = false
     @State private var showSetParentSheet = false
     @State private var parentTicketIdText = ""
     @State private var isSettingParent = false
@@ -410,6 +415,30 @@ struct TicketsView: View {
         }
     }
 
+    // MARK: - Parent/Child Outline
+
+    /// The filtered tickets arranged as parents with their children beneath.
+    var ticketTree: [TicketNode] {
+        TicketHierarchy.build(from: filteredTickets)
+    }
+
+    /// The rows the table draws — the tree flattened, minus collapsed subtrees.
+    var outlineRows: [TicketOutlineRow] {
+        TicketHierarchy.flatten(ticketTree, collapsed: collapsedTicketIds)
+    }
+
+    private var parentIds: Set<Int> {
+        TicketHierarchy.foldableIds(in: filteredTickets)
+    }
+
+    private func toggleExpansion(_ ticketId: Int) {
+        if collapsedTicketIds.contains(ticketId) {
+            collapsedTicketIds.remove(ticketId)
+        } else {
+            collapsedTicketIds.insert(ticketId)
+        }
+    }
+
     // MARK: - Feed Filtering
 
     /// Check if a feed entry looks like a status change
@@ -537,6 +566,7 @@ struct TicketsView: View {
             if !appState.isTicketsCacheValid {
                 loadTickets()
             }
+            await appState.resolveTdxMe()
             await loadForms()
             if let id = appState.navigateToTicketId {
                 selectedTicketIds = [id]
@@ -584,6 +614,20 @@ struct TicketsView: View {
                     }
                 }
 
+                let parents = parentIds
+                if !parents.isEmpty {
+                    let allCollapsed = parents.isSubset(of: collapsedTicketIds)
+                    Button(action: {
+                        collapsedTicketIds = allCollapsed ? [] : parents
+                    }) {
+                        Label(allCollapsed ? "Expand All" : "Collapse All",
+                              systemImage: allCollapsed
+                                ? "arrow.down.right.and.arrow.up.left"
+                                : "arrow.up.left.and.arrow.down.right")
+                    }
+                    .help(allCollapsed ? "Expand all parent tickets" : "Collapse all parent tickets")
+                }
+
                 Button(action: { showFilters.toggle() }) {
                     Label("Filters", systemImage: filters.hasActiveFilters
                         ? "line.3.horizontal.decrease.circle.fill"
@@ -591,6 +635,23 @@ struct TicketsView: View {
                 }
                 .popover(isPresented: $showFilters, arrowEdge: .bottom) {
                     FilterPanelView(filters: filters)
+                }
+
+                Button(action: { showCreateTicket = true }) {
+                    Label("Create Ticket", systemImage: "plus")
+                }
+                .help("Create a ticket")
+                .popover(isPresented: $showCreateTicket, arrowEdge: .bottom) {
+                    CreateTicketView(
+                        defaultResponsible: appState.tdxMe,
+                        onCreated: { ticket in
+                            showCreateTicket = false
+                            loadTickets()
+                            if let id = ticket.id { selectedTicketIds = [id] }
+                        },
+                        onCancel: { showCreateTicket = false }
+                    )
+                    .environmentObject(appState)
                 }
 
                 Button(action: loadTickets) {
@@ -717,7 +778,9 @@ struct TicketsView: View {
             },
             onSelectTicket: { ticket in
                 selectedTicketIds = [ticket.id]
-            }
+            },
+            selectedTicketId: selectedTicket?.id,
+            collapsedTicketIds: $collapsedTicketIds
         )
     }
 
@@ -762,16 +825,34 @@ struct TicketsView: View {
                     // Ticket rows
                     ScrollView(.vertical, showsIndicators: true) {
                         LazyVStack(spacing: 0) {
-                            ForEach(Array(filteredTickets.enumerated()), id: \.element.id) { idx, ticket in
+                            ForEach(Array(outlineRows.enumerated()), id: \.element.id) { idx, row in
+                                let ticket = row.ticket
                                 HStack(spacing: 0) {
-                                    Text(verbatim: "#\(ticket.id ?? 0)")
-                                        .appFont(.body, design: .monospaced)
-                                        .frame(width: colW(.id) - 12, alignment: .leading)
-                                        .padding(.leading, 10).padding(.trailing, 2)
-                                    Text(ticket.title ?? "-")
-                                        .frame(width: colW(.title) - 12, alignment: .leading)
-                                        .padding(.leading, 10).padding(.trailing, 2)
-                                        .lineLimit(1)
+                                    HStack(spacing: 2) {
+                                        Spacer().frame(width: CGFloat(row.depth) * 14)
+                                        disclosureControl(for: row)
+                                        Text(verbatim: "#\(ticket.id ?? 0)")
+                                            .appFont(.body, design: .monospaced)
+                                        Spacer(minLength: 0)
+                                    }
+                                    .frame(width: colW(.id) - 12, alignment: .leading)
+                                    .padding(.leading, 10).padding(.trailing, 2)
+                                    HStack(spacing: 6) {
+                                        Text(ticket.title ?? "-")
+                                            .lineLimit(1)
+                                        if row.hasChildren {
+                                            Text(verbatim: "\(row.childCount)")
+                                                .appFont(.caption2)
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 1)
+                                                .background(Color.secondary.opacity(0.18))
+                                                .foregroundColor(.secondary)
+                                                .clipShape(Capsule())
+                                        }
+                                        Spacer(minLength: 0)
+                                    }
+                                    .frame(width: colW(.title) - 12, alignment: .leading)
+                                    .padding(.leading, 10).padding(.trailing, 2)
                                     TicketStatusBadge(statusName: ticket.statusName)
                                         .frame(width: colW(.status) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
@@ -828,8 +909,30 @@ struct TicketsView: View {
         }
     }
 
+    /// The fold/unfold triangle in front of a parent's ticket number. Children
+    /// and childless tickets get an equally wide blank so the numbers line up.
+    @ViewBuilder
+    private func disclosureControl(for row: TicketOutlineRow) -> some View {
+        if row.hasChildren {
+            Button(action: { toggleExpansion(row.id) }) {
+                Image(systemName: "chevron.right")
+                    .appFont(.caption2)
+                    .foregroundColor(.secondary)
+                    .rotationEffect(.degrees(row.isExpanded ? 90 : 0))
+                    .frame(width: 12, height: 12)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(row.isExpanded
+                  ? "Hide \(row.childCount) child ticket\(row.childCount == 1 ? "" : "s")"
+                  : "Show \(row.childCount) child ticket\(row.childCount == 1 ? "" : "s")")
+        } else {
+            Spacer().frame(width: 12)
+        }
+    }
+
     private func moveTicketSelection(by offset: Int) {
-        let list = filteredTickets
+        let list = outlineRows.map(\.ticket)
         guard !list.isEmpty else { return }
         guard let currentId = selectedTicketIds.first ?? nil,
               let currentIndex = list.firstIndex(where: { $0.id == currentId }) else {
@@ -1155,16 +1258,20 @@ struct TicketsView: View {
                     fieldRow(label: "Responsible") {
                         HStack(spacing: 4) {
                             Menu {
-                                if let myName = appState.tdxAuthenticatedUserName,
-                                   let myUid = appState.tdxService.authenticatedUserId {
+                                // Resolved from the signed-in Azure identity, not
+                                // from the TDX session — the Web API always
+                                // authenticates as the service account, so
+                                // gating this on TDX SSO hid it permanently.
+                                if let me = appState.tdxMe, let myUid = me.uid {
                                     Button(action: {
                                         editResponsibleUid = myUid
-                                        editResponsibleName = myName
+                                        editResponsibleName = me.fullName ?? ""
                                         isReassigning = false
                                         trackEdits(ticket: ticket)
                                     }) {
                                         Label("Assign to me", systemImage: "person.fill")
                                     }
+                                    .disabled(editResponsibleUid == myUid)
                                 }
                                 Button(action: {
                                     isReassigning = true
@@ -1534,7 +1641,6 @@ struct TicketsView: View {
                     Task {
                         isAddingComment = true
                         await addComment(ticket: ticket)
-                        newComment = ""
                         isAddingComment = false
                     }
                 }
@@ -1593,7 +1699,10 @@ struct TicketsView: View {
                     .padding(.vertical, 8)
             } else {
                 ForEach(filteredFeed, id: \.id) { entry in
-                    FeedEntryRow(entry: entry)
+                    FeedEntryRow(entry: entry) { text, isPrivate in
+                        guard let entryId = entry.id else { return }
+                        try await replyToFeedEntry(feedEntryId: entryId, replyText: text, isPrivate: isPrivate)
+                    }
                 }
             }
         }
@@ -1980,26 +2089,22 @@ struct TicketsView: View {
                 isPrivate: isCommentPrivate,
                 notify: notifyIds.isEmpty ? nil : notifyIds
             )
+            newComment = ""
             loadTicketFeed(ticketId: ticket.id ?? 0)
         } catch {
-            print("Failed to add comment: \(error)")
+            saveErrorMessage = "Comment failed: \(error.localizedDescription)"
         }
     }
 
     /// Reply to a specific feed entry (threaded comment)
-    private func replyToFeedEntry(feedEntryId: Int, replyText: String) {
-        guard let ticketId = selectedTicket?.id else { return }
-        Task {
-            do {
-                _ = try await appState.tdxService.replyToFeedEntry(
-                    ticketId: ticketId,
-                    feedEntryId: feedEntryId,
-                    comment: replyText
-                )
-                loadTicketFeed(ticketId: ticketId)
-            } catch {
-                print("Failed to reply to feed entry: \(error)")
-            }
+    private func replyToFeedEntry(feedEntryId: Int, replyText: String, isPrivate: Bool) async throws {
+        _ = try await appState.tdxService.replyToFeedEntry(
+            feedEntryId: feedEntryId,
+            comment: replyText,
+            isPrivate: isPrivate
+        )
+        if let ticketId = selectedTicket?.id {
+            loadTicketFeed(ticketId: ticketId)
         }
     }
 
@@ -2057,7 +2162,9 @@ struct TicketsView: View {
             }
         }
 
-        // Default responsible filter to self (SSO only, once)
+        // Default responsible filter to self (SSO only, once). Deliberately not
+        // keyed off `tdxMe`: that resolves for everyone, and switching this on
+        // would silently narrow the queue from the whole group to one person.
         guard !meModeApplied,
               appState.tdxSsoAuthenticated,
               let userName = appState.tdxAuthenticatedUserName,
@@ -2155,6 +2262,17 @@ struct DetailRow: View {
 
 struct FeedEntryRow: View {
     let entry: TdxFeedEntry
+    /// Posts a threaded reply to this entry. Throws so the row can show why a
+    /// reply didn't land instead of quietly clearing the box.
+    var onReply: ((String, Bool) async throws -> Void)? = nil
+
+    @State private var isReplying = false
+    @State private var replyText = ""
+    @State private var isReplyPrivate = false
+    @State private var isSendingReply = false
+    @State private var replyError: String?
+
+    private var canReply: Bool { onReply != nil && entry.id != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -2177,6 +2295,21 @@ struct FeedEntryRow: View {
                         .appFont(.callout)
                         .foregroundColor(.secondary)
                 }
+                if canReply {
+                    Button(action: {
+                        isReplying.toggle()
+                        if isReplying {
+                            isReplyPrivate = entry.isPrivate == true
+                            replyError = nil
+                        }
+                    }) {
+                        Image(systemName: isReplying ? "xmark" : "arrowshape.turn.up.left")
+                            .appFont(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(isReplying ? "Cancel reply" : "Reply in thread")
+                }
                 Button(action: { copyEntryToClipboard() }) {
                     Image(systemName: "doc.on.doc")
                         .appFont(.caption)
@@ -2194,7 +2327,8 @@ struct FeedEntryRow: View {
             }
 
             // Threaded replies from API
-            if let replies = entry.replies, !replies.isEmpty {
+            if !entry.replyList.isEmpty {
+                let replies = entry.replyList
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(replies, id: \.id) { reply in
                         HStack(alignment: .top, spacing: 8) {
@@ -2235,10 +2369,66 @@ struct FeedEntryRow: View {
                 }
                 .padding(.top, 4)
             }
+
+            if isReplying {
+                replyComposer
+            }
         }
         .padding(10)
         .background(Color.secondary.opacity(0.06))
         .cornerRadius(6)
+    }
+
+    @ViewBuilder
+    private var replyComposer: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextEditor(text: $replyText)
+                .appFont(.callout)
+                .frame(height: 60)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.accentColor.opacity(0.4), lineWidth: 1)
+                )
+
+            if let replyError {
+                Text(replyError)
+                    .appFont(.caption)
+                    .foregroundColor(.red)
+            }
+
+            HStack {
+                Toggle("Private", isOn: $isReplyPrivate)
+                    .toggleStyle(.checkbox)
+                    .appFont(.caption)
+                Spacer()
+                if isSendingReply {
+                    ProgressView().controlSize(.small)
+                }
+                Button("Reply", action: sendReply)
+                    .controlSize(.small)
+                    .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSendingReply)
+            }
+        }
+        .padding(.top, 6)
+        .padding(.leading, 8)
+    }
+
+    private func sendReply() {
+        guard let onReply else { return }
+        let text = replyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        Task {
+            isSendingReply = true
+            replyError = nil
+            defer { isSendingReply = false }
+            do {
+                try await onReply(text, isReplyPrivate)
+                replyText = ""
+                isReplying = false
+            } catch {
+                replyError = "Reply failed: \(error.localizedDescription)"
+            }
+        }
     }
 
     private func copyEntryToClipboard() {

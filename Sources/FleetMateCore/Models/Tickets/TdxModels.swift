@@ -44,9 +44,20 @@ public struct TdxTicket: Codable, Identifiable, Sendable, Equatable, Hashable {
     public let isOnHold: Bool?
     public let appId: Int?
     public let parentId: Int?
+    public let parentTitle: String?
+    public let parentClass: Int?
     public let locationId: Int?
     public let locationRoomId: Int?
     public let uri: String?
+
+    /// The parent ticket's ID, or nil when the ticket has no parent.
+    ///
+    /// TDX reports "no parent" as `0`, not as a missing/null field, so a plain
+    /// `parentId != nil` check treats every orphan as a child of ticket zero.
+    public var parentTicketId: Int? {
+        guard let parentId, parentId > 0 else { return nil }
+        return parentId
+    }
 
     enum CodingKeys: String, CodingKey {
         case id = "ID"
@@ -90,6 +101,8 @@ public struct TdxTicket: Codable, Identifiable, Sendable, Equatable, Hashable {
         case isOnHold = "IsOnHold"
         case appId = "AppID"
         case parentId = "ParentID"
+        case parentTitle = "ParentTitle"
+        case parentClass = "ParentClass"
         case locationId = "LocationID"
         case locationRoomId = "LocationRoomID"
         case uri = "Uri"
@@ -106,7 +119,13 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
     public let createdFullName: String?
     public let createdEmail: String?
     public let itemType: Int?
+    public let itemId: Int?
     public let replies: [TdxFeedEntry]?
+    public let repliesCount: Int?
+
+    /// Replies as a plain array — TDX omits the key on some entries and sends
+    /// `[]` on others, and callers shouldn't have to care which.
+    public var replyList: [TdxFeedEntry] { replies ?? [] }
 
     enum CodingKeys: String, CodingKey {
         case id = "ID"
@@ -116,7 +135,9 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
         case createdFullName = "CreatedFullName"
         case createdEmail = "CreatedEmail"
         case itemType = "ItemType"
+        case itemId = "ItemID"
         case replies = "Replies"
+        case repliesCount = "RepliesCount"
     }
 }
 
@@ -180,45 +201,95 @@ public struct CreateTicketRequest: Codable {
     public var typeId: Int
     public var title: String
     public var description: String?
+    public var classification: Int?
+    public var formId: Int?
     public var accountId: Int?
     public var statusId: Int?
     public var priorityId: Int?
     public var sourceId: Int?
+    public var serviceId: Int?
     public var requestorUid: String?
     public var responsibleUid: String?
+    public var responsibleGroupId: Int?
+    public var parentId: Int?
+    public var isRichHtml: Bool?
 
     public init(
         typeId: Int,
         title: String,
         description: String? = nil,
+        classification: Int? = nil,
+        formId: Int? = nil,
         accountId: Int? = nil,
         statusId: Int? = nil,
         priorityId: Int? = nil,
         sourceId: Int? = nil,
+        serviceId: Int? = nil,
         requestorUid: String? = nil,
-        responsibleUid: String? = nil
+        responsibleUid: String? = nil,
+        responsibleGroupId: Int? = nil,
+        parentId: Int? = nil,
+        isRichHtml: Bool? = nil
     ) {
         self.typeId = typeId
         self.title = title
         self.description = description
+        self.classification = classification
+        self.formId = formId
         self.accountId = accountId
         self.statusId = statusId
         self.priorityId = priorityId
         self.sourceId = sourceId
+        self.serviceId = serviceId
         self.requestorUid = requestorUid
         self.responsibleUid = responsibleUid
+        self.responsibleGroupId = responsibleGroupId
+        self.parentId = parentId
+        self.isRichHtml = isRichHtml
     }
 
     enum CodingKeys: String, CodingKey {
         case typeId = "TypeID"
         case title = "Title"
         case description = "Description"
+        case classification = "Classification"
+        case formId = "FormID"
         case accountId = "AccountID"
         case statusId = "StatusID"
         case priorityId = "PriorityID"
         case sourceId = "SourceID"
+        case serviceId = "ServiceID"
         case requestorUid = "RequestorUid"
         case responsibleUid = "ResponsibleUid"
+        case responsibleGroupId = "ResponsibleGroupID"
+        case parentId = "ParentID"
+        case isRichHtml = "IsRichHtml"
+    }
+}
+
+/// TDX ticket classification IDs.
+///
+/// These are fixed platform-wide constants, not per-tenant reference data, and
+/// TDX exposes no endpoint to enumerate them — hence the hard-coded list.
+public enum TdxClassification: Int, CaseIterable, Sendable {
+    case ticket = 9
+    case incident = 32
+    case problem = 33
+    case change = 34
+    case release = 35
+    case serviceRequest = 46
+    case majorIncident = 77
+
+    public var name: String {
+        switch self {
+        case .ticket: return "Ticket"
+        case .incident: return "Incident"
+        case .problem: return "Problem"
+        case .change: return "Change"
+        case .release: return "Release"
+        case .serviceRequest: return "Service Request"
+        case .majorIncident: return "Major Incident"
+        }
     }
 }
 
@@ -349,7 +420,10 @@ public struct TdxPerson: Codable, Identifiable, Hashable {
 public struct TdxStatusItem: Codable {
     public let id: Int
     public let name: String?
-    public let statusClass: String?
+    /// TDX sends this as a numeric enum (1 = New, 2 = In Process, …), not a
+    /// name. Typed as a String it failed to decode, taking the whole status
+    /// list down with it.
+    public let statusClass: Int?
 
     enum CodingKeys: String, CodingKey {
         case id = "ID"
@@ -389,5 +463,66 @@ public struct TdxFormItem: Codable {
         case id = "ID"
         case name = "Name"
         case active = "Active"
+    }
+}
+
+public struct TdxSourceItem: Codable {
+    public let id: Int
+    public let name: String?
+    public let isActive: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "ID"
+        case name = "Name"
+        case isActive = "IsActive"
+    }
+}
+
+public struct TdxAccountItem: Codable {
+    public let id: Int
+    public let name: String?
+    public let isActive: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "ID"
+        case name = "Name"
+        case isActive = "IsActive"
+    }
+}
+
+public struct TdxGroupItem: Codable {
+    public let id: Int
+    public let name: String?
+    public let isActive: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "ID"
+        case name = "Name"
+        case isActive = "IsActive"
+    }
+}
+
+public struct TdxServiceItem: Codable {
+    public let id: Int
+    public let name: String?
+    public let compositeName: String?
+    public let isActive: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "ID"
+        case name = "Name"
+        case compositeName = "CompositeName"
+        case isActive = "IsActive"
+    }
+}
+
+/// A named reference item for a picker — the shape every lookup above collapses to.
+public struct TdxLookupItem: Identifiable, Hashable, Sendable {
+    public let id: Int
+    public let name: String
+
+    public init(id: Int, name: String) {
+        self.id = id
+        self.name = name
     }
 }

@@ -99,6 +99,20 @@ struct VerifySubcommand: AsyncParsableCommand {
                 return "\(feed.count) entries, \(threaded) threaded"
             }
 
+            await check(results, "Attachments", "GET /api/attachments/{id}/content") {
+                guard let ticket = try await service.getTicket(id: id) else {
+                    throw VerifyError.message("ticket not found")
+                }
+                guard let attachment = ticket.attachmentList.first else {
+                    return "ticket has no attachments — pass --ticket for one that does"
+                }
+                // Decoding the list isn't enough; the bytes have to arrive too.
+                guard let data = try await service.downloadAttachment(id: attachment.id), !data.isEmpty else {
+                    throw VerifyError.message("\(attachment.displayName) returned no content")
+                }
+                return "\(ticket.attachmentList.count) listed, downloaded \(attachment.displayName) (\(data.count) bytes)"
+            }
+
             await check(results, "Get feed entry", "GET /api/feed/{id}") {
                 let feed = try await service.getTicketFeed(ticketId: id)
                 guard let entryId = feed.first?.id else { return "no feed entries to read" }

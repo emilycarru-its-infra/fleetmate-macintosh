@@ -50,14 +50,24 @@ public class TdxSsoService: NSObject {
     public weak var delegate: TdxSsoDelegate?
     
     /// The TDX SSO login URL
+    /// The Web API's own SSO entry point.
+    ///
+    /// This must be the API endpoint, not the web UI. Pointing the WebView at
+    /// `/TDWorkManagement/` (as this did) logs you into TDNext and leaves a
+    /// *web session cookie* behind — which is not an API credential, which is
+    /// why every scraped "SSO token" was rejected with a 400 and why the app
+    /// fell back to the service account.
+    ///
+    /// `GET /TDWebApi/api/auth/loginsso` 301s into Shibboleth → Entra and, once
+    /// the assertion comes back, returns a real Bearer JWT as the response
+    /// body. That token carries the signed-in person's identity, so their
+    /// actions are attributed to them rather than to the API service account.
     public var ssoLoginUrl: URL? {
         guard let baseUrl = config.tdxBaseUrl?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) else {
             return nil
         }
-        // Use TDWorkManagement which triggers automatic SSO
-        // Strip /TDWebApi if present to get the root
         let rootUrl = baseUrl.replacingOccurrences(of: "/TDWebApi", with: "")
-        return URL(string: "\(rootUrl)/TDWorkManagement/")
+        return URL(string: "\(rootUrl)/TDWebApi/api/auth/loginsso")
     }
     
     /// Patterns indicating successful authentication
@@ -333,12 +343,45 @@ public class TdxSsoService: NSObject {
     }
     
     private func checkForSuccessfulAuth(url: URL) -> Bool {
+        // Success is landing back on the API's SSO endpoint, which renders the
+        // JWT as its body. The old UI-page patterns are kept only so a stray
+        // redirect into TDNext still terminates the flow instead of hanging.
         let urlString = url.absoluteString
+        if urlString.contains("/TDWebApi/api/auth/") { return true }
         return successPatterns.contains { urlString.contains($0) }
+    }
+
+    /// Read the JWT that `loginsso` writes as the page body.
+    ///
+    /// The response is bare text, so WebKit wraps it in a `<pre>`; taking
+    /// `body.innerText` gets the token itself.
+    private func extractTokenFromPageBody() async -> String? {
+        guard let webView else { return nil }
+        let text = try? await webView.evaluateJavaScript("document.body ? document.body.innerText : ''")
+        guard let raw = (text as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else { return nil }
+
+        let token = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        // A JWT is three dot-separated base64 segments starting `eyJ`; anything
+        // else is an error page, and must not be handed out as a credential.
+        guard token.hasPrefix("eyJ"), token.split(separator: ".").count == 3 else { return nil }
+        return token
     }
     
     private func completeAuthentication() {
         Task {
+            // The API's JWT, if we landed on loginsso, beats anything scraped
+            // from a web session — it is the only form TDX accepts as Bearer.
+            if let apiToken = await extractTokenFromPageBody() {
+                dbg.info("[TdxSsoService] Captured API JWT from loginsso (\(apiToken.count) chars)", category: "tdx-sso")
+                let (userName, userEmail) = await extractUserInfo()
+                let result = TdxSsoResult.success(token: apiToken, userName: userName, userEmail: userEmail)
+                delegate?.tdxSsoDidComplete(result: result)
+                authContinuation?.resume(returning: result)
+                authContinuation = nil
+                return
+            }
+
             // Extract token
             guard let token = await extractToken() else {
                 let result = TdxSsoResult.failure("Failed to extract authentication token")

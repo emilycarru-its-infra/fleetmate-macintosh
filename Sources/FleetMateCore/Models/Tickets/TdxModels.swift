@@ -127,6 +127,56 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
     /// `[]` on others, and callers shouldn't have to care which.
     public var replyList: [TdxFeedEntry] { replies ?? [] }
 
+    /// True when TDX says this entry has replies but didn't send them.
+    ///
+    /// The ticket feed collection always returns `Replies: []` and reports the
+    /// real number in `RepliesCount`; only `GET /api/feed/{id}` carries the
+    /// bodies. Rendering straight from the feed therefore shows no threads at
+    /// all, which is exactly what it looked like.
+    public var hasUnloadedReplies: Bool {
+        (repliesCount ?? 0) > 0 && replyList.isEmpty
+    }
+
+    public init(
+        id: Int?,
+        body: String?,
+        isPrivate: Bool?,
+        createdDate: String?,
+        createdFullName: String?,
+        createdEmail: String?,
+        itemType: Int?,
+        itemId: Int?,
+        replies: [TdxFeedEntry]?,
+        repliesCount: Int?
+    ) {
+        self.id = id
+        self.body = body
+        self.isPrivate = isPrivate
+        self.createdDate = createdDate
+        self.createdFullName = createdFullName
+        self.createdEmail = createdEmail
+        self.itemType = itemType
+        self.itemId = itemId
+        self.replies = replies
+        self.repliesCount = repliesCount
+    }
+
+    /// A copy carrying the given replies.
+    public func withReplies(_ replies: [TdxFeedEntry]) -> TdxFeedEntry {
+        TdxFeedEntry(
+            id: id,
+            body: body,
+            isPrivate: isPrivate,
+            createdDate: createdDate,
+            createdFullName: createdFullName,
+            createdEmail: createdEmail,
+            itemType: itemType,
+            itemId: itemId,
+            replies: replies,
+            repliesCount: repliesCount ?? replies.count
+        )
+    }
+
     enum CodingKeys: String, CodingKey {
         case id = "ID"
         case body = "Body"

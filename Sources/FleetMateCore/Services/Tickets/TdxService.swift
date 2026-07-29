@@ -443,7 +443,47 @@ public class TdxService {
 
     // MARK: - Feed (Comments)
 
-    public func getTicketFeed(ticketId: Int) async throws -> [TdxFeedEntry] {
+    /// A ticket's activity feed.
+    ///
+    /// - Parameter includeReplies: Fetch the bodies of threaded replies. The
+    ///   feed collection reports `RepliesCount` but always sends `Replies: []`,
+    ///   so without this pass no thread ever renders — only `GET /api/feed/{id}`
+    ///   carries the replies themselves. Costs one extra request per threaded
+    ///   entry, issued concurrently.
+    public func getTicketFeed(ticketId: Int, includeReplies: Bool = true) async throws -> [TdxFeedEntry] {
+        let feed = try await fetchFeed(ticketId: ticketId)
+        guard includeReplies else { return feed }
+        return await hydrateReplies(in: feed)
+    }
+
+    /// Replace entries that have unloaded replies with copies carrying them.
+    private func hydrateReplies(in feed: [TdxFeedEntry]) async -> [TdxFeedEntry] {
+        let pending = feed.filter { $0.hasUnloadedReplies }
+        guard !pending.isEmpty else { return feed }
+        dbg.debug("TDX hydrating replies for \(pending.count) feed entries", category: "tdx")
+
+        let loaded: [Int: [TdxFeedEntry]] = await withTaskGroup(of: (Int, [TdxFeedEntry])?.self) { group in
+            for entry in pending {
+                guard let id = entry.id else { continue }
+                group.addTask {
+                    guard let full = try? await self.getFeedEntry(id: id) else { return nil }
+                    return (id, full.replyList)
+                }
+            }
+            var result: [Int: [TdxFeedEntry]] = [:]
+            for await item in group {
+                if let (id, replies) = item { result[id] = replies }
+            }
+            return result
+        }
+
+        return feed.map { entry in
+            guard let id = entry.id, let replies = loaded[id], !replies.isEmpty else { return entry }
+            return entry.withReplies(replies)
+        }
+    }
+
+    private func fetchFeed(ticketId: Int) async throws -> [TdxFeedEntry] {
         guard let headers = await headers() else { return [] }
 
         let url = config.tdxTicketsUrl("\(ticketId)/feed")
@@ -454,18 +494,6 @@ public class TdxService {
                 .validate()
                 .responseData { dataResponse in
                     if let data = dataResponse.data {
-                        if let jsonArray = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-                            // Log first entry's full keys to understand structure
-                            if let first = jsonArray.first {
-                                let keys = first.keys.sorted().joined(separator: ", ")
-                                dbg.debug("TDX feed entry keys: \(keys)", category: "tdx")
-                                // Log every field value to find threading clues
-                                for key in first.keys.sorted() {
-                                    let val = first[key]
-                                    dbg.debug("  [\(key)] = \(val ?? "nil")", category: "tdx")
-                                }
-                            }
-                        }
                         do {
                             let feed = try JSONDecoder().decode([TdxFeedEntry].self, from: data)
                             dbg.debug("TDX feed decoded: \(feed.count) entries", category: "tdx")
@@ -519,43 +547,18 @@ public class TdxService {
         }
     }
 
-    /// Reply to an existing feed entry, creating a threaded comment.
-    ///
-    /// Replies go through the tenant-level Feed API, not the ticket's own feed
-    /// collection: `POST /api/{appId}/tickets/{id}/feed/{entryId}` is not a TDX
-    /// route and answers 404, which is why threaded replies silently stopped
-    /// working. Every feed entry advertises its real address in its `Uri`
-    /// (`api/feed/{id}`), and that is what accepts a comment.
-    public func replyToFeedEntry(feedEntryId: Int, comment: String, isPrivate: Bool = false, isRichHtml: Bool = false, notify: [String]? = nil) async throws -> TdxFeedEntry? {
-        guard let headers = await headers() else { return nil }
-
-        let request = CreateFeedEntryRequest(
-            comments: comment,
-            isPrivate: isPrivate,
-            isRichHtml: isRichHtml,
-            notify: notify
-        )
-
-        let url = config.tdxGlobalUrl("feed/\(feedEntryId)/comment")
-        dbg.info("TDX replyToFeedEntry → POST \(url)", category: "tdx")
-
-        return try await withCheckedThrowingContinuation { continuation in
-            activeSession.request(url, method: .post, parameters: request, encoder: JSONParameterEncoder.default, headers: headers)
-                .validate()
-                .responseDecodable(of: TdxFeedEntry.self) { response in
-                    switch response.result {
-                    case .success(let entry):
-                        continuation.resume(returning: entry)
-                    case .failure(let error):
-                        if let data = response.data {
-                            let body = String(data: data, encoding: .utf8) ?? "(unreadable)"
-                            dbg.warn("TDX reply to feed \(feedEntryId) failed (\(response.response?.statusCode ?? 0)): \(body)", category: "tdx")
-                        }
-                        continuation.resume(throwing: error)
-                    }
-                }
-        }
-    }
+    // Posting a threaded reply is not possible through the TDX Web API, and no
+    // method for it belongs here. Verified against the live API on 2026-07-28:
+    //
+    //   • OPTIONS /api/feed/{id} answers `Allow: GET,DELETE` — there is no
+    //     POST route under a feed entry at all, under any suffix.
+    //   • POST /api/{appId}/tickets/{id}/feed accepts ParentID,
+    //     ParentFeedEntryID, ReplyToID, and ItemUpdateID without complaint and
+    //     ignores every one of them: each returns 201 having created another
+    //     top-level entry, with the named parent's RepliesCount still 0.
+    //
+    // Existing threads *are* readable — see `getTicketFeed(includeReplies:)`.
+    // The UI offers quoting into a new comment instead.
 
     /// Fetch a single feed entry with its replies.
     public func getFeedEntry(id: Int) async throws -> TdxFeedEntry? {

@@ -117,7 +117,16 @@ class AppState: ObservableObject {
     /// GitHub 0" and a spinner where a populated list had been. Living on
     /// AppState, it survives tab switches like the other caches.
     let pullRequestQueue = PullRequestQueueModel()
-    
+
+    /// Everything the Projects tab loads from Azure DevOps and GitHub.
+    ///
+    /// Same reasoning as `pullRequestQueue` above: BoardsView kept all of this in
+    /// `@State`, so being destroyed on every tab switch threw the work items away
+    /// and refetched them from scratch. Projects was the last tab not sharing the
+    /// cache the others use.
+    @Published var projects = ProjectsCache()
+
+
     // Cache timestamps
     private var devicesCacheTime: Date?
     private var assetsCacheTime: Date?
@@ -452,6 +461,40 @@ class AppState: ObservableObject {
                     }
                 }
             }
+
+            // Preload Projects (DevOps work items + GitHub issues).
+            //
+            // Same token guard as work items above: a registry built before the
+            // DevOps token lands would return GitHub issues only, and marking the
+            // cache loaded would leave Projects looking half-empty until a manual
+            // refresh. Better to let BoardsView load it on demand in that case.
+            let ghEnabled = config.tasks?.providers.github?.enabled == true
+            let azdoReady = config.isDevOpsConfigured && devOpsService.hasValidToken
+            if projects.loadedAt == nil, azdoReady || (ghEnabled && !config.isDevOpsConfigured) {
+                group.addTask { @MainActor in
+                    dbg.info("Preloading projects...", category: "preload")
+                    do {
+                        let config = try FleetMateConfig.load()
+                        let registry = await self.makeTaskRegistry(config: config)
+
+                        let bucketsByProvider = await registry.listAllBuckets()
+                        self.projects.buckets = Array(Set(
+                            bucketsByProvider.values.flatMap { $0.map(\.name) }
+                        )).sorted()
+
+                        var filter = TaskFilter()
+                        filter.includeClosed = true
+                        filter.limit = 500
+                        self.projects.allTasks = await registry.listTasks(filter: filter)
+                        self.projects.syncEnabled =
+                            (config.tasks?.planner != nil) || (config.tasks?.markdown != nil)
+                        self.projects.loadedAt = Date()
+                        dbg.info("Projects preloaded: \(self.projects.allTasks.count) tasks", category: "preload")
+                    } catch {
+                        dbg.error("Projects preload FAILED: \(error)", category: "preload")
+                    }
+                }
+            }
         }
         dbg.info("preloadAllData finished", category: "preload")
 
@@ -464,6 +507,34 @@ class AppState: ObservableObject {
         )
     }
     
+    // MARK: - Task Providers
+
+    /// Build the task provider registry (Azure DevOps, GitHub Projects, Gitea)
+    /// and authenticate each one.
+    ///
+    /// Lives here rather than in BoardsView so the launch preload and the view
+    /// build an identical registry. `authenticateAll()` isolates per-provider
+    /// failures, so one dead provider doesn't take the others down.
+    func makeTaskRegistry(config: FleetMateConfig) async -> TaskProviderRegistry {
+        dbg.info("makeTaskRegistry starting — devOpsService.hasValidToken=\(devOpsService.hasValidToken) org=\(config.devopsOrganization ?? "nil") project=\(config.devopsProject ?? "nil")", category: "boards")
+        let registry = TaskProviderRegistry()
+        let azdo   = AzureDevOpsTaskProvider(service: devOpsService, config: config)
+        let github = GitHubProjectsTaskProvider(config: config.tasks?.providers.github ?? GitHubProviderConfig())
+        let gitea  = GiteaTaskProvider(config: config)
+
+        await registry.registerProvider(azdo)
+        await registry.registerProvider(github)
+        await registry.registerProvider(gitea)
+
+        dbg.info("Registered providers: azdo.enabled=\(await azdo.isEnabled) github.enabled=\(await github.isEnabled) gitea.enabled=\(await gitea.isEnabled)", category: "boards")
+
+        let authResults = await registry.authenticateAll()
+        for (id, success) in authResults {
+            dbg.info("Provider \(id) auth: \(success ? "OK" : "FAILED")", category: "boards")
+        }
+        return registry
+    }
+
     // MARK: - TDX SSO Authentication
     
     /// Check if TDX SSO login is required

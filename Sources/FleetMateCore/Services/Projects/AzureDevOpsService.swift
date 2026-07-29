@@ -903,6 +903,62 @@ public class AzureDevOpsService {
         )
     }
 
+    /// Abandon a pull request.
+    ///
+    /// Reversible in Azure DevOps — an abandoned PR can be reactivated — but it
+    /// notifies reviewers, so the UI confirms first.
+    @discardableResult
+    public func abandonPullRequest(
+        repository: String,
+        pullRequestId: Int,
+        project: String? = nil
+    ) async throws -> GitPullRequest {
+        dbg.info("AzDO abandonPullRequest(\(repository)#\(pullRequestId))", category: "azdo")
+        let encodedRepo = repository.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repository
+        let body = try JSONSerialization.data(withJSONObject: ["status": "abandoned"])
+        return try await request(
+            "PATCH",
+            path: "/_apis/git/repositories/\(encodedRepo)/pullrequests/\(pullRequestId)?api-version=7.0",
+            body: body,
+            forProject: project
+        )
+    }
+
+    /// Complete (merge) a pull request.
+    ///
+    /// Two calls: Azure DevOps requires `lastMergeSourceCommit` to be echoed back
+    /// on completion, and rejects the request if the source branch has moved
+    /// since — so the current value has to be read immediately beforehand.
+    ///
+    /// `completionOptions` is deliberately omitted. The PR already carries the
+    /// merge strategy and delete-source-branch settings chosen when it was
+    /// opened, and sending our own would silently override branch policy.
+    @discardableResult
+    public func completePullRequest(
+        repository: String,
+        pullRequestId: Int,
+        project: String? = nil
+    ) async throws -> GitPullRequest {
+        dbg.info("AzDO completePullRequest(\(repository)#\(pullRequestId))", category: "azdo")
+        let encodedRepo = repository.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repository
+        let path = "/_apis/git/repositories/\(encodedRepo)/pullrequests/\(pullRequestId)?api-version=7.0"
+
+        let current: GitPullRequest = try await request("GET", path: path, forProject: project)
+        guard let commitId = current.lastMergeSourceCommit?.commitId else {
+            throw AzDevOpsError.httpError(
+                code: 409,
+                message: "Azure DevOps has not produced a merge commit for this pull request yet. "
+                    + "This usually means it still has conflicts or the merge is still being evaluated."
+            )
+        }
+
+        let body = try JSONSerialization.data(withJSONObject: [
+            "status": "completed",
+            "lastMergeSourceCommit": ["commitId": commitId]
+        ])
+        return try await request("PATCH", path: path, body: body, forProject: project)
+    }
+
     /// List recent commits for a repository (optionally filtered by branch).
     public func getCommits(repositoryId: String, branch: String? = nil, top: Int = 20, project: String? = nil) async throws -> [GitCommitRef] {
         dbg.info("AzDO getCommits(\(repositoryId))", category: "azdo")

@@ -50,6 +50,12 @@ public struct TdxTicket: Codable, Identifiable, Sendable, Equatable, Hashable {
     public let locationId: Int?
     public let locationRoomId: Int?
     public let uri: String?
+    public let attachments: [TdxAttachment]?
+
+    /// Attachments as a plain array, newest first — how the web UI sorts them.
+    public var attachmentList: [TdxAttachment] {
+        (attachments ?? []).sorted { ($0.createdDate ?? "") > ($1.createdDate ?? "") }
+    }
 
     /// How long the ticket has been open, in whole days.
     ///
@@ -134,6 +140,55 @@ public struct TdxTicket: Codable, Identifiable, Sendable, Equatable, Hashable {
         case locationId = "LocationID"
         case locationRoomId = "LocationRoomID"
         case uri = "Uri"
+        case attachments = "Attachments"
+    }
+}
+
+// MARK: - Attachments
+
+/// A file on a ticket.
+///
+/// TDX returns these inline on the ticket itself — there is no
+/// `GET /tickets/{id}/attachments` to call (that route is POST-only, for
+/// uploads) — and each one carries the address of its own bytes.
+public struct TdxAttachment: Codable, Identifiable, Hashable, Sendable {
+    public let id: String
+    public let name: String?
+    public let size: Int?
+    public let createdFullName: String?
+    public let createdDate: String?
+    public let isPrivate: Bool?
+    public let contentUri: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "ID"
+        case name = "Name"
+        case size = "Size"
+        case createdFullName = "CreatedFullName"
+        case createdDate = "CreatedDate"
+        case isPrivate = "IsPrivate"
+        case contentUri = "ContentUri"
+    }
+
+    public var displayName: String { name ?? id }
+
+    public var sizeLabel: String {
+        guard let size else { return "" }
+        return ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+    }
+
+    /// An SF Symbol matching the file type, for the row's leading icon.
+    public var iconName: String {
+        switch (name as NSString?)?.pathExtension.lowercased() ?? "" {
+        case "png", "jpg", "jpeg", "gif", "heic", "bmp", "tiff", "webp": return "photo"
+        case "pdf": return "doc.richtext"
+        case "zip", "gz", "tar", "7z": return "doc.zipper"
+        case "csv", "xlsx", "xls": return "tablecells"
+        case "doc", "docx", "rtf", "txt", "md": return "doc.text"
+        case "mov", "mp4", "m4v", "avi": return "film"
+        case "log": return "list.bullet.rectangle"
+        default: return "paperclip"
+        }
     }
 }
 

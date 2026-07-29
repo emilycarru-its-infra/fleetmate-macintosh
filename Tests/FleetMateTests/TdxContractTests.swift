@@ -264,6 +264,75 @@ final class TdxContractTests: XCTestCase {
         XCTAssertEqual(entry?.id, 29652860)
     }
 
+    // MARK: - Attachments
+
+    func testAttachmentsArriveInlineOnTheTicket() async throws {
+        // There is no GET /tickets/{id}/attachments — that route is POST-only,
+        // for uploads. The files come back on the ticket itself.
+        StubURLProtocol.reset(stubs: stubs([
+            StubURLProtocol.Stub(pathContains: "/tickets/", body: """
+            {"ID":7,"Attachments":[
+              {"ID":"a-1","Name":"old.png","Size":100,"CreatedDate":"2026-07-17T18:29:36.653Z",
+               "ContentUri":"api/attachments/a-1/content"},
+              {"ID":"a-2","Name":"new.png","Size":200,"CreatedDate":"2026-07-28T23:11:34.193Z",
+               "ContentUri":"api/attachments/a-2/content"}]}
+            """)
+        ]))
+
+        let ticket = try await makeService().getTicket(id: 7)
+
+        // Newest first, matching how the web UI lists them.
+        XCTAssertEqual(ticket?.attachmentList.map(\.displayName), ["new.png", "old.png"])
+        XCTAssertEqual(ticket?.attachmentList.first?.sizeLabel.isEmpty, false)
+    }
+
+    func testAttachmentDownloadHitsTheTenantContentRoute() async throws {
+        StubURLProtocol.reset(stubs: stubs([
+            StubURLProtocol.Stub(pathContains: "/attachments/", body: "binary-bytes")
+        ]))
+
+        let data = try await makeService().downloadAttachment(id: "a-1")
+
+        let call = try onlyApiCall()
+        XCTAssertEqual(call.method, "GET")
+        XCTAssertEqual(call.path, "/TDWebApi/api/attachments/a-1/content")
+        XCTAssertEqual(data.map { String(decoding: $0, as: UTF8.self) }, "binary-bytes")
+    }
+
+    // MARK: - Acting identity
+
+    func testAValidUserJwtIsPreferredOverTheServiceAccount() async throws {
+        // The whole point of SSO here: writes must be attributed to the person,
+        // not to the API service account.
+        StubURLProtocol.reset(stubs: stubs([
+            StubURLProtocol.Stub(pathContains: "/tickets/1", body: #"{"ID":1}"#)
+        ]))
+
+        let service = makeService()
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJyb2QifQ.signature"
+        service.setSsoToken(jwt, expiry: Date().addingTimeInterval(3600), userName: "Rod")
+        XCTAssertTrue(service.hasUserJwt)
+        XCTAssertTrue(service.actingIdentityIsUser)
+
+        _ = try await service.getTicket(id: 1)
+
+        let call = try onlyApiCall()
+        XCTAssertEqual(call.headers["Authorization"], "Bearer \(jwt)")
+        // No service-account handshake should have happened at all.
+        XCTAssertTrue(StubURLProtocol.recorded.allSatisfy { !$0.path.contains("loginadmin") })
+    }
+
+    func testAScrapedSessionMarkerIsNotTreatedAsAUserJwt() async throws {
+        // "cookie-auth" and other non-JWT values are web-session leftovers; the
+        // API rejects them as Bearer credentials, so they must not suppress the
+        // service-account path.
+        let service = makeService()
+        service.setSsoToken("cookie-auth", expiry: Date().addingTimeInterval(3600))
+
+        XCTAssertFalse(service.hasUserJwt)
+        XCTAssertFalse(service.actingIdentityIsUser)
+    }
+
     // MARK: - Lookups
 
     func testFindPersonMatchesOnExactEmail() async throws {

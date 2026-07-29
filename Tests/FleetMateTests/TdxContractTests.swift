@@ -211,21 +211,57 @@ final class TdxContractTests: XCTestCase {
         XCTAssertEqual(entry?.id, 555)
     }
 
-    func testReplyGoesToTheTenantFeedEndpointNotTheTicketFeed() async throws {
-        // The ticket-scoped `/tickets/{id}/feed/{entryId}` route does not exist
-        // in TDX and answers 404; replies live under `/api/feed/{id}/comment`,
-        // which is the address every feed entry publishes in its own `Uri`.
+    func testFeedLoadsRepliesThatTheTicketFeedOnlyCounts() async throws {
+        // The ticket feed collection reports RepliesCount but always sends
+        // `Replies: []`; only GET /api/feed/{id} carries the bodies. Trusting
+        // the collection is why no thread ever appeared in the Activity pane.
         StubURLProtocol.reset(stubs: stubs([
-            StubURLProtocol.Stub(pathContains: "/feed/", body: #"{"ID":556}"#)
+            StubURLProtocol.Stub(pathContains: "/tickets/9/feed", body: """
+            [{"ID":100,"Body":"Question","RepliesCount":2,"Replies":[]},
+             {"ID":101,"Body":"Unrelated","RepliesCount":0,"Replies":[]}]
+            """),
+            StubURLProtocol.Stub(pathContains: "/feed/100", body: """
+            {"ID":100,"Body":"Question","RepliesCount":2,
+             "Replies":[{"ID":1,"Body":"First"},{"ID":2,"Body":"Second"}]}
+            """)
         ]))
 
-        _ = try await makeService().replyToFeedEntry(feedEntryId: 29652860, comment: "Following up")
+        let feed = try await makeService().getTicketFeed(ticketId: 9)
+
+        XCTAssertEqual(feed.count, 2)
+        XCTAssertEqual(feed[0].replyList.map(\.body), ["First", "Second"])
+        XCTAssertFalse(feed[0].hasUnloadedReplies)
+
+        // Entries without replies must not cost an extra round trip.
+        let paths = StubURLProtocol.apiCalls.map(\.path)
+        XCTAssertEqual(paths.filter { $0.contains("/api/feed/") }, ["/TDWebApi/api/feed/100"])
+    }
+
+    func testFeedCanSkipReplyHydration() async throws {
+        StubURLProtocol.reset(stubs: stubs([
+            StubURLProtocol.Stub(pathContains: "/tickets/9/feed",
+                                 body: #"[{"ID":100,"Body":"Question","RepliesCount":2,"Replies":[]}]"#)
+        ]))
+
+        let feed = try await makeService().getTicketFeed(ticketId: 9, includeReplies: false)
+
+        XCTAssertTrue(feed[0].hasUnloadedReplies)
+        XCTAssertEqual(StubURLProtocol.apiCalls.count, 1)
+    }
+
+    func testFeedEntryIsReadFromTheTenantFeedEndpoint() async throws {
+        // Threads are readable per-entry even though they cannot be written to:
+        // OPTIONS /api/feed/{id} answers `Allow: GET,DELETE`.
+        StubURLProtocol.reset(stubs: stubs([
+            StubURLProtocol.Stub(pathContains: "/feed/", body: #"{"ID":29652860,"RepliesCount":0}"#)
+        ]))
+
+        let entry = try await makeService().getFeedEntry(id: 29652860)
 
         let call = try onlyApiCall()
-        XCTAssertEqual(call.method, "POST")
-        XCTAssertEqual(call.path, "/TDWebApi/api/feed/29652860/comment")
-        XCTAssertFalse(call.path.contains("/tickets/"), "replies must not be posted under a ticket path")
-        XCTAssertEqual(call.jsonObject?["Comments"] as? String, "Following up")
+        XCTAssertEqual(call.method, "GET")
+        XCTAssertEqual(call.path, "/TDWebApi/api/feed/29652860")
+        XCTAssertEqual(entry?.id, 29652860)
     }
 
     // MARK: - Lookups

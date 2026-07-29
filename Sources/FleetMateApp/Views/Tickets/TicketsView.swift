@@ -5,6 +5,7 @@ enum TicketSortField: String, CaseIterable {
     case id = "ID"
     case modified = "Modified"
     case created = "Created"
+    case age = "Age"
     case title = "Title"
     case status = "Status"
     case priority = "Priority"
@@ -140,8 +141,8 @@ struct TicketsView: View {
 
     // Column widths
     @State private var columnWidths: [TicketSortField: CGFloat] = [
-        .id: 130, .title: 250, .status: 110, .priority: 90,
-        .requestor: 130, .responsible: 130, .modified: 120, .created: 120,
+        .id: 130, .title: 500, .status: 110, .priority: 90,
+        .requestor: 130, .responsible: 130, .age: 70, .modified: 120, .created: 120,
     ]
 
     // Parent/child outline — collapsed is the exception, so an empty set means
@@ -410,10 +411,24 @@ struct TicketsView: View {
                 return compareStrings(a.priorityName, b.priorityName)
             case .requestor:
                 return compareStrings(a.requestorName, b.requestorName)
+            case .age:
+                // Oldest first when descending — a queue is read by what has
+                // been waiting longest, not by what arrived last.
+                let aAge = a.ageInDays ?? -1
+                let bAge = b.ageInDays ?? -1
+                return sortAscending ? aAge < bAge : aAge > bAge
             case .responsible:
                 return compareStrings(a.responsibleFullName, b.responsibleFullName)
             }
         }
+    }
+
+    /// Tickets that have sat for weeks should read as such at a glance.
+    private func ageColor(_ days: Int?) -> Color {
+        guard let days else { return .secondary }
+        if days >= 30 { return .red }
+        if days >= 14 { return .orange }
+        return .secondary
     }
 
     // MARK: - Parent/Child Outline
@@ -434,6 +449,17 @@ struct TicketsView: View {
 
     private func toggleExpansion(_ ticketId: Int) {
         if collapsedTicketIds.contains(ticketId) {
+            collapsedTicketIds.remove(ticketId)
+        } else {
+            collapsedTicketIds.insert(ticketId)
+        }
+    }
+
+    private func expandAll() { collapsedTicketIds = [] }
+    private func collapseAll() { collapsedTicketIds = parentIds }
+
+    private func setExpanded(_ expanded: Bool, for ticketId: Int) {
+        if expanded {
             collapsedTicketIds.remove(ticketId)
         } else {
             collapsedTicketIds.insert(ticketId)
@@ -604,23 +630,11 @@ struct TicketsView: View {
                     .help("Group board columns by")
                 }
 
-                // Sits with the view-shape controls, not the filters: it changes
-                // how rows are drawn, not which rows are there.
-                let parents = parentIds
-                if !parents.isEmpty {
-                    let allCollapsed = parents.isSubset(of: collapsedTicketIds)
-                    Button(action: {
-                        collapsedTicketIds = allCollapsed ? [] : parents
-                    }) {
-                        Label(allCollapsed ? "Expand All" : "Collapse All",
-                              systemImage: allCollapsed
-                                ? "chevron.down.square"
-                                : "chevron.right.square")
-                    }
-                    .help(allCollapsed
-                          ? "Expand all \(parents.count) parent tickets"
-                          : "Collapse all \(parents.count) parent tickets")
-                }
+                // No expand/collapse-all button here on purpose. Finder, Xcode,
+                // and Mail keep outline folding on the outline itself:
+                // option-click a triangle, arrow keys, and a context menu. A
+                // toolbar button for it is chrome those apps deliberately
+                // don't spend. See `expandAll` / `collapseAll` below.
 
                 if filters.hasActiveFilters || showClosed || !isDefaultDatePreset {
                     Button(action: {
@@ -794,7 +808,7 @@ struct TicketsView: View {
         [
             ("ID", .id), ("Title", .title), ("Status", .status), ("Priority", .priority),
             ("Requestor", .requestor), ("Responsible", .responsible),
-            ("Modified", .modified), ("Created", .created),
+            ("Age", .age), ("Modified", .modified), ("Created", .created),
         ]
     }
 
@@ -872,6 +886,11 @@ struct TicketsView: View {
                                         .frame(width: colW(.responsible) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
                                         .lineLimit(1)
+                                    Text(ticket.ageLabel)
+                                        .frame(width: colW(.age) - 12, alignment: .leading)
+                                        .padding(.leading, 10).padding(.trailing, 2)
+                                        .appFont(.body, design: .monospaced)
+                                        .foregroundColor(ageColor(ticket.ageInDays))
                                     Text(formatDateString(ticket.modifiedDate))
                                         .frame(width: colW(.modified) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
@@ -892,6 +911,7 @@ struct TicketsView: View {
                                         : (idx % 2 == 1 ? Color.secondary.opacity(0.04) : Color.clear)
                                 )
                                 .contentShape(Rectangle())
+                                .contextMenu { outlineContextMenu }
                                 .onTapGesture {
                                     if let id = ticket.id {
                                         selectedTicketIds = [id]
@@ -911,15 +931,27 @@ struct TicketsView: View {
             .focusEffectDisabled()
             .onKeyPress(.upArrow) { moveTicketSelection(by: -1); return .handled }
             .onKeyPress(.downArrow) { moveTicketSelection(by: 1); return .handled }
+            // Left/right fold the selected row, as in any macOS outline.
+            .onKeyPress(.rightArrow) { foldSelection(expanded: true); return .handled }
+            .onKeyPress(.leftArrow) { foldSelection(expanded: false); return .handled }
         }
     }
 
     /// The fold/unfold triangle in front of a parent's ticket number. Children
     /// and childless tickets get an equally wide blank so the numbers line up.
+    ///
+    /// Option-clicking applies the new state to every parent, the way Finder
+    /// and Xcode do — which is why there is no toolbar button for it.
     @ViewBuilder
     private func disclosureControl(for row: TicketOutlineRow) -> some View {
         if row.hasChildren {
-            Button(action: { toggleExpansion(row.id) }) {
+            Button(action: {
+                if NSEvent.modifierFlags.contains(.option) {
+                    if row.isExpanded { collapseAll() } else { expandAll() }
+                } else {
+                    toggleExpansion(row.id)
+                }
+            }) {
                 Image(systemName: "chevron.right")
                     .appFont(.caption2)
                     .foregroundColor(.secondary)
@@ -928,11 +960,34 @@ struct TicketsView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .animation(.easeInOut(duration: 0.15), value: row.isExpanded)
             .help(row.isExpanded
-                  ? "Hide \(row.childCount) child ticket\(row.childCount == 1 ? "" : "s")"
-                  : "Show \(row.childCount) child ticket\(row.childCount == 1 ? "" : "s")")
+                  ? "Hide \(row.childCount) child ticket\(row.childCount == 1 ? "" : "s") — ⌥ click for all"
+                  : "Show \(row.childCount) child ticket\(row.childCount == 1 ? "" : "s") — ⌥ click for all")
         } else {
             Spacer().frame(width: 12)
+        }
+    }
+
+    /// Right-click folding, for people who don't know about ⌥ click.
+    @ViewBuilder
+    private var outlineContextMenu: some View {
+        Button("Expand All", action: expandAll)
+            .disabled(collapsedTicketIds.isEmpty)
+        Button("Collapse All", action: collapseAll)
+            .disabled(parentIds.isSubset(of: collapsedTicketIds))
+    }
+
+    /// Fold or unfold the selected row. On a row that can't fold, left arrow
+    /// jumps to its parent instead — again matching Finder.
+    private func foldSelection(expanded: Bool) {
+        guard let selectedId = selectedTicketIds.first ?? nil else { return }
+        guard let row = outlineRows.first(where: { $0.id == selectedId }) else { return }
+
+        if row.hasChildren {
+            setExpanded(expanded, for: selectedId)
+        } else if !expanded, let parentId = row.ticket.parentTicketId {
+            selectedTicketIds = [parentId]
         }
     }
 
@@ -2278,28 +2333,45 @@ struct FeedEntryRow: View {
     /// that quotes what it answers.
     var onQuote: ((TdxFeedEntry) -> Void)? = nil
 
+    /// A thread is a stack of cards, each reply indented under the comment it
+    /// answers — the same shape children take on the board, so the two views
+    /// read the same way.
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .top) {
-                Text(entry.createdFullName ?? "Unknown")
-                    .appFont(.body)
+        VStack(alignment: .leading, spacing: 6) {
+            commentCard(entry, isReply: false)
+            ForEach(entry.replyList, id: \.id) { reply in
+                commentCard(reply, isReply: true)
+                    .padding(.leading, 24)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func commentCard(_ item: TdxFeedEntry, isReply: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(item.createdFullName ?? "Unknown")
+                    .appFont(isReply ? .callout : .body)
                     .fontWeight(.semibold)
-                    .foregroundColor(.secondary)
-                Spacer()
-                if entry.isPrivate == true {
+                    .foregroundColor(.primary)
+                Spacer(minLength: 8)
+                if item.isPrivate == true {
                     Text("Private")
-                        .appFont(.caption)
+                        .appFont(.caption2)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color.secondary.opacity(0.15))
-                        .cornerRadius(4)
+                        .foregroundColor(.secondary)
+                        .clipShape(Capsule())
                 }
-                if let dateStr = entry.createdDate, let date = TicketsView.parseDate(dateStr) {
+                if let dateStr = item.createdDate, let date = TicketsView.parseDate(dateStr) {
                     Text(formatRelativeDate(date))
-                        .appFont(.callout)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
-                if let onQuote {
+                // Only top-level entries can be quoted: a quote needs a stable
+                // feed entry to point at, and replies aren't addressable.
+                if let onQuote, !isReply {
                     Button(action: { onQuote(entry) }) {
                         Image(systemName: "arrowshape.turn.up.left")
                             .appFont(.caption)
@@ -2308,7 +2380,7 @@ struct FeedEntryRow: View {
                     .buttonStyle(.plain)
                     .help("Quote this in a new comment — TeamDynamix has no API for replying inside a thread")
                 }
-                Button(action: { copyEntryToClipboard() }) {
+                Button(action: { copyToClipboard(item) }) {
                     Image(systemName: "doc.on.doc")
                         .appFont(.caption)
                         .foregroundColor(.secondary)
@@ -2317,75 +2389,28 @@ struct FeedEntryRow: View {
                 .help("Copy to clipboard")
             }
 
-            if let body = entry.body, !body.isEmpty {
+            if let body = item.body, !body.isEmpty {
                 Text(TicketsView.decodeHtml(body))
-                    .appFont(.body)
+                    .appFont(isReply ? .callout : .body)
                     .foregroundColor(.primary)
                     .textSelection(.enabled)
-            }
-
-            // Threaded replies from API
-            if !entry.replyList.isEmpty {
-                let replies = entry.replyList
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(replies, id: \.id) { reply in
-                        HStack(alignment: .top, spacing: 8) {
-                            Rectangle()
-                                .fill(Color.accentColor.opacity(0.4))
-                                .frame(width: 2)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack {
-                                    Text(reply.createdFullName ?? "Unknown")
-                                        .appFont(.callout)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.secondary)
-                                    Spacer()
-                                    if let dateStr = reply.createdDate, let date = TicketsView.parseDate(dateStr) {
-                                        Text(formatRelativeDate(date))
-                                            .appFont(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    Button(action: { copyReplyToClipboard(reply) }) {
-                                        Image(systemName: "doc.on.doc")
-                                            .appFont(.caption2)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help("Copy to clipboard")
-                                }
-                                if let body = reply.body, !body.isEmpty {
-                                    Text(TicketsView.decodeHtml(body))
-                                        .appFont(.callout)
-                                        .foregroundColor(.secondary)
-                                        .textSelection(.enabled)
-                                }
-                            }
-                        }
-                        .padding(.leading, 8)
-                    }
-                }
-                .padding(.top, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(10)
-        .background(Color.secondary.opacity(0.06))
-        .cornerRadius(6)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.08), radius: 2, x: 0, y: 1)
     }
 
-    private func copyEntryToClipboard() {
-        let name = entry.createdFullName ?? "Unknown"
-        let date = entry.createdDate ?? ""
-        let body = TicketsView.decodeHtml(entry.body ?? "")
-        let text = "\(name) (\(date)):\n\(body)"
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-
-    private func copyReplyToClipboard(_ reply: TdxFeedEntry) {
-        let name = reply.createdFullName ?? "Unknown"
-        let date = reply.createdDate ?? ""
-        let body = TicketsView.decodeHtml(reply.body ?? "")
+    private func copyToClipboard(_ item: TdxFeedEntry) {
+        let name = item.createdFullName ?? "Unknown"
+        let date = item.createdDate ?? ""
+        let body = TicketsView.decodeHtml(item.body ?? "")
         let text = "\(name) (\(date)):\n\(body)"
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)

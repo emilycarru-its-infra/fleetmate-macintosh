@@ -282,6 +282,7 @@ struct TicketCard: View {
                         .clipShape(Capsule())
                 }
                 Spacer()
+                AgeBadge(days: ticket.ageInDays)
                 if let priority = ticket.priorityName {
                     PriorityBadge(priority: priority)
                 }
@@ -327,6 +328,28 @@ struct TicketCard: View {
                 .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
         )
         .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
+    }
+}
+
+/// How long a ticket has been open, always in days.
+///
+/// Deliberately never rolls up to months or years: on a queue card, "47d"
+/// carries information that "2 months" throws away.
+struct AgeBadge: View {
+    let days: Int?
+
+    var body: some View {
+        if let days {
+            let color: Color = days >= 30 ? .red : (days >= 14 ? .orange : .secondary)
+            Text(verbatim: "\(days)d")
+                .appFont(.caption2, design: .monospaced)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(color.opacity(0.15))
+                .foregroundColor(color)
+                .cornerRadius(4)
+                .help("Open for \(days) day\(days == 1 ? "" : "s")")
+        }
     }
 }
 

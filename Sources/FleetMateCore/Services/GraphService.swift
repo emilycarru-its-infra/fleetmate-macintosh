@@ -130,12 +130,27 @@ public class GraphService {
         ]
     }
 
+    /// Graph's hard ceiling for `$top` on directory collections.
+    ///
+    /// Asking for more is not merely capped — the request fails outright with
+    /// `Request_UnsupportedQuery` ("Invalid page size specified"), so a caller
+    /// wanting 1000 groups gets zero of them.
+    private static let maxGraphPageSize = 999
+
+    /// Page size for a request that wants `limit` results in total.
+    ///
+    /// This is a *page* size, not a cap on the result: every paged call here
+    /// follows `@odata.nextLink` until it reaches `limit`.
+    private func pageSize(for limit: Int) -> Int {
+        min(limit, config.graphPageSize, Self.maxGraphPageSize)
+    }
+
     // MARK: - Intune Devices
 
     public func getManagedDevices(filter: String? = nil, limit: Int = 100) async throws -> [IntuneDevice] {
         guard let headers = await headers() else { return [] }
 
-        var url = "\(baseUrl)/deviceManagement/managedDevices?$top=\(min(limit, config.graphPageSize))"
+        var url = "\(baseUrl)/deviceManagement/managedDevices?$top=\(pageSize(for: limit))"
         if let filter = filter {
             url += "&$filter=\(filter.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filter)"
         }
@@ -209,7 +224,7 @@ public class GraphService {
     public func getMobileApps(limit: Int = 100) async throws -> [MobileApp] {
         guard let headers = await headers() else { return [] }
 
-        var url = "\(baseUrl)/deviceAppManagement/mobileApps?$top=\(min(limit, config.graphPageSize))"
+        var url = "\(baseUrl)/deviceAppManagement/mobileApps?$top=\(pageSize(for: limit))"
         var allApps: [MobileApp] = []
 
         while let currentUrl = URL(string: url), allApps.count < limit {
@@ -623,7 +638,7 @@ public class GraphService {
             groupId = group.id ?? ""
         }
 
-        var url = "\(baseUrl)/groups/\(groupId)/members?$top=\(min(limit, config.graphPageSize))"
+        var url = "\(baseUrl)/groups/\(groupId)/members?$top=\(pageSize(for: limit))"
         var members: [EntraUser] = []
 
         while let _ = URL(string: url), members.count < limit {
@@ -643,7 +658,7 @@ public class GraphService {
     public func getGroupDeviceMembers(_ groupId: String, limit: Int = 100) async throws -> [EntraDevice] {
         guard let headers = await headers() else { return [] }
 
-        var url = "\(baseUrl)/groups/\(groupId)/members/microsoft.graph.device?$top=\(min(limit, config.graphPageSize))"
+        var url = "\(baseUrl)/groups/\(groupId)/members/microsoft.graph.device?$top=\(pageSize(for: limit))"
         var devices: [EntraDevice] = []
 
         while let _ = URL(string: url), devices.count < limit {
@@ -665,7 +680,7 @@ public class GraphService {
 
         let filter = "startswith(displayName, '\(query)')"
         let escapedFilter = filter.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filter
-        var url = "\(baseUrl)/groups?$filter=\(escapedFilter)&$top=\(min(limit, config.graphPageSize))"
+        var url = "\(baseUrl)/groups?$filter=\(escapedFilter)&$top=\(pageSize(for: limit))"
 
         // Paginate: a prefix like "Devices-" matches far more than one page, and
         // the caller filters the full set client-side (so e.g. "Shared-" can match

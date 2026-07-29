@@ -428,7 +428,7 @@ class AppState: ObservableObject {
                 group.addTask { @MainActor in
                     dbg.info("Preloading groups...", category: "preload")
                     do {
-                        let groups = try await self.graphService.searchGroups("Devices-", limit: 100)
+                        let groups = try await self.graphService.searchGroups("Devices-", limit: DeviceGroupFetch.limit)
                         self.updateGroupsCache(groups)
                         dbg.info("Groups preloaded: \(groups.count) groups", category: "preload")
                     } catch {

@@ -226,6 +226,24 @@ struct CreateTicketSubcommand: AsyncParsableCommand {
     @Option(name: .shortAndLong, help: "Priority ID")
     var priority: Int?
 
+    @Option(name: .long, help: "Status ID")
+    var status: Int?
+
+    @Option(name: .long, help: "Classification ID (46 = Service Request)")
+    var classification: Int?
+
+    @Option(name: .long, help: "Account / department ID")
+    var account: Int?
+
+    @Option(name: .long, help: "Requestor email — resolved to a TDX person")
+    var requestor: String?
+
+    @Option(name: .long, help: "Responsible email — resolved to a TDX person")
+    var responsible: String?
+
+    @Flag(name: .long, help: "Email the requestor and responsible about the new ticket")
+    var notify: Bool = false
+
     @Flag(name: .shortAndLong, help: "Output as JSON")
     var json: Bool = false
 
@@ -238,14 +256,26 @@ struct CreateTicketSubcommand: AsyncParsableCommand {
             throw ExitCode.failure
         }
 
+        let requestorUid = try await resolveUid(requestor, label: "requestor", service: service)
+        let responsibleUid = try await resolveUid(responsible, label: "responsible", service: service)
+
         let request = CreateTicketRequest(
             typeId: type ?? config.tdxDefaultTypeId ?? 0,
             title: title,
             description: description,
-            priorityId: priority
+            classification: classification,
+            accountId: account,
+            statusId: status,
+            priorityId: priority,
+            requestorUid: requestorUid,
+            responsibleUid: responsibleUid
         )
 
-        guard let ticket = try await service.createTicket(request: request) else {
+        guard let ticket = try await service.createTicket(
+            request: request,
+            notifyRequestor: notify,
+            notifyResponsible: notify && responsibleUid != nil
+        ) else {
             print("Failed to create ticket".red)
             throw ExitCode.failure
         }
@@ -260,6 +290,15 @@ struct CreateTicketSubcommand: AsyncParsableCommand {
             print("  Title: \(ticket.title ?? title)")
             print("")
         }
+    }
+
+    private func resolveUid(_ email: String?, label: String, service: TdxService) async throws -> String? {
+        guard let email, !email.isEmpty else { return nil }
+        guard let person = try await service.findPerson(email: email) else {
+            print("No TDX person found for \(label) '\(email)'".red)
+            throw ExitCode.failure
+        }
+        return person.uid
     }
 }
 

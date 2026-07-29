@@ -205,6 +205,7 @@ struct TicketsView: View {
     @State private var isSavingDescription = false
 
     @FocusState private var descriptionFocused: Bool
+    @FocusState private var commentFocused: Bool
 
     var tickets: [TdxTicket] { appState.cachedTickets }
 
@@ -603,6 +604,24 @@ struct TicketsView: View {
                     .help("Group board columns by")
                 }
 
+                // Sits with the view-shape controls, not the filters: it changes
+                // how rows are drawn, not which rows are there.
+                let parents = parentIds
+                if !parents.isEmpty {
+                    let allCollapsed = parents.isSubset(of: collapsedTicketIds)
+                    Button(action: {
+                        collapsedTicketIds = allCollapsed ? [] : parents
+                    }) {
+                        Label(allCollapsed ? "Expand All" : "Collapse All",
+                              systemImage: allCollapsed
+                                ? "chevron.down.square"
+                                : "chevron.right.square")
+                    }
+                    .help(allCollapsed
+                          ? "Expand all \(parents.count) parent tickets"
+                          : "Collapse all \(parents.count) parent tickets")
+                }
+
                 if filters.hasActiveFilters || showClosed || !isDefaultDatePreset {
                     Button(action: {
                         filters.clearAll()
@@ -612,20 +631,6 @@ struct TicketsView: View {
                         Label("Clear Filters", systemImage: "xmark.circle.fill")
                             .foregroundStyle(.yellow)
                     }
-                }
-
-                let parents = parentIds
-                if !parents.isEmpty {
-                    let allCollapsed = parents.isSubset(of: collapsedTicketIds)
-                    Button(action: {
-                        collapsedTicketIds = allCollapsed ? [] : parents
-                    }) {
-                        Label(allCollapsed ? "Expand All" : "Collapse All",
-                              systemImage: allCollapsed
-                                ? "arrow.down.right.and.arrow.up.left"
-                                : "arrow.up.left.and.arrow.down.right")
-                    }
-                    .help(allCollapsed ? "Expand all parent tickets" : "Collapse all parent tickets")
                 }
 
                 Button(action: { showFilters.toggle() }) {
@@ -1627,6 +1632,7 @@ struct TicketsView: View {
             TextEditor(text: $newComment)
                 .appFont(.body)
                 .frame(height: 80)
+                .focused($commentFocused)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(Color.gray.opacity(0.3), lineWidth: 1)
@@ -1699,10 +1705,7 @@ struct TicketsView: View {
                     .padding(.vertical, 8)
             } else {
                 ForEach(filteredFeed, id: \.id) { entry in
-                    FeedEntryRow(entry: entry) { text, isPrivate in
-                        guard let entryId = entry.id else { return }
-                        try await replyToFeedEntry(feedEntryId: entryId, replyText: text, isPrivate: isPrivate)
-                    }
+                    FeedEntryRow(entry: entry, onQuote: quoteInComment)
                 }
             }
         }
@@ -2096,16 +2099,22 @@ struct TicketsView: View {
         }
     }
 
-    /// Reply to a specific feed entry (threaded comment)
-    private func replyToFeedEntry(feedEntryId: Int, replyText: String, isPrivate: Bool) async throws {
-        _ = try await appState.tdxService.replyToFeedEntry(
-            feedEntryId: feedEntryId,
-            comment: replyText,
-            isPrivate: isPrivate
-        )
-        if let ticketId = selectedTicket?.id {
-            loadTicketFeed(ticketId: ticketId)
-        }
+    /// Seed the comment box with a quote of an existing entry.
+    ///
+    /// This is what "replying" amounts to here: TDX renders threads but exposes
+    /// no API to post into one, so the response goes back as a new top-level
+    /// comment that carries the context with it.
+    private func quoteInComment(_ entry: TdxFeedEntry) {
+        let author = entry.createdFullName ?? "Unknown"
+        let quoted = Self.decodeHtml(entry.body ?? "")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { "> \($0)" }
+            .joined(separator: "\n")
+
+        let block = "> \(author) wrote:\n\(quoted)\n\n"
+        newComment = block + newComment
+        isCommentPrivate = entry.isPrivate == true
+        commentFocused = true
     }
 
     // MARK: - Board Drag-and-Drop
@@ -2262,17 +2271,12 @@ struct DetailRow: View {
 
 struct FeedEntryRow: View {
     let entry: TdxFeedEntry
-    /// Posts a threaded reply to this entry. Throws so the row can show why a
-    /// reply didn't land instead of quietly clearing the box.
-    var onReply: ((String, Bool) async throws -> Void)? = nil
-
-    @State private var isReplying = false
-    @State private var replyText = ""
-    @State private var isReplyPrivate = false
-    @State private var isSendingReply = false
-    @State private var replyError: String?
-
-    private var canReply: Bool { onReply != nil && entry.id != nil }
+    /// Quotes this entry into the ticket's comment box.
+    ///
+    /// Not a threaded reply: the TDX Web API can read existing threads but has
+    /// no route for posting into one, so a response is a new top-level comment
+    /// that quotes what it answers.
+    var onQuote: ((TdxFeedEntry) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -2295,20 +2299,14 @@ struct FeedEntryRow: View {
                         .appFont(.callout)
                         .foregroundColor(.secondary)
                 }
-                if canReply {
-                    Button(action: {
-                        isReplying.toggle()
-                        if isReplying {
-                            isReplyPrivate = entry.isPrivate == true
-                            replyError = nil
-                        }
-                    }) {
-                        Image(systemName: isReplying ? "xmark" : "arrowshape.turn.up.left")
+                if let onQuote {
+                    Button(action: { onQuote(entry) }) {
+                        Image(systemName: "arrowshape.turn.up.left")
                             .appFont(.caption)
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help(isReplying ? "Cancel reply" : "Reply in thread")
+                    .help("Quote this in a new comment — TeamDynamix has no API for replying inside a thread")
                 }
                 Button(action: { copyEntryToClipboard() }) {
                     Image(systemName: "doc.on.doc")
@@ -2369,66 +2367,10 @@ struct FeedEntryRow: View {
                 }
                 .padding(.top, 4)
             }
-
-            if isReplying {
-                replyComposer
-            }
         }
         .padding(10)
         .background(Color.secondary.opacity(0.06))
         .cornerRadius(6)
-    }
-
-    @ViewBuilder
-    private var replyComposer: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            TextEditor(text: $replyText)
-                .appFont(.callout)
-                .frame(height: 60)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.accentColor.opacity(0.4), lineWidth: 1)
-                )
-
-            if let replyError {
-                Text(replyError)
-                    .appFont(.caption)
-                    .foregroundColor(.red)
-            }
-
-            HStack {
-                Toggle("Private", isOn: $isReplyPrivate)
-                    .toggleStyle(.checkbox)
-                    .appFont(.caption)
-                Spacer()
-                if isSendingReply {
-                    ProgressView().controlSize(.small)
-                }
-                Button("Reply", action: sendReply)
-                    .controlSize(.small)
-                    .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSendingReply)
-            }
-        }
-        .padding(.top, 6)
-        .padding(.leading, 8)
-    }
-
-    private func sendReply() {
-        guard let onReply else { return }
-        let text = replyText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        Task {
-            isSendingReply = true
-            replyError = nil
-            defer { isSendingReply = false }
-            do {
-                try await onReply(text, isReplyPrivate)
-                replyText = ""
-                isReplying = false
-            } catch {
-                replyError = "Reply failed: \(error.localizedDescription)"
-            }
-        }
     }
 
     private func copyEntryToClipboard() {

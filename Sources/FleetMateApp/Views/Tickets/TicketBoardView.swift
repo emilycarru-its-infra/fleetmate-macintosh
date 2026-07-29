@@ -17,7 +17,10 @@ struct TicketBoardView: View {
     /// Called when a card is dropped on a column: (ticketId, targetColumnKey)
     let onDropTicket: (Int, String) -> Void
     let onSelectTicket: (TdxTicket) -> Void
-    
+    let selectedTicketId: Int?
+    /// Shared with the list view so folding a parent in one view folds it in both.
+    @Binding var collapsedTicketIds: Set<Int>
+
     // MARK: - Grouped columns based on groupBy
 
     private var columns: [(key: String, label: String, tickets: [TdxTicket])] {
@@ -105,6 +108,8 @@ struct TicketBoardView: View {
                         label: col.label,
                         tickets: col.tickets,
                         accentColor: groupBy == .status ? statusColor(for: col.label) : nil,
+                        selectedTicketId: selectedTicketId,
+                        collapsedTicketIds: $collapsedTicketIds,
                         onDropTicket: { ticketId in
                             onDropTicket(ticketId, col.key)
                         },
@@ -135,13 +140,25 @@ struct BoardColumn: View {
     let label: String
     let tickets: [TdxTicket]
     let accentColor: Color?
+    let selectedTicketId: Int?
+    @Binding var collapsedTicketIds: Set<Int>
     let onDropTicket: (Int) -> Void
     let onSelectTicket: (TdxTicket) -> Void
-    
+
     @State private var isTargeted = false
 
     private var columnColor: Color { accentColor ?? .secondary }
-    
+
+    /// The column's cards as an outline. A parent only nests children that
+    /// landed in this same column, so grouping by status still shows a parent's
+    /// New and In Process children in their own columns.
+    private var rows: [TicketOutlineRow] {
+        TicketHierarchy.flatten(
+            TicketHierarchy.build(from: tickets),
+            collapsed: collapsedTicketIds
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Column header
@@ -157,12 +174,19 @@ struct BoardColumn: View {
 
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    ForEach(tickets, id: \.id) { ticket in
-                        TicketCard(ticket: ticket)
-                            .draggable("\(ticket.id ?? 0)_\(columnKey)")
-                            .onTapGesture {
-                                onSelectTicket(ticket)
-                            }
+                    ForEach(rows) { row in
+                        TicketCard(
+                            ticket: row.ticket,
+                            childCount: row.childCount,
+                            isExpanded: row.isExpanded,
+                            isSelected: selectedTicketId == row.ticket.id,
+                            onToggleExpand: { toggleExpansion(row.id) }
+                        )
+                        .padding(.leading, CGFloat(row.depth) * 16)
+                        .draggable("\(row.ticket.id ?? 0)_\(columnKey)")
+                        .onTapGesture {
+                            onSelectTicket(row.ticket)
+                        }
                     }
                     // Empty column drop zone
                     if tickets.isEmpty {
@@ -196,6 +220,14 @@ struct BoardColumn: View {
             isTargeted = targeted
         }
     }
+
+    private func toggleExpansion(_ ticketId: Int) {
+        if collapsedTicketIds.contains(ticketId) {
+            collapsedTicketIds.remove(ticketId)
+        } else {
+            collapsedTicketIds.insert(ticketId)
+        }
+    }
 }
 
 /// Draggable ticket data — generic across all group-by modes
@@ -211,23 +243,50 @@ struct TicketDragData: Codable, Transferable {
 /// Individual ticket card in the Kanban board
 struct TicketCard: View {
     let ticket: TdxTicket
-    
+    var childCount: Int = 0
+    var isExpanded: Bool = true
+    var isSelected: Bool = false
+    var onToggleExpand: (() -> Void)? = nil
+
+    private var hasChildren: Bool { childCount > 0 }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Ticket ID and priority
             HStack {
+                if hasChildren, let onToggleExpand {
+                    Button(action: onToggleExpand) {
+                        Image(systemName: "chevron.right")
+                            .appFont(.caption2)
+                            .foregroundColor(.secondary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                            .frame(width: 12, height: 12)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(isExpanded ? "Hide child tickets" : "Show child tickets")
+                }
                 if let id = ticket.id {
                     Text(verbatim: "#\(id)")
                         .appFont(.caption)
                         .foregroundColor(.accentColor)
                         .fontWeight(.medium)
                 }
+                if hasChildren {
+                    Text(verbatim: "\(childCount)")
+                        .appFont(.caption2)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.18))
+                        .foregroundColor(.secondary)
+                        .clipShape(Capsule())
+                }
                 Spacer()
                 if let priority = ticket.priorityName {
                     PriorityBadge(priority: priority)
                 }
             }
-            
+
             // Title
             Text(ticket.title ?? "Untitled")
                 .appFont(.subheadline)
@@ -263,6 +322,10 @@ struct TicketCard: View {
         .padding(10)
         .background(Color(nsColor: .controlBackgroundColor))
         .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+        )
         .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
     }
 }
@@ -299,6 +362,8 @@ struct PriorityBadge: View {
         statuses: [1: "New", 2: "In Progress", 3: "Resolved", 4: "Closed"],
         groupBy: .status,
         onDropTicket: { _, _ in },
-        onSelectTicket: { _ in }
+        onSelectTicket: { _ in },
+        selectedTicketId: nil,
+        collapsedTicketIds: .constant([])
     )
 }

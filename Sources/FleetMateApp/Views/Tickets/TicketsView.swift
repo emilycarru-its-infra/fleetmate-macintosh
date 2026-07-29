@@ -1763,8 +1763,12 @@ struct TicketsView: View {
                     .foregroundColor(.secondary)
                     .padding(.vertical, 8)
             } else {
-                ForEach(filteredFeed, id: \.id) { entry in
-                    FeedEntryRow(entry: entry, onQuote: quoteInComment)
+                // Threads need clear air between them, or one thread's replies
+                // read as belonging to the next comment down.
+                VStack(alignment: .leading, spacing: 16) {
+                    ForEach(filteredFeed, id: \.id) { entry in
+                        FeedEntryRow(entry: entry, onQuote: quoteInComment)
+                    }
                 }
             }
         }
@@ -2341,27 +2345,15 @@ struct FeedEntryRow: View {
     /// answers — the same shape children take on the board, so the two views
     /// read the same way.
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 8) {
             commentCard(entry, isReply: false)
 
-            if !entry.replyList.isEmpty {
-                // A continuous rail down the left ties the replies to the
-                // comment they answer. Separate floating cards read as
-                // unrelated messages that happen to be adjacent.
-                HStack(alignment: .top, spacing: 0) {
-                    Rectangle()
-                        .fill(Color.accentColor.opacity(0.35))
-                        .frame(width: 2)
-                        .padding(.leading, 16)
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        ForEach(entry.replyList, id: \.id) { reply in
-                            commentCard(reply, isReply: true)
-                        }
-                    }
-                    .padding(.leading, 10)
-                }
-                .padding(.top, 1)
+            // Replies are simply indented, the way child tickets are on the
+            // board. An accent rail alongside them added a second competing
+            // vertical line without making the nesting any clearer.
+            ForEach(entry.replyList, id: \.id) { reply in
+                commentCard(reply, isReply: true)
+                    .padding(.leading, 28)
             }
         }
     }
@@ -2418,14 +2410,14 @@ struct FeedEntryRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
+        .padding(12)
         .background(isReply
-                    ? Color.secondary.opacity(0.07)
+                    ? Color.secondary.opacity(0.08)
                     : Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.secondary.opacity(isReply ? 0.10 : 0.18), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
         )
     }
 

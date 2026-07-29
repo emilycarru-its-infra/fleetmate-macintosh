@@ -282,7 +282,10 @@ struct TicketCard: View {
                         .clipShape(Capsule())
                 }
                 Spacer()
-                AgeBadge(days: ticket.ageInDays)
+                // Days since the last update, not days since it opened — this
+                // is the card's only date, so it should be the one that shows
+                // a ticket going quiet.
+                AgeBadge(days: ticket.daysSinceLastActivity)
                 if let priority = ticket.priorityName {
                     PriorityBadge(priority: priority)
                 }
@@ -331,7 +334,7 @@ struct TicketCard: View {
     }
 }
 
-/// How long a ticket has been open, always in days.
+/// Days since a ticket was last touched, always in days.
 ///
 /// Deliberately never rolls up to months or years: on a queue card, "47d"
 /// carries information that "2 months" throws away.
@@ -348,7 +351,7 @@ struct AgeBadge: View {
                 .background(color.opacity(0.15))
                 .foregroundColor(color)
                 .cornerRadius(4)
-                .help("Open for \(days) day\(days == 1 ? "" : "s")")
+                .help(days == 0 ? "Updated today" : "No activity for \(days) day\(days == 1 ? "" : "s")")
         }
     }
 }

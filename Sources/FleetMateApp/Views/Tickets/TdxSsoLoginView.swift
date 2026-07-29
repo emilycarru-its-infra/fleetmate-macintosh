@@ -292,6 +292,12 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     private let fidoTimeoutSeconds: TimeInterval = 2
     /// Whether the Enterprise SSO Extension is available on this system
     private var ssoExtensionAvailable = false
+    /// The signed-in user's address, used when `app-sso` can't supply one.
+    ///
+    /// Set from the resolved Azure identity as soon as the app knows it, so
+    /// silent SSO has an address to put in the Entra username field.
+    static var fallbackUpn: String?
+
     /// The user's Platform SSO UPN (e.g. user@domain.ca), detected from macOS identity
     private var platformSsoUpn: String? {
         didSet {
@@ -478,7 +484,23 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         // block SwiftUI's AttributeGraph. The result will be available
         // before the WebView reaches login.microsoftonline.com.
         Task { [weak self] in
-            let upn = await Self.detectPlatformSsoUpn()
+            var upn = await Self.detectPlatformSsoUpn()
+            if upn == nil {
+                // The Azure identity that supplies the fallback resolves about
+                // a second after SSO starts, so waiting a little beats giving
+                // up: without an address the Entra page never advances and the
+                // whole attempt times out onto the service account. Well inside
+                // the flow's own timeout, and `platformSsoUpn`'s didSet fires
+                // the auto-fill if the page is already showing.
+                for _ in 0..<20 {
+                    if let fallback = Self.fallbackUpn {
+                        Self.ssoLogStatic("[PSSO] Using signed-in Azure identity as UPN: \(fallback)")
+                        upn = fallback
+                        break
+                    }
+                    try? await Task.sleep(for: .milliseconds(500))
+                }
+            }
             await MainActor.run {
                 self?.platformSsoUpn = upn
             }
@@ -567,6 +589,16 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                 if let upn = bestUpn {
                     Self.ssoLogStatic("[PSSO] Detected Platform SSO UPN: \(upn)")
                     continuation.resume(returning: upn)
+                } else if let fallback = Self.fallbackUpn {
+                    // `app-sso platform -s` doesn't always carry a usable UPN:
+                    // on an enrolled Mac it may expose no `upn` key at all and
+                    // mask `loginUserName` as "r***n@example.com". Without an
+                    // address the Entra page can't be advanced, silent SSO
+                    // times out, and every write falls back to the service
+                    // account. The signed-in Azure identity supplies the same
+                    // address and is already resolved by then.
+                    Self.ssoLogStatic("[PSSO] No usable UPN from app-sso — using signed-in Azure identity: \(fallback)")
+                    continuation.resume(returning: fallback)
                 } else {
                     Self.ssoLogStatic("[PSSO] No Platform SSO UPN found in app-sso output")
                     continuation.resume(returning: nil)

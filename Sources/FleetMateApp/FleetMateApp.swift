@@ -558,11 +558,18 @@ class AppState: ObservableObject {
         guard ssoViewModel == nil else { return }
         dbg.info("[SSO Phase 1] Starting silent TDX SSO attempt (authMethod=\(config.tdxAuthMethod), ssoEnabled=\(config.tdxSsoEnabled))", category: "tdx-sso")
 
-        let viewModel = TdxSsoLoginViewModel(config: config)
-        ssoViewModel = viewModel
-
         Task { @MainActor [weak self] in
             guard let self else { return }
+
+            // Resolve the sign-in address before the flow starts. Entra's page
+            // needs a username to advance, `app-sso` doesn't reliably supply
+            // one, and arriving with it late means the attempt has already
+            // timed out onto the service account.
+            await self.primeTdxSsoUpn()
+
+            let viewModel = TdxSsoLoginViewModel(config: self.config)
+            self.ssoViewModel = viewModel
+
             let silentSuccess = await viewModel.performSilentAuthentication()
             self.ssoViewModel = nil
 
@@ -754,6 +761,23 @@ class AppState: ObservableObject {
         return candidates
     }
 
+    /// Make the signed-in address available to the TDX SSO flow.
+    ///
+    /// `app-sso platform -s` is not a reliable source: on an enrolled Mac it
+    /// can expose no `upn` key at all and mask `loginUserName` as
+    /// `r***n@example.com`. The Azure identity has the real address.
+    func primeTdxSsoUpn() async {
+        guard TdxSsoLoginViewModel.fallbackUpn == nil else { return }
+
+        if let email = devOpsSsoUserEmail, !email.isEmpty {
+            TdxSsoLoginViewModel.fallbackUpn = email.lowercased()
+            return
+        }
+        if let account = await devOpsService.currentIdentity().account, !account.isEmpty {
+            TdxSsoLoginViewModel.fallbackUpn = account.lowercased()
+        }
+    }
+
     /// Resolve and cache the current user's TDX person record. Cheap to call
     /// repeatedly — it returns immediately once resolved.
     func resolveTdxMe() async {
@@ -887,6 +911,10 @@ class AppState: ObservableObject {
         devOpsSsoUserName = userName
         devOpsSsoUserEmail = userEmail
         showDevOpsSsoLogin = false
+
+        // TDX SSO may already be waiting on an address to put in Entra's
+        // username field; this is the earliest point one is known.
+        Task { @MainActor in await self.primeTdxSsoUpn() }
         // Prefer the UPN: it is the identity Azure DevOps actually attributes
         // work to, and a display name alone cannot show that.
         authManager.update(.devops, state: .valid(user: userEmail ?? userName, expiry: expiry))

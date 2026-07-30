@@ -151,6 +151,7 @@ struct TicketsView: View {
 
     // Comment state
     @State private var newComment = ""
+    @State private var isCommentSectionExpanded = false
     @State private var isCommentPrivate = false
     @State private var isAddingComment = false
     @State private var notifyRequestor = false
@@ -162,7 +163,7 @@ struct TicketsView: View {
 
     // View mode
     @State private var viewMode: TicketViewMode = .table
-    @State private var boardGroupBy: BoardGroupBy = .status
+    @State private var boardGroupBy: BoardGroupBy = .responsible
 
     // Detail editing state
     @State private var detailedTicket: TdxTicket? = nil
@@ -1066,41 +1067,48 @@ struct TicketsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let ticket = selectedTicket {
-            // Only the conversation scrolls. Which ticket this is, who owns it,
-            // and the box you type into are what you keep referring to while
-            // reading, and they used to slide off the top as soon as you did.
+            // The title and field grid stay frozen; everything content-sized —
+            // description, attachments, comment box, feed — scrolls. Keeping
+            // the description pinned meant capping its height, and a capped
+            // description reads as cut off. The activity filter re-pins itself
+            // as a sticky section header once the feed reaches the top.
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 0) {
                     detailHeader(ticket: ticket)
                     Divider()
                     Spacer().frame(height: 10)
                     detailFields(ticket: ticket)
-                    if !ticket.attachmentList.isEmpty {
-                        Divider().padding(.vertical, 8)
-                        TicketAttachmentsView(attachments: ticket.attachmentList)
-                    }
-                    Divider().padding(.vertical, 8)
-                    addCommentSection(ticket: ticket)
-                    Divider().padding(.vertical, 8)
-                    activityHeader
-                    // Close the pinned block with the same divider the sections
-                    // above use. Without it the feed's first card slides up and
-                    // gets cut off flush against the header — a raw edge that
-                    // read as broken rather than as a scroll boundary.
                     Divider().padding(.top, 10)
                 }
                 .padding([.horizontal, .top])
 
                 ScrollView {
-                    activityFeed
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal)
-                        .padding(.top, 10)
-                        .padding(.bottom)
+                    LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                        descriptionSection(ticket: ticket)
+                            .padding(.top, 10)
+                        if !ticket.attachmentList.isEmpty {
+                            Divider().padding(.vertical, 8)
+                            TicketAttachmentsView(attachments: ticket.attachmentList)
+                        }
+                        Divider().padding(.vertical, 8)
+                        addCommentSection(ticket: ticket)
+                        Section {
+                            activityFeed
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 10)
+                                .padding(.bottom)
+                        } header: {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Divider().padding(.bottom, 8)
+                                activityHeader
+                                Divider().padding(.top, 10)
+                            }
+                            .padding(.top, 8)
+                            .background(Color(nsColor: .windowBackgroundColor))
+                        }
+                    }
+                    .padding(.horizontal)
                 }
-                // The pinned block above grows with the ticket; without a floor
-                // a long description would squeeze the feed to nothing.
-                .frame(minHeight: 180)
             }
         } else {
             VStack {
@@ -1533,8 +1541,6 @@ struct TicketsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // Description — full width below the two columns
-            descriptionSection(ticket: ticket)
         }
         .padding(.vertical, 4)
         .sheet(isPresented: $showSetParentSheet) {
@@ -1707,19 +1713,13 @@ struct TicketsView: View {
                         .background(Color.secondary.opacity(0.06))
                         .cornerRadius(6)
                 } else {
-                    // Capped and self-scrolling: the description sits in the
-                    // pinned block now, so an essay-length one would otherwise
-                    // push the activity feed off the bottom of the pane.
-                    ScrollView {
-                        Text(text)
-                            .appFont(.body)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxHeight: 220)
-                    .padding(8)
-                    .background(Color.secondary.opacity(0.06))
-                    .cornerRadius(6)
+                    Text(text)
+                        .appFont(.body)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(Color.secondary.opacity(0.06))
+                        .cornerRadius(6)
                 }
             }
         }
@@ -1729,52 +1729,84 @@ struct TicketsView: View {
 
     private func addCommentSection(ticket: TdxTicket) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Add Comment")
-                .appFont(.headline)
-            TextEditor(text: $newComment)
-                .appFont(.body)
-                .frame(height: 80)
-                .focused($commentFocused)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                )
-
-            HStack {
-                Toggle("Private", isOn: $isCommentPrivate)
-                    .toggleStyle(.checkbox)
-                    .appFont(.body)
-                Spacer()
-                Button("Post Comment") {
-                    Task {
-                        isAddingComment = true
-                        await addComment(ticket: ticket)
-                        isAddingComment = false
+            // Folded by default, like Attachments — the editor, notify options
+            // and buttons only take space when a comment is being written.
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.15)) { isCommentSectionExpanded.toggle() }
+                if isCommentSectionExpanded { commentFocused = true }
+            }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .appFont(.caption)
+                        .foregroundColor(.secondary)
+                        .rotationEffect(.degrees(isCommentSectionExpanded ? 90 : 0))
+                    Text("Add Comment")
+                        .appFont(.headline)
+                    if !isCommentSectionExpanded,
+                       !newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("Draft")
+                            .appFont(.caption)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Color.accentColor.opacity(0.15))
+                            .foregroundColor(.accentColor)
+                            .clipShape(Capsule())
                     }
+                    Spacer()
                 }
-                .disabled(newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingComment)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help(isCommentSectionExpanded ? "Hide the comment editor" : "Write a comment")
 
-            // Notify options
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Notify:")
+            if isCommentSectionExpanded {
+                TextEditor(text: $newComment)
                     .appFont(.body)
-                    .foregroundColor(.secondary)
-                if let requestor = ticket.requestorName, !requestor.isEmpty {
-                    Toggle("Requestor: \(requestor)", isOn: $notifyRequestor)
+                    .frame(height: 80)
+                    .focused($commentFocused)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
+                    )
+
+                HStack {
+                    Toggle("Private", isOn: $isCommentPrivate)
                         .toggleStyle(.checkbox)
                         .appFont(.body)
+                    Spacer()
+                    Button("Post Comment") {
+                        Task {
+                            isAddingComment = true
+                            await addComment(ticket: ticket)
+                            isAddingComment = false
+                        }
+                    }
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingComment)
+                    .help("Post Comment (⌘↩)")
                 }
-                if let responsible = ticket.responsibleFullName, !responsible.isEmpty,
-                   ticket.responsibleUid != ticket.requestorUid {
-                    Toggle("Responsible: \(responsible)", isOn: $notifyResponsible)
-                        .toggleStyle(.checkbox)
+
+                // Notify options
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Notify:")
                         .appFont(.body)
-                }
-                if let group = ticket.responsibleGroupName, !group.isEmpty {
-                    Toggle("Group: \(group)", isOn: $notifyGroup)
-                        .toggleStyle(.checkbox)
-                        .appFont(.body)
+                        .foregroundColor(.secondary)
+                    if let requestor = ticket.requestorName, !requestor.isEmpty {
+                        Toggle("Requestor: \(requestor)", isOn: $notifyRequestor)
+                            .toggleStyle(.checkbox)
+                            .appFont(.body)
+                    }
+                    if let responsible = ticket.responsibleFullName, !responsible.isEmpty,
+                       ticket.responsibleUid != ticket.requestorUid {
+                        Toggle("Responsible: \(responsible)", isOn: $notifyResponsible)
+                            .toggleStyle(.checkbox)
+                            .appFont(.body)
+                    }
+                    if let group = ticket.responsibleGroupName, !group.isEmpty {
+                        Toggle("Group: \(group)", isOn: $notifyGroup)
+                            .toggleStyle(.checkbox)
+                            .appFont(.body)
+                    }
                 }
             }
         }

@@ -23,6 +23,10 @@ struct AuthSettingsView: View {
     @State private var editDevopsClientId = ""
     @State private var editDevopsTenantId = ""
 
+    // CLI sign-in (az / gh) run from the cards themselves
+    @State private var runningCliSignIn: AuthSystemId?
+    @State private var cliSignInResult: [AuthSystemId: CliSignIn.Outcome] = [:]
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -216,8 +220,17 @@ struct AuthSettingsView: View {
                 let aApp = cfg.tdxAssetsAppId ?? cfg.tdxAppId
                 if let a = tApp { detailRow("Ticketing app ID", String(a)) }
                 if let a = aApp, a != tApp { detailRow("Assets app ID", String(a)) }
-                if let user = appState.tdxSsoAuthenticated ? appState.tdxAuthenticatedUserName : system.user {
-                    detailRow("SSO signed in as", user, .green)
+                // Say who writes will be attributed to, rather than implying a
+                // signed-in user when the service account is doing the work.
+                if appState.tdxService.actingIdentityIsUser {
+                    let who = appState.tdxMe?.fullName ?? appState.tdxAuthenticatedUserName ?? "signed-in user"
+                    detailRow("Acting as", who, .green)
+                } else if cfg.tdxBeid != nil || cfg.tdxUsername != nil {
+                    detailRow("Acting as", "Service account — edits will not show your name", .orange)
+                } else {
+                    // No service account to fall back to, so this isn't
+                    // "acting as the wrong identity" — it's no access at all.
+                    detailRow("Acting as", "Nobody — not signed in, TDX calls will fail", .orange)
                 }
                 if cfg.tdxBeid != nil {
                     detailRow("Service account", cfg.tdxUsername ?? "configured", .secondary)
@@ -260,6 +273,7 @@ struct AuthSettingsView: View {
                 if case .failed(let msg) = system.state {
                     detailRow("Error", msg, .red)
                 }
+                cliSignInRow(.devops)
                 checkedRow(system.lastChecked)
             }
 
@@ -271,8 +285,9 @@ struct AuthSettingsView: View {
                 if let user = system.user {
                     detailRow("Signed in as", user, .green)
                 } else {
-                    detailRow("Status", "not logged in — run: gh auth login", .secondary)
+                    detailRow("Status", "not logged in", .secondary)
                 }
+                cliSignInRow(.github)
                 checkedRow(system.lastChecked)
             }
 
@@ -338,10 +353,12 @@ struct AuthSettingsView: View {
         case .serviceAccount: return "Service account (BEID + WebServicesKey)"
         case .userPassword:   return "Username / password"
         case .auto:
-            // `.auto` uses the service-account loginadmin path; the WKWebView SSO
-            // token is not a valid API credential and is no longer preferred.
-            if appState.config.tdxBeid != nil { return "Auto → Service account (BEID)" }
-            return "Auto → needs BEID + WebServicesKey"
+            // SSO first — a user JWT or cookie session is preferred over the
+            // service account now, so describe it in that order.
+            if appState.config.tdxBeid != nil {
+                return "Auto → SSO, falling back to service account (BEID)"
+            }
+            return "Auto → SSO only (no service account configured)"
         }
     }
 
@@ -445,16 +462,78 @@ struct AuthSettingsView: View {
             case .github:
                 if case .valid = system.state {
                     EmptyView()
+                } else if runningCliSignIn == .github {
+                    ProgressView().controlSize(.small)
                 } else {
-                    Text("gh auth login")
-                        .appFont(.caption2)
-                        .foregroundColor(.secondary)
-                        .fontDesign(.monospaced)
+                    // gh prompts on the TTY even with every flag given, so this
+                    // hands off to Terminal rather than pretending to run inline.
+                    Button("gh auth login") {
+                        cliSignInResult[.github] = CliSignIn.ghLoginInTerminal()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .help("Opens Terminal to finish the GitHub device/browser flow")
                 }
 
             default:
                 EmptyView()
             }
+
+            // `az login` is the trust anchor for DevOps and for every aze
+            // elevation session, so offer it on the cards that depend on it.
+            if needsAzSignIn(system) {
+                if runningCliSignIn == system.systemId {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("az login") { runAzLogin(for: system.systemId) }
+                        .controlSize(.small)
+                        .help(CliSignIn.azLoginCommandDescription(config: appState.config))
+                }
+            }
+        }
+    }
+
+    // MARK: - CLI sign-in
+
+    /// True for systems that authenticate off the operator's `az` session and
+    /// currently aren't signed in. Graph, Entra and Intune only qualify when
+    /// they're actually routed through elevation rather than a service principal.
+    private func needsAzSignIn(_ system: AuthSystemStatus) -> Bool {
+        if case .valid = system.state { return false }
+        switch system.systemId {
+        case .devops:                  return true
+        case .graph, .entra, .intune:  return appState.config.graphUsesAze
+        default:                       return false
+        }
+    }
+
+    private func runAzLogin(for id: AuthSystemId) {
+        runningCliSignIn = id
+        Task {
+            let outcome = await CliSignIn.azLogin(config: appState.config)
+            await MainActor.run {
+                cliSignInResult[id] = outcome
+                runningCliSignIn = nil
+            }
+            // Re-probe so the card reflects the new session rather than the
+            // state it had before signing in.
+            if outcome.succeeded {
+                await appState.authManager.probeAll(
+                    graphService: appState.graphService,
+                    tdxService: appState.tdxService,
+                    snipeService: appState.snipeService,
+                    devOpsService: appState.devOpsService
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func cliSignInRow(_ id: AuthSystemId) -> some View {
+        if let outcome = cliSignInResult[id] {
+            detailRow(outcome.succeeded ? "az / gh" : "Sign-in error",
+                      outcome.message,
+                      outcome.succeeded ? .green : .red)
         }
     }
 

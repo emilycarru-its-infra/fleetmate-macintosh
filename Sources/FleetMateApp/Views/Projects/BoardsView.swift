@@ -191,7 +191,24 @@ struct BoardsView: View {
         VStack(alignment: .leading, spacing: 0) {
             contentArea
         }
+        .onAppCommand { command in
+            switch command {
+            case .refresh:
+                loadTasks(); loadGhProjectInfo(); loadBoards()
+            case .newItem:
+                // The toolbar's + is a menu of three item types; ⌘N takes the
+                // first one this project can actually create.
+                if canCreateWorkItem { showCreateWorkItem = true }
+                else if canCreateIssue { showCreateIssue = true }
+                else if canCreateProject { showCreateProject = true }
+            case .clearFilters:
+                clearAllFilters()
+            default:
+                break
+            }
+        }
         .searchable(text: $searchText, prompt: "Search tasks...")
+        .findFocusesSearchField()
         .toolbar { projectsToolbar }
         .task {
             // Only load when nothing has ever loaded. Previously this keyed off
@@ -377,15 +394,6 @@ struct BoardsView: View {
             }
             .disabled(isLoading || isLoadingGhInfo)
             .help("Refresh")
-            .keyboardShortcut("r", modifiers: .command)
-
-            // A bare "8" said nothing. Spelling out what it counts costs a few
-            // points of width and removes the guesswork.
-            Text("\(filteredTasks.count) \(filteredTasks.count == 1 ? "item" : "items")")
-                .appFont(.caption)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .help("Items matching the current filters")
         }
     }
 

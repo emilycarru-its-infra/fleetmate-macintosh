@@ -115,7 +115,11 @@ struct GroupsContentView: View {
                 .listStyle(.plain)
             }
         }
+        .onAppCommand { command in
+            if command == .refresh { loadDeviceGroups() }
+        }
         .searchable(text: $searchText, prompt: "Filter groups…")
+        .findFocusesSearchField()
         .toolbar {
             ToolbarItemGroup(placement: .automatic) {
                 if !groups.isEmpty {
@@ -128,7 +132,6 @@ struct GroupsContentView: View {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(isLoading)
-                .keyboardShortcut("r", modifiers: .command)
             }
         }
         .task {
@@ -208,7 +211,13 @@ struct UsersContentView: View {
         // Entra is queried on submit rather than per keystroke, so the field
         // keeps its Return-to-search behaviour now that it lives in the toolbar.
         .searchable(text: $searchText, prompt: "Search users…")
+        .findFocusesSearchField()
         .onSubmit(of: .search) { searchUser() }
+        .onAppCommand { command in
+            // Entra is queried on demand, so a refresh re-runs the current
+            // search rather than reloading a cache there isn't one of.
+            if command == .refresh { searchUser() }
+        }
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 if isLoading { ProgressView().controlSize(.small) }

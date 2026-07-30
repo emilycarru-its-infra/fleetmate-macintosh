@@ -460,6 +460,34 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     })();
     """
     
+    /// Accepts Entra's "Stay signed in?" prompt.
+    ///
+    /// This is what makes launch-time SSO silent. Declining (or ignoring) it
+    /// leaves `ESTSAUTH` as a session cookie, which WKWebView drops when the app
+    /// quits — so every launch started a fresh sign-in and ran into the passkey
+    /// page. Accepting swaps it for `ESTSAUTHPERSISTENT`, which the persistent
+    /// data store keeps, and the next launch completes with no interaction.
+    ///
+    /// Entra reuses `#idSIButton9` for Next, Sign in *and* Yes, so this only
+    /// clicks once it is sure the page is KMSI and not the username form.
+    static let kmsiScript = """
+    (function() {
+        if (window.__fleetmateKmsi) { return 'already-handled'; }
+        var checkbox = document.querySelector('#KmsiCheckboxField');
+        var bodyText = document.body ? document.body.innerText : '';
+        var isKmsi = window.location.href.indexOf('kmsi') !== -1
+                     || checkbox !== null
+                     || bodyText.indexOf('Stay signed in') !== -1;
+        if (!isKmsi) { return 'not-kmsi'; }
+        var yes = document.querySelector('#idSIButton9');
+        if (!yes) { return 'no-button'; }
+        if (checkbox && !checkbox.checked) { checkbox.click(); }
+        window.__fleetmateKmsi = true;
+        yes.click();
+        return 'accepted';
+    })();
+    """
+
     init(config: FleetMateConfig) {
         self.config = config
         self.ssoService = TdxSsoService(config: config)
@@ -1778,6 +1806,18 @@ extension TdxSsoLoginViewModel: WKNavigationDelegate {
             autoFillEntraLogin()
         }
         
+        // Accept "Stay signed in?" wherever it appears in the Entra chain, so
+        // the session survives quitting the app and the next launch is silent.
+        if let host = url.host, host.contains("login.microsoftonline.com") || host.contains("login.microsoft.com") {
+            Task {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                let result = try? await webView.evaluateJavaScript(Self.kmsiScript)
+                if let outcome = result as? String, outcome == "accepted" {
+                    ssoLog("[KMSI] Accepted \"Stay signed in\" — session will persist across launches")
+                }
+            }
+        }
+
         // On FIDO/passkey pages or any Entra page after username submission:
         // inject fallback to handle error pages and redirect to alt auth.
         // The script uses window.__fleetmateFidoFallback to prevent duplicate runs.

@@ -568,6 +568,18 @@ class AppState: ObservableObject {
     /// SSO session is already present in the system.
     /// If it fails, does NOT show any UI. The interactive Phase 2 sheet is
     /// triggered later, only when the user navigates to a tab that needs auth.
+    /// Put the device's Entra PRT cookie into shared storage so the silent SAML
+    /// chain authenticates without a prompt. No-op when the broker declines.
+    func primeEntraPrtCookies() async {
+        guard let entraUrl = URL(string: "https://login.microsoftonline.com/\(config.effectiveAzureTenantId)/saml2") else { return }
+        let cookies = await EntraPrtCookieProvider().ssoCookies(for: entraUrl)
+        guard !cookies.isEmpty else { return }
+        for cookie in cookies {
+            HTTPCookieStorage.shared.setCookie(cookie)
+        }
+        dbg.info("[PRT] Installed \(cookies.count) PRT cookie(s) for the silent SAML chain", category: "tdx-sso")
+    }
+
     func attemptSilentTdxSso() {
         guard ssoViewModel == nil else { return }
         dbg.info("[SSO Phase 1] Starting silent TDX SSO attempt (authMethod=\(config.tdxAuthMethod), ssoEnabled=\(config.tdxSsoEnabled))", category: "tdx-sso")
@@ -580,6 +592,13 @@ class AppState: ObservableObject {
             // one, and arriving with it late means the attempt has already
             // timed out onto the service account.
             await self.primeTdxSsoUpn()
+
+            // Phase 0: ask the Entra broker for the device's PRT cookie and put
+            // it in shared cookie storage, which the silent URLSession chain
+            // below already reads from. Without it Entra answers that chain with
+            // its interactive sign-in page, because the SSO plug-in acts only on
+            // requests an app actually makes — it does not intercept traffic.
+            await self.primeEntraPrtCookies()
 
             let viewModel = TdxSsoLoginViewModel(config: self.config)
             self.ssoViewModel = viewModel

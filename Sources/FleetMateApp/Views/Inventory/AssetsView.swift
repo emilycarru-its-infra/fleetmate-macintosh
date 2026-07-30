@@ -552,18 +552,18 @@ struct AssetDetailSidebar: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: categorySymbol)
-                        .appFont(fixed: 22)
+                        .appFont(fixed: 27)
                         .foregroundStyle(Color.accentColor)
-                        .frame(width: 44, height: 44)
-                        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                        .frame(width: 56, height: 56)
+                        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
 
                     VStack(alignment: .leading, spacing: 3) {
                         Text(asset.displayName ?? "Unnamed Asset")
-                            .appFont(.title3, weight: .semibold)
+                            .appFont(.title2, weight: .semibold)
                             .lineLimit(2)
                         if let model = asset.model?.name {
                             Text(model)
-                                .appFont(.subheadline)
+                                .appFont(.body)
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -619,17 +619,19 @@ struct AssetDetailSidebar: View {
                                 let assignedToLocation = asset.assignedTo?.type == "location"
                                 if let who = asset.assignedTo?.name, !assignedToLocation {
                                     Label(who, systemImage: "person.fill")
-                                        .appFont(.caption)
+                                        .appFont(.callout)
                                         .foregroundColor(.secondary)
                                 }
                                 if let place = asset.location?.name ?? (assignedToLocation ? asset.assignedTo?.name : nil) {
                                     Label(place, systemImage: "mappin.and.ellipse")
-                                        .appFont(.caption)
+                                        .appFont(.callout)
                                         .foregroundColor(.secondary)
                                 }
                                 Spacer(minLength: 0)
                             }
                         }
+
+                        heroLifecycle
                     }
 
                     Spacer(minLength: 0)
@@ -667,7 +669,6 @@ struct AssetDetailSidebar: View {
                     }
 
                     groupCard("procurement")
-                    lifecycleCard
 
                     // Remaining taxonomy groups in their render order.
                     ForEach(["management", "networking", "identity"], id: \.self) { slug in
@@ -805,16 +806,16 @@ struct AssetDetailSidebar: View {
 
     private func identityChip(_ value: String, help: String) -> some View {
         Button(action: { copyToClipboard(value) }) {
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 Text(value)
-                    .appFont(.caption, design: .monospaced)
+                    .appFont(.callout, design: .monospaced)
                 Image(systemName: "doc.on.doc")
-                    .appFont(fixed: 9)
+                    .appFont(fixed: 11)
                     .foregroundColor(.secondary)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
         .help(help)
@@ -1000,7 +1001,7 @@ struct AssetDetailSidebar: View {
                 if case .success(let img) = phase {
                     img.resizable()
                         .scaledToFit()
-                        .frame(maxHeight: 96)
+                        .frame(maxHeight: 112)
                 }
             }
         }
@@ -1035,15 +1036,15 @@ struct AssetDetailSidebar: View {
         return "\(formatted) — \(span.joined(separator: " ")) \(suffix)"
     }
 
-    /// EOL and warranty progress, like the web's Lifecycle card: how far
-    /// through its life the machine is, at a glance.
+    /// EOL and warranty progress as a compact hero widget — how far through
+    /// its life the machine is belongs next to its name, not below the fold.
     @ViewBuilder
-    private var lifecycleCard: some View {
+    private var heroLifecycle: some View {
         let purchase = asset.purchaseDate?.parsed
         let eolBar = lifecycleFraction(from: purchase, to: asset.assetEolDate?.parsed)
         let warrantyBar = lifecycleFraction(from: purchase, to: asset.warrantyExpires?.parsed)
         if eolBar != nil || warrantyBar != nil {
-            sectionCard("Lifecycle", systemImage: "hourglass") {
+            VStack(alignment: .leading, spacing: 6) {
                 if let fraction = eolBar, let eolDate = asset.assetEolDate?.parsed {
                     LifecycleBar(
                         title: "Device EOL",
@@ -1053,12 +1054,14 @@ struct AssetDetailSidebar: View {
                 }
                 if let fraction = warrantyBar {
                     LifecycleBar(
-                        title: "Warranty Expires",
+                        title: "Warranty",
                         trailing: "\(asset.warrantyExpires?.formatted ?? "") · \(Int(fraction * 100))%",
                         fraction: fraction
                     )
                 }
             }
+            .frame(maxWidth: 340)
+            .padding(.top, 4)
         }
     }
 
@@ -1088,7 +1091,7 @@ struct AssetDetailSidebar: View {
             }
             content()
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(12)
         .background(Color.secondary.opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius: 10))

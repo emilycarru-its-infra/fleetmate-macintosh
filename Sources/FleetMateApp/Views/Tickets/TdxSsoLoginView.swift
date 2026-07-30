@@ -375,7 +375,43 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         if (window.__fleetmateFidoFallback) return;
         window.__fleetmateFidoFallback = true;
         var acted = false;
+        // console.log in an off-screen WKWebView goes nowhere; every decision
+        // this script takes must surface in the app log or it can't be debugged.
+        function fmLog(msg) {
+            try { window.webkit.messageHandlers.samlInterceptor.postMessage({debug: msg}); } catch (e) {}
+        }
+        function fmInventory() {
+            if (window.__fmTilesLogged) return;
+            var tiles = document.querySelectorAll('[data-value]');
+            if (tiles.length === 0) return;
+            window.__fmTilesLogged = true;
+            var inv = [];
+            for (var t = 0; t < tiles.length; t++) {
+                var txt = (tiles[t].textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 60);
+                inv.push((tiles[t].getAttribute('data-value') || '?') + ' ("' + txt + '")');
+            }
+            fmLog('[FIDO] Methods Entra offers: ' + inv.join(' | '));
+        }
+        // Report what this page actually is, once — a fallback that finds
+        // nothing to click must say what it was looking at, or the log shows
+        // an injection followed by 80 seconds of unexplained silence.
+        function fmDescribePage() {
+            if (window.__fmPageLogged) return;
+            window.__fmPageLogged = true;
+            var body = (document.body && document.body.innerText || '').replace(/\\s+/g, ' ').slice(0, 300);
+            fmLog('[FIDO] Page: ' + location.href);
+            fmLog('[FIDO] Body: ' + body);
+            var elems = document.querySelectorAll('a, button, [role="link"], [role="button"], input[type="submit"], [data-value]');
+            var seen = [];
+            for (var i = 0; i < elems.length && seen.length < 20; i++) {
+                var txt = (elems[i].textContent || elems[i].value || '').trim().replace(/\\s+/g, ' ').slice(0, 50);
+                if (txt) seen.push(txt);
+            }
+            fmLog('[FIDO] Clickables (' + elems.length + '): ' + seen.join(' | '));
+        }
         function tryFallback() {
+            fmDescribePage();
+            fmInventory();
             if (acted) return true;
             var elems = document.querySelectorAll('a, button, [role="link"], [role="button"], input[type="submit"], span[tabindex], div[tabindex], li[tabindex]');
             // Priority 1: Click "Sign in another way" — fired on ANY Entra page, not just error/FIDO pages.
@@ -390,7 +426,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                     text.indexOf('try a different way') !== -1 ||
                     text.indexOf('choose another') !== -1 ||
                     text.indexOf("i can't use") !== -1) {
-                    console.log('[FleetMate] FIDO fallback - clicking: ' + text);
+                    fmLog('[FIDO] Clicking: ' + text);
                     elems[i].click();
                     acted = true;
                     return true;
@@ -417,7 +453,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                     for (var t = 0; t < tiles.length; t++) {
                         var val = tiles[t].getAttribute('data-value') || '';
                         if (val === preferred[p]) {
-                            console.log('[FleetMate] Selecting alt method: ' + val);
+                            fmLog('[FIDO] Selecting alt method: ' + val);
                             tiles[t].click();
                             acted = true;
                             setTimeout(function() {
@@ -441,7 +477,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                 for (var i = 0; i < elems.length; i++) {
                     var text = (elems[i].textContent || elems[i].value || '').trim().toLowerCase();
                     if (text === 'back' || text === 'go back') {
-                        console.log('[FleetMate] Error page - clicking: ' + text);
+                        fmLog('[FIDO] Error page - clicking: ' + text);
                         elems[i].click();
                         acted = true;
                         return true;
@@ -453,9 +489,9 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         if (document.body) {
             var observer = new MutationObserver(function() { tryFallback(); });
             observer.observe(document.body, { childList: true, subtree: true });
-            setTimeout(function() { observer.disconnect(); }, 45000);
+            setTimeout(function() { observer.disconnect(); }, 90000);
         }
-        var delays = [200, 500, 1000, 1500, 2000, 3000, 4000, 6000, 8000, 10000, 13000, 16000, 20000];
+        var delays = [200, 500, 1000, 1500, 2000, 3000, 4000, 6000, 8000, 10000, 13000, 16000, 20000, 30000, 45000, 60000];
         delays.forEach(function(d) { setTimeout(tryFallback, d); });
     })();
     """
@@ -646,8 +682,36 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         return """
         (function() {
             var filled = false;
+            function fmLog(msg) {
+                try { window.webkit.messageHandlers.samlInterceptor.postMessage({debug: msg}); } catch (e) {}
+            }
             function tryAutoLogin() {
                 if (filled) return;
+
+                // Account picker first. When the WebView's data store already
+                // holds Entra sessions, there is no username form — Entra asks
+                // which account to continue with ("Pick an account"), and with
+                // two signed-in accounts (aws- and the real one) it can never
+                // auto-choose. This page was misread as a sign-in wall for
+                // months; the session was there all along, one click deep.
+                // The address must match EXACTLY, not as a substring —
+                // "aws-adoe@example.edu" contains "adoe@example.edu"
+                // and sorts first, so a contains() check signs into TDX as the
+                // AWS identity and every API call comes back 403.
+                var wanted = '\(escapedUpn)'.toLowerCase();
+                var tiles = document.querySelectorAll('[role="button"], [role="link"], .table, div[data-test-id], small');
+                for (var i = 0; i < tiles.length; i++) {
+                    var txt = (tiles[i].textContent || '').toLowerCase();
+                    var emails = txt.match(/[a-z0-9._%+-]+@[a-z0-9.-]+/g) || [];
+                    if (emails.indexOf(wanted) !== -1) {
+                        var target = tiles[i].closest('[role="button"], [role="link"], .table') || tiles[i];
+                        filled = true;
+                        fmLog('[PICKER] Choosing signed-in account: ' + wanted + ' (tile: ' + emails.join(',') + ')');
+                        target.click();
+                        return;
+                    }
+                }
+
                 // Find the username input field
                 var input = document.querySelector('input[name="loginfmt"]');
                 if (!input) input = document.querySelector('input[type="email"]');
@@ -824,6 +888,13 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     
     /// Called when JavaScript intercepts a SAML form submission
     func handleSamlInterception(_ message: WKScriptMessage) {
+        // Debug lines from the injected scripts — the only way anything they
+        // observe or click inside the off-screen page reaches the app log.
+        if let body = message.body as? [String: Any], let debug = body["debug"] as? String {
+            dbg.info(debug, category: "tdx-sso")
+            navigationLog.append(debug)
+            return
+        }
         guard let body = message.body as? [String: Any],
               let actionUrlString = body["action"] as? String,
               let actionUrl = URL(string: actionUrlString),

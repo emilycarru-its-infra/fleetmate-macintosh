@@ -659,8 +659,12 @@ class AppState: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
 
-            // Wait up to 25 seconds for headless SSO to complete.
-            let deadline = Date().addingTimeInterval(25)
+            // Wait up to 95 seconds for headless SSO to complete. 25s was
+            // calibrated for a chain that either completes or doesn't; it
+            // guillotined any method that involves the person's phone — an
+            // Authenticator push needs the fallback script to request it
+            // (~10-20s in) plus however long a human takes to tap approve.
+            let deadline = Date().addingTimeInterval(95)
             while Date() < deadline {
                 if let result = viewModel.authResult {
                     self.ssoViewModel = nil
@@ -683,18 +687,10 @@ class AppState: ObservableObject {
 
             self.ssoViewModel = nil
             hiddenWindow.close()
-            // Deliberately does NOT touch the TDX auth badge. TeamDynamix's API
-            // supports no Entra/OAuth login at all — `/api/auth/loginsso` is
-            // internal to TDX's own client-side JS and mints no portable token —
-            // so browser SSO is not, and cannot become, TDX's auth path. That is
-            // the service-account JWT (BEID + WebServicesKey), which probeAll
-            // verifies independently.
-            //
-            // Reporting a failure here was a race the badge lost: this fires at
-            // ~28s while the probe, queued behind the Graph elevation warm-up,
-            // lands at ~68s. Whichever finished last won, which is how the panel
-            // came to show "Failed: Silent SSO failed" directly above a green
-            // "signed in as Service Account".
+            // Deliberately does NOT touch the TDX auth badge here: probeAll
+            // verifies TDX independently, and reporting a failure from this
+            // racing task is how the panel once showed "Failed: Silent SSO
+            // failed" directly above a green "signed in" row.
             // Not "unaffected" any more: with no service account configured,
             // this is the only way in, so a failure here means no TDX access
             // until someone signs in.

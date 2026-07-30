@@ -394,14 +394,6 @@ struct BoardsView: View {
             }
             .disabled(isLoading || isLoadingGhInfo)
             .help("Refresh")
-
-            // A bare "8" said nothing. Spelling out what it counts costs a few
-            // points of width and removes the guesswork.
-            Text("\(filteredTasks.count) \(filteredTasks.count == 1 ? "item" : "items")")
-                .appFont(.caption)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .help("Items matching the current filters")
         }
     }
 

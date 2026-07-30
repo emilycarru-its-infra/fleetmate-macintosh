@@ -96,6 +96,12 @@ final class PullRequestQueueModel: ObservableObject {
 
         merged.merge(await gitHubTask.value)
 
+        // Not being signed into gh is a normal state, not a fault — the
+        // Authentication panel owns reporting it. Real API failures stay.
+        merged.errors.removeAll {
+            $0.source == .gitHub && $0.message.contains("No GitHub authentication token")
+        }
+
         guard !Task.isCancelled else { return }
         queue = merged
         lastLoaded = Date()

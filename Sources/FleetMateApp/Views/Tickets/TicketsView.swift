@@ -5,6 +5,7 @@ enum TicketSortField: String, CaseIterable {
     case id = "ID"
     case modified = "Modified"
     case created = "Created"
+    case age = "Age"
     case title = "Title"
     case status = "Status"
     case priority = "Priority"
@@ -140,9 +141,13 @@ struct TicketsView: View {
 
     // Column widths
     @State private var columnWidths: [TicketSortField: CGFloat] = [
-        .id: 100, .title: 250, .status: 110, .priority: 90,
-        .requestor: 130, .responsible: 130, .modified: 120, .created: 120,
+        .id: 130, .title: 500, .status: 110, .priority: 90,
+        .requestor: 130, .responsible: 130, .age: 70, .modified: 120, .created: 120,
     ]
+
+    // Parent/child outline — collapsed is the exception, so an empty set means
+    // every parent starts expanded.
+    @State private var collapsedTicketIds: Set<Int> = []
 
     // Comment state
     @State private var newComment = ""
@@ -189,6 +194,7 @@ struct TicketsView: View {
     @State private var notifyNewResponsible = true
     // Actions menu
     @State private var showActionsMenu = false
+    @State private var showCreateTicket = false
     @State private var showSetParentSheet = false
     @State private var parentTicketIdText = ""
     @State private var isSettingParent = false
@@ -200,6 +206,7 @@ struct TicketsView: View {
     @State private var isSavingDescription = false
 
     @FocusState private var descriptionFocused: Bool
+    @FocusState private var commentFocused: Bool
 
     var tickets: [TdxTicket] { appState.cachedTickets }
 
@@ -404,9 +411,58 @@ struct TicketsView: View {
                 return compareStrings(a.priorityName, b.priorityName)
             case .requestor:
                 return compareStrings(a.requestorName, b.requestorName)
+            case .age:
+                // Oldest first when descending — a queue is read by what has
+                // been waiting longest, not by what arrived last.
+                let aAge = a.ageInDays ?? -1
+                let bAge = b.ageInDays ?? -1
+                return sortAscending ? aAge < bAge : aAge > bAge
             case .responsible:
                 return compareStrings(a.responsibleFullName, b.responsibleFullName)
             }
+        }
+    }
+
+    /// Tickets that have sat for weeks should read as such at a glance.
+    private func ageColor(_ days: Int?) -> Color {
+        guard let days else { return .secondary }
+        if days >= 30 { return .red }
+        if days >= 14 { return .orange }
+        return .secondary
+    }
+
+    // MARK: - Parent/Child Outline
+
+    /// The filtered tickets arranged as parents with their children beneath.
+    var ticketTree: [TicketNode] {
+        TicketHierarchy.build(from: filteredTickets)
+    }
+
+    /// The rows the table draws — the tree flattened, minus collapsed subtrees.
+    var outlineRows: [TicketOutlineRow] {
+        TicketHierarchy.flatten(ticketTree, collapsed: collapsedTicketIds)
+    }
+
+    private var parentIds: Set<Int> {
+        TicketHierarchy.foldableIds(in: filteredTickets)
+    }
+
+    private func toggleExpansion(_ ticketId: Int) {
+        if collapsedTicketIds.contains(ticketId) {
+            collapsedTicketIds.remove(ticketId)
+        } else {
+            collapsedTicketIds.insert(ticketId)
+        }
+    }
+
+    private func expandAll() { collapsedTicketIds = [] }
+    private func collapseAll() { collapsedTicketIds = parentIds }
+
+    private func setExpanded(_ expanded: Bool, for ticketId: Int) {
+        if expanded {
+            collapsedTicketIds.remove(ticketId)
+        } else {
+            collapsedTicketIds.insert(ticketId)
         }
     }
 
@@ -537,6 +593,7 @@ struct TicketsView: View {
             if !appState.isTicketsCacheValid {
                 loadTickets()
             }
+            await appState.resolveTdxMe()
             await loadForms()
             if let id = appState.navigateToTicketId {
                 selectedTicketIds = [id]
@@ -557,7 +614,22 @@ struct TicketsView: View {
             applyMeMode()
             if !tickets.isEmpty { filters.buildFromTickets(tickets) }
         }
+        .onAppCommand { command in
+            switch command {
+            case .refresh:       loadTickets()
+            case .newItem:       showCreateTicket = true
+            case .toggleFilters: showFilters.toggle()
+            case .clearFilters:
+                filters.clearAll()
+                showClosed = false
+                resetToCurrentTerm()
+            case .showListView:  viewMode = .table
+            case .showBoardView: viewMode = .board
+            case .find:          break  // handled by findFocusesSearchField()
+            }
+        }
         .searchable(text: $searchText, prompt: "Search tickets...")
+        .findFocusesSearchField()
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 ViewModePill(selection: $viewMode)
@@ -569,9 +641,18 @@ struct TicketsView: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .frame(width: 130)
+                    // No fixed width: a capsule wider than the menu's own
+                    // bounds leaves a hover highlight that doesn't reach the
+                    // capsule's edges.
+                    .fixedSize()
                     .help("Group board columns by")
                 }
+
+                // No expand/collapse-all button here on purpose. Finder, Xcode,
+                // and Mail keep outline folding on the outline itself:
+                // option-click a triangle, arrow keys, and a context menu. A
+                // toolbar button for it is chrome those apps deliberately
+                // don't spend. See `expandAll` / `collapseAll` below.
 
                 if filters.hasActiveFilters || showClosed || !isDefaultDatePreset {
                     Button(action: {
@@ -591,6 +672,23 @@ struct TicketsView: View {
                 }
                 .popover(isPresented: $showFilters, arrowEdge: .bottom) {
                     FilterPanelView(filters: filters)
+                }
+
+                Button(action: { showCreateTicket = true }) {
+                    Label("Create Ticket", systemImage: "plus")
+                }
+                .help("Create a ticket")
+                .popover(isPresented: $showCreateTicket, arrowEdge: .bottom) {
+                    CreateTicketView(
+                        defaultResponsible: appState.tdxMe,
+                        onCreated: { ticket in
+                            showCreateTicket = false
+                            loadTickets()
+                            if let id = ticket.id { selectedTicketIds = [id] }
+                        },
+                        onCancel: { showCreateTicket = false }
+                    )
+                    .environmentObject(appState)
                 }
 
                 Button(action: loadTickets) {
@@ -717,7 +815,9 @@ struct TicketsView: View {
             },
             onSelectTicket: { ticket in
                 selectedTicketIds = [ticket.id]
-            }
+            },
+            selectedTicketId: selectedTicket?.id,
+            collapsedTicketIds: $collapsedTicketIds
         )
     }
 
@@ -726,7 +826,7 @@ struct TicketsView: View {
         [
             ("ID", .id), ("Title", .title), ("Status", .status), ("Priority", .priority),
             ("Requestor", .requestor), ("Responsible", .responsible),
-            ("Modified", .modified), ("Created", .created),
+            ("Age", .age), ("Modified", .modified), ("Created", .created),
         ]
     }
 
@@ -762,16 +862,34 @@ struct TicketsView: View {
                     // Ticket rows
                     ScrollView(.vertical, showsIndicators: true) {
                         LazyVStack(spacing: 0) {
-                            ForEach(Array(filteredTickets.enumerated()), id: \.element.id) { idx, ticket in
+                            ForEach(Array(outlineRows.enumerated()), id: \.element.id) { idx, row in
+                                let ticket = row.ticket
                                 HStack(spacing: 0) {
-                                    Text(verbatim: "#\(ticket.id ?? 0)")
-                                        .appFont(.body, design: .monospaced)
-                                        .frame(width: colW(.id) - 12, alignment: .leading)
-                                        .padding(.leading, 10).padding(.trailing, 2)
-                                    Text(ticket.title ?? "-")
-                                        .frame(width: colW(.title) - 12, alignment: .leading)
-                                        .padding(.leading, 10).padding(.trailing, 2)
-                                        .lineLimit(1)
+                                    HStack(spacing: 2) {
+                                        Spacer().frame(width: CGFloat(row.depth) * 14)
+                                        disclosureControl(for: row)
+                                        Text(verbatim: "#\(ticket.id ?? 0)")
+                                            .appFont(.body, design: .monospaced)
+                                        Spacer(minLength: 0)
+                                    }
+                                    .frame(width: colW(.id) - 12, alignment: .leading)
+                                    .padding(.leading, 10).padding(.trailing, 2)
+                                    HStack(spacing: 6) {
+                                        Text(ticket.title ?? "-")
+                                            .lineLimit(1)
+                                        if row.hasChildren {
+                                            Text(verbatim: "\(row.childCount)")
+                                                .appFont(.caption2)
+                                                .padding(.horizontal, 5)
+                                                .padding(.vertical, 1)
+                                                .background(Color.secondary.opacity(0.18))
+                                                .foregroundColor(.secondary)
+                                                .clipShape(Capsule())
+                                        }
+                                        Spacer(minLength: 0)
+                                    }
+                                    .frame(width: colW(.title) - 12, alignment: .leading)
+                                    .padding(.leading, 10).padding(.trailing, 2)
                                     TicketStatusBadge(statusName: ticket.statusName)
                                         .frame(width: colW(.status) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
@@ -786,6 +904,11 @@ struct TicketsView: View {
                                         .frame(width: colW(.responsible) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
                                         .lineLimit(1)
+                                    Text(ticket.ageLabel)
+                                        .frame(width: colW(.age) - 12, alignment: .leading)
+                                        .padding(.leading, 10).padding(.trailing, 2)
+                                        .appFont(.body, design: .monospaced)
+                                        .foregroundColor(ageColor(ticket.ageInDays))
                                     Text(formatDateString(ticket.modifiedDate))
                                         .frame(width: colW(.modified) - 12, alignment: .leading)
                                         .padding(.leading, 10).padding(.trailing, 2)
@@ -806,6 +929,7 @@ struct TicketsView: View {
                                         : (idx % 2 == 1 ? Color.secondary.opacity(0.04) : Color.clear)
                                 )
                                 .contentShape(Rectangle())
+                                .contextMenu { outlineContextMenu }
                                 .onTapGesture {
                                     if let id = ticket.id {
                                         selectedTicketIds = [id]
@@ -825,11 +949,68 @@ struct TicketsView: View {
             .focusEffectDisabled()
             .onKeyPress(.upArrow) { moveTicketSelection(by: -1); return .handled }
             .onKeyPress(.downArrow) { moveTicketSelection(by: 1); return .handled }
+            // Left/right fold the selected row, as in any macOS outline.
+            .onKeyPress(.rightArrow) { foldSelection(expanded: true); return .handled }
+            .onKeyPress(.leftArrow) { foldSelection(expanded: false); return .handled }
+        }
+    }
+
+    /// The fold/unfold triangle in front of a parent's ticket number. Children
+    /// and childless tickets get an equally wide blank so the numbers line up.
+    ///
+    /// Option-clicking applies the new state to every parent, the way Finder
+    /// and Xcode do — which is why there is no toolbar button for it.
+    @ViewBuilder
+    private func disclosureControl(for row: TicketOutlineRow) -> some View {
+        if row.hasChildren {
+            Button(action: {
+                if NSEvent.modifierFlags.contains(.option) {
+                    if row.isExpanded { collapseAll() } else { expandAll() }
+                } else {
+                    toggleExpansion(row.id)
+                }
+            }) {
+                Image(systemName: "chevron.right")
+                    .appFont(.caption2)
+                    .foregroundColor(.secondary)
+                    .rotationEffect(.degrees(row.isExpanded ? 90 : 0))
+                    .frame(width: 12, height: 12)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .animation(.easeInOut(duration: 0.15), value: row.isExpanded)
+            .help(row.isExpanded
+                  ? "Hide \(row.childCount) child ticket\(row.childCount == 1 ? "" : "s") — ⌥ click for all"
+                  : "Show \(row.childCount) child ticket\(row.childCount == 1 ? "" : "s") — ⌥ click for all")
+        } else {
+            Spacer().frame(width: 12)
+        }
+    }
+
+    /// Right-click folding, for people who don't know about ⌥ click.
+    @ViewBuilder
+    private var outlineContextMenu: some View {
+        Button("Expand All", action: expandAll)
+            .disabled(collapsedTicketIds.isEmpty)
+        Button("Collapse All", action: collapseAll)
+            .disabled(parentIds.isSubset(of: collapsedTicketIds))
+    }
+
+    /// Fold or unfold the selected row. On a row that can't fold, left arrow
+    /// jumps to its parent instead — again matching Finder.
+    private func foldSelection(expanded: Bool) {
+        guard let selectedId = selectedTicketIds.first ?? nil else { return }
+        guard let row = outlineRows.first(where: { $0.id == selectedId }) else { return }
+
+        if row.hasChildren {
+            setExpanded(expanded, for: selectedId)
+        } else if !expanded, let parentId = row.ticket.parentTicketId {
+            selectedTicketIds = [parentId]
         }
     }
 
     private func moveTicketSelection(by offset: Int) {
-        let list = filteredTickets
+        let list = outlineRows.map(\.ticket)
         guard !list.isEmpty else { return }
         guard let currentId = selectedTicketIds.first ?? nil,
               let currentIndex = list.firstIndex(where: { $0.id == currentId }) else {
@@ -885,18 +1066,41 @@ struct TicketsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let ticket = selectedTicket {
-            ScrollView {
+            // Only the conversation scrolls. Which ticket this is, who owns it,
+            // and the box you type into are what you keep referring to while
+            // reading, and they used to slide off the top as soon as you did.
+            VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 0) {
                     detailHeader(ticket: ticket)
                     Divider()
                     Spacer().frame(height: 10)
                     detailFields(ticket: ticket)
+                    if !ticket.attachmentList.isEmpty {
+                        Divider().padding(.vertical, 8)
+                        TicketAttachmentsView(attachments: ticket.attachmentList)
+                    }
                     Divider().padding(.vertical, 8)
                     addCommentSection(ticket: ticket)
                     Divider().padding(.vertical, 8)
-                    activitySection
+                    activityHeader
+                    // Close the pinned block with the same divider the sections
+                    // above use. Without it the feed's first card slides up and
+                    // gets cut off flush against the header — a raw edge that
+                    // read as broken rather than as a scroll boundary.
+                    Divider().padding(.top, 10)
                 }
-                .padding()
+                .padding([.horizontal, .top])
+
+                ScrollView {
+                    activityFeed
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                        .padding(.top, 10)
+                        .padding(.bottom)
+                }
+                // The pinned block above grows with the ticket; without a floor
+                // a long description would squeeze the feed to nothing.
+                .frame(minHeight: 180)
             }
         } else {
             VStack {
@@ -1155,16 +1359,20 @@ struct TicketsView: View {
                     fieldRow(label: "Responsible") {
                         HStack(spacing: 4) {
                             Menu {
-                                if let myName = appState.tdxAuthenticatedUserName,
-                                   let myUid = appState.tdxService.authenticatedUserId {
+                                // Resolved from the signed-in Azure identity, not
+                                // from the TDX session — the Web API always
+                                // authenticates as the service account, so
+                                // gating this on TDX SSO hid it permanently.
+                                if let me = appState.tdxMe, let myUid = me.uid {
                                     Button(action: {
                                         editResponsibleUid = myUid
-                                        editResponsibleName = myName
+                                        editResponsibleName = me.fullName ?? ""
                                         isReassigning = false
                                         trackEdits(ticket: ticket)
                                     }) {
                                         Label("Assign to me", systemImage: "person.fill")
                                     }
+                                    .disabled(editResponsibleUid == myUid)
                                 }
                                 Button(action: {
                                     isReassigning = true
@@ -1499,13 +1707,19 @@ struct TicketsView: View {
                         .background(Color.secondary.opacity(0.06))
                         .cornerRadius(6)
                 } else {
-                    Text(text)
-                        .appFont(.body)
-                        .textSelection(.enabled)
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.secondary.opacity(0.06))
-                        .cornerRadius(6)
+                    // Capped and self-scrolling: the description sits in the
+                    // pinned block now, so an essay-length one would otherwise
+                    // push the activity feed off the bottom of the pane.
+                    ScrollView {
+                        Text(text)
+                            .appFont(.body)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 220)
+                    .padding(8)
+                    .background(Color.secondary.opacity(0.06))
+                    .cornerRadius(6)
                 }
             }
         }
@@ -1520,6 +1734,7 @@ struct TicketsView: View {
             TextEditor(text: $newComment)
                 .appFont(.body)
                 .frame(height: 80)
+                .focused($commentFocused)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(Color.gray.opacity(0.3), lineWidth: 1)
@@ -1534,7 +1749,6 @@ struct TicketsView: View {
                     Task {
                         isAddingComment = true
                         await addComment(ticket: ticket)
-                        newComment = ""
                         isAddingComment = false
                     }
                 }
@@ -1568,22 +1782,27 @@ struct TicketsView: View {
 
     // MARK: - Activity Section
 
-    private var activitySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Activity")
-                    .appFont(.headline)
-                Spacer()
-                Picker("", selection: $feedFilter) {
-                    Text("Comments").tag(FeedFilterType.comments)
-                    Text("Edits").tag(FeedFilterType.edits)
-                    Text("Status").tag(FeedFilterType.statusChanges)
-                    Text("All").tag(FeedFilterType.all)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 320)
+    /// Pinned above the feed: the title and the filter that decides what the
+    /// feed below is showing. Scrolling either of those away leaves you reading
+    /// a list with no label on it.
+    private var activityHeader: some View {
+        HStack {
+            Text("Activity")
+                .appFont(.headline)
+            Spacer()
+            Picker("", selection: $feedFilter) {
+                Text("Comments").tag(FeedFilterType.comments)
+                Text("Edits").tag(FeedFilterType.edits)
+                Text("Status").tag(FeedFilterType.statusChanges)
+                Text("All").tag(FeedFilterType.all)
             }
+            .pickerStyle(.segmented)
+            .frame(width: 320)
+        }
+    }
 
+    private var activityFeed: some View {
+        VStack(alignment: .leading, spacing: 8) {
             if isLoadingFeed {
                 ProgressView("Loading activity...")
                     .padding()
@@ -1592,8 +1811,13 @@ struct TicketsView: View {
                     .foregroundColor(.secondary)
                     .padding(.vertical, 8)
             } else {
-                ForEach(filteredFeed, id: \.id) { entry in
-                    FeedEntryRow(entry: entry)
+                // Threads need more air between them than rows within a thread
+                // have, or one thread's replies read as belonging to the next
+                // comment down. Each row already carries its own trailing gap.
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(filteredFeed, id: \.id) { entry in
+                        FeedEntryRow(entry: entry, onQuote: quoteInComment)
+                    }
                 }
             }
         }
@@ -1980,27 +2204,29 @@ struct TicketsView: View {
                 isPrivate: isCommentPrivate,
                 notify: notifyIds.isEmpty ? nil : notifyIds
             )
+            newComment = ""
             loadTicketFeed(ticketId: ticket.id ?? 0)
         } catch {
-            print("Failed to add comment: \(error)")
+            saveErrorMessage = "Comment failed: \(error.localizedDescription)"
         }
     }
 
-    /// Reply to a specific feed entry (threaded comment)
-    private func replyToFeedEntry(feedEntryId: Int, replyText: String) {
-        guard let ticketId = selectedTicket?.id else { return }
-        Task {
-            do {
-                _ = try await appState.tdxService.replyToFeedEntry(
-                    ticketId: ticketId,
-                    feedEntryId: feedEntryId,
-                    comment: replyText
-                )
-                loadTicketFeed(ticketId: ticketId)
-            } catch {
-                print("Failed to reply to feed entry: \(error)")
-            }
-        }
+    /// Seed the comment box with a quote of an existing entry.
+    ///
+    /// This is what "replying" amounts to here: TDX renders threads but exposes
+    /// no API to post into one, so the response goes back as a new top-level
+    /// comment that carries the context with it.
+    private func quoteInComment(_ entry: TdxFeedEntry) {
+        let author = entry.createdFullName ?? "Unknown"
+        let quoted = Self.decodeHtml(entry.body ?? "")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { "> \($0)" }
+            .joined(separator: "\n")
+
+        let block = "> \(author) wrote:\n\(quoted)\n\n"
+        newComment = block + newComment
+        isCommentPrivate = entry.isPrivate == true
+        commentFocused = true
     }
 
     // MARK: - Board Drag-and-Drop
@@ -2057,7 +2283,9 @@ struct TicketsView: View {
             }
         }
 
-        // Default responsible filter to self (SSO only, once)
+        // Default responsible filter to self (SSO only, once). Deliberately not
+        // keyed off `tdxMe`: that resolves for everyone, and switching this on
+        // would silently narrow the queue from the whole group to one person.
         guard !meModeApplied,
               appState.tdxSsoAuthenticated,
               let userName = appState.tdxAuthenticatedUserName,
@@ -2151,33 +2379,188 @@ struct DetailRow: View {
     }
 }
 
+// MARK: - Thread Rail
+
+/// What the rail below a comment's avatar has to reach.
+enum ThreadConnectorKind {
+    /// Nothing follows at this level — draw no line.
+    case none
+    /// The next comment sits at the same indent: straight down.
+    case straight
+    /// The next comment is indented further right: down, then a rounded turn.
+    case elbow
+}
+
+private struct ThreadConnectorShape: Shape {
+    let kind: ThreadConnectorKind
+    let elbowRun: CGFloat
+
+    /// Radius of the turn. Large enough to read as a curve at 2pt, small
+    /// enough not to eat the whole horizontal run.
+    private let radius: CGFloat = 10
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        guard kind != .none else { return path }
+
+        let x = rect.midX
+        path.move(to: CGPoint(x: x, y: rect.minY))
+
+        switch kind {
+        case .straight:
+            path.addLine(to: CGPoint(x: x, y: rect.maxY))
+        case .elbow:
+            path.addLine(to: CGPoint(x: x, y: rect.maxY - radius))
+            path.addQuadCurve(
+                to: CGPoint(x: x + radius, y: rect.maxY),
+                control: CGPoint(x: x, y: rect.maxY)
+            )
+            path.addLine(to: CGPoint(x: x + elbowRun, y: rect.maxY))
+        case .none:
+            break
+        }
+        return path
+    }
+}
+
+/// The anchor each rail hangs from. TDX's feed carries no photo for a comment's
+/// author, only a name, so this is initials on a neutral disc.
+private struct ThreadAvatar: View {
+    let name: String?
+    let size: CGFloat
+
+    private var initials: String {
+        let parts = (name ?? "")
+            .split(separator: " ")
+            .filter { $0.first?.isLetter == true }
+        let letters = parts.prefix(2).compactMap { $0.first }
+        return letters.isEmpty ? "?" : String(letters).uppercased()
+    }
+
+    var body: some View {
+        Circle()
+            .fill(Color.secondary.opacity(0.18))
+            .frame(width: size, height: size)
+            .overlay(
+                Text(initials)
+                    .appFont(fixed: 10, weight: .semibold)
+                    .foregroundStyle(.secondary)
+            )
+    }
+}
+
 // MARK: - Feed Entry Row
 
 struct FeedEntryRow: View {
     let entry: TdxFeedEntry
+    /// Quotes this entry into the ticket's comment box.
+    ///
+    /// Not a threaded reply: the TDX Web API can read existing threads but has
+    /// no route for posting into one, so a response is a new top-level comment
+    /// that quotes what it answers.
+    var onQuote: ((TdxFeedEntry) -> Void)? = nil
 
+    // Thread rail geometry. The numbers relate to each other, so they live
+    // together: an elbow has to land on the middle of the next avatar, which
+    // means its horizontal run is the reply indent less half an avatar.
+    private static let avatarSize: CGFloat = 26
+    private static let railSpacing: CGFloat = 10
+    private static let replyIndent: CGFloat = 34
+    private static let rowGap: CGFloat = 10
+    private static var elbowRun: CGFloat { replyIndent - avatarSize / 2 }
+
+    /// A thread connects the way it does in Threads: every comment's avatar
+    /// anchors a neutral rail that runs down the gutter and elbows into the
+    /// avatar of whatever comes next. Replies chain to each other rather than
+    /// all reaching back to the parent, so the line traces reading order.
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .top) {
-                Text(entry.createdFullName ?? "Unknown")
-                    .appFont(.body)
+        VStack(alignment: .leading, spacing: 0) {
+            threadRow(
+                entry,
+                isReply: false,
+                connector: entry.replyList.isEmpty ? .none : .elbow
+            )
+
+            ForEach(Array(entry.replyList.enumerated()), id: \.element.id) { index, reply in
+                threadRow(
+                    reply,
+                    isReply: true,
+                    connector: index == entry.replyList.count - 1 ? .none : .straight
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func threadRow(
+        _ item: TdxFeedEntry,
+        isReply: Bool,
+        connector: ThreadConnectorKind
+    ) -> some View {
+        HStack(alignment: .top, spacing: Self.railSpacing) {
+            if isReply {
+                // Less the stack's own spacing, which lands after this spacer —
+                // charge the full indent here and the avatar sits 10pt right of
+                // where the parent's elbow reaches for it.
+                Color.clear.frame(width: Self.replyIndent - Self.railSpacing, height: 0)
+            }
+
+            VStack(spacing: 0) {
+                ThreadAvatar(name: item.createdFullName, size: Self.avatarSize)
+                ThreadConnectorShape(kind: connector, elbowRun: Self.elbowRun)
+                    .stroke(
+                        Color.secondary.opacity(0.35),
+                        style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                    )
+                    .frame(maxHeight: .infinity)
+                    // Draw past the row's bottom edge so an elbow meets the
+                    // side of the next avatar instead of stopping at its top.
+                    .padding(.bottom, connector == .elbow ? -Self.avatarSize / 2 : 0)
+            }
+            .frame(width: Self.avatarSize)
+
+            // The gap between comments sits inside the row so the rail spans
+            // it — put it between rows and the line breaks at every seam.
+            commentCard(item, isReply: isReply)
+                .padding(.bottom, Self.rowGap)
+        }
+    }
+
+    @ViewBuilder
+    private func commentCard(_ item: TdxFeedEntry, isReply: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(item.createdFullName ?? "Unknown")
+                    .appFont(isReply ? .callout : .body)
                     .fontWeight(.semibold)
-                    .foregroundColor(.secondary)
-                Spacer()
-                if entry.isPrivate == true {
+                    .foregroundColor(.primary)
+                Spacer(minLength: 8)
+                if item.isPrivate == true {
                     Text("Private")
-                        .appFont(.caption)
+                        .appFont(.caption2)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color.secondary.opacity(0.15))
-                        .cornerRadius(4)
+                        .foregroundColor(.secondary)
+                        .clipShape(Capsule())
                 }
-                if let dateStr = entry.createdDate, let date = TicketsView.parseDate(dateStr) {
+                if let dateStr = item.createdDate, let date = TicketsView.parseDate(dateStr) {
                     Text(formatRelativeDate(date))
-                        .appFont(.callout)
+                        .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
-                Button(action: { copyEntryToClipboard() }) {
+                // Only top-level entries can be quoted: a quote needs a stable
+                // feed entry to point at, and replies aren't addressable.
+                if let onQuote, !isReply {
+                    Button(action: { onQuote(entry) }) {
+                        Image(systemName: "arrowshape.turn.up.left")
+                            .appFont(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Quote this in a new comment — TeamDynamix has no API for replying inside a thread")
+                }
+                Button(action: { copyToClipboard(item) }) {
                     Image(systemName: "doc.on.doc")
                         .appFont(.caption)
                         .foregroundColor(.secondary)
@@ -2186,74 +2569,30 @@ struct FeedEntryRow: View {
                 .help("Copy to clipboard")
             }
 
-            if let body = entry.body, !body.isEmpty {
+            if let body = item.body, !body.isEmpty {
                 Text(TicketsView.decodeHtml(body))
-                    .appFont(.body)
+                    .appFont(isReply ? .callout : .body)
                     .foregroundColor(.primary)
                     .textSelection(.enabled)
-            }
-
-            // Threaded replies from API
-            if let replies = entry.replies, !replies.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(replies, id: \.id) { reply in
-                        HStack(alignment: .top, spacing: 8) {
-                            Rectangle()
-                                .fill(Color.accentColor.opacity(0.4))
-                                .frame(width: 2)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack {
-                                    Text(reply.createdFullName ?? "Unknown")
-                                        .appFont(.callout)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.secondary)
-                                    Spacer()
-                                    if let dateStr = reply.createdDate, let date = TicketsView.parseDate(dateStr) {
-                                        Text(formatRelativeDate(date))
-                                            .appFont(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    Button(action: { copyReplyToClipboard(reply) }) {
-                                        Image(systemName: "doc.on.doc")
-                                            .appFont(.caption2)
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help("Copy to clipboard")
-                                }
-                                if let body = reply.body, !body.isEmpty {
-                                    Text(TicketsView.decodeHtml(body))
-                                        .appFont(.callout)
-                                        .foregroundColor(.secondary)
-                                        .textSelection(.enabled)
-                                }
-                            }
-                        }
-                        .padding(.leading, 8)
-                    }
-                }
-                .padding(.top, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(10)
-        .background(Color.secondary.opacity(0.06))
-        .cornerRadius(6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(isReply
+                    ? Color.secondary.opacity(0.08)
+                    : Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+        )
     }
 
-    private func copyEntryToClipboard() {
-        let name = entry.createdFullName ?? "Unknown"
-        let date = entry.createdDate ?? ""
-        let body = TicketsView.decodeHtml(entry.body ?? "")
-        let text = "\(name) (\(date)):\n\(body)"
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-
-    private func copyReplyToClipboard(_ reply: TdxFeedEntry) {
-        let name = reply.createdFullName ?? "Unknown"
-        let date = reply.createdDate ?? ""
-        let body = TicketsView.decodeHtml(reply.body ?? "")
+    private func copyToClipboard(_ item: TdxFeedEntry) {
+        let name = item.createdFullName ?? "Unknown"
+        let date = item.createdDate ?? ""
+        let body = TicketsView.decodeHtml(item.body ?? "")
         let text = "\(name) (\(date)):\n\(body)"
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)

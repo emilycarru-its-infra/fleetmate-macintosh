@@ -641,7 +641,10 @@ struct TicketsView: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .frame(width: 130)
+                    // No fixed width: a capsule wider than the menu's own
+                    // bounds leaves a hover highlight that doesn't reach the
+                    // capsule's edges.
+                    .fixedSize()
                     .help("Group board columns by")
                 }
 
@@ -1080,6 +1083,11 @@ struct TicketsView: View {
                     addCommentSection(ticket: ticket)
                     Divider().padding(.vertical, 8)
                     activityHeader
+                    // Close the pinned block with the same divider the sections
+                    // above use. Without it the feed's first card slides up and
+                    // gets cut off flush against the header — a raw edge that
+                    // read as broken rather than as a scroll boundary.
+                    Divider().padding(.top, 10)
                 }
                 .padding([.horizontal, .top])
 
@@ -1087,7 +1095,7 @@ struct TicketsView: View {
                     activityFeed
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal)
-                        .padding(.top, 8)
+                        .padding(.top, 10)
                         .padding(.bottom)
                 }
                 // The pinned block above grows with the ticket; without a floor

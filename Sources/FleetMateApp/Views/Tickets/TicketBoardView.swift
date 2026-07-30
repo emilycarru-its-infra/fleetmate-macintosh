@@ -1,10 +1,11 @@
 import SwiftUI
 import FleetMateCore
 
-/// Grouping options for the Kanban board
+/// Grouping options for the Kanban board. Responsible leads: it is the default
+/// view and the one the queue is actually worked from.
 enum BoardGroupBy: String, CaseIterable {
-    case status = "Status"
     case responsible = "Responsible"
+    case status = "Status"
     case priority = "Priority"
     case group = "Group"
 }
@@ -36,6 +37,30 @@ struct TicketBoardView: View {
         }
     }
 
+    /// Responsible mode arranges people inside the Group they belong to —
+    /// group blocks ordered alphabetically, responsibles alphabetical inside,
+    /// Unassigned last within each block, groupless tickets in a trailing
+    /// "No Group" block.
+    private var responsibleGroupBlocks: [(group: String, columns: [(key: String, label: String, tickets: [TdxTicket])])] {
+        var byGroup: [String: [TdxTicket]] = [:]
+        for ticket in tickets {
+            let group = ticket.responsibleGroupName?.isEmpty == false ? ticket.responsibleGroupName! : "No Group"
+            byGroup[group, default: []].append(ticket)
+        }
+        let groupNames = byGroup.keys.sorted { a, b in
+            if a == "No Group" { return false }
+            if b == "No Group" { return true }
+            return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+        }
+        return groupNames.map { name in
+            (group: name,
+             columns: stringFieldColumns(in: byGroup[name] ?? [],
+                                         keyPath: \.responsibleFullName,
+                                         fallback: "Unassigned",
+                                         ordering: .alphabetical))
+        }
+    }
+
     private var statusColumns: [(key: String, label: String, tickets: [TdxTicket])] {
         let ordered = orderedStatuses
         return ordered.map { status in
@@ -49,6 +74,10 @@ struct TicketBoardView: View {
     }
 
     private func stringFieldColumns(keyPath: KeyPath<TdxTicket, String?>, fallback: String, ordering: ColumnOrdering = .alphabetical) -> [(key: String, label: String, tickets: [TdxTicket])] {
+        stringFieldColumns(in: tickets, keyPath: keyPath, fallback: fallback, ordering: ordering)
+    }
+
+    private func stringFieldColumns(in tickets: [TdxTicket], keyPath: KeyPath<TdxTicket, String?>, fallback: String, ordering: ColumnOrdering = .alphabetical) -> [(key: String, label: String, tickets: [TdxTicket])] {
         var groups: [String: [TdxTicket]] = [:]
         for ticket in tickets {
             let val = ticket[keyPath: keyPath] ?? fallback
@@ -102,24 +131,62 @@ struct TicketBoardView: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: true) {
             HStack(alignment: .top, spacing: 16) {
-                ForEach(columns, id: \.key) { col in
-                    BoardColumn(
-                        columnKey: col.key,
-                        label: col.label,
-                        tickets: col.tickets,
-                        accentColor: groupBy == .status ? statusColor(for: col.label) : nil,
-                        selectedTicketId: selectedTicketId,
-                        collapsedTicketIds: $collapsedTicketIds,
-                        onDropTicket: { ticketId in
-                            onDropTicket(ticketId, col.key)
-                        },
-                        onSelectTicket: onSelectTicket
-                    )
+                if groupBy == .responsible {
+                    // Group blocks envelop their people, the way the Inventory
+                    // chip capsule envelops CPU/GPU/Memory/NPU.
+                    ForEach(responsibleGroupBlocks, id: \.group) { block in
+                        groupBlock(block.group, columns: block.columns)
+                    }
+                } else {
+                    ForEach(columns, id: \.key) { col in
+                        boardColumn(col)
+                    }
                 }
             }
             .padding()
         }
         .background(Color.secondary.opacity(0.03))
+    }
+
+    private func boardColumn(_ col: (key: String, label: String, tickets: [TdxTicket])) -> some View {
+        BoardColumn(
+            columnKey: col.key,
+            label: col.label,
+            tickets: col.tickets,
+            accentColor: groupBy == .status ? statusColor(for: col.label) : nil,
+            selectedTicketId: selectedTicketId,
+            collapsedTicketIds: $collapsedTicketIds,
+            onDropTicket: { ticketId in
+                onDropTicket(ticketId, col.key)
+            },
+            onSelectTicket: onSelectTicket
+        )
+    }
+
+    private func groupBlock(_ name: String, columns: [(key: String, label: String, tickets: [TdxTicket])]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(name)
+                    .appFont(.subheadline, weight: .bold)
+                Text(verbatim: "\(columns.reduce(0) { $0 + $1.tickets.count })")
+                    .appFont(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 4)
+            HStack(alignment: .top, spacing: 12) {
+                ForEach(columns, id: \.key) { col in
+                    boardColumn(col)
+                }
+            }
+        }
+        .padding(8)
+        .background(Color.secondary.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                .foregroundColor(Color.secondary.opacity(0.35))
+        )
     }
 
     private func statusColor(for name: String) -> Color {

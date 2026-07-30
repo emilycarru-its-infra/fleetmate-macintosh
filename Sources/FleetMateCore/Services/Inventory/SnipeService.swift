@@ -276,6 +276,44 @@ public class SnipeService {
     public func updateAsset(assetId: Int, request: SnipeAssetUpdateRequest) async throws -> SnipeResponse {
         return try await put("/api/v1/hardware/\(assetId)", body: request)
     }
+
+    /// All custom field definitions — element types and listbox options.
+    public func getFieldDefinitions() async throws -> [SnipeFieldDef] {
+        let response: SnipeListResponse<SnipeFieldDef>? = try await fetch("/api/v1/fields?limit=500")
+        return response?.rows ?? []
+    }
+
+    /// Update a single field by its API key — a standard column ("serial",
+    /// "name", "notes") or a custom field's `_snipeit_*` db column, which the
+    /// API's `custom_fields` entries carry as `field`.
+    ///
+    /// PATCH, not PUT: the sidebar edits one value at a time, and Snipe-IT
+    /// treats PUT as full replacement — sending one key that way nulls the
+    /// asset's other writable columns.
+    public func patchAssetField(assetId: Int, apiField: String, value: String) async throws -> SnipeResponse {
+        return try await patch("/api/v1/hardware/\(assetId)", body: [apiField: value])
+    }
+
+    private func patch<T: Encodable, R: Decodable>(_ path: String, body: T) async throws -> R {
+        let url = "\(baseUrl)\(path)"
+
+        let hdrs = try await authHeaders()
+        return try await withCheckedThrowingContinuation { continuation in
+            session.request(url, method: .patch, parameters: body, encoder: JSONParameterEncoder.default, headers: hdrs)
+                .validate(statusCode: 200..<500)
+                .responseDecodable(of: R.self) { response in
+                    switch response.result {
+                    case .success(let value):
+                        continuation.resume(returning: value)
+                    case .failure(let error):
+                        if let data = response.data, let body = String(data: data, encoding: .utf8) {
+                            print("[SnipeService PATCH] Decode failure body: \(body.prefix(400))")
+                        }
+                        continuation.resume(throwing: error)
+                    }
+                }
+        }
+    }
     
     // MARK: - Private Helpers
     

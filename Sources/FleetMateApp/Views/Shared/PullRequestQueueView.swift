@@ -245,7 +245,9 @@ struct PullRequestQueueSection: View {
                     if !isCollapsed.wrappedValue {
                         Divider()
                         ForEach(Array(visible.enumerated()), id: \.element.id) { index, pr in
-                            PullRequestRow(pullRequest: pr)
+                            PullRequestRow(pullRequest: pr) {
+                                model.load(appState: appState, force: true)
+                            }
                             if index < visible.count - 1 { Divider() }
                         }
 
@@ -307,11 +309,68 @@ struct PullRequestQueueSection: View {
 
 struct PullRequestRow: View {
     let pullRequest: UnifiedPullRequest
+    /// Called after a completed or abandoned PR, so the queue can refresh.
+    var onActionCompleted: (() -> Void)?
+
+    @EnvironmentObject private var appState: AppState
     @State private var isHovering = false
+    @State private var pendingAction: PullRequestAction?
+    @State private var runningAction: PullRequestAction?
+    @State private var actionError: String?
 
     private let maxReviewerBubbles = 4
 
+    /// The two write actions the queue offers on an Azure DevOps PR.
+    enum PullRequestAction: String, Identifiable {
+        case complete, abandon
+        var id: String { rawValue }
+
+        var title: String { self == .complete ? "Complete" : "Abandon" }
+        var tint: Color { self == .complete ? .green : .orange }
+        var icon: String { self == .complete ? "checkmark" : "xmark" }
+    }
+
+    /// Complete and Abandon are Azure DevOps writes, and only mean anything
+    /// while the PR is still active.
+    private var showsActions: Bool {
+        guard pullRequest.source == .azureDevOps else { return false }
+        return pullRequest.state == .open || pullRequest.state == .draft
+    }
+
     var body: some View {
+        // The row's body and its action buttons are siblings rather than nested:
+        // a Button inside a Button doesn't reliably receive clicks on macOS.
+        HStack(spacing: 6) {
+            rowButton
+            if showsActions {
+                actionButtons
+            }
+        }
+        .background(isHovering ? Color.secondary.opacity(0.08) : Color.clear)
+        .onHover { isHovering = $0 }
+        .confirmationDialog(
+            confirmationTitle,
+            isPresented: Binding(get: { pendingAction != nil }, set: { if !$0 { pendingAction = nil } }),
+            presenting: pendingAction
+        ) { action in
+            Button(action.title, role: action == .abandon ? .destructive : nil) {
+                perform(action)
+            }
+            Button("Cancel", role: .cancel) { pendingAction = nil }
+        } message: { action in
+            Text(confirmationMessage(for: action))
+        }
+        .alert(
+            "Action failed",
+            isPresented: Binding(get: { actionError != nil }, set: { if !$0 { actionError = nil } })
+        ) {
+            Button("OK", role: .cancel) { actionError = nil }
+        } message: {
+            Text(actionError ?? "")
+        }
+    }
+
+    private var rowButton: some View {
         Button(action: open) {
             HStack(alignment: .top, spacing: 10) {
                 Rectangle()
@@ -353,17 +412,97 @@ struct PullRequestRow: View {
             }
             .padding(.vertical, 7)
             .padding(.trailing, 4)
-            .background(isHovering ? Color.secondary.opacity(0.08) : Color.clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
         .help(pullRequest.webUrl)
         .contextMenu {
             Button("Open in Browser") { open() }
             Button("Copy Link") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(pullRequest.webUrl, forType: .string)
+            }
+        }
+    }
+
+    // MARK: Actions
+
+    private var actionButtons: some View {
+        HStack(spacing: 4) {
+            actionButton(.complete)
+            actionButton(.abandon)
+        }
+        .padding(.trailing, 6)
+    }
+
+    private func actionButton(_ action: PullRequestAction) -> some View {
+        Button {
+            pendingAction = action
+        } label: {
+            HStack(spacing: 3) {
+                if runningAction == action {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: action.icon).appFont(fixed: 9, weight: .bold)
+                }
+                Text(action.title).appFont(fixed: 10, weight: .medium)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(action.tint.opacity(0.15))
+            .foregroundStyle(action.tint)
+            .clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(action.tint.opacity(0.35), lineWidth: 1))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(runningAction != nil)
+        .help(action == .complete
+              ? "Complete this pull request, merging it into \(pullRequest.targetBranch)"
+              : "Abandon this pull request")
+    }
+
+    private var confirmationTitle: String {
+        guard let action = pendingAction else { return "" }
+        return "\(action.title) !\(pullRequest.number)?"
+    }
+
+    private func confirmationMessage(for action: PullRequestAction) -> String {
+        switch action {
+        case .complete:
+            return "\(pullRequest.title)\n\nThis merges \(pullRequest.sourceBranch) into "
+                + "\(pullRequest.targetBranch) in \(pullRequest.repository), using the merge "
+                + "options already set on the pull request."
+        case .abandon:
+            return "\(pullRequest.title)\n\nThe pull request stays in \(pullRequest.repository) "
+                + "and can be reactivated in Azure DevOps, but reviewers are notified."
+        }
+    }
+
+    private func perform(_ action: PullRequestAction) {
+        pendingAction = nil
+        runningAction = action
+        Task {
+            defer { runningAction = nil }
+            do {
+                switch action {
+                case .complete:
+                    try await appState.devOpsService.completePullRequest(
+                        repository: pullRequest.repository,
+                        pullRequestId: pullRequest.number,
+                        project: pullRequest.container
+                    )
+                case .abandon:
+                    try await appState.devOpsService.abandonPullRequest(
+                        repository: pullRequest.repository,
+                        pullRequestId: pullRequest.number,
+                        project: pullRequest.container
+                    )
+                }
+                onActionCompleted?()
+            } catch {
+                actionError = "Could not \(action.title.lowercased()) !\(pullRequest.number): "
+                    + error.localizedDescription
             }
         }
     }

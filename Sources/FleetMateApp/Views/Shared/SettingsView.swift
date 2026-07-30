@@ -30,7 +30,10 @@ struct SettingsView: View {
 private struct GeneralSettingsTab: View {
     @EnvironmentObject var appState: AppState
     @AppStorage("settings.selectedTab") private var selectedTabIndex: Int = 0
-    @State private var isLoading = true
+    /// Modules switched on before their credentials exist. The switch flips
+    /// immediately and stays here; the row grows a Configure button instead of
+    /// the old behavior of yanking the user to the Authentication tab.
+    @State private var pendingConfigure: Set<AuthSystemId> = []
 
     private var enableGraph: Bool { appState.config.isGraphConfigured || appState.config.graphTenantId != nil }
     private var enableSnipe: Bool { appState.config.isSnipeConfigured }
@@ -60,7 +63,6 @@ private struct GeneralSettingsTab: View {
                         title: "Devices & Identity",
                         subtitle: "Microsoft Intune devices, Entra ID users and groups",
                         systemId: .graph,
-                        onEnable: { /* Graph needs tenant ID — open Auth edit */ },
                         onDisable: {
                             var c = appState.config
                             c.graphTenantId = nil
@@ -75,7 +77,6 @@ private struct GeneralSettingsTab: View {
                         title: "Inventory",
                         subtitle: "Snipe-IT asset management",
                         systemId: .snipe,
-                        onEnable: { /* Snipe needs URL — open Auth edit */ },
                         onDisable: {
                             var c = appState.config
                             c.snipeUrl = nil; c.snipeApiKey = nil
@@ -89,7 +90,6 @@ private struct GeneralSettingsTab: View {
                         title: "Tickets",
                         subtitle: "TeamDynamix service desk",
                         systemId: .tdx,
-                        onEnable: { /* TDX needs URL — open Auth edit */ },
                         onDisable: {
                             var c = appState.config
                             c.tdxBaseUrl = nil
@@ -102,7 +102,6 @@ private struct GeneralSettingsTab: View {
                         title: "Projects",
                         subtitle: "Azure DevOps boards and GitHub issues",
                         systemId: .devops,
-                        onEnable: { /* DevOps needs org — open Auth edit */ },
                         onDisable: {
                             var c = appState.config
                             c.devopsOrganization = nil
@@ -119,34 +118,60 @@ private struct GeneralSettingsTab: View {
         }
     }
 
-    private func moduleRow(enabled: Bool, icon: String, title: String, subtitle: String, systemId: AuthSystemId, onEnable: @escaping () -> Void, onDisable: @escaping () -> Void) -> some View {
-        Toggle(isOn: Binding(
-            get: { enabled },
-            set: { newValue in
-                if newValue {
-                    onEnable()
-                    // Switch to Auth tab and trigger edit for this system
-                    selectedTabIndex = 1
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        NotificationCenter.default.post(name: .editAuthSystem, object: systemId)
+    @ViewBuilder
+    private func moduleRow(enabled: Bool, icon: String, title: String, subtitle: String, systemId: AuthSystemId, onDisable: @escaping () -> Void) -> some View {
+        let needsConfig = pendingConfigure.contains(systemId) && !enabled
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: Binding(
+                get: { enabled || pendingConfigure.contains(systemId) },
+                set: { newValue in
+                    withAnimation(.snappy) {
+                        if newValue {
+                            pendingConfigure.insert(systemId)
+                        } else {
+                            pendingConfigure.remove(systemId)
+                            if enabled { onDisable() }
+                        }
                     }
-                } else {
-                    onDisable()
+                }
+            )) {
+                HStack(spacing: 12) {
+                    Image(systemName: icon)
+                        .appFont(.title3)
+                        .foregroundStyle(.tint)
+                        .frame(width: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).appFont(.body, weight: .medium)
+                        Text(subtitle).appFont(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
-        )) {
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .appFont(.title3)
-                    .foregroundStyle(.tint)
-                    .frame(width: 24)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).appFont(.body, weight: .medium)
-                    Text(subtitle).appFont(.caption).foregroundStyle(.secondary)
+            .toggleStyle(.switch)
+
+            if needsConfig {
+                HStack(spacing: 8) {
+                    Image(systemName: "key")
+                        .foregroundStyle(.secondary)
+                    Text("Needs credentials before it can load anything.")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Configure…") {
+                        selectedTabIndex = 1
+                        // The Authentication tab may not exist yet when the tab
+                        // switch lands, so let it build before asking it to edit.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                            NotificationCenter.default.post(name: .editAuthSystem, object: systemId)
+                        }
+                    }
+                    .controlSize(.small)
                 }
+                .padding(.leading, 36)
             }
         }
-        .toggleStyle(.switch)
+        .onChange(of: enabled) { _, nowEnabled in
+            if nowEnabled { pendingConfigure.remove(systemId) }
+        }
     }
 }
 

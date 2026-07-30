@@ -221,8 +221,12 @@ struct AuthSettingsView: View {
                 if appState.tdxService.actingIdentityIsUser {
                     let who = appState.tdxMe?.fullName ?? appState.tdxAuthenticatedUserName ?? "signed-in user"
                     detailRow("Acting as", who, .green)
-                } else {
+                } else if cfg.tdxBeid != nil || cfg.tdxUsername != nil {
                     detailRow("Acting as", "Service account — edits will not show your name", .orange)
+                } else {
+                    // No service account to fall back to, so this isn't
+                    // "acting as the wrong identity" — it's no access at all.
+                    detailRow("Acting as", "Nobody — not signed in, TDX calls will fail", .orange)
                 }
                 if cfg.tdxBeid != nil {
                     detailRow("Service account", cfg.tdxUsername ?? "configured", .secondary)
@@ -343,10 +347,12 @@ struct AuthSettingsView: View {
         case .serviceAccount: return "Service account (BEID + WebServicesKey)"
         case .userPassword:   return "Username / password"
         case .auto:
-            // `.auto` uses the service-account loginadmin path; the WKWebView SSO
-            // token is not a valid API credential and is no longer preferred.
-            if appState.config.tdxBeid != nil { return "Auto → Service account (BEID)" }
-            return "Auto → needs BEID + WebServicesKey"
+            // SSO first — a user JWT or cookie session is preferred over the
+            // service account now, so describe it in that order.
+            if appState.config.tdxBeid != nil {
+                return "Auto → SSO, falling back to service account (BEID)"
+            }
+            return "Auto → SSO only (no service account configured)"
         }
     }
 

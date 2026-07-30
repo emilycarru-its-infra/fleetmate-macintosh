@@ -73,7 +73,21 @@ public struct SnipeAsset: Codable, Identifiable, Hashable, Sendable {
     public let createdAt: SnipeDateRef?
     public let updatedAt: SnipeDateRef?
     public let customFields: [String: SnipeCustomField]?
-    
+    /// Asset (or model) photo URL, as the web app shows at the top of the page.
+    public let image: String?
+    public let expectedCheckin: SnipeDateRef?
+    /// End-of-life date; the API also sends `eol` as a "N months" span string.
+    public let assetEolDate: SnipeDateRef?
+    public let eol: String?
+    /// "36 months" — the transformer bakes the unit into the string.
+    public let warrantyMonths: String?
+    public let warrantyExpires: SnipeDateRef?
+    public let supplier: SnipeModelRef?
+    public let byod: Bool?
+    public let requestable: Bool?
+    /// Native column on the ECU fork (F2 lease migration).
+    public let decommissionDate: SnipeDateRef?
+
     enum CodingKeys: String, CodingKey {
         case id, name, serial, model, category, manufacturer, location, notes
         case assetTag = "asset_tag"
@@ -87,6 +101,12 @@ public struct SnipeAsset: Codable, Identifiable, Hashable, Sendable {
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case customFields = "custom_fields"
+        case image, eol, supplier, byod, requestable
+        case decommissionDate = "decommission_date"
+        case expectedCheckin = "expected_checkin"
+        case assetEolDate = "asset_eol_date"
+        case warrantyMonths = "warranty_months"
+        case warrantyExpires = "warranty_expires"
     }
     
     /// Name with HTML entities decoded
@@ -320,6 +340,16 @@ public struct SnipeDateRef: Codable, Sendable {
     /// Returns the date value, preferring datetime over date
     public var value: String? {
         datetime ?? date
+    }
+
+    /// Parsed calendar date, for lifecycle math. Handles both the bare
+    /// "yyyy-MM-dd" form and the datetime form's leading date component.
+    public var parsed: Date? {
+        guard let raw = value, raw.count >= 10 else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        return formatter.date(from: String(raw.prefix(10)))
     }
 }
 

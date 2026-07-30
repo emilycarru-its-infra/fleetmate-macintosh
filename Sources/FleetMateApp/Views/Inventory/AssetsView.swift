@@ -472,9 +472,10 @@ struct AssetFieldGroup {
     let symbol: String
     /// Identifier-style values render monospaced.
     let mono: Bool
-    /// Field names in this group — the client-side mirror of the fork's
-    /// `SeedAssetFieldGroups` migration, used when the API doesn't say.
-    let fields: Set<String>
+    /// Field names in this group, in the render order the web app uses —
+    /// the client-side mirror of the fork's taxonomy, used when the API
+    /// doesn't say.
+    let fields: [String]
 }
 
 /// The six groups the ECU Snipe-IT fork seeds, in its render order
@@ -485,16 +486,19 @@ struct AssetFieldGroup {
 private let assetFieldGroups: [AssetFieldGroup] = [
     AssetFieldGroup(
         slug: "inventory", title: "Inventory", symbol: "clipboard", mono: false,
-        fields: ["Area", "Catalog", "Usage", "Fleet"]
+        fields: ["Device Management Service", "Fleet", "Catalog", "Usage", "Area"]
     ),
     AssetFieldGroup(
         slug: "specs", title: "Specs", symbol: "cpu", mono: false,
-        fields: ["Architecture", "Chip", "CPU", "GPU", "NPU", "Memory", "Storage",
-                 "Display", "Display Resolution", "Colour", "Version"]
+        fields: ["Platform", "Colour", "Display", "Display Resolution", "Memory",
+                 "Storage", "Chip", "CPU", "GPU", "NPU", "Architecture",
+                 "Cellular", "Version"]
     ),
     AssetFieldGroup(
+        // The live instance folds Platform and DMS into other groups; this
+        // card only appears when the server's field_group says otherwise.
         slug: "management", title: "Management", symbol: "laptopcomputer", mono: false,
-        fields: ["Platform", "Device Management Service", "Enrollment Status"]
+        fields: []
     ),
     AssetFieldGroup(
         slug: "networking", title: "Networking", symbol: "network", mono: false,
@@ -511,7 +515,7 @@ private let assetFieldGroups: [AssetFieldGroup] = [
     AssetFieldGroup(
         slug: "identity", title: "Identity", symbol: "touchid", mono: true,
         fields: ["Entra ID", "Intune ID", "Defender ID", "Object ID", "Micro ID",
-                 "Identifier", "IMEI"]
+                 "Identifier", "IMEI", "Enrollment Status"]
     ),
 ]
 
@@ -576,7 +580,7 @@ struct AssetDetailSidebar: View {
                                 NSWorkspace.shared.open(url)
                             }
                         }) {
-                            Image(systemName: "arrow.up.right.square")
+                            Image(systemName: "globe")
                         }
                         .buttonStyle(.plain)
                         .help("Open in Snipe-IT")
@@ -635,6 +639,9 @@ struct AssetDetailSidebar: View {
                     // part. Storage/Display/Architecture (and Battery on
                     // laptops) stand outside it. Every tile always renders —
                     // an empty value shows as "—", not as a missing tile.
+                    assetPhoto
+                    overviewCard
+                    lifecycleCard
                     specTilesSection
 
                     // Status (editable dropdown)
@@ -674,14 +681,22 @@ struct AssetDetailSidebar: View {
                     // Hardware identity rows; the headline specs live in the
                     // chips above, so they don't repeat here.
                     sectionCard("Hardware", systemImage: "desktopcomputer") {
-                        detailRow("Serial", value: asset.serial, copyable: true, mono: true)
+                        detailRow("Serial", value: asset.serial, copyable: true, mono: true, editKey: "serial")
                         detailRow("Model", value: asset.model?.name)
                         detailRow("Category", value: asset.category?.name)
                         detailRow("Manufacturer", value: asset.manufacturer?.name)
+                        detailRow("Architecture",
+                                  value: asset.customFieldByName("Architecture")?.value,
+                                  copyable: true,
+                                  editKey: asset.customFieldByName("Architecture")?.field,
+                                  alwaysShow: asset.customFieldByName("Architecture") != nil)
                     }
 
                     // The fork's field-group taxonomy, one card per group in
-                    // its render order. Skips groups with nothing to show.
+                    // its render order. Every field of the asset's fieldset
+                    // shows, empty ones as "—" — the web renders empty rows,
+                    // and hiding them made the two apps disagree about what a
+                    // device even has. Cards with no fields at all disappear.
                     ForEach(assetFieldGroups, id: \.slug) { group in
                         let fields = customFields(in: group)
                         if !fields.isEmpty || (group.slug == "procurement" && hasPurchaseInfo) {
@@ -691,23 +706,23 @@ struct AssetDetailSidebar: View {
                                     detailRow("Purchase Date", value: asset.purchaseDate?.formatted)
                                 }
                                 ForEach(fields, id: \.key) { fieldName, field in
-                                    detailRow(fieldName, value: field.value, copyable: true, mono: group.mono)
+                                    detailRow(fieldName, value: field.value, copyable: true,
+                                              mono: group.mono, editKey: field.field, alwaysShow: true)
+                                    // Web order: Location sits between Catalog
+                                    // and Usage in the Inventory card.
+                                    if group.slug == "inventory" && fieldName == "Catalog" {
+                                        detailRow("Location", value: asset.rtdLocation?.name, alwaysShow: true)
+                                    }
                                 }
                             }
                         }
                     }
 
-                    // Location
-                    sectionCard("Location", systemImage: "mappin.and.ellipse") {
-                        detailRow("Location", value: asset.location?.name)
-                        detailRow("Default Location", value: asset.rtdLocation?.name)
-                    }
-
-                    // Dates
-                    sectionCard("Dates", systemImage: "calendar") {
-                        detailRow("Last Checkout", value: asset.lastCheckout?.formatted)
-                        detailRow("Last Audit", value: asset.lastAuditDate?.formatted)
-                        detailRow("Next Audit", value: asset.nextAuditDate?.formatted)
+                    // Metadata, like the web's bottom card. The checkout /
+                    // audit dates live in the Overview card at the top now.
+                    sectionCard("Metadata", systemImage: "cylinder.split.1x2") {
+                        detailRow("BYOD", value: (asset.byod ?? false) ? "Yes" : "No")
+                        detailRow("Requestable", value: (asset.requestable ?? false) ? "Yes" : "No")
                         detailRow("Created", value: asset.createdAt?.formatted)
                         detailRow("Updated", value: asset.updatedAt?.formatted)
                     }
@@ -783,12 +798,18 @@ struct AssetDetailSidebar: View {
 
     private func customFields(in group: AssetFieldGroup) -> [(key: String, value: SnipeCustomField)] {
         guard let customFields = asset.customFields else { return [] }
-        return customFields.sorted(by: { $0.key < $1.key })
+        return customFields
             .filter {
                 groupSlug(for: $0.key, field: $0.value) == group.slug
-                    && !($0.value.value?.isEmpty ?? true)
                     && !hiddenFields.contains($0.key)
                     && !chipFields.contains($0.key)
+            }
+            .sorted { a, b in
+                // Canonical (web) order first; fields the mirror doesn't know
+                // sort after, alphabetically.
+                let ia = group.fields.firstIndex(of: a.key) ?? Int.max
+                let ib = group.fields.firstIndex(of: b.key) ?? Int.max
+                return ia == ib ? a.key < b.key : ia < ib
             }
     }
 
@@ -876,7 +897,6 @@ struct AssetDetailSidebar: View {
         var tiles: [AssetSpecTile.Model] = [
             .init(icon: "internaldrive", label: "Storage", tint: .purple, value: specValue("Storage")),
             .init(icon: "display", label: "Display", tint: .blue, value: specValue("Display")),
-            .init(icon: "square.stack.3d.up", label: "Architecture", tint: .orange, value: specValue("Architecture")),
         ]
         if isLaptop {
             tiles.append(.init(icon: "battery.75percent", label: "Battery", tint: .green, value: specValue("Battery")))
@@ -921,9 +941,102 @@ struct AssetDetailSidebar: View {
         }
     }
 
-    /// Fields the tiles consume, excluded from the cards so nothing repeats.
+    /// Fields rendered outside the group cards (the tiles, plus the Hardware
+    /// card's Architecture row), excluded there so nothing repeats.
     private var chipFields: Set<String> {
-        ["Chip", "CPU", "Memory", "GPU", "NPU", "Storage", "Display", "Architecture", "Battery"]
+        ["Chip", "CPU", "Memory", "GPU", "NPU", "Storage", "Display", "Battery", "Architecture"]
+    }
+
+    // MARK: - Photo / Overview / Lifecycle
+
+    /// The asset's photo, as the web page leads with. Only occupies space when
+    /// the image actually loads — no broken-image placeholder.
+    @ViewBuilder
+    private var assetPhoto: some View {
+        if let image = asset.image, let url = URL(string: image) {
+            AsyncImage(url: url) { phase in
+                if case .success(let img) = phase {
+                    HStack {
+                        Spacer()
+                        img.resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 140)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
+                            )
+                        Spacer()
+                    }
+                }
+            }
+        }
+    }
+
+    /// The checkout/audit/EOL dates the web shows right under the photo —
+    /// every row always visible, so a missing audit reads as "not audited"
+    /// instead of the row quietly not existing.
+    private var overviewCard: some View {
+        sectionCard("Overview", systemImage: "calendar") {
+            detailRow("Last Checkout", value: asset.lastCheckout?.formatted, alwaysShow: true)
+            detailRow("Expected Checkin", value: asset.expectedCheckin?.formatted, alwaysShow: true)
+            detailRow("Last Audit", value: asset.lastAuditDate?.formatted, alwaysShow: true)
+            detailRow("Next Audit", value: asset.nextAuditDate?.formatted, alwaysShow: true)
+            detailRow("Decommission", value: asset.decommissionDate?.formatted, alwaysShow: true)
+            detailRow("Supplier", value: asset.supplier?.name, alwaysShow: true)
+            detailRow("Device EOL", value: deviceEolText, alwaysShow: true)
+        }
+    }
+
+    /// "2028-05-15 — 1 year 9 months from now", like the web's EOL row.
+    private var deviceEolText: String? {
+        guard let formatted = asset.assetEolDate?.formatted else { return nil }
+        guard let eolDate = asset.assetEolDate?.parsed else { return formatted }
+        let now = Date()
+        let parts = Calendar.current.dateComponents([.year, .month], from: min(now, eolDate), to: max(now, eolDate))
+        var span: [String] = []
+        if let y = parts.year, y > 0 { span.append("\(y) year\(y == 1 ? "" : "s")") }
+        if let m = parts.month, m > 0 { span.append("\(m) month\(m == 1 ? "" : "s")") }
+        guard !span.isEmpty else { return formatted }
+        let suffix = eolDate > now ? "from now" : "ago"
+        return "\(formatted) — \(span.joined(separator: " ")) \(suffix)"
+    }
+
+    /// EOL and warranty progress, like the web's Lifecycle card: how far
+    /// through its life the machine is, at a glance.
+    @ViewBuilder
+    private var lifecycleCard: some View {
+        let purchase = asset.purchaseDate?.parsed
+        let eolBar = lifecycleFraction(from: purchase, to: asset.assetEolDate?.parsed)
+        let warrantyBar = lifecycleFraction(from: purchase, to: asset.warrantyExpires?.parsed)
+        if eolBar != nil || warrantyBar != nil {
+            sectionCard("Lifecycle", systemImage: "hourglass") {
+                if let fraction = eolBar, let eolDate = asset.assetEolDate?.parsed {
+                    LifecycleBar(
+                        title: "Device EOL",
+                        trailing: "\(monthsBetween(Date(), eolDate)) months left · \(Int(fraction * 100))%",
+                        fraction: fraction
+                    )
+                }
+                if let fraction = warrantyBar {
+                    LifecycleBar(
+                        title: "Warranty Expires",
+                        trailing: "\(asset.warrantyExpires?.formatted ?? "") · \(Int(fraction * 100))%",
+                        fraction: fraction
+                    )
+                }
+            }
+        }
+    }
+
+    /// Elapsed share of the purchase→milestone span, clamped to 0…1.
+    private func lifecycleFraction(from start: Date?, to end: Date?) -> Double? {
+        guard let start, let end, end > start else { return nil }
+        return min(max(Date().timeIntervalSince(start) / end.timeIntervalSince(start), 0), 1)
+    }
+
+    private func monthsBetween(_ a: Date, _ b: Date) -> Int {
+        abs(Calendar.current.dateComponents([.month], from: a, to: b).month ?? 0)
     }
 
     // MARK: - Cards
@@ -952,27 +1065,38 @@ struct AssetDetailSidebar: View {
         )
     }
 
+    /// One field row. `editKey` is the API key a PATCH writes ("serial", or a
+    /// custom field's `_snipeit_*` column) — rows without one aren't editable.
+    /// `alwaysShow` keeps empty fields visible as "—", the way the web shows
+    /// every row of the fieldset.
     @ViewBuilder
-    private func detailRow(_ label: String, value: String?, copyable: Bool = false, mono: Bool = false) -> some View {
-        if let value = value, !value.isEmpty {
-            HStack(alignment: .top) {
-                Text(label)
-                    .appFont(.callout)
-                    .foregroundColor(.secondary)
-                    .frame(width: 110, alignment: .leading)
-                Text(value)
-                    .appFont(.callout, design: mono ? .monospaced : .default)
-                    .textSelection(.enabled)
-                if copyable {
-                    Button(action: { copyToClipboard(value) }) {
-                        Image(systemName: "doc.on.doc")
-                            .appFont(.caption)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Copy")
+    private func detailRow(_ label: String, value: String?, copyable: Bool = false,
+                           mono: Bool = false, editKey: String? = nil, alwaysShow: Bool = false) -> some View {
+        if alwaysShow || !(value?.isEmpty ?? true) {
+            DetailFieldRow(
+                label: label,
+                value: value ?? "",
+                copyable: copyable,
+                mono: mono,
+                editKey: editKey,
+                onSave: editKey == nil ? nil : { key, newValue in
+                    await saveField(key, newValue)
                 }
-                Spacer()
+            )
+        }
+    }
+
+    /// PATCH one field; returns an error message or nil on success.
+    private func saveField(_ apiField: String, _ value: String) async -> String? {
+        do {
+            let response = try await snipeService.patchAssetField(assetId: asset.id, apiField: apiField, value: value)
+            if response.status == "error" {
+                return response.messages ?? "Update failed"
             }
+            onSaved()
+            return nil
+        } catch {
+            return error.localizedDescription
         }
     }
 
@@ -1024,6 +1148,162 @@ struct AssetDetailSidebar: View {
                 saveError = error.localizedDescription
             }
         }
+    }
+}
+
+// MARK: - Detail Field Row
+
+/// A label/value row whose actions live behind hover: copy, and — when the
+/// field has an API key — a pencil that swaps the value for an inline editor.
+/// Always-visible action buttons on thirty rows read as noise; hover keeps the
+/// data as the surface and the verbs one gesture away.
+struct DetailFieldRow: View {
+    let label: String
+    let value: String
+    var copyable = false
+    var mono = false
+    var editKey: String? = nil
+    /// Returns an error message, or nil on success.
+    var onSave: ((String, String) async -> String?)? = nil
+
+    @State private var hovered = false
+    @State private var isEditing = false
+    @State private var draft = ""
+    @State private var isSaving = false
+    @State private var saveError: String? = nil
+    /// Value shown after a successful save, until the parent's reload catches
+    /// up — without it the row snaps back to the stale value for a beat.
+    @State private var savedOverride: String? = nil
+
+    private var displayValue: String { savedOverride ?? value }
+
+    var body: some View {
+        HStack(alignment: .top) {
+            Text(label)
+                .appFont(.callout)
+                .foregroundColor(.secondary)
+                .frame(width: 110, alignment: .leading)
+
+            if isEditing {
+                TextField("", text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .appFont(.callout, design: mono ? .monospaced : .default)
+                    .onSubmit { commit() }
+                    .onExitCommand { cancel() }
+                if isSaving {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button(action: commit) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Save")
+                    Button(action: cancel) {
+                        Image(systemName: "xmark.circle")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Cancel")
+                }
+            } else {
+                Text(displayValue.isEmpty ? "—" : displayValue)
+                    .appFont(.callout, design: mono ? .monospaced : .default)
+                    .foregroundColor(displayValue.isEmpty ? .secondary : .primary)
+                    .textSelection(.enabled)
+
+                if copyable && !displayValue.isEmpty {
+                    Button(action: {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(displayValue, forType: .string)
+                    }) {
+                        Image(systemName: "doc.on.doc")
+                            .appFont(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy")
+                    .opacity(hovered ? 1 : 0)
+                }
+                if editKey != nil, onSave != nil {
+                    Button(action: {
+                        draft = displayValue
+                        saveError = nil
+                        isEditing = true
+                    }) {
+                        Image(systemName: "pencil")
+                            .appFont(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Edit")
+                    .opacity(hovered ? 1 : 0)
+                }
+                if let saveError {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .appFont(.caption)
+                        .foregroundColor(.red)
+                        .help(saveError)
+                }
+            }
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .onHover { hovered = $0 }
+        .onChange(of: value) { _, _ in savedOverride = nil }
+    }
+
+    private func commit() {
+        guard let editKey, let onSave, !isSaving else { return }
+        let newValue = draft
+        isSaving = true
+        Task {
+            let error = await onSave(editKey, newValue)
+            isSaving = false
+            saveError = error
+            if error == nil {
+                savedOverride = newValue
+                isEditing = false
+            }
+        }
+    }
+
+    private func cancel() {
+        isEditing = false
+        saveError = nil
+    }
+}
+
+// MARK: - Lifecycle Bar
+
+/// One progress line of the Lifecycle card: title left, milestone right, and
+/// a bar showing how much of the span has elapsed — amber while running,
+/// red once overdue.
+struct LifecycleBar: View {
+    let title: String
+    let trailing: String
+    let fraction: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                    .appFont(.callout, weight: .medium)
+                Spacer()
+                Text(trailing)
+                    .appFont(.caption)
+                    .foregroundColor(.secondary)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.secondary.opacity(0.15))
+                    Capsule()
+                        .fill(fraction >= 1 ? Color.red : Color.orange)
+                        .frame(width: max(geo.size.width * fraction, 4))
+                }
+            }
+            .frame(height: 6)
+        }
+        .padding(.vertical, 2)
     }
 }
 

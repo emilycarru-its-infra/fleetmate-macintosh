@@ -676,7 +676,10 @@ class AppState: ObservableObject {
             // lands at ~68s. Whichever finished last won, which is how the panel
             // came to show "Failed: Silent SSO failed" directly above a green
             // "signed in as Service Account".
-            dbg.warn("[SSO Phase 1.5] Headless WKWebView SSO FAILED or timed out — TDX auth is unaffected (service-account JWT is the supported path)", category: "tdx-sso")
+            // Not "unaffected" any more: with no service account configured,
+            // this is the only way in, so a failure here means no TDX access
+            // until someone signs in.
+            dbg.warn("[SSO Phase 1.5] Headless WKWebView SSO FAILED or timed out — TDX calls will fail until an interactive sign-in succeeds", category: "tdx-sso")
         }
     }
 

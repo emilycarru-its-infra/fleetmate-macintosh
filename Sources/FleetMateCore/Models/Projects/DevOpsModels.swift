@@ -490,6 +490,10 @@ public struct GitPullRequest: Codable, Identifiable {
     public let isDraft: Bool?
     public let mergeStatus: String?
     public let reviewers: [GitPullRequestReviewer]?
+    /// The source commit the server last merged. Completing a PR requires
+    /// echoing this back, which is how Azure DevOps detects that the branch
+    /// moved between reading the PR and completing it.
+    public let lastMergeSourceCommit: GitCommitRefLite?
 
     public var id: Int { pullRequestId }
 
@@ -509,6 +513,14 @@ public struct GitPullRequest: Codable, Identifiable {
 
     /// True when Azure DevOps has detected merge conflicts against the target.
     public var hasConflicts: Bool { mergeStatus?.lowercased() == "conflicts" }
+}
+
+/// A bare commit reference. `GitCommitRef` can't stand in here: the PR payload
+/// carries only `commitId` and `url`, so decoding it would fail on the missing
+/// non-optional fields.
+public struct GitCommitRefLite: Codable {
+    public let commitId: String?
+    public let url: String?
 }
 
 public struct GitPullRequestReviewer: Codable {

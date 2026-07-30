@@ -277,6 +277,12 @@ public class SnipeService {
         return try await put("/api/v1/hardware/\(assetId)", body: request)
     }
 
+    /// All custom field definitions — element types and listbox options.
+    public func getFieldDefinitions() async throws -> [SnipeFieldDef] {
+        let response: SnipeListResponse<SnipeFieldDef>? = try await fetch("/api/v1/fields?limit=500")
+        return response?.rows ?? []
+    }
+
     /// Update a single field by its API key — a standard column ("serial",
     /// "name", "notes") or a custom field's `_snipeit_*` db column, which the
     /// API's `custom_fields` entries carry as `field`.

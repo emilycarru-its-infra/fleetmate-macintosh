@@ -357,6 +357,8 @@ public struct SnipeCustomField: Codable, Sendable {
     public let field: String?
     public let value: String?
     public let fieldFormat: String?
+    /// Snipe element type: "text", "listbox", "checkbox", "radio", "textarea".
+    public let element: String?
     /// Slug of the fork's field group ("inventory", "specs", "management",
     /// "networking", "procurement", "identity"). Sent by the ECU Snipe-IT fork
     /// once its AssetsTransformer exposes it; nil from stock Snipe-IT, in which
@@ -364,9 +366,26 @@ public struct SnipeCustomField: Codable, Sendable {
     public let fieldGroup: String?
 
     enum CodingKeys: String, CodingKey {
-        case field, value
+        case field, value, element
         case fieldFormat = "field_format"
         case fieldGroup = "field_group"
+    }
+}
+
+/// A custom field definition from GET /api/v1/fields — carries what the asset
+/// payload doesn't: the field's element type and, for listboxes, its options.
+public struct SnipeFieldDef: Codable, Identifiable, Sendable {
+    public let id: Int
+    public let name: String?
+    public let dbColumnName: String?
+    /// Element type — "listbox" is the one that changes the editor.
+    public let type: String?
+    public let fieldValuesArray: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, type
+        case dbColumnName = "db_column_name"
+        case fieldValuesArray = "field_values_array"
     }
 }
 

@@ -540,6 +540,9 @@ struct AssetDetailSidebar: View {
 
     // Loaded option lists
     @State private var loadedStatusLabels: [SnipeStatusLabel] = []
+    /// Listbox custom fields' options, keyed by db column — so editing a
+    /// dropdown field offers its real choices instead of a text field.
+    @State private var fieldListboxOptions: [String: [String]] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -592,130 +595,83 @@ struct AssetDetailSidebar: View {
                     .buttonStyle(.plain)
                 }
 
-                // Identity line: tag and serial as copyable chips, status pill,
-                // and who/where — the four questions every lookup starts with.
-                HStack(spacing: 8) {
-                    if let tag = asset.assetTag {
-                        identityChip(tag, help: "Copy asset tag")
-                    }
-                    if let serial = asset.serial {
-                        identityChip(serial, help: "Copy serial number")
-                    }
-                    StatusBadge(status: asset.statusLabel)
-                    Spacer()
-                }
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        // Identity line: tag and serial as copyable chips,
+                        // status pill — what every lookup starts with.
+                        HStack(spacing: 8) {
+                            if let tag = asset.assetTag {
+                                identityChip(tag, help: "Copy asset tag")
+                            }
+                            if let serial = asset.serial {
+                                identityChip(serial, help: "Copy serial number")
+                            }
+                            StatusBadge(status: asset.statusLabel)
+                            Spacer(minLength: 0)
+                        }
 
-                if asset.assignedTo?.name != nil || asset.location?.name != nil {
-                    HStack(spacing: 14) {
-                        // An asset checked out to a room is not "assigned to a
-                        // person named D4315" — when the assignee IS a location,
-                        // the person line would duplicate the pin line verbatim.
-                        let assignedToLocation = asset.assignedTo?.type == "location"
-                        if let who = asset.assignedTo?.name, !assignedToLocation {
-                            Label(who, systemImage: "person.fill")
-                                .appFont(.caption)
-                                .foregroundColor(.secondary)
+                        if asset.assignedTo?.name != nil || asset.location?.name != nil {
+                            HStack(spacing: 14) {
+                                // An asset checked out to a room is not
+                                // "assigned to a person named D4315" — when the
+                                // assignee IS a location, the person line would
+                                // duplicate the pin line verbatim.
+                                let assignedToLocation = asset.assignedTo?.type == "location"
+                                if let who = asset.assignedTo?.name, !assignedToLocation {
+                                    Label(who, systemImage: "person.fill")
+                                        .appFont(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                if let place = asset.location?.name ?? (assignedToLocation ? asset.assignedTo?.name : nil) {
+                                    Label(place, systemImage: "mappin.and.ellipse")
+                                        .appFont(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                            }
                         }
-                        if let place = asset.location?.name ?? (assignedToLocation ? asset.assignedTo?.name : nil) {
-                            Label(place, systemImage: "mappin.and.ellipse")
-                                .appFont(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
                     }
+
+                    Spacer(minLength: 0)
+
+                    // The photo lives under the action buttons, in what was
+                    // dead space — as the manufacturer ships it: no frame, no
+                    // rounding, no border.
+                    assetPhoto
                 }
             }
             .padding()
 
             Divider()
 
-            // Scrollable detail
+            // Scrollable detail, in priority order: state and people first,
+            // classification and dates second, the machine itself third,
+            // money fourth, everything else after.
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    // Hardware tiles, in ReportMate's layout language: on Apple
-                    // Silicon the CPU/Memory/GPU/NPU tiles sit inside a dashed
-                    // capsule under a "{chip} Chip — Unified Memory
-                    // Architecture" title, because on an SoC those four ARE one
-                    // part. Storage/Display/Architecture (and Battery on
-                    // laptops) stand outside it. Every tile always renders —
-                    // an empty value shows as "—", not as a missing tile.
-                    assetPhoto
-                    overviewCard
+                    HStack(alignment: .top, spacing: 12) {
+                        statusCard
+                        if asset.assignedTo != nil {
+                            assignmentCard
+                        }
+                    }
+
+                    HStack(alignment: .top, spacing: 12) {
+                        groupCard("inventory")
+                        overviewCard
+                    }
+
+                    HStack(alignment: .top, spacing: 12) {
+                        hardwareCard
+                        specTilesSection
+                    }
+
+                    groupCard("procurement")
                     lifecycleCard
-                    specTilesSection
 
-                    // Status (editable dropdown)
-                    sectionCard("Status", systemImage: "circle.dashed") {
-                        if !loadedStatusLabels.isEmpty {
-                            HStack(alignment: .top) {
-                                Text("Status")
-                                    .appFont(.callout)
-                                    .foregroundColor(.secondary)
-                                    .frame(width: 110, alignment: .leading)
-                                Picker("", selection: Binding(
-                                    get: { editStatusId ?? asset.statusLabel?.id ?? 0 },
-                                    set: { editStatusId = $0; hasEdits = true }
-                                )) {
-                                    ForEach(loadedStatusLabels, id: \.id) { label in
-                                        Text(label.name ?? "Unknown").tag(label.id)
-                                    }
-                                }
-                                .labelsHidden()
-                                Spacer()
-                            }
-                        } else {
-                            detailRow("Status", value: asset.statusLabel?.name)
-                        }
-                        detailRow("Status Type", value: asset.statusLabel?.statusMeta)
-                    }
-
-                    // Assignment (Username hidden)
-                    if asset.assignedTo != nil {
-                        sectionCard("Assignment", systemImage: "person.2") {
-                            detailRow("Assigned To", value: asset.assignedTo?.name)
-                            detailRow("Email", value: asset.assignedTo?.email, copyable: true)
-                            detailRow("Employee #", value: asset.assignedTo?.employeeNumber)
-                        }
-                    }
-
-                    // Hardware identity rows; the headline specs live in the
-                    // chips above, so they don't repeat here.
-                    sectionCard("Hardware", systemImage: "desktopcomputer") {
-                        detailRow("Serial", value: asset.serial, copyable: true, mono: true, editKey: "serial")
-                        detailRow("Model", value: asset.model?.name)
-                        detailRow("Category", value: asset.category?.name)
-                        detailRow("Manufacturer", value: asset.manufacturer?.name)
-                        detailRow("Architecture",
-                                  value: asset.customFieldByName("Architecture")?.value,
-                                  copyable: true,
-                                  editKey: asset.customFieldByName("Architecture")?.field,
-                                  alwaysShow: asset.customFieldByName("Architecture") != nil)
-                    }
-
-                    // The fork's field-group taxonomy, one card per group in
-                    // its render order. Every field of the asset's fieldset
-                    // shows, empty ones as "—" — the web renders empty rows,
-                    // and hiding them made the two apps disagree about what a
-                    // device even has. Cards with no fields at all disappear.
-                    ForEach(assetFieldGroups, id: \.slug) { group in
-                        let fields = customFields(in: group)
-                        if !fields.isEmpty || (group.slug == "procurement" && hasPurchaseInfo) {
-                            sectionCard(group.title, systemImage: group.symbol) {
-                                if group.slug == "procurement" {
-                                    detailRow("Purchase Cost", value: asset.purchaseCost)
-                                    detailRow("Purchase Date", value: asset.purchaseDate?.formatted)
-                                }
-                                ForEach(fields, id: \.key) { fieldName, field in
-                                    detailRow(fieldName, value: field.value, copyable: true,
-                                              mono: group.mono, editKey: field.field, alwaysShow: true)
-                                    // Web order: Location sits between Catalog
-                                    // and Usage in the Inventory card.
-                                    if group.slug == "inventory" && fieldName == "Catalog" {
-                                        detailRow("Location", value: asset.rtdLocation?.name, alwaysShow: true)
-                                    }
-                                }
-                            }
-                        }
+                    // Remaining taxonomy groups in their render order.
+                    ForEach(["management", "networking", "identity"], id: \.self) { slug in
+                        groupCard(slug)
                     }
 
                     // Metadata, like the web's bottom card. The checkout /
@@ -947,27 +903,104 @@ struct AssetDetailSidebar: View {
         ["Chip", "CPU", "Memory", "GPU", "NPU", "Storage", "Display", "Battery", "Architecture"]
     }
 
+    // MARK: - Prioritized cards
+
+    private var statusCard: some View {
+        sectionCard("Status", systemImage: "circle.dashed") {
+            if !loadedStatusLabels.isEmpty {
+                HStack(alignment: .top) {
+                    Text("Status")
+                        .appFont(.callout)
+                        .foregroundColor(.secondary)
+                        .frame(width: 110, alignment: .leading)
+                    Picker("", selection: Binding(
+                        get: { editStatusId ?? asset.statusLabel?.id ?? 0 },
+                        set: { editStatusId = $0; hasEdits = true }
+                    )) {
+                        ForEach(loadedStatusLabels, id: \.id) { label in
+                            Text(label.name ?? "Unknown").tag(label.id)
+                        }
+                    }
+                    .labelsHidden()
+                    Spacer()
+                }
+            } else {
+                detailRow("Status", value: asset.statusLabel?.name)
+            }
+            detailRow("Status Type", value: asset.statusLabel?.statusMeta)
+        }
+    }
+
+    private var assignmentCard: some View {
+        sectionCard("Assignment", systemImage: "person.2") {
+            detailRow("Assigned To", value: asset.assignedTo?.name)
+            detailRow("Email", value: asset.assignedTo?.email, copyable: true)
+            detailRow("Employee #", value: asset.assignedTo?.employeeNumber)
+        }
+    }
+
+    /// Identity rows plus the specs-group fields, one card — Hardware and
+    /// Specs were two names for the same thing (Snipe's group is being renamed
+    /// to Hardware to match). The headline numbers stay in the tiles.
+    private var hardwareCard: some View {
+        sectionCard("Hardware", systemImage: "desktopcomputer") {
+            detailRow("Serial", value: asset.serial, copyable: true, mono: true, editKey: "serial")
+            detailRow("Model", value: asset.model?.name)
+            detailRow("Category", value: asset.category?.name)
+            detailRow("Manufacturer", value: asset.manufacturer?.name)
+            detailRow("Architecture",
+                      value: asset.customFieldByName("Architecture")?.value,
+                      copyable: true,
+                      editKey: asset.customFieldByName("Architecture")?.field,
+                      alwaysShow: asset.customFieldByName("Architecture") != nil)
+            if let specs = assetFieldGroups.first(where: { $0.slug == "specs" }) {
+                ForEach(customFields(in: specs), id: \.key) { fieldName, field in
+                    detailRow(fieldName, value: field.value, copyable: true,
+                              editKey: field.field, alwaysShow: true)
+                }
+            }
+        }
+    }
+
+    /// One taxonomy group as a card. Every field of the asset's fieldset
+    /// shows, empty ones as "—" — the web renders empty rows, and hiding them
+    /// made the two apps disagree about what a device even has.
+    @ViewBuilder
+    private func groupCard(_ slug: String) -> some View {
+        if let group = assetFieldGroups.first(where: { $0.slug == slug }) {
+            let fields = customFields(in: group)
+            if !fields.isEmpty || (slug == "procurement" && hasPurchaseInfo) {
+                sectionCard(group.title, systemImage: group.symbol) {
+                    if slug == "procurement" {
+                        detailRow("Purchase Cost", value: asset.purchaseCost)
+                        detailRow("Purchase Date", value: asset.purchaseDate?.formatted)
+                    }
+                    ForEach(fields, id: \.key) { fieldName, field in
+                        detailRow(fieldName, value: field.value, copyable: true,
+                                  mono: group.mono, editKey: field.field, alwaysShow: true)
+                        // Web order: Location sits between Catalog and Usage
+                        // in the Inventory card.
+                        if slug == "inventory" && fieldName == "Catalog" {
+                            detailRow("Location", value: asset.rtdLocation?.name, alwaysShow: true)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Photo / Overview / Lifecycle
 
-    /// The asset's photo, as the web page leads with. Only occupies space when
-    /// the image actually loads — no broken-image placeholder.
+    /// The asset's photo, exactly as it comes — no frame, no rounding, no
+    /// border. Only occupies space when the image actually loads.
     @ViewBuilder
     private var assetPhoto: some View {
         if let image = asset.image, let url = URL(string: image) {
             AsyncImage(url: url) { phase in
                 if case .success(let img) = phase {
-                    HStack {
-                        Spacer()
-                        img.resizable()
-                            .scaledToFit()
-                            .frame(maxHeight: 140)
-                            .clipShape(RoundedRectangle(cornerRadius: 10))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
-                            )
-                        Spacer()
-                    }
+                    img.resizable()
+                        .scaledToFit()
+                        .frame(maxHeight: 96)
                 }
             }
         }
@@ -1079,6 +1112,9 @@ struct AssetDetailSidebar: View {
                 copyable: copyable,
                 mono: mono,
                 editKey: editKey,
+                // Snipe's field type decides the editor: a listbox edits as
+                // the dropdown it is on the web, not as free text.
+                options: editKey.flatMap { fieldListboxOptions[$0] },
                 onSave: editKey == nil ? nil : { key, newValue in
                     await saveField(key, newValue)
                 }
@@ -1120,6 +1156,20 @@ struct AssetDetailSidebar: View {
             loadedStatusLabels = try await snipeService.getStatusLabels()
         } catch {
             print("[AssetDetailSidebar] Failed to load status labels: \(error)")
+        }
+        do {
+            let defs = try await snipeService.getFieldDefinitions()
+            var options: [String: [String]] = [:]
+            for def in defs {
+                if let column = def.dbColumnName,
+                   (def.type ?? "").lowercased() == "listbox",
+                   let values = def.fieldValuesArray, !values.isEmpty {
+                    options[column] = values
+                }
+            }
+            fieldListboxOptions = options
+        } catch {
+            print("[AssetDetailSidebar] Failed to load field definitions: \(error)")
         }
     }
 
@@ -1163,6 +1213,9 @@ struct DetailFieldRow: View {
     var copyable = false
     var mono = false
     var editKey: String? = nil
+    /// Listbox choices — when present, editing offers Snipe's dropdown
+    /// instead of free text, matching the field's type on the web.
+    var options: [String]? = nil
     /// Returns an error message, or nil on success.
     var onSave: ((String, String) async -> String?)? = nil
 
@@ -1185,26 +1238,49 @@ struct DetailFieldRow: View {
                 .frame(width: 110, alignment: .leading)
 
             if isEditing {
-                TextField("", text: $draft)
-                    .textFieldStyle(.roundedBorder)
-                    .appFont(.callout, design: mono ? .monospaced : .default)
-                    .onSubmit { commit() }
-                    .onExitCommand { cancel() }
-                if isSaving {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Button(action: commit) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
+                // Controls sit LEFT of the editor — cancel outermost, save
+                // adjacent to the field — and center-aligned with it, so they
+                // don't float off the field's baseline.
+                HStack(alignment: .center, spacing: 6) {
+                    if isSaving {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button(action: cancel) {
+                            Image(systemName: "xmark.circle")
+                                .appFont(fixed: 14)
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Cancel")
+                        Button(action: commit) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .appFont(fixed: 14)
+                                .foregroundColor(.green)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Save")
                     }
-                    .buttonStyle(.plain)
-                    .help("Save")
-                    Button(action: cancel) {
-                        Image(systemName: "xmark.circle")
-                            .foregroundColor(.secondary)
+
+                    if let options, !options.isEmpty {
+                        // The field IS a dropdown in Snipe; edit it as one.
+                        Picker("", selection: $draft) {
+                            if !draft.isEmpty && !options.contains(draft) {
+                                Text(draft).tag(draft)
+                            }
+                            Text("—").tag("")
+                            ForEach(options, id: \.self) { option in
+                                Text(option).tag(option)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    } else {
+                        TextField("", text: $draft)
+                            .textFieldStyle(.roundedBorder)
+                            .appFont(.callout, design: mono ? .monospaced : .default)
+                            .onSubmit { commit() }
+                            .onExitCommand { cancel() }
                     }
-                    .buttonStyle(.plain)
-                    .help("Cancel")
                 }
             } else {
                 Text(displayValue.isEmpty ? "—" : displayValue)
@@ -1230,8 +1306,11 @@ struct DetailFieldRow: View {
                         saveError = nil
                         isEditing = true
                     }) {
+                        // Big enough to read as a button — the caption-sized
+                        // glyph was a faint scratch nobody would click.
                         Image(systemName: "pencil")
-                            .appFont(.caption)
+                            .appFont(fixed: 13, weight: .semibold)
+                            .foregroundColor(Color.primary.opacity(0.75))
                     }
                     .buttonStyle(.plain)
                     .help("Edit")

@@ -463,12 +463,58 @@ struct AssetsView: View {
     }
 }
 
-// MARK: - Custom Field Section Mapping
+// MARK: - Field Group Taxonomy
 
-private let hardwareFields = Set(["Platform", "Chip", "CPU", "GPU", "NPU", "Memory", "Storage", "Display"])
-private let managementFields = Set(["Micro ID", "Intune ID", "Object ID"])
-private let financialFields = Set(["Invoice Number", "PO Number", "Lease Contract ID", "Lease Contract Name",
-                                    "Lease End Date", "Ownership Type", "Purchase Cost", "Purchase Date"])
+/// One asset-detail section, mirroring the fork's field-group taxonomy.
+struct AssetFieldGroup {
+    let slug: String
+    let title: String
+    let symbol: String
+    /// Identifier-style values render monospaced.
+    let mono: Bool
+    /// Field names in this group — the client-side mirror of the fork's
+    /// `SeedAssetFieldGroups` migration, used when the API doesn't say.
+    let fields: Set<String>
+}
+
+/// The six groups the ECU Snipe-IT fork seeds, in its render order
+/// (`database/migrations/2026_06_18_120000_seed_asset_field_groups.php`).
+/// The server's `field_group` slug on each custom field wins when present, so
+/// admin re-grouping flows through without an app update; this mirror only
+/// decides where a field lands when the API predates the transformer change.
+private let assetFieldGroups: [AssetFieldGroup] = [
+    AssetFieldGroup(
+        slug: "inventory", title: "Inventory", symbol: "clipboard", mono: false,
+        fields: ["Area", "Catalog", "Usage", "Fleet"]
+    ),
+    AssetFieldGroup(
+        slug: "specs", title: "Specs", symbol: "cpu", mono: false,
+        fields: ["Architecture", "Chip", "CPU", "GPU", "NPU", "Memory", "Storage",
+                 "Display", "Display Resolution", "Colour", "Version"]
+    ),
+    AssetFieldGroup(
+        slug: "management", title: "Management", symbol: "laptopcomputer", mono: false,
+        fields: ["Platform", "Device Management Service", "Enrollment Status"]
+    ),
+    AssetFieldGroup(
+        slug: "networking", title: "Networking", symbol: "network", mono: false,
+        fields: ["Hostname", "Address", "Driver", "Queue(s)", "Virtual Queue",
+                 "Toner Contract", "Options"]
+    ),
+    AssetFieldGroup(
+        slug: "procurement", title: "Procurement", symbol: "dollarsign.circle", mono: false,
+        fields: ["Ownership Type", "Lease Contract ID", "Lease Contract Name",
+                 "Lease End Date", "Lease Rent", "Buyout Cost", "Invoice Number",
+                 "PO Number", "Warranty/Soft Cost", "Decommission Date",
+                 "License Type", "Purchase Cost", "Purchase Date"]
+    ),
+    AssetFieldGroup(
+        slug: "identity", title: "Identity", symbol: "touchid", mono: true,
+        fields: ["Entra ID", "Intune ID", "Defender ID", "Object ID", "Micro ID",
+                 "Identifier", "IMEI"]
+    ),
+]
+
 private let hiddenFields = Set(["Username"])
 
 // MARK: - Asset Detail Sidebar
@@ -557,12 +603,16 @@ struct AssetDetailSidebar: View {
 
                 if asset.assignedTo?.name != nil || asset.location?.name != nil {
                     HStack(spacing: 14) {
-                        if let who = asset.assignedTo?.name {
+                        // An asset checked out to a room is not "assigned to a
+                        // person named D4315" — when the assignee IS a location,
+                        // the person line would duplicate the pin line verbatim.
+                        let assignedToLocation = asset.assignedTo?.type == "location"
+                        if let who = asset.assignedTo?.name, !assignedToLocation {
                             Label(who, systemImage: "person.fill")
                                 .appFont(.caption)
                                 .foregroundColor(.secondary)
                         }
-                        if let place = asset.location?.name {
+                        if let place = asset.location?.name ?? (assignedToLocation ? asset.assignedTo?.name : nil) {
                             Label(place, systemImage: "mappin.and.ellipse")
                                 .appFont(.caption)
                                 .foregroundColor(.secondary)
@@ -578,15 +628,14 @@ struct AssetDetailSidebar: View {
             // Scrollable detail
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    // Spec chips: the numbers people compare machines by, worn
-                    // up front instead of buried among rows.
-                    if !specChips.isEmpty {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], alignment: .leading, spacing: 8) {
-                            ForEach(specChips, id: \.label) { chip in
-                                SpecChip(icon: chip.icon, label: chip.label, value: chip.value)
-                            }
-                        }
-                    }
+                    // Hardware tiles, in ReportMate's layout language: on Apple
+                    // Silicon the CPU/Memory/GPU/NPU tiles sit inside a dashed
+                    // capsule under a "{chip} Chip — Unified Memory
+                    // Architecture" title, because on an SoC those four ARE one
+                    // part. Storage/Display/Architecture (and Battery on
+                    // laptops) stand outside it. Every tile always renders —
+                    // an empty value shows as "—", not as a missing tile.
+                    specTilesSection
 
                     // Status (editable dropdown)
                     sectionCard("Status", systemImage: "circle.dashed") {
@@ -622,40 +671,27 @@ struct AssetDetailSidebar: View {
                         }
                     }
 
-                    // Hardware: identity rows; the headline specs live in the
+                    // Hardware identity rows; the headline specs live in the
                     // chips above, so they don't repeat here.
-                    sectionCard("Hardware", systemImage: "cpu") {
+                    sectionCard("Hardware", systemImage: "desktopcomputer") {
                         detailRow("Serial", value: asset.serial, copyable: true, mono: true)
                         detailRow("Model", value: asset.model?.name)
                         detailRow("Category", value: asset.category?.name)
                         detailRow("Manufacturer", value: asset.manufacturer?.name)
-                        if let customFields = asset.customFields {
-                            ForEach(customFields.sorted(by: { $0.key < $1.key }), id: \.key) { fieldName, field in
-                                if hardwareFields.contains(fieldName) && !chipFields.contains(fieldName) {
-                                    detailRow(fieldName, value: field.value, copyable: true)
+                    }
+
+                    // The fork's field-group taxonomy, one card per group in
+                    // its render order. Skips groups with nothing to show.
+                    ForEach(assetFieldGroups, id: \.slug) { group in
+                        let fields = customFields(in: group)
+                        if !fields.isEmpty || (group.slug == "procurement" && hasPurchaseInfo) {
+                            sectionCard(group.title, systemImage: group.symbol) {
+                                if group.slug == "procurement" {
+                                    detailRow("Purchase Cost", value: asset.purchaseCost)
+                                    detailRow("Purchase Date", value: asset.purchaseDate?.formatted)
                                 }
-                            }
-                        }
-                    }
-
-                    // Management identifiers — long GUIDs, so monospaced.
-                    let mgmtFields = managementCustomFields
-                    if !mgmtFields.isEmpty {
-                        sectionCard("Identifiers", systemImage: "barcode.viewfinder") {
-                            ForEach(mgmtFields, id: \.key) { fieldName, field in
-                                detailRow(fieldName, value: field.value, copyable: true, mono: true)
-                            }
-                        }
-                    }
-
-                    // Financials section
-                    sectionCard("Financials", systemImage: "dollarsign.circle") {
-                        detailRow("Purchase Cost", value: asset.purchaseCost)
-                        detailRow("Purchase Date", value: asset.purchaseDate?.formatted)
-                        if let customFields = asset.customFields {
-                            ForEach(customFields.sorted(by: { $0.key < $1.key }), id: \.key) { fieldName, field in
-                                if financialFields.contains(fieldName) && fieldName != "Purchase Cost" && fieldName != "Purchase Date" {
-                                    detailRow(fieldName, value: field.value, copyable: true)
+                                ForEach(fields, id: \.key) { fieldName, field in
+                                    detailRow(fieldName, value: field.value, copyable: true, mono: group.mono)
                                 }
                             }
                         }
@@ -738,17 +774,37 @@ struct AssetDetailSidebar: View {
 
     // MARK: - Custom Field Grouping
 
-    private var managementCustomFields: [(key: String, value: SnipeCustomField)] {
+    /// Group slug for a field: the server's word when the fork's API sends
+    /// `field_group`, else the mirrored seed taxonomy, else "other".
+    private func groupSlug(for name: String, field: SnipeCustomField) -> String {
+        if let slug = field.fieldGroup, !slug.isEmpty { return slug }
+        return assetFieldGroups.first(where: { $0.fields.contains(name) })?.slug ?? "other"
+    }
+
+    private func customFields(in group: AssetFieldGroup) -> [(key: String, value: SnipeCustomField)] {
         guard let customFields = asset.customFields else { return [] }
         return customFields.sorted(by: { $0.key < $1.key })
-            .filter { managementFields.contains($0.key) && !($0.value.value?.isEmpty ?? true) }
+            .filter {
+                groupSlug(for: $0.key, field: $0.value) == group.slug
+                    && !($0.value.value?.isEmpty ?? true)
+                    && !hiddenFields.contains($0.key)
+                    && !chipFields.contains($0.key)
+            }
+    }
+
+    private var hasPurchaseInfo: Bool {
+        !(asset.purchaseCost?.isEmpty ?? true) || asset.purchaseDate?.formatted != nil
     }
 
     private var unmappedCustomFields: [(key: String, value: SnipeCustomField)] {
         guard let customFields = asset.customFields else { return [] }
-        let allMapped = hardwareFields.union(managementFields).union(financialFields).union(hiddenFields)
         return customFields.sorted(by: { $0.key < $1.key })
-            .filter { !allMapped.contains($0.key) && !($0.value.value?.isEmpty ?? true) }
+            .filter {
+                groupSlug(for: $0.key, field: $0.value) == "other"
+                    && !($0.value.value?.isEmpty ?? true)
+                    && !hiddenFields.contains($0.key)
+                    && !chipFields.contains($0.key)
+            }
     }
 
     // MARK: - Hero pieces
@@ -787,31 +843,88 @@ struct AssetDetailSidebar: View {
         .help(help)
     }
 
-    /// The headline specs, pulled out of the row soup: what people actually
-    /// compare machines by.
-    private var specChips: [(icon: String, label: String, value: String)] {
-        let mapping: [(field: String, icon: String)] = [
-            ("Chip", "cpu"),
-            ("CPU", "cpu"),
-            ("Memory", "memorychip"),
-            ("Storage", "internaldrive"),
-            ("GPU", "rectangle.3.group"),
-            ("Display", "display"),
-        ]
-        var chips: [(icon: String, label: String, value: String)] = []
-        for (field, icon) in mapping {
-            if let value = asset.customFieldByName(field)?.value,
-               !value.isEmpty, value != "-",
-               !chips.contains(where: { $0.label == field }) {
-                chips.append((icon: icon, label: field, value: value))
-            }
-        }
-        return chips
+    // MARK: - Spec tiles (ReportMate layout language)
+
+    private var chipName: String? {
+        let value = asset.customFieldByName("Chip")?.value ?? ""
+        return value.isEmpty || value == "-" ? nil : value
     }
 
-    /// Fields shown as chips, excluded from the Hardware card so nothing
-    /// appears twice.
-    private var chipFields: Set<String> { Set(specChips.map(\.label)) }
+    private var isLaptop: Bool {
+        (asset.category?.name ?? "").lowercased().contains("laptop")
+    }
+
+    private func specValue(_ field: String) -> String {
+        let value = asset.customFieldByName(field)?.value ?? ""
+        return value.isEmpty || value == "-" ? "—" : value
+    }
+
+    /// The four SoC members. On Apple Silicon the CPU tile falls back to the
+    /// chip name — on an M-series machine the chip IS the CPU.
+    private var socTiles: [AssetSpecTile.Model] {
+        [
+            .init(icon: "cpu", label: "CPU", tint: .red,
+                  value: specValue("CPU") == "—" ? (chipName ?? "—") : specValue("CPU")),
+            .init(icon: "memorychip", label: "Memory", tint: .yellow, value: specValue("Memory")),
+            .init(icon: "square.3.layers.3d", label: "GPU", tint: .green, value: specValue("GPU")),
+            .init(icon: "brain", label: "NPU", tint: .pink, value: specValue("NPU")),
+        ]
+    }
+
+    /// Desktops show 7 tiles; laptops add Battery as the 8th.
+    private var peripheralTiles: [AssetSpecTile.Model] {
+        var tiles: [AssetSpecTile.Model] = [
+            .init(icon: "internaldrive", label: "Storage", tint: .purple, value: specValue("Storage")),
+            .init(icon: "display", label: "Display", tint: .blue, value: specValue("Display")),
+            .init(icon: "square.stack.3d.up", label: "Architecture", tint: .orange, value: specValue("Architecture")),
+        ]
+        if isLaptop {
+            tiles.append(.init(icon: "battery.75percent", label: "Battery", tint: .green, value: specValue("Battery")))
+        }
+        return tiles
+    }
+
+    private var tileColumns: [GridItem] {
+        [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
+    }
+
+    @ViewBuilder
+    private var specTilesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let chip = chipName {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("\(chip) Chip")
+                        .appFont(.subheadline, weight: .bold)
+                    Text("Unified Memory Architecture")
+                        .appFont(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                LazyVGrid(columns: tileColumns, spacing: 8) {
+                    ForEach(socTiles) { AssetSpecTile(model: $0) }
+                }
+                .padding(8)
+                .background(Color.secondary.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                        .foregroundColor(Color.secondary.opacity(0.35))
+                )
+            } else {
+                LazyVGrid(columns: tileColumns, spacing: 8) {
+                    ForEach(socTiles) { AssetSpecTile(model: $0) }
+                }
+            }
+            LazyVGrid(columns: tileColumns, spacing: 8) {
+                ForEach(peripheralTiles) { AssetSpecTile(model: $0) }
+            }
+        }
+    }
+
+    /// Fields the tiles consume, excluded from the cards so nothing repeats.
+    private var chipFields: Set<String> {
+        ["Chip", "CPU", "Memory", "GPU", "NPU", "Storage", "Display", "Architecture", "Battery"]
+    }
 
     // MARK: - Cards
 
@@ -914,40 +1027,48 @@ struct AssetDetailSidebar: View {
     }
 }
 
-// MARK: - Spec Chip
+// MARK: - Spec Tile
 
-/// One headline spec — "16 GB", "M2 Pro" — as a small labelled tile.
-struct SpecChip: View {
-    let icon: String
-    let label: String
-    let value: String
+/// One hardware fact as a tile: tinted icon and label, value in the tint —
+/// the same visual grammar ReportMate's hardware page uses, so the two tools
+/// describe a machine the same way.
+struct AssetSpecTile: View {
+    struct Model: Identifiable {
+        let icon: String
+        let label: String
+        let tint: Color
+        let value: String
+        var id: String { label }
+    }
+
+    let model: Model
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .appFont(fixed: 13)
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(label)
-                    .appFont(fixed: 9, weight: .medium)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Image(systemName: model.icon)
+                    .appFont(fixed: 12)
+                    .foregroundStyle(model.tint)
+                Text(model.label)
+                    .appFont(fixed: 10, weight: .semibold)
                     .foregroundColor(.secondary)
                     .textCase(.uppercase)
-                Text(value)
-                    .appFont(fixed: 12, weight: .semibold)
-                    .lineLimit(1)
             }
-            Spacer(minLength: 0)
+            Text(model.value)
+                .appFont(fixed: 14, weight: .bold)
+                .foregroundStyle(model.value == "—" ? Color.secondary : model.tint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color.secondary.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color(NSColor.controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
         )
-        .help("\(label): \(value)")
+        .help("\(model.label): \(model.value)")
     }
 }
 

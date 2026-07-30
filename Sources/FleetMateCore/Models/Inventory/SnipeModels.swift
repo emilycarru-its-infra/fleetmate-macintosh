@@ -327,10 +327,16 @@ public struct SnipeCustomField: Codable, Sendable {
     public let field: String?
     public let value: String?
     public let fieldFormat: String?
-    
+    /// Slug of the fork's field group ("inventory", "specs", "management",
+    /// "networking", "procurement", "identity"). Sent by the ECU Snipe-IT fork
+    /// once its AssetsTransformer exposes it; nil from stock Snipe-IT, in which
+    /// case the client falls back to its mirrored copy of the seeded taxonomy.
+    public let fieldGroup: String?
+
     enum CodingKeys: String, CodingKey {
         case field, value
         case fieldFormat = "field_format"
+        case fieldGroup = "field_group"
     }
 }
 

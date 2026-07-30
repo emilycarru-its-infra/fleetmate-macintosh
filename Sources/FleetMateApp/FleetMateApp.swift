@@ -68,8 +68,30 @@ class AppState: ObservableObject {
     /// The visible tab. Lives here rather than in `ContentView` so the ⌘1–⌘6
     /// menu commands, which are built in the `App` scene, can both read it (to
     /// decide whether ⌘N means "ticket" or "work item") and set it.
-    @Published var selectedTab: AppTab = .dashboard
-    @Published var navigateToTab: AppTab?
+    ///
+    /// The didSet logs each change with its call stack: the app has been seen
+    /// jumping to Inventory with no user action, and only three code paths
+    /// write tab state — none of them targeting Inventory. Until the jump is
+    /// reproduced with this in place, the log is the only way to name the
+    /// caller. Cheap enough to keep (fires only on actual changes).
+    @Published var selectedTab: AppTab = .dashboard {
+        didSet {
+            guard oldValue != selectedTab else { return }
+            let frames = Thread.callStackSymbols.dropFirst(2).prefix(5)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .joined(separator: " | ")
+            dbg.info("Tab \(oldValue.rawValue) → \(selectedTab.rawValue) via: \(frames)", category: "tabs")
+        }
+    }
+    @Published var navigateToTab: AppTab? {
+        didSet {
+            guard let tab = navigateToTab else { return }
+            let frames = Thread.callStackSymbols.dropFirst(2).prefix(5)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .joined(separator: " | ")
+            dbg.info("navigateToTab ← \(tab.rawValue) via: \(frames)", category: "tabs")
+        }
+    }
     /// The most recent menu command, for the visible tab to act on.
     /// See `AppCommand` for why this is a broadcast rather than a direct call.
     @Published var pendingCommand: AppCommandRequest?

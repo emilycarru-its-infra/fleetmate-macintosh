@@ -736,6 +736,13 @@ public struct FleetMateConfig: Codable {
         return "\(base)/api/people/\(suffix)"
     }
 
+    /// A TDX API URL that is not scoped to a ticketing app — feed, accounts,
+    /// groups, and services all live at the tenant root rather than under
+    /// `/api/{appId}/`.
+    public func tdxGlobalUrl(_ suffix: String) -> String {
+        "\(tdxApiBase)/api/\(suffix)"
+    }
+
     // MARK: - Persist
 
     /// Write all credential fields to the macOS Keychain.

@@ -223,7 +223,16 @@ struct AssetsView: View {
                 )
             }
         }
+        .onAppCommand { command in
+            switch command {
+            case .refresh:       loadAllAssets()
+            case .toggleFilters: showFilters.toggle()
+            case .clearFilters:  filters.clearAll()
+            default:             break
+            }
+        }
         .searchable(text: $searchText, prompt: "Search assets...")
+        .findFocusesSearchField()
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 if filters.hasActiveFilters {

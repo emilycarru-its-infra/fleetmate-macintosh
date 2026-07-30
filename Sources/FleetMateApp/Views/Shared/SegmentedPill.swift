@@ -36,6 +36,20 @@ struct SegmentedPill<Value: Hashable>: View {
             }
         }
         .padding(3)
-        .background(.secondary.opacity(0.08), in: Capsule())
+        .modifier(PillEnclosure())
+    }
+}
+
+/// The pill's enclosing capsule — only where the system doesn't already draw
+/// one. macOS 26 wraps every toolbar item in its own liquid-glass capsule, so
+/// drawing our own inside it stacked three nested capsules (glass → gray →
+/// selection) where the design wants two.
+private struct PillEnclosure: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content
+        } else {
+            content.background(.secondary.opacity(0.08), in: Capsule())
+        }
     }
 }

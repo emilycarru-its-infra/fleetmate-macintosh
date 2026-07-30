@@ -235,7 +235,16 @@ struct DevicesView: View {
         } message: {
             Text("This will remove company data and unenroll \(selectedDeviceIds.count) device(s), leaving personal data intact.")
         }
+        .onAppCommand { command in
+            switch command {
+            case .refresh:       loadDevices()
+            case .toggleFilters: showFilters.toggle()
+            case .clearFilters:  filters.clearAll()
+            default:             break
+            }
+        }
         .searchable(text: $searchText, prompt: "Search devices...")
+        .findFocusesSearchField()
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 if filters.hasActiveFilters {

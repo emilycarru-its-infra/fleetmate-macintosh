@@ -1063,7 +1063,10 @@ struct TicketsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let ticket = selectedTicket {
-            ScrollView {
+            // Only the conversation scrolls. Which ticket this is, who owns it,
+            // and the box you type into are what you keep referring to while
+            // reading, and they used to slide off the top as soon as you did.
+            VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 0) {
                     detailHeader(ticket: ticket)
                     Divider()
@@ -1076,9 +1079,20 @@ struct TicketsView: View {
                     Divider().padding(.vertical, 8)
                     addCommentSection(ticket: ticket)
                     Divider().padding(.vertical, 8)
-                    activitySection
+                    activityHeader
                 }
-                .padding()
+                .padding([.horizontal, .top])
+
+                ScrollView {
+                    activityFeed
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal)
+                        .padding(.top, 8)
+                        .padding(.bottom)
+                }
+                // The pinned block above grows with the ticket; without a floor
+                // a long description would squeeze the feed to nothing.
+                .frame(minHeight: 180)
             }
         } else {
             VStack {
@@ -1685,13 +1699,19 @@ struct TicketsView: View {
                         .background(Color.secondary.opacity(0.06))
                         .cornerRadius(6)
                 } else {
-                    Text(text)
-                        .appFont(.body)
-                        .textSelection(.enabled)
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.secondary.opacity(0.06))
-                        .cornerRadius(6)
+                    // Capped and self-scrolling: the description sits in the
+                    // pinned block now, so an essay-length one would otherwise
+                    // push the activity feed off the bottom of the pane.
+                    ScrollView {
+                        Text(text)
+                            .appFont(.body)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 220)
+                    .padding(8)
+                    .background(Color.secondary.opacity(0.06))
+                    .cornerRadius(6)
                 }
             }
         }
@@ -1754,22 +1774,27 @@ struct TicketsView: View {
 
     // MARK: - Activity Section
 
-    private var activitySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Activity")
-                    .appFont(.headline)
-                Spacer()
-                Picker("", selection: $feedFilter) {
-                    Text("Comments").tag(FeedFilterType.comments)
-                    Text("Edits").tag(FeedFilterType.edits)
-                    Text("Status").tag(FeedFilterType.statusChanges)
-                    Text("All").tag(FeedFilterType.all)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 320)
+    /// Pinned above the feed: the title and the filter that decides what the
+    /// feed below is showing. Scrolling either of those away leaves you reading
+    /// a list with no label on it.
+    private var activityHeader: some View {
+        HStack {
+            Text("Activity")
+                .appFont(.headline)
+            Spacer()
+            Picker("", selection: $feedFilter) {
+                Text("Comments").tag(FeedFilterType.comments)
+                Text("Edits").tag(FeedFilterType.edits)
+                Text("Status").tag(FeedFilterType.statusChanges)
+                Text("All").tag(FeedFilterType.all)
             }
+            .pickerStyle(.segmented)
+            .frame(width: 320)
+        }
+    }
 
+    private var activityFeed: some View {
+        VStack(alignment: .leading, spacing: 8) {
             if isLoadingFeed {
                 ProgressView("Loading activity...")
                     .padding()

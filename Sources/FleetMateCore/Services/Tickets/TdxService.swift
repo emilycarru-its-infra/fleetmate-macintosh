@@ -1,6 +1,21 @@
 import Foundation
 import Alamofire
 
+/// Why a TDX call couldn't be made at all.
+public enum TdxAuthError: LocalizedError {
+    /// No usable credential. With the service account gone, this means SSO
+    /// hasn't completed — every call used to return an empty list instead,
+    /// which read as "TeamDynamix has no tickets" and hid the real cause.
+    case notAuthenticated
+
+    public var errorDescription: String? {
+        switch self {
+        case .notAuthenticated:
+            return "Not signed in to TeamDynamix. Sign in with SSO to load tickets."
+        }
+    }
+}
+
 /// TeamDynamix (TDX) service for ticket management
 /// Uses JWT authentication via SSO, username/password, or BEID
 public class TdxService {
@@ -57,9 +72,22 @@ public class TdxService {
         return token.hasPrefix("eyJ") && token.split(separator: ".").count == 3
     }
 
+    /// True when SSO produced a signed-in web session instead of a JWT.
+    ///
+    /// Cookie auth is just as much the operator's own identity as a JWT is —
+    /// the credential rides on `cookieSession` rather than an Authorization
+    /// header, which is the only difference that matters here.
+    public var hasUserCookieSession: Bool {
+        guard let token = ssoToken, Date() < ssoTokenExpiry else { return false }
+        return token == Self.cookieAuthMarker && cookieSession != nil
+    }
+
     /// Who writes will be attributed to: the signed-in person, or the service
     /// account. Surfaced so the UI can say which, rather than implying one.
-    public var actingIdentityIsUser: Bool { hasUserJwt }
+    public var actingIdentityIsUser: Bool { hasUserJwt || hasUserCookieSession }
+
+    /// Stands in for a token when the session is carried by cookies.
+    static let cookieAuthMarker = "cookie-auth"
     
     /// The authenticated SSO user's display name
     public var authenticatedUserName: String? {
@@ -150,16 +178,26 @@ public class TdxService {
         let authMethod = config.tdxAuthMethod
         dbg.debug("TDX getAccessToken (method=\(authMethod), ssoValid=\(ssoToken != nil && Date() < ssoTokenExpiry))", category: "tdx-auth")
         
-        // Prefer a real user JWT whenever we hold one, including under `.auto`.
+        // Prefer the signed-in operator's own session whenever we hold one,
+        // including under `.auto`. Writes are then attributed to the person who
+        // made them instead of the API service account.
         //
-        // This used to be browser-SSO-only, because the "SSO token" was scraped
-        // from a TDNext web session and the API answered 400 to it. That was a
-        // symptom of pointing the login flow at the web UI: the Web API does
-        // have an inbound SSO path at `/api/auth/loginsso`, and it hands back a
-        // genuine Bearer JWT. Using it is what makes edits appear under the
-        // person who made them instead of the API service account.
+        // This used to be browser-SSO-only, because the "SSO token" could be a
+        // value scraped from a TDNext web session, and the API answers 400 to
+        // that as a Bearer credential. So the two shapes worth having are
+        // checked by name rather than by "is non-empty": a real JWT from
+        // `/api/auth/loginsso`, and a cookie session. Anything else still falls
+        // through. See the TDX auth-ceiling notes.
         if hasUserJwt {
             dbg.info("TDX using SSO user token (expires in \(Int(ssoTokenExpiry.timeIntervalSinceNow))s)", category: "tdx-auth")
+            return ssoToken
+        }
+
+        // A cookie session is the operator too. Dropping through to the service
+        // account here is what made an interactive sign-in appear to succeed
+        // and then post every comment as "Inventory API Automations" anyway.
+        if hasUserCookieSession {
+            dbg.info("TDX using SSO cookie session (expires in \(Int(ssoTokenExpiry.timeIntervalSinceNow))s)", category: "tdx-auth")
             return ssoToken
         }
 
@@ -271,10 +309,7 @@ public class TdxService {
 
     public func searchTickets(search: TicketSearchRequest? = nil, maxResults: Int = 50) async throws -> [TdxTicket] {
         dbg.info("TDX searchTickets (maxResults=\(maxResults))", category: "tdx")
-        guard let headers = await headers() else {
-            dbg.warn("TDX searchTickets — no auth headers, returning []", category: "tdx")
-            return []
-        }
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
 
         var request = search ?? TicketSearchRequest()
         request.maxResults = maxResults
@@ -301,7 +336,7 @@ public class TdxService {
     }
 
     public func getTicket(id: Int) async throws -> TdxTicket? {
-        guard let headers = await headers() else { return nil }
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
 
         let url = config.tdxTicketsUrl("\(id)")
 
@@ -333,7 +368,7 @@ public class TdxService {
         notifyResponsible: Bool = false,
         allowRequestorCreation: Bool = false
     ) async throws -> TdxTicket? {
-        guard let headers = await headers() else { return nil }
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
 
         var createRequest = request
 
@@ -393,7 +428,7 @@ public class TdxService {
     }
 
     public func updateTicket(id: Int, updates: [String: Any], notifyNewResponsible: Bool = false) async throws -> TdxTicket? {
-        guard let headers = await headers() else { return nil }
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
 
         var url = config.tdxTicketsUrl("\(id)")
         if notifyNewResponsible {
@@ -435,7 +470,7 @@ public class TdxService {
     /// Update a ticket using a full TicketUpdateRequest (required fields included to avoid 400).
     /// Uses POST — TDX's PATCH is really a full replace and POST is the reliable method.
     public func updateTicket(id: Int, request: TicketUpdateRequest, notifyNewResponsible: Bool = false) async throws -> TdxTicket? {
-        guard let headers = await headers() else { return nil }
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
 
         var url = config.tdxTicketsUrl("\(id)")
         if notifyNewResponsible {
@@ -504,7 +539,7 @@ public class TdxService {
     }
 
     private func fetchFeed(ticketId: Int) async throws -> [TdxFeedEntry] {
-        guard let headers = await headers() else { return [] }
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
 
         let url = config.tdxTicketsUrl("\(ticketId)/feed")
         dbg.debug("TDX getTicketFeed → GET \(url)", category: "tdx")
@@ -538,7 +573,7 @@ public class TdxService {
     /// caught up with yet.
     @discardableResult
     public func addComment(ticketId: Int, comment: String, isPrivate: Bool = false, isRichHtml: Bool = false, notify: [String]? = nil) async throws -> TdxFeedEntry? {
-        guard let headers = await headers() else { return nil }
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
 
         let request = CreateFeedEntryRequest(
             comments: comment,
@@ -587,7 +622,7 @@ public class TdxService {
     /// Attachments are listed inline on the ticket; this fetches the content
     /// each one points at via its `ContentUri`.
     public func downloadAttachment(id: String) async throws -> Data? {
-        guard let headers = await headers() else { return nil }
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
 
         let url = config.tdxGlobalUrl("attachments/\(id)/content")
         dbg.info("TDX downloadAttachment → GET \(url)", category: "tdx")
@@ -626,7 +661,7 @@ public class TdxService {
 
     /// Fetch a single feed entry with its replies.
     public func getFeedEntry(id: Int) async throws -> TdxFeedEntry? {
-        guard let headers = await headers() else { return nil }
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
 
         let url = config.tdxGlobalUrl("feed/\(id)")
 
@@ -649,7 +684,7 @@ public class TdxService {
     /// Search for people in TDX by name or email
     public func searchPeople(searchText: String, maxResults: Int = 10) async throws -> [TdxPerson] {
         guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
-        guard let headers = await headers() else { return [] }
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
 
         let encoded = searchText.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? searchText
         let url = config.tdxPeopleUrl("lookup?searchText=\(encoded)&maxResults=\(maxResults)")
@@ -693,7 +728,13 @@ public class TdxService {
             return statusCache
         }
 
-        guard let headers = await headers() else { return statusCache }
+        guard let headers = await headers() else {
+            // Serve the last-known values when we have them, but an empty
+            // cache means we never authenticated — that is a failure, not
+            // a tenant with no statuses.
+            if statusCache.isEmpty { throw TdxAuthError.notAuthenticated }
+            return statusCache
+        }
 
         // Must be the ticketing app, not `tdxAppId` — that is the Assets app at
         // ECU, and asking it for ticket statuses is a 400.
@@ -723,7 +764,13 @@ public class TdxService {
             return typeCache
         }
 
-        guard let headers = await headers() else { return typeCache }
+        guard let headers = await headers() else {
+            // Serve the last-known values when we have them, but an empty
+            // cache means we never authenticated — that is a failure, not
+            // a tenant with no typees.
+            if typeCache.isEmpty { throw TdxAuthError.notAuthenticated }
+            return typeCache
+        }
 
         let url = config.tdxTicketsUrl("types")
 
@@ -750,7 +797,13 @@ public class TdxService {
             return priorityCache
         }
 
-        guard let headers = await headers() else { return priorityCache }
+        guard let headers = await headers() else {
+            // Serve the last-known values when we have them, but an empty
+            // cache means we never authenticated — that is a failure, not
+            // a tenant with no priorityes.
+            if priorityCache.isEmpty { throw TdxAuthError.notAuthenticated }
+            return priorityCache
+        }
 
         let url = config.tdxTicketsUrl("priorities")
 
@@ -777,7 +830,13 @@ public class TdxService {
             return formCache
         }
 
-        guard let headers = await headers() else { return formCache }
+        guard let headers = await headers() else {
+            // Serve the last-known values when we have them, but an empty
+            // cache means we never authenticated — that is a failure, not
+            // a tenant with no formes.
+            if formCache.isEmpty { throw TdxAuthError.notAuthenticated }
+            return formCache
+        }
 
         let appId = config.tdxTicketingAppId ?? config.tdxAppId ?? 0
         let url = "\(baseUrl)/api/\(appId)/tickets/forms"
@@ -809,7 +868,13 @@ public class TdxService {
     /// Ticket sources ("Staff Created", "Client Portal", …).
     public func getSources() async throws -> [TdxLookupItem] {
         if !sourceCache.isEmpty && Date() < refDataExpiry { return sourceCache }
-        guard let headers = await headers() else { return sourceCache }
+        guard let headers = await headers() else {
+            // Serve the last-known values when we have them, but an empty
+            // cache means we never authenticated — that is a failure, not
+            // a tenant with no sourcees.
+            if sourceCache.isEmpty { throw TdxAuthError.notAuthenticated }
+            return sourceCache
+        }
 
         let items: [TdxSourceItem] = try await get(config.tdxTicketsUrl("sources"), headers: headers)
         sourceCache = lookupItems(items.filter { $0.isActive != false }.map { ($0.id, $0.name) })
@@ -819,7 +884,13 @@ public class TdxService {
     /// Accounts / departments — the ticket's Acct/Dept field.
     public func getAccounts() async throws -> [TdxLookupItem] {
         if !accountCache.isEmpty && Date() < refDataExpiry { return accountCache }
-        guard let headers = await headers() else { return accountCache }
+        guard let headers = await headers() else {
+            // Serve the last-known values when we have them, but an empty
+            // cache means we never authenticated — that is a failure, not
+            // a tenant with no accountes.
+            if accountCache.isEmpty { throw TdxAuthError.notAuthenticated }
+            return accountCache
+        }
 
         // Accounts is a search endpoint, not a list one; an empty filter with
         // IsActive returns the full active set.
@@ -832,7 +903,13 @@ public class TdxService {
     /// Responsible groups.
     public func getGroups() async throws -> [TdxLookupItem] {
         if !groupCache.isEmpty && Date() < refDataExpiry { return groupCache }
-        guard let headers = await headers() else { return groupCache }
+        guard let headers = await headers() else {
+            // Serve the last-known values when we have them, but an empty
+            // cache means we never authenticated — that is a failure, not
+            // a tenant with no groupes.
+            if groupCache.isEmpty { throw TdxAuthError.notAuthenticated }
+            return groupCache
+        }
 
         let body: [String: Any] = ["IsActive": true, "MaxResults": 1000]
         let items: [TdxGroupItem] = try await post(config.tdxGlobalUrl("groups/search"), body: body, headers: headers)
@@ -843,7 +920,13 @@ public class TdxService {
     /// Services, labelled by their full category path where TDX supplies one.
     public func getServices() async throws -> [TdxLookupItem] {
         if !serviceCache.isEmpty && Date() < refDataExpiry { return serviceCache }
-        guard let headers = await headers() else { return serviceCache }
+        guard let headers = await headers() else {
+            // Serve the last-known values when we have them, but an empty
+            // cache means we never authenticated — that is a failure, not
+            // a tenant with no servicees.
+            if serviceCache.isEmpty { throw TdxAuthError.notAuthenticated }
+            return serviceCache
+        }
 
         let items: [TdxServiceItem] = try await get(config.tdxGlobalUrl("services"), headers: headers)
         serviceCache = lookupItems(items.filter { $0.isActive != false }
@@ -853,7 +936,7 @@ public class TdxService {
 
     /// Ticket types as picker items (the `getTypes` dictionary loses ordering).
     public func getTypeItems() async throws -> [TdxLookupItem] {
-        guard let headers = await headers() else { return [] }
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
         let items: [TdxTypeItem] = try await get(config.tdxTicketsUrl("types"), headers: headers)
         return lookupItems(items.map { ($0.id, $0.name) })
     }

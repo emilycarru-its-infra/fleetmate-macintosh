@@ -11,6 +11,12 @@ struct FleetMateApp: App {
         // Ensure app appears in Dock and can be activated
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
+
+        // FleetMate is one window with six modes, not a document app. Leaving
+        // automatic tabbing on put "Show Tab Bar" and "Show All Tabs" (⌘\) at
+        // the top of the View menu, promising document tabs that don't exist —
+        // directly above the ⌘1–⌘6 items that do the switching.
+        NSWindow.allowsAutomaticWindowTabbing = false
     }
 
     var body: some Scene {
@@ -25,15 +31,7 @@ struct FleetMateApp: App {
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
-            CommandGroup(replacing: .newItem) { }
-            
-            // Standard Edit menu with Cut/Copy/Paste/Select All
-            CommandGroup(after: .pasteboard) {
-                Button("Select All") {
-                    NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
-                }
-                .keyboardShortcut("a", modifiers: .command)
-            }
+            FleetMateCommands(appState: appState)
         }
 
         #if os(macOS)
@@ -66,7 +64,38 @@ class AppState: ObservableObject {
     @Published var showOnboardingWizard = false
 
     // MARK: - Tab Navigation (set by Dashboard to switch tabs)
-    @Published var navigateToTab: AppTab?
+
+    /// The visible tab. Lives here rather than in `ContentView` so the ⌘1–⌘6
+    /// menu commands, which are built in the `App` scene, can both read it (to
+    /// decide whether ⌘N means "ticket" or "work item") and set it.
+    ///
+    /// The didSet logs each change with its call stack: the app has been seen
+    /// jumping to Inventory with no user action, and only three code paths
+    /// write tab state — none of them targeting Inventory. Until the jump is
+    /// reproduced with this in place, the log is the only way to name the
+    /// caller. Cheap enough to keep (fires only on actual changes).
+    @Published var selectedTab: AppTab = .dashboard {
+        didSet {
+            guard oldValue != selectedTab else { return }
+            let frames = Thread.callStackSymbols.dropFirst(2).prefix(5)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .joined(separator: " | ")
+            dbg.info("Tab \(oldValue.rawValue) → \(selectedTab.rawValue) via: \(frames)", category: "tabs")
+        }
+    }
+    @Published var navigateToTab: AppTab? {
+        didSet {
+            guard let tab = navigateToTab else { return }
+            let frames = Thread.callStackSymbols.dropFirst(2).prefix(5)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .joined(separator: " | ")
+            dbg.info("navigateToTab ← \(tab.rawValue) via: \(frames)", category: "tabs")
+        }
+    }
+    /// The most recent menu command, for the visible tab to act on.
+    /// See `AppCommand` for why this is a broadcast rather than a direct call.
+    @Published var pendingCommand: AppCommandRequest?
+
     @Published var navigateToDeviceId: String?
     @Published var navigateToTicketId: Int?
     @Published var navigateToFilter: String?
@@ -260,8 +289,15 @@ class AppState: ObservableObject {
         }
     }
     
+    // MARK: - Menu Commands
+
+    /// Broadcast a menu command to whichever tab is on screen.
+    func perform(_ command: AppCommand) {
+        pendingCommand = AppCommandRequest(command: command)
+    }
+
     // MARK: - Cache Helpers
-    
+
     /// Check if cache is valid (not expired)
     func isCacheValid(_ cacheTime: Date?) -> Bool {
         guard let cacheTime = cacheTime else { return false }
@@ -431,7 +467,14 @@ class AppState: ObservableObject {
                     }
                 }
             }
-            
+
+            // Resolve who "me" is in TDX, so Assign to me is ready on first use
+            if config.isTdxConfigured && tdxMe == nil {
+                group.addTask { @MainActor in
+                    await self.resolveTdxMe()
+                }
+            }
+
             // Preload groups
             if config.isSystemsGraphConfigured && !isGroupsCacheValid {
                 group.addTask { @MainActor in
@@ -547,15 +590,41 @@ class AppState: ObservableObject {
     /// SSO session is already present in the system.
     /// If it fails, does NOT show any UI. The interactive Phase 2 sheet is
     /// triggered later, only when the user navigates to a tab that needs auth.
+    /// Put the device's Entra PRT cookie into shared storage so the silent SAML
+    /// chain authenticates without a prompt. No-op when the broker declines.
+    func primeEntraPrtCookies() async {
+        guard let entraUrl = URL(string: "https://login.microsoftonline.com/\(config.effectiveAzureTenantId)/saml2") else { return }
+        let cookies = await EntraPrtCookieProvider().ssoCookies(for: entraUrl)
+        guard !cookies.isEmpty else { return }
+        for cookie in cookies {
+            HTTPCookieStorage.shared.setCookie(cookie)
+        }
+        dbg.info("[PRT] Installed \(cookies.count) PRT cookie(s) for the silent SAML chain", category: "tdx-sso")
+    }
+
     func attemptSilentTdxSso() {
         guard ssoViewModel == nil else { return }
         dbg.info("[SSO Phase 1] Starting silent TDX SSO attempt (authMethod=\(config.tdxAuthMethod), ssoEnabled=\(config.tdxSsoEnabled))", category: "tdx-sso")
 
-        let viewModel = TdxSsoLoginViewModel(config: config)
-        ssoViewModel = viewModel
-
         Task { @MainActor [weak self] in
             guard let self else { return }
+
+            // Resolve the sign-in address before the flow starts. Entra's page
+            // needs a username to advance, `app-sso` doesn't reliably supply
+            // one, and arriving with it late means the attempt has already
+            // timed out onto the service account.
+            await self.primeTdxSsoUpn()
+
+            // Phase 0: ask the Entra broker for the device's PRT cookie and put
+            // it in shared cookie storage, which the silent URLSession chain
+            // below already reads from. Without it Entra answers that chain with
+            // its interactive sign-in page, because the SSO plug-in acts only on
+            // requests an app actually makes — it does not intercept traffic.
+            await self.primeEntraPrtCookies()
+
+            let viewModel = TdxSsoLoginViewModel(config: self.config)
+            self.ssoViewModel = viewModel
+
             let silentSuccess = await viewModel.performSilentAuthentication()
             self.ssoViewModel = nil
 
@@ -612,8 +681,12 @@ class AppState: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
 
-            // Wait up to 25 seconds for headless SSO to complete.
-            let deadline = Date().addingTimeInterval(25)
+            // Wait up to 95 seconds for headless SSO to complete. 25s was
+            // calibrated for a chain that either completes or doesn't; it
+            // guillotined any method that involves the person's phone — an
+            // Authenticator push needs the fallback script to request it
+            // (~10-20s in) plus however long a human takes to tap approve.
+            let deadline = Date().addingTimeInterval(95)
             while Date() < deadline {
                 if let result = viewModel.authResult {
                     self.ssoViewModel = nil
@@ -636,19 +709,14 @@ class AppState: ObservableObject {
 
             self.ssoViewModel = nil
             hiddenWindow.close()
-            // Deliberately does NOT touch the TDX auth badge. TeamDynamix's API
-            // supports no Entra/OAuth login at all — `/api/auth/loginsso` is
-            // internal to TDX's own client-side JS and mints no portable token —
-            // so browser SSO is not, and cannot become, TDX's auth path. That is
-            // the service-account JWT (BEID + WebServicesKey), which probeAll
-            // verifies independently.
-            //
-            // Reporting a failure here was a race the badge lost: this fires at
-            // ~28s while the probe, queued behind the Graph elevation warm-up,
-            // lands at ~68s. Whichever finished last won, which is how the panel
-            // came to show "Failed: Silent SSO failed" directly above a green
-            // "signed in as Service Account".
-            dbg.warn("[SSO Phase 1.5] Headless WKWebView SSO FAILED or timed out — TDX auth is unaffected (service-account JWT is the supported path)", category: "tdx-sso")
+            // Deliberately does NOT touch the TDX auth badge here: probeAll
+            // verifies TDX independently, and reporting a failure from this
+            // racing task is how the panel once showed "Failed: Silent SSO
+            // failed" directly above a green "signed in" row.
+            // Not "unaffected" any more: with no service account configured,
+            // this is the only way in, so a failure here means no TDX access
+            // until someone signs in.
+            dbg.warn("[SSO Phase 1.5] Headless WKWebView SSO FAILED or timed out — TDX calls will fail until an interactive sign-in succeeds", category: "tdx-sso")
         }
     }
 
@@ -722,8 +790,65 @@ class AppState: ObservableObject {
         tdxService.clearSsoToken()
         tdxSsoAuthenticated = false
         tdxAuthenticatedUserName = nil
+        tdxMe = nil
         authManager.update(.tdx, state: .configured)
         invalidateTicketsCache()
+    }
+
+    // MARK: - TDX Identity ("me")
+
+    /// The TDX person record for whoever is driving the app.
+    ///
+    /// TDX's Web API always authenticates as the service account, so the session
+    /// itself can't say who you are. This is resolved separately from the
+    /// signed-in Azure identity and is what "Assign to me" acts on.
+    @Published var tdxMe: TdxPerson?
+
+    /// Email addresses to try when resolving `tdxMe`, best first.
+    private func tdxIdentityCandidates() async -> [String] {
+        var candidates: [String] = []
+        if let email = devOpsSsoUserEmail, !email.isEmpty { candidates.append(email) }
+        if let account = await devOpsService.currentIdentity().account, !account.isEmpty {
+            candidates.append(account)
+        }
+        if let name = tdxAuthenticatedUserName, name.contains("@") { candidates.append(name) }
+        return candidates
+    }
+
+    /// Make the signed-in address available to the TDX SSO flow.
+    ///
+    /// `app-sso platform -s` is not a reliable source: on an enrolled Mac it
+    /// can expose no `upn` key at all and mask `loginUserName` as
+    /// `r***n@ecuad.ca`. The Azure identity has the real address.
+    func primeTdxSsoUpn() async {
+        guard TdxSsoLoginViewModel.fallbackUpn == nil else { return }
+
+        if let email = devOpsSsoUserEmail, !email.isEmpty {
+            TdxSsoLoginViewModel.fallbackUpn = email.lowercased()
+            return
+        }
+        if let account = await devOpsService.currentIdentity().account, !account.isEmpty {
+            TdxSsoLoginViewModel.fallbackUpn = account.lowercased()
+        }
+    }
+
+    /// Resolve and cache the current user's TDX person record. Cheap to call
+    /// repeatedly — it returns immediately once resolved.
+    func resolveTdxMe() async {
+        guard tdxMe == nil, config.isTdxConfigured else { return }
+
+        for email in await tdxIdentityCandidates() {
+            do {
+                if let person = try await tdxService.findPerson(email: email) {
+                    dbg.info("TDX identity resolved: \(person.fullName ?? "?") via \(email)", category: "tdx")
+                    tdxMe = person
+                    return
+                }
+            } catch {
+                dbg.warn("TDX identity lookup failed for \(email): \(error.localizedDescription)", category: "tdx")
+            }
+        }
+        dbg.warn("TDX identity unresolved — no signed-in email matched a TDX person", category: "tdx")
     }
     
     // MARK: - Azure DevOps SSO Authentication
@@ -840,6 +965,10 @@ class AppState: ObservableObject {
         devOpsSsoUserName = userName
         devOpsSsoUserEmail = userEmail
         showDevOpsSsoLogin = false
+
+        // TDX SSO may already be waiting on an address to put in Entra's
+        // username field; this is the earliest point one is known.
+        Task { @MainActor in await self.primeTdxSsoUpn() }
         // Prefer the UPN: it is the identity Azure DevOps actually attributes
         // work to, and a display name alone cannot show that.
         authManager.update(.devops, state: .valid(user: userEmail ?? userName, expiry: expiry))

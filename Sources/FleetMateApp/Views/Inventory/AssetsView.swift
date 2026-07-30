@@ -493,52 +493,83 @@ struct AssetDetailSidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header with close button + Re-Allocate
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(asset.name ?? "Unnamed Asset")
-                        .appFont(.headline)
-                        .lineLimit(2)
-                    if let tag = asset.assetTag {
-                        HStack(spacing: 4) {
-                            Text(tag)
+            // Hero header: what the asset IS, at a glance — icon, name, the two
+            // identifiers everyone copies, and where it stands. The old header
+            // was a name and a tag; every other fact was buried in the rows.
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: categorySymbol)
+                        .appFont(fixed: 22)
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 44, height: 44)
+                        .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(asset.displayName ?? "Unnamed Asset")
+                            .appFont(.title3, weight: .semibold)
+                            .lineLimit(2)
+                        if let model = asset.model?.name {
+                            Text(model)
                                 .appFont(.subheadline)
                                 .foregroundColor(.secondary)
-                            Button(action: { copyToClipboard(tag) }) {
-                                Image(systemName: "doc.on.doc")
-                                    .appFont(.caption)
+                        }
+                    }
+
+                    Spacer()
+
+                    if asset.assignedTo != nil || asset.statusLabel?.statusMeta == "deployable" {
+                        Button(action: onReAllocate) {
+                            Label("Re-Allocate", systemImage: "person.2.arrow.trianglehead.counterclockwise")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                    if let snipeUrl = snipeUrl, let assetId = Optional(asset.id) {
+                        Button(action: {
+                            if let url = URL(string: "\(snipeUrl)/hardware/\(assetId)") {
+                                NSWorkspace.shared.open(url)
                             }
-                            .buttonStyle(.plain)
-                            .help("Copy asset tag")
+                        }) {
+                            Image(systemName: "arrow.up.right.square")
                         }
+                        .buttonStyle(.plain)
+                        .help("Open in Snipe-IT")
                     }
-                }
-                Spacer()
-                // Re-Allocate button (top right)
-                if asset.assignedTo != nil || asset.statusLabel?.statusMeta == "deployable" {
-                    Button(action: onReAllocate) {
-                        Label("Re-Allocate", systemImage: "person.2.arrow.trianglehead.counterclockwise")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                }
-                // Open in Snipe-IT
-                if let snipeUrl = snipeUrl, let assetId = Optional(asset.id) {
-                    Button(action: {
-                        if let url = URL(string: "\(snipeUrl)/hardware/\(assetId)") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }) {
-                        Image(systemName: "arrow.up.right.square")
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Open in Snipe-IT")
                 }
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .foregroundColor(.secondary)
+
+                // Identity line: tag and serial as copyable chips, status pill,
+                // and who/where — the four questions every lookup starts with.
+                HStack(spacing: 8) {
+                    if let tag = asset.assetTag {
+                        identityChip(tag, help: "Copy asset tag")
+                    }
+                    if let serial = asset.serial {
+                        identityChip(serial, help: "Copy serial number")
+                    }
+                    StatusBadge(status: asset.statusLabel)
+                    Spacer()
                 }
-                .buttonStyle(.plain)
+
+                if asset.assignedTo?.name != nil || asset.location?.name != nil {
+                    HStack(spacing: 14) {
+                        if let who = asset.assignedTo?.name {
+                            Label(who, systemImage: "person.fill")
+                                .appFont(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        if let place = asset.location?.name {
+                            Label(place, systemImage: "mappin.and.ellipse")
+                                .appFont(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        Spacer()
+                    }
+                }
             }
             .padding()
 
@@ -546,9 +577,19 @@ struct AssetDetailSidebar: View {
 
             // Scrollable detail
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 12) {
+                    // Spec chips: the numbers people compare machines by, worn
+                    // up front instead of buried among rows.
+                    if !specChips.isEmpty {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 8)], alignment: .leading, spacing: 8) {
+                            ForEach(specChips, id: \.label) { chip in
+                                SpecChip(icon: chip.icon, label: chip.label, value: chip.value)
+                            }
+                        }
+                    }
+
                     // Status (editable dropdown)
-                    detailSection("Status") {
+                    sectionCard("Status", systemImage: "circle.dashed") {
                         if !loadedStatusLabels.isEmpty {
                             HStack(alignment: .top) {
                                 Text("Status")
@@ -573,40 +614,42 @@ struct AssetDetailSidebar: View {
                     }
 
                     // Assignment (Username hidden)
-                    detailSection("Assignment") {
-                        detailRow("Assigned To", value: asset.assignedTo?.name)
-                        detailRow("Email", value: asset.assignedTo?.email, copyable: true)
-                        detailRow("Employee #", value: asset.assignedTo?.employeeNumber)
+                    if asset.assignedTo != nil {
+                        sectionCard("Assignment", systemImage: "person.2") {
+                            detailRow("Assigned To", value: asset.assignedTo?.name)
+                            detailRow("Email", value: asset.assignedTo?.email, copyable: true)
+                            detailRow("Employee #", value: asset.assignedTo?.employeeNumber)
+                        }
                     }
 
-                    // Hardware section (standard + custom fields)
-                    detailSection("Hardware") {
-                        detailRow("Serial", value: asset.serial, copyable: true)
+                    // Hardware: identity rows; the headline specs live in the
+                    // chips above, so they don't repeat here.
+                    sectionCard("Hardware", systemImage: "cpu") {
+                        detailRow("Serial", value: asset.serial, copyable: true, mono: true)
                         detailRow("Model", value: asset.model?.name)
                         detailRow("Category", value: asset.category?.name)
                         detailRow("Manufacturer", value: asset.manufacturer?.name)
-                        // Custom hardware fields
                         if let customFields = asset.customFields {
                             ForEach(customFields.sorted(by: { $0.key < $1.key }), id: \.key) { fieldName, field in
-                                if hardwareFields.contains(fieldName) {
+                                if hardwareFields.contains(fieldName) && !chipFields.contains(fieldName) {
                                     detailRow(fieldName, value: field.value, copyable: true)
                                 }
                             }
                         }
                     }
 
-                    // Management section
+                    // Management identifiers — long GUIDs, so monospaced.
                     let mgmtFields = managementCustomFields
                     if !mgmtFields.isEmpty {
-                        detailSection("Management") {
+                        sectionCard("Identifiers", systemImage: "barcode.viewfinder") {
                             ForEach(mgmtFields, id: \.key) { fieldName, field in
-                                detailRow(fieldName, value: field.value, copyable: true)
+                                detailRow(fieldName, value: field.value, copyable: true, mono: true)
                             }
                         }
                     }
 
                     // Financials section
-                    detailSection("Financials") {
+                    sectionCard("Financials", systemImage: "dollarsign.circle") {
                         detailRow("Purchase Cost", value: asset.purchaseCost)
                         detailRow("Purchase Date", value: asset.purchaseDate?.formatted)
                         if let customFields = asset.customFields {
@@ -619,13 +662,13 @@ struct AssetDetailSidebar: View {
                     }
 
                     // Location
-                    detailSection("Location") {
+                    sectionCard("Location", systemImage: "mappin.and.ellipse") {
                         detailRow("Location", value: asset.location?.name)
                         detailRow("Default Location", value: asset.rtdLocation?.name)
                     }
 
                     // Dates
-                    detailSection("Dates") {
+                    sectionCard("Dates", systemImage: "calendar") {
                         detailRow("Last Checkout", value: asset.lastCheckout?.formatted)
                         detailRow("Last Audit", value: asset.lastAuditDate?.formatted)
                         detailRow("Next Audit", value: asset.nextAuditDate?.formatted)
@@ -634,7 +677,7 @@ struct AssetDetailSidebar: View {
                     }
 
                     if let notes = asset.notes, !notes.isEmpty {
-                        detailSection("Notes") {
+                        sectionCard("Notes", systemImage: "note.text") {
                             Text(notes)
                                 .appFont(.callout)
                                 .foregroundColor(.secondary)
@@ -645,7 +688,7 @@ struct AssetDetailSidebar: View {
                     // Other custom fields (unmapped)
                     let otherFields = unmappedCustomFields
                     if !otherFields.isEmpty {
-                        detailSection("Other") {
+                        sectionCard("Other", systemImage: "square.grid.2x2") {
                             ForEach(otherFields, id: \.key) { fieldName, field in
                                 detailRow(fieldName, value: field.value, copyable: true)
                             }
@@ -708,20 +751,96 @@ struct AssetDetailSidebar: View {
             .filter { !allMapped.contains($0.key) && !($0.value.value?.isEmpty ?? true) }
     }
 
+    // MARK: - Hero pieces
+
+    /// SF Symbol for the asset's category, so the header says "a desktop"
+    /// before a single row is read.
+    private var categorySymbol: String {
+        let category = (asset.category?.name ?? "").lowercased()
+        if category.contains("laptop") { return "laptopcomputer" }
+        if category.contains("display") || category.contains("monitor") { return "display" }
+        if category.contains("desktop") { return "desktopcomputer" }
+        if category.contains("tablet") || category.contains("ipad") { return "ipad" }
+        if category.contains("phone") { return "iphone" }
+        if category.contains("printer") { return "printer" }
+        if category.contains("server") { return "server.rack" }
+        if category.contains("network") || category.contains("switch") || category.contains("router") { return "network" }
+        if category.contains("camera") { return "camera" }
+        if category.contains("audio") || category.contains("speaker") { return "hifispeaker" }
+        return "shippingbox"
+    }
+
+    private func identityChip(_ value: String, help: String) -> some View {
+        Button(action: { copyToClipboard(value) }) {
+            HStack(spacing: 4) {
+                Text(value)
+                    .appFont(.caption, design: .monospaced)
+                Image(systemName: "doc.on.doc")
+                    .appFont(fixed: 9)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+
+    /// The headline specs, pulled out of the row soup: what people actually
+    /// compare machines by.
+    private var specChips: [(icon: String, label: String, value: String)] {
+        let mapping: [(field: String, icon: String)] = [
+            ("Chip", "cpu"),
+            ("CPU", "cpu"),
+            ("Memory", "memorychip"),
+            ("Storage", "internaldrive"),
+            ("GPU", "rectangle.3.group"),
+            ("Display", "display"),
+        ]
+        var chips: [(icon: String, label: String, value: String)] = []
+        for (field, icon) in mapping {
+            if let value = asset.customFieldByName(field)?.value,
+               !value.isEmpty, value != "-",
+               !chips.contains(where: { $0.label == field }) {
+                chips.append((icon: icon, label: field, value: value))
+            }
+        }
+        return chips
+    }
+
+    /// Fields shown as chips, excluded from the Hardware card so nothing
+    /// appears twice.
+    private var chipFields: Set<String> { Set(specChips.map(\.label)) }
+
+    // MARK: - Cards
+
     @ViewBuilder
-    private func detailSection(_ title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .appFont(.subheadline)
-                .fontWeight(.semibold)
-                .foregroundColor(.secondary)
-                .textCase(.uppercase)
+    private func sectionCard(_ title: String, systemImage: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .appFont(.caption)
+                    .foregroundColor(.secondary)
+                Text(title)
+                    .appFont(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.secondary)
+            }
             content()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.secondary.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+        )
     }
 
     @ViewBuilder
-    private func detailRow(_ label: String, value: String?, copyable: Bool = false) -> some View {
+    private func detailRow(_ label: String, value: String?, copyable: Bool = false, mono: Bool = false) -> some View {
         if let value = value, !value.isEmpty {
             HStack(alignment: .top) {
                 Text(label)
@@ -729,7 +848,7 @@ struct AssetDetailSidebar: View {
                     .foregroundColor(.secondary)
                     .frame(width: 110, alignment: .leading)
                 Text(value)
-                    .appFont(.callout)
+                    .appFont(.callout, design: mono ? .monospaced : .default)
                     .textSelection(.enabled)
                 if copyable {
                     Button(action: { copyToClipboard(value) }) {
@@ -792,6 +911,43 @@ struct AssetDetailSidebar: View {
                 saveError = error.localizedDescription
             }
         }
+    }
+}
+
+// MARK: - Spec Chip
+
+/// One headline spec — "16 GB", "M2 Pro" — as a small labelled tile.
+struct SpecChip: View {
+    let icon: String
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .appFont(fixed: 13)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label)
+                    .appFont(fixed: 9, weight: .medium)
+                    .foregroundColor(.secondary)
+                    .textCase(.uppercase)
+                Text(value)
+                    .appFont(fixed: 12, weight: .semibold)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.secondary.opacity(0.05))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+        )
+        .help("\(label): \(value)")
     }
 }
 

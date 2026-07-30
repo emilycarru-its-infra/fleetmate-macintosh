@@ -3,25 +3,12 @@ import MarkdownUI
 import AppKit
 import FleetMateCore
 
-// MARK: - NSColor Hex Helper
-
-private extension NSColor {
-    /// Convert NSColor to CSS hex string, adapting to current appearance.
-    var hexString: String {
-        let c = usingColorSpace(.sRGB) ?? self
-        let r = Int(c.redComponent * 255)
-        let g = Int(c.greenComponent * 255)
-        let b = Int(c.blueComponent * 255)
-        return String(format: "#%02x%02x%02x", r, g, b)
-    }
-}
-
 // MARK: - Shared Markdown / HTML Renderer
 
 /// Renders rich text content — auto-detects HTML vs Markdown.
 /// Used globally across FleetMate for all description, comment, and paragraph fields.
 ///
-/// - **HTML content** (from Azure DevOps): rendered via `NSAttributedString` (AppKit).
+/// - **HTML content** (from Azure DevOps): converted by `HtmlToMarkdown`, then MarkdownUI.
 /// - **Markdown content** (from GitHub, Gitea, user input): rendered via `MarkdownUI`.
 struct MarkdownTextView: View {
     let content: String
@@ -33,7 +20,13 @@ struct MarkdownTextView: View {
                 .foregroundColor(.secondary)
                 .italic()
         } else if isHtml(content) {
-            HtmlRenderedView(html: content)
+            // ADO HTML is converted to Markdown and rendered by the same
+            // renderer as everything else. The old path (NSAttributedString →
+            // SwiftUI Text) discarded paragraph styles: tables flattened to a
+            // line per cell, bullets lost their indent, paragraphs their air.
+            Markdown(HtmlToMarkdown.convert(content))
+                .markdownTheme(.fleetMate)
+                .textSelection(.enabled)
         } else {
             Markdown(content)
                 .markdownTheme(.fleetMate)
@@ -45,62 +38,6 @@ struct MarkdownTextView: View {
     private func isHtml(_ text: String) -> Bool {
         let htmlPattern = #"<\s*(div|p|br|h[1-6]|ul|ol|li|span|a|img|table|tr|td|th|pre|code|em|strong|b|i|hr)\b"#
         return text.range(of: htmlPattern, options: [.regularExpression, .caseInsensitive]) != nil
-    }
-}
-
-// MARK: - HTML Renderer (reuses HtmlTextView logic)
-
-/// Renders HTML as styled NSAttributedString text.
-private struct HtmlRenderedView: View {
-    let html: String
-
-    var body: some View {
-        if let attributed = htmlToAttributedString(html) {
-            Text(attributed)
-                .appFont(.body)
-                .textSelection(.enabled)
-        } else {
-            // Fallback: strip tags
-            Text(html.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression))
-                .appFont(.body)
-                .textSelection(.enabled)
-        }
-    }
-
-    private func htmlToAttributedString(_ html: String) -> AttributedString? {
-        // Use system colors that adapt to light/dark mode
-        let textColor = NSColor.labelColor.hexString
-        let bgColor = NSColor.textBackgroundColor.hexString
-        let codeFg = NSColor.secondaryLabelColor.hexString
-        let linkColor = NSColor.controlAccentColor.hexString
-        let borderColor = NSColor.separatorColor.hexString
-        let headerBg = NSColor.unemphasizedSelectedContentBackgroundColor.hexString
-        let secondaryText = NSColor.secondaryLabelColor.hexString
-
-        let wrapped = """
-        <html><head><style>
-        body { font-family: -apple-system, sans-serif; font-size: 14px; color: \(textColor); background: \(bgColor); }
-        pre { font-family: Menlo, monospace; font-size: 13px; color: \(codeFg); padding: 8px 12px; overflow-x: auto; }
-        code { font-family: Menlo, monospace; font-size: 13px; color: \(codeFg); }
-        pre code { padding: 0; }
-        img { max-width: 100%; height: auto; }
-        a { color: \(linkColor); }
-        table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid \(borderColor); padding: 6px 8px; text-align: left; }
-        th { background: \(headerBg); font-weight: 600; }
-        blockquote { border-left: 3px solid \(borderColor); padding-left: 12px; color: \(secondaryText); }
-        </style></head><body>\(html)</body></html>
-        """
-        guard let data = wrapped.data(using: .utf8) else { return nil }
-        guard let nsAttr = try? NSAttributedString(
-            data: data,
-            options: [
-                .documentType: NSAttributedString.DocumentType.html,
-                .characterEncoding: String.Encoding.utf8.rawValue
-            ],
-            documentAttributes: nil
-        ) else { return nil }
-        return try? AttributedString(nsAttr, including: \.appKit)
     }
 }
 

@@ -109,7 +109,7 @@ public enum CliSignIn {
 
     /// Absolute path where we can find it — a GUI app's PATH doesn't include
     /// Homebrew, so bare names would resolve only via the `env` fallback.
-    static func resolveExecutable(_ name: String) -> String {
+    public static func resolveExecutable(_ name: String) -> String {
         for candidate in ["/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)", "/usr/bin/\(name)"]
         where FileManager.default.isExecutableFile(atPath: candidate) {
             return candidate

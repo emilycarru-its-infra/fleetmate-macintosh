@@ -130,7 +130,7 @@ class AuthManager: ObservableObject {
     
     // MARK: - Probe All
 
-    /// Validate/probe each configured system asynchronously. Called once on launch 
+    /// Validate/probe each configured system asynchronously. Called once on launch
     /// and again whenever config is reloaded.
     func probeAll(
         graphService: GraphService,
@@ -138,89 +138,115 @@ class AuthManager: ObservableObject {
         snipeService: SnipeService,
         devOpsService: AzureDevOpsService
     ) async {
-        // Graph / Intune
-        if systems[.graph] != nil {
-            update(.graph, state: .authenticating)
-            update(.intune, state: .authenticating)
-            do {
-                // Attempt a lightweight Graph call
-                _ = try await graphService.getManagedDevices(limit: 1)
-                update(.graph,  state: .valid(user: "az elevation", expiry: nil))
-                update(.intune, state: .valid(user: "az elevation", expiry: nil))
-            } catch {
-                update(.graph,  state: .failed(message: error.localizedDescription))
-                update(.intune, state: .failed(message: error.localizedDescription))
-            }
+        // .intune shares .graph's probe — skip it so the pair is probed once.
+        for id in AuthSystemId.allCases where systems[id] != nil && id != .intune {
+            await probeSystem(
+                id,
+                graphService: graphService,
+                tdxService: tdxService,
+                snipeService: snipeService,
+                devOpsService: devOpsService
+            )
         }
-        
-        // Entra
-        if systems[.entra] != nil {
-            update(.entra, state: .authenticating)
-            do {
-                _ = try await graphService.searchGroups("test", limit: 1)
-                update(.entra, state: .valid(user: "az elevation", expiry: nil))
-            } catch {
-                update(.entra, state: .failed(message: error.localizedDescription))
-            }
-        }
-        
-        // Snipe-IT
-        if systems[.snipe] != nil {
-            if snipeService.usesOidc {
-                // OIDC bearer minted from the operator's Entra session — the
-                // default since the fork's OIDC guard shipped. This branch used
-                // to be missing entirely, so a Snipe on OIDC was never probed:
-                // it sat at .configured until the (irrelevant) cookie-SSO attempt
-                // timed out and painted it red, while the API was working fine.
-                update(.snipe, state: .authenticating)
-                do {
-                    _ = try await snipeService.getAllAssets()
-                    update(.snipe, state: .valid(user: "SSO bearer (OIDC)", expiry: nil))
-                } catch {
-                    update(.snipe, state: .failed(message: error.localizedDescription))
-                }
-            } else if snipeService.ssoAuthenticated {
-                // SSO mode — already authenticated via cookies
-                update(.snipe, state: .valid(user: snipeService.ssoUserName ?? "SSO User", expiry: nil))
-            } else if !snipeService.apiKey.isEmpty {
-                // API key mode — probe with a lightweight call
-                update(.snipe, state: .authenticating)
-                do {
-                    _ = try await snipeService.getAllAssets()
-                    update(.snipe, state: .valid(user: config.snipeUrl ?? "Snipe-IT", expiry: nil))
-                } catch {
-                    update(.snipe, state: .failed(message: error.localizedDescription))
-                }
-            }
-            // SSO not yet authenticated + no API key = leave at .configured, SSO will handle it
-        }
-        
-        // TDX
-        if systems[.tdx] != nil {
-            update(.tdx, state: .authenticating)
-            do {
-                let search = TicketSearchRequest(maxResults: 1)
-                _ = try await tdxService.searchTickets(search: search, maxResults: 1)
-                let userName = tdxService.authenticatedUserName
-                update(.tdx, state: .valid(user: userName ?? "Service Account", expiry: nil))
-            } catch {
-                update(.tdx, state: .failed(message: error.localizedDescription))
-            }
-        }
-        
-        // DevOps (OAuth2 SSO)
-        if systems[.devops] != nil {
+    }
+
+    /// Probe a single system, so a card's Re-check only spins that card.
+    /// `.graph` and `.intune` share one probe (same elevation identity).
+    func probeSystem(
+        _ id: AuthSystemId,
+        graphService: GraphService,
+        tdxService: TdxService,
+        snipeService: SnipeService,
+        devOpsService: AzureDevOpsService
+    ) async {
+        guard systems[id] != nil else { return }
+        switch id {
+        case .graph, .intune:
+            await probeGraphIntune(graphService: graphService)
+        case .entra:
+            await probeEntra(graphService: graphService)
+        case .snipe:
+            await probeSnipe(snipeService: snipeService)
+        case .tdx:
+            await probeTdx(tdxService: tdxService)
+        case .devops:
             if devOpsService.hasValidToken {
                 update(.devops, state: .authenticating)
                 await probeDevOps(devOpsService: devOpsService)
             }
             // If no token yet, leave at .configured — SSO will handle it
-        }
-        
-        // GitHub (gh CLI)
-        if systems[.github] != nil {
+        case .github:
             update(.github, state: .authenticating)
             await probeGitHub()
+        case .gitea:
+            break
+        }
+    }
+
+    private func probeGraphIntune(graphService: GraphService) async {
+        guard systems[.graph] != nil else { return }
+        update(.graph, state: .authenticating)
+        update(.intune, state: .authenticating)
+        do {
+            // Attempt a lightweight Graph call
+            _ = try await graphService.getManagedDevices(limit: 1)
+            update(.graph,  state: .valid(user: "az elevation", expiry: nil))
+            update(.intune, state: .valid(user: "az elevation", expiry: nil))
+        } catch {
+            update(.graph,  state: .failed(message: error.localizedDescription))
+            update(.intune, state: .failed(message: error.localizedDescription))
+        }
+    }
+
+    private func probeEntra(graphService: GraphService) async {
+        update(.entra, state: .authenticating)
+        do {
+            _ = try await graphService.searchGroups("test", limit: 1)
+            update(.entra, state: .valid(user: "az elevation", expiry: nil))
+        } catch {
+            update(.entra, state: .failed(message: error.localizedDescription))
+        }
+    }
+
+    private func probeSnipe(snipeService: SnipeService) async {
+        if snipeService.usesOidc {
+            // OIDC bearer minted from the operator's Entra session — the
+            // default since the fork's OIDC guard shipped. This branch used
+            // to be missing entirely, so a Snipe on OIDC was never probed:
+            // it sat at .configured until the (irrelevant) cookie-SSO attempt
+            // timed out and painted it red, while the API was working fine.
+            update(.snipe, state: .authenticating)
+            do {
+                _ = try await snipeService.getAllAssets()
+                update(.snipe, state: .valid(user: "SSO bearer (OIDC)", expiry: nil))
+            } catch {
+                update(.snipe, state: .failed(message: error.localizedDescription))
+            }
+        } else if snipeService.ssoAuthenticated {
+            // SSO mode — already authenticated via cookies
+            update(.snipe, state: .valid(user: snipeService.ssoUserName ?? "SSO User", expiry: nil))
+        } else if !snipeService.apiKey.isEmpty {
+            // API key mode — probe with a lightweight call
+            update(.snipe, state: .authenticating)
+            do {
+                _ = try await snipeService.getAllAssets()
+                update(.snipe, state: .valid(user: config.snipeUrl ?? "Snipe-IT", expiry: nil))
+            } catch {
+                update(.snipe, state: .failed(message: error.localizedDescription))
+            }
+        }
+        // SSO not yet authenticated + no API key = leave at .configured, SSO will handle it
+    }
+
+    private func probeTdx(tdxService: TdxService) async {
+        update(.tdx, state: .authenticating)
+        do {
+            let search = TicketSearchRequest(maxResults: 1)
+            _ = try await tdxService.searchTickets(search: search, maxResults: 1)
+            let userName = tdxService.authenticatedUserName
+            update(.tdx, state: .valid(user: userName ?? "Service Account", expiry: nil))
+        } catch {
+            update(.tdx, state: .failed(message: error.localizedDescription))
         }
     }
     
@@ -286,19 +312,18 @@ class AuthManager: ObservableObject {
         update(.devops, state: .configured)
     }
     
-    private func probeGitHub() async {
-        // Check `gh auth status`
-        do {
-            let output = try await shellOutput("/usr/bin/env", ["gh", "auth", "status", "--active"])
-            if output.contains("Logged in") {
-                let user = output.components(separatedBy: "account ").last?
-                    .components(separatedBy: " ").first?.trimmingCharacters(in: .whitespacesAndNewlines)
-                update(.github, state: .valid(user: user, expiry: nil))
-            } else {
-                update(.github, state: .configured) // gh present but not logged in
-            }
-        } catch {
-            // gh CLI not installed or not logged in
+    func probeGitHub() async {
+        // A GUI app's PATH has no Homebrew, so resolve gh by absolute path.
+        // `gh auth status` exits non-zero when logged out and prints to stderr
+        // on some versions, so read both streams and ignore the exit code.
+        let gh = CliSignIn.resolveExecutable("gh")
+        let output = await shellOutputLenient(gh, ["auth", "status", "--active"])
+        if output.contains("Logged in") {
+            let user = output.components(separatedBy: "account ").last?
+                .components(separatedBy: " ").first?.trimmingCharacters(in: .whitespacesAndNewlines)
+            update(.github, state: .valid(user: user, expiry: nil))
+        } else {
+            // gh missing or not logged in
             update(.github, state: .configured)
         }
     }
@@ -348,7 +373,34 @@ class AuthManager: ObservableObject {
         guard process.terminationStatus == 0 else { throw AuthError.commandFailed }
         return String(data: data, encoding: .utf8) ?? ""
     }
-    
+
+    /// Run a command and return stdout + stderr regardless of exit code —
+    /// for tools like `gh auth status` that report state on stderr and exit 1.
+    private func shellOutputLenient(_ executable: String, _ arguments: [String]) async -> String {
+        await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            if executable.hasPrefix("/") {
+                process.executableURL = URL(fileURLWithPath: executable)
+                process.arguments = arguments
+            } else {
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                process.arguments = [executable] + arguments
+            }
+            let out = Pipe(), err = Pipe()
+            process.standardOutput = out
+            process.standardError = err
+            do {
+                try process.run()
+            } catch {
+                return ""
+            }
+            let outData = out.fileHandleForReading.readDataToEndOfFile()
+            let errData = err.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return String(decoding: outData, as: UTF8.self) + String(decoding: errData, as: UTF8.self)
+        }.value
+    }
+
     enum AuthError: Error {
         case commandFailed
         case parseError

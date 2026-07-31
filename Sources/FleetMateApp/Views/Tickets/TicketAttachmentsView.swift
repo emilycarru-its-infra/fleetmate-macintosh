@@ -13,6 +13,9 @@ struct TicketAttachmentsView: View {
     /// Folded by default — the file list is reference material, and on a busy
     /// ticket it pushes the comment box and activity below the fold.
     @State private var isExpanded = false
+    /// The staged file being previewed in the Quick Look popover, keyed by the
+    /// attachment id it belongs to so the popover anchors on the right row.
+    @State private var preview: (attachmentId: String, url: URL)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -91,7 +94,16 @@ struct TicketAttachmentsView: View {
                     Image(systemName: "eye")
                 }
                 .buttonStyle(.borderless)
-                .help("Open \(attachment.displayName)")
+                .help("Preview \(attachment.displayName)")
+                .popover(isPresented: Binding(
+                    get: { preview?.attachmentId == attachment.id },
+                    set: { if !$0 { preview = nil } }
+                )) {
+                    if let preview {
+                        QuickLookPreview(url: preview.url)
+                            .frame(width: 560, height: 640)
+                    }
+                }
 
                 Button(action: { save(attachment) }) {
                     Image(systemName: "square.and.arrow.down")
@@ -125,9 +137,10 @@ struct TicketAttachmentsView: View {
 
     // MARK: - Actions
 
+    /// Quick Look in a popover on the row, not a separate Preview window.
     private func open(_ attachment: TdxAttachment) {
         run(attachment) { url in
-            NSWorkspace.shared.open(url)
+            preview = (attachmentId: attachment.id, url: url)
         }
     }
 
@@ -164,6 +177,25 @@ struct TicketAttachmentsView: View {
             } catch {
                 errorMessage = "Could not download \(attachment.displayName): \(error.localizedDescription)"
             }
+        }
+    }
+}
+
+/// A Quick Look preview embedded in SwiftUI — the same rendering the Space-bar
+/// preview uses, but inline in a popover instead of a floating panel.
+struct QuickLookPreview: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> QLPreviewView {
+        let view = QLPreviewView(frame: .zero, style: .normal) ?? QLPreviewView()
+        view.shouldCloseWithWindow = true
+        view.previewItem = url as NSURL
+        return view
+    }
+
+    func updateNSView(_ view: QLPreviewView, context: Context) {
+        if (view.previewItem as? NSURL) as URL? != url {
+            view.previewItem = url as NSURL
         }
     }
 }

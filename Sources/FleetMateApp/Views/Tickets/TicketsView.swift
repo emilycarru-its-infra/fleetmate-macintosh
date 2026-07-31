@@ -1970,7 +1970,6 @@ struct TicketsView: View {
               let category = TicketFilterCategory(rawValue: link.category) else { return }
         appState.navigateToModuleFilter = nil
         filters.selectedValues[category] = [resolveFilterValue(link.value, in: filters.availableValues[category])]
-        showFilters = true
     }
 
     // MARK: - Data Loading

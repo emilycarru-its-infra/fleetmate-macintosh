@@ -470,7 +470,6 @@ struct AssetsView: View {
               let category = AssetFilterCategory(rawValue: link.category) else { return }
         appState.navigateToModuleFilter = nil
         filters.selectedValues[category] = [resolveFilterValue(link.value, in: filters.availableValues[category])]
-        showFilters = true
     }
 
     private func loadAllAssets() {
@@ -702,9 +701,16 @@ struct AssetDetailSidebar: View {
                         groupCard("procurement")
                     }
 
-                    // Remaining taxonomy groups in their render order.
-                    ForEach(["management", "networking", "identity"], id: \.self) { slug in
-                        groupCard(slug)
+                    groupCard("management")
+
+                    // Networking is short, Identity is GUID-wide — share a row
+                    // roughly 30/70 (Identity spans two of three grid columns).
+                    Grid(horizontalSpacing: 12, verticalSpacing: 12) {
+                        GridRow {
+                            groupCard("networking")
+                            groupCard("identity")
+                                .gridCellColumns(2)
+                        }
                     }
 
                     if let notes = asset.notes, !notes.isEmpty {

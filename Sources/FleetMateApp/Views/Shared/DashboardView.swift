@@ -67,7 +67,9 @@ struct DashboardView: View {
     @State private var assetCategoryBars: [ChartBar] = []
     @State private var errorCategoryBars: [ChartBar] = []
     @State private var activityItems: [ActivityItem] = []
-    @State private var snipeActivity: [SnipeActivityLog] = []
+    /// Snipe's activity log lives on AppState — refetching it per tab switch
+    /// left the feed blank for seconds every time the Dashboard came back.
+    private var snipeActivity: [SnipeActivityLog] { appState.cachedSnipeActivity }
 
     // "My pull requests" queue across Azure DevOps + GitHub. Owned by AppState so
     // it outlives this view — see AppState.pullRequestQueue.
@@ -125,6 +127,11 @@ struct DashboardView: View {
             // Fixed top: header + alerts + KPIs
             VStack(alignment: .leading, spacing: 10) {
                 headerSection
+                // Front and center: the cross-system search is the fastest way
+                // into anything, so it gets the Spotlight spot.
+                GlobalSearchField(query: $searchQuery, focused: $searchFocused, large: true)
+                    .frame(maxWidth: 640)
+                    .frame(maxWidth: .infinity, alignment: .center)
                 if let error = appState.errorMessage { errorBanner(error) }
             }
             .padding(.horizontal, 16)
@@ -140,7 +147,7 @@ struct DashboardView: View {
             }
         }
         .frame(maxHeight: .infinity)
-        .overlay(alignment: .topTrailing) { searchResultsOverlay }
+        .overlay(alignment: .top) { searchResultsOverlay }
         .toolbar { dashboardToolbar }
         .onAppCommand { command in
             if command == .refresh { Task { await refreshAll() } }
@@ -156,7 +163,11 @@ struct DashboardView: View {
             guard !Task.isCancelled else { return }
             searchResults = GlobalSearchScanner.search(searchQuery, appState: appState)
         }
-        .task { await loadAllSections() }
+        .task {
+            // Paint from the warm caches immediately; the loads refresh after.
+            buildActivityFeed()
+            await loadAllSections()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in }
         .onChange(of: appState.cachedDevices.count) { _, _ in refreshSection(.devices) }
         .onChange(of: appState.cachedAssets.count) { _, _ in refreshSection(.assets) }
@@ -235,11 +246,6 @@ struct DashboardView: View {
 
     @ToolbarContentBuilder
     private var dashboardToolbar: some ToolbarContent {
-        // The global search rides the toolbar so it gets the same glass
-        // treatment as the other toolbar controls.
-        ToolbarItem(placement: .automatic) {
-            GlobalSearchField(query: $searchQuery, focused: $searchFocused)
-        }
         ToolbarItemGroup(placement: .automatic) {
             Button(action: { Task { await refreshAll() } }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
@@ -280,16 +286,16 @@ struct DashboardView: View {
     @ViewBuilder
     private var searchResultsOverlay: some View {
         if !searchQuery.isEmpty && !searchResults.isEmpty {
-            ZStack(alignment: .topTrailing) {
+            ZStack(alignment: .top) {
                 // Tap anywhere outside the panel to dismiss.
                 Color.black.opacity(0.001)
                     .contentShape(Rectangle())
                     .onTapGesture { searchQuery = "" }
-                GlobalSearchResultsPanel(results: searchResults) { hit in
+                GlobalSearchResultsPanel(results: searchResults, width: 640) { hit in
                     openSearchResult(hit)
                 }
-                .padding(.trailing, 16)
-                .padding(.top, 8)
+                // Sits right under the hero field (header ≈ 60pt + field).
+                .padding(.top, 118)
             }
             .transition(.opacity)
         }
@@ -1042,7 +1048,7 @@ struct DashboardView: View {
 
         // Fetch recent activity log (last 24h worth, up to 50 entries)
         do {
-            snipeActivity = try await appState.snipeService.getActivityLog(limit: 50)
+            appState.cachedSnipeActivity = try await appState.snipeService.getActivityLog(limit: 50)
         } catch {
             dbg.error("Dashboard snipe activity: \(error)", category: "dashboard")
         }
@@ -1055,6 +1061,9 @@ struct DashboardView: View {
         let isoAlt = ISO8601DateFormatter()
         isoAlt.formatOptions = [.withInternetDateTime]
         let cutoff = Date().addingTimeInterval(-86400) // last 24 hours
+        // Inventory moves slower than tickets and syncs — a day of Snipe
+        // activity is often near-empty, so it looks back a week.
+        let inventoryCutoff = Date().addingTimeInterval(-7 * 86400)
 
         func parse(_ str: String?) -> Date? {
             guard let s = str else { return nil }
@@ -1102,9 +1111,9 @@ struct DashboardView: View {
                                       context: d.userDisplayName ?? d.operatingSystem))
         }
 
-        // Assets – all updated in last 24h
+        // Assets – updated within the inventory window
         for a in appState.cachedAssets {
-            if let dateStr = a.updatedAt?.value, let date = parse(dateStr), date > cutoff {
+            if let dateStr = a.updatedAt?.value, let date = parse(dateStr), date > inventoryCutoff {
                 let name = a.name ?? a.assetTag ?? "Asset"
                 items.append(ActivityItem(icon: "shippingbox", name: name,
                                           detail: a.statusLabel?.name ?? "",
@@ -1113,7 +1122,7 @@ struct DashboardView: View {
             }
         }
 
-        // Snipe activity log – filter to last 24h
+        // Snipe activity log – inventory window
         let dateFmt = DateFormatter()
         dateFmt.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSSZ"
         let dateFmtAlt = DateFormatter()
@@ -1122,7 +1131,7 @@ struct DashboardView: View {
         for entry in snipeActivity {
             let dateStr = entry.createdAt?.value
             let date = dateStr.flatMap { parse($0) ?? dateFmt.date(from: $0) ?? dateFmtAlt.date(from: $0) }
-            if let date = date, date > cutoff {
+            if let date = date, date > inventoryCutoff {
                 let action = entry.actionType ?? "activity"
                 let itemName = entry.item?.name ?? "item"
                 let admin = entry.admin?.name ?? ""

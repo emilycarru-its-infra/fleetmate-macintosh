@@ -273,9 +273,10 @@ struct DashboardView: View {
             if isAnyLoading {
                 ProgressView().controlSize(.small)
             }
-            // The search shares the title row — its own row was mostly air —
-            // and stretches to the trailing edge.
+            // The search shares the title row — generous, but capped so the
+            // title keeps its breathing room.
             GlobalSearchField(query: $searchQuery, focused: $searchFocused, large: true)
+                .frame(maxWidth: 560)
         }
     }
 
@@ -289,12 +290,12 @@ struct DashboardView: View {
                 Color.black.opacity(0.001)
                     .contentShape(Rectangle())
                     .onTapGesture { searchQuery = "" }
-                GlobalSearchResultsPanel(results: searchResults, width: 640) { hit in
+                GlobalSearchResultsPanel(results: searchResults, width: 560) { hit in
                     openSearchResult(hit)
                 }
-                // Drops from the field's spot in the title row.
+                // Flush under the field: same width, same trailing edge.
                 .padding(.trailing, 16)
-                .padding(.top, 62)
+                .padding(.top, 70)
             }
             .transition(.opacity)
         }

@@ -773,7 +773,7 @@ struct TicketsView: View {
                 .frame(minWidth: 380)
             if selectedTicket != nil {
                 detailSidebarView
-                    .frame(minWidth: 440, idealWidth: 660, maxWidth: 900)
+                    .frame(minWidth: 440, idealWidth: 900, maxWidth: 1100)
                     .background(Color(nsColor: .windowBackgroundColor))
             }
         }
@@ -789,7 +789,7 @@ struct TicketsView: View {
                 .frame(minWidth: 380)
             if selectedTicket != nil {
                 detailSidebarView
-                    .frame(minWidth: 440, idealWidth: 660, maxWidth: 900)
+                    .frame(minWidth: 440, idealWidth: 900, maxWidth: 1100)
                     .background(Color(nsColor: .windowBackgroundColor))
             }
         }

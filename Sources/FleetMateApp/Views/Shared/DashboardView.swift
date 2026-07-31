@@ -92,6 +92,11 @@ struct DashboardView: View {
     @State private var showAuthPopover = false
     @State private var activityFilter: AppTab? = nil
 
+    // Global search (top right): query + debounced results over the caches.
+    @State private var searchQuery = ""
+    @State private var searchResults: [GlobalSearchResult] = []
+    @FocusState private var searchFocused: Bool
+
     // Draggable split
     @State private var splitFraction: CGFloat = 0.7
     @State private var splitFractionDragStart: CGFloat = 0.7
@@ -132,9 +137,21 @@ struct DashboardView: View {
             }
         }
         .frame(maxHeight: .infinity)
+        .overlay(alignment: .topTrailing) { searchResultsOverlay }
         .toolbar { dashboardToolbar }
         .onAppCommand { command in
             if command == .refresh { Task { await refreshAll() } }
+            if command == .find { searchFocused = true }
+        }
+        .task(id: searchQuery) {
+            guard searchQuery.trimmingCharacters(in: .whitespaces).count >= 2 else {
+                searchResults = []
+                return
+            }
+            // Debounce; the task id change cancels a superseded scan.
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled else { return }
+            searchResults = GlobalSearchScanner.search(searchQuery, appState: appState)
         }
         .task { await loadAllSections() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in }
@@ -161,6 +178,10 @@ struct DashboardView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         kpiGrid
                         PullRequestQueueSection(model: pullRequestModel)
+                            .environmentObject(appState)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 16)
+                        DashboardTasksSection(model: appState.dashboardTasks)
                             .environmentObject(appState)
                             .padding(.horizontal, 16)
                             .padding(.bottom, 16)
@@ -244,7 +265,45 @@ struct DashboardView: View {
             if isAnyLoading {
                 ProgressView().controlSize(.small)
             }
+            GlobalSearchField(query: $searchQuery, focused: $searchFocused)
         }
+    }
+
+    // MARK: - Global Search
+
+    @ViewBuilder
+    private var searchResultsOverlay: some View {
+        if !searchQuery.isEmpty && !searchResults.isEmpty {
+            ZStack(alignment: .topTrailing) {
+                // Tap anywhere outside the panel to dismiss.
+                Color.black.opacity(0.001)
+                    .contentShape(Rectangle())
+                    .onTapGesture { searchQuery = "" }
+                GlobalSearchResultsPanel(results: searchResults) { hit in
+                    openSearchResult(hit)
+                }
+                .padding(.trailing, 16)
+                .padding(.top, 58)
+            }
+            .transition(.opacity)
+        }
+    }
+
+    private func openSearchResult(_ hit: GlobalSearchResult) {
+        switch hit.category {
+        case .devices:
+            navigate(to: .devices, deviceId: hit.deviceId)
+        case .inventory:
+            appState.navigateToInventorySearch = hit.inventoryFilter
+            navigate(to: .inventory)
+        case .tickets:
+            navigate(to: .tickets, ticketId: hit.ticketId)
+        case .workItems:
+            navigate(to: .projects)
+        case .users, .groups:
+            navigate(to: .identity)
+        }
+        searchQuery = ""
     }
 
     // MARK: - Connect Prompt

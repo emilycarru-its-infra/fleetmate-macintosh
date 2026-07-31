@@ -127,11 +127,6 @@ struct DashboardView: View {
             // Fixed top: header + alerts + KPIs
             VStack(alignment: .leading, spacing: 10) {
                 headerSection
-                // Front and center: the cross-system search is the fastest way
-                // into anything, so it gets the Spotlight spot.
-                GlobalSearchField(query: $searchQuery, focused: $searchFocused, large: true)
-                    .frame(maxWidth: 640)
-                    .frame(maxWidth: .infinity, alignment: .center)
                 if let error = appState.errorMessage { errorBanner(error) }
             }
             .padding(.horizontal, 16)
@@ -147,7 +142,7 @@ struct DashboardView: View {
             }
         }
         .frame(maxHeight: .infinity)
-        .overlay(alignment: .top) { searchResultsOverlay }
+        .overlay(alignment: .topTrailing) { searchResultsOverlay }
         .toolbar { dashboardToolbar }
         .onAppCommand { command in
             if command == .refresh { Task { await refreshAll() } }
@@ -267,7 +262,7 @@ struct DashboardView: View {
     // MARK: - Header
 
     private var headerSection: some View {
-        HStack(alignment: .center) {
+        HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Dashboard")
                     .appFont(.largeTitle, weight: .bold)
@@ -278,6 +273,9 @@ struct DashboardView: View {
             if isAnyLoading {
                 ProgressView().controlSize(.small)
             }
+            // The search shares the title row — its own row was mostly air —
+            // and stretches to the trailing edge.
+            GlobalSearchField(query: $searchQuery, focused: $searchFocused, large: true)
         }
     }
 
@@ -286,7 +284,7 @@ struct DashboardView: View {
     @ViewBuilder
     private var searchResultsOverlay: some View {
         if !searchQuery.isEmpty && !searchResults.isEmpty {
-            ZStack(alignment: .top) {
+            ZStack(alignment: .topTrailing) {
                 // Tap anywhere outside the panel to dismiss.
                 Color.black.opacity(0.001)
                     .contentShape(Rectangle())
@@ -294,8 +292,9 @@ struct DashboardView: View {
                 GlobalSearchResultsPanel(results: searchResults, width: 640) { hit in
                     openSearchResult(hit)
                 }
-                // Sits right under the hero field (header ≈ 60pt + field).
-                .padding(.top, 118)
+                // Drops from the field's spot in the title row.
+                .padding(.trailing, 16)
+                .padding(.top, 62)
             }
             .transition(.opacity)
         }

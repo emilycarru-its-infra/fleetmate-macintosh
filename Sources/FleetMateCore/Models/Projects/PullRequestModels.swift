@@ -264,6 +264,34 @@ public enum PullRequestDateParser {
     }
 }
 
+// MARK: - GitHub Issues
+
+/// A row in the dashboard's GitHub issues table — deliberately thin, it links
+/// out to github.com rather than replicating the issue UI.
+public struct GitHubIssueSummary: Sendable, Identifiable, Hashable {
+    public let number: Int
+    public let title: String
+    /// "owner/name"
+    public let repository: String
+    public let state: String
+    public let authorLogin: String?
+    public let updatedAt: Date?
+    public let webUrl: String
+
+    public var id: String { "\(repository)#\(number)" }
+
+    public init(number: Int, title: String, repository: String, state: String,
+                authorLogin: String?, updatedAt: Date?, webUrl: String) {
+        self.number = number
+        self.title = title
+        self.repository = repository
+        self.state = state
+        self.authorLogin = authorLogin
+        self.updatedAt = updatedAt
+        self.webUrl = webUrl
+    }
+}
+
 /// A provider that failed while building the queue.
 public struct PullRequestQueueError: Sendable, Identifiable {
     public let source: PullRequestSource

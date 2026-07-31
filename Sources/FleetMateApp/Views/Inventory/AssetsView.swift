@@ -672,16 +672,17 @@ struct AssetDetailSidebar: View {
             // money fourth, everything else after.
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    HStack(alignment: .top, spacing: 12) {
-                        statusCard
-                        if asset.assignedTo != nil {
-                            assignmentCard
-                        }
-                    }
-
+                    // Inventory spans the left; Status and Assignment stack on
+                    // the right beside it.
                     HStack(alignment: .top, spacing: 12) {
                         groupCard("inventory")
-                        metadataCard
+                        VStack(alignment: .leading, spacing: 12) {
+                            statusCard
+                            if asset.assignedTo != nil {
+                                assignmentCard
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     }
 
                     HStack(alignment: .top, spacing: 12) {
@@ -712,6 +713,8 @@ struct AssetDetailSidebar: View {
                             }
                         }
                     }
+
+                    metadataCard
 
                     // Save button
                     if hasEdits {

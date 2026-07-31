@@ -154,6 +154,9 @@ struct DashboardTasksPane: View {
                         .padding(.vertical, 10)
                     Spacer(minLength: 0)
                 } else {
+                    // Capped: in the dashboard's outer ScrollView the height
+                    // proposal is unbounded, so without a ceiling this card's
+                    // ideal height is all ~200 rows.
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(visibleWorkItems.enumerated()), id: \.element.id) { index, item in
@@ -162,6 +165,7 @@ struct DashboardTasksPane: View {
                             }
                         }
                     }
+                    .frame(maxHeight: 540)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

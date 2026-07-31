@@ -426,7 +426,19 @@ struct PullRequestQueueSection: View {
     private var emptyState: some View {
         GroupBox {
             VStack(spacing: 6) {
-                if let filtered = model.selectedSource {
+                if model.selectedSource == .azureDevOps,
+                   appState.config.isDevOpsConfigured, !appState.devOpsService.hasValidToken {
+                    // Not empty — unauthenticated. "DevOps 0" with no
+                    // explanation looked like the queue vanished.
+                    Image(systemName: "clock")
+                        .appFont(.title2)
+                        .foregroundStyle(.secondary)
+                    Text("Waiting for Azure DevOps sign-in…")
+                        .appFont(.callout)
+                    Text("The queue loads automatically once SSO completes.")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let filtered = model.selectedSource {
                     // Empty because of the filter, not because the queue is clear —
                     // saying "nothing waiting on you" here would be a lie.
                     Image(systemName: "line.3.horizontal.decrease.circle")

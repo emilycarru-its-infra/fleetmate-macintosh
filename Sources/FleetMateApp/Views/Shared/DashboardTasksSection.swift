@@ -179,32 +179,28 @@ struct DashboardTasksPane: View {
             appState.navigateToWorkItemId = item.id
             appState.navigateToTab = .projects
         } label: {
+            // Invisible grid: fixed-width columns so pills line up down the
+            // list. Area path leads (where the ids used to be), title flexes,
+            // then Type / Iteration / State pill columns.
             HStack(spacing: 8) {
-                Text("#\(item.id)")
-                    .appFont(.caption, design: .monospaced)
+                Text(breadcrumb(item.fields?.areaPath) ?? "")
+                    .appFont(.caption2)
                     .foregroundStyle(.secondary)
-                    .frame(width: 46, alignment: .leading)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .frame(width: 170, alignment: .leading)
                 Text(item.fields?.title ?? "(untitled)")
                     .appFont(.caption)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Spacer(minLength: 6)
-                if let area = breadcrumb(item.fields?.areaPath) {
-                    Text(area)
-                        .appFont(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                        .frame(maxWidth: 150, alignment: .trailing)
-                }
-                if let type = item.fields?.workItemType {
-                    statePill(type, tint: .teal)
-                }
-                if let iteration = breadcrumb(item.fields?.iterationPath)?
-                    .split(separator: "›").last.map({ $0.trimmingCharacters(in: .whitespaces) }) {
-                    statePill(iteration, tint: .gray)
-                }
-                statePill(item.fields?.state ?? "", tint: .indigo)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                pillColumn(item.fields?.workItemType, tint: .teal, width: 84)
+                pillColumn(
+                    breadcrumb(item.fields?.iterationPath)?
+                        .split(separator: "›").last.map { $0.trimmingCharacters(in: .whitespaces) },
+                    tint: .gray, width: 76
+                )
+                pillColumn(item.fields?.state, tint: .indigo, width: 62)
             }
             .padding(.vertical, 5)
             .contentShape(Rectangle())
@@ -322,6 +318,21 @@ struct DashboardTasksPane: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// A pill in a fixed-width column — empty values keep the column's space
+    /// so the grid stays aligned.
+    @ViewBuilder
+    private func pillColumn(_ text: String?, tint: Color, width: CGFloat) -> some View {
+        Group {
+            if let text, !text.isEmpty {
+                statePill(text, tint: tint)
+                    .lineLimit(1)
+            } else {
+                Color.clear.frame(height: 1)
+            }
+        }
+        .frame(width: width, alignment: .center)
     }
 
     private func statePill(_ state: String, tint: Color) -> some View {

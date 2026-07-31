@@ -63,10 +63,19 @@ struct GroupsContentView: View {
     /// don't throw them away.
     private var groupDevices: [String: [EntraDevice]] { appState.cachedGroupMembers }
 
+    /// Matches on group name OR member device name — the member cache is warm
+    /// from the launch preload, so searching "ALLAGUO" surfaces every group
+    /// that Mac belongs to.
     var filteredGroups: [EntraGroup] {
         if searchText.isEmpty { return groups }
-        return groups.filter {
-            $0.displayName?.localizedCaseInsensitiveContains(searchText) ?? false
+        return groups.filter { group in
+            if group.displayName?.localizedCaseInsensitiveContains(searchText) ?? false {
+                return true
+            }
+            let members = appState.cachedGroupMembers[group.id ?? ""] ?? []
+            return members.contains {
+                $0.displayName?.localizedCaseInsensitiveContains(searchText) ?? false
+            }
         }
     }
 

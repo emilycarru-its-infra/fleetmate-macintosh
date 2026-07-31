@@ -50,13 +50,17 @@ final class DashboardTasksModel: ObservableObject {
     }
 }
 
-// MARK: - Section
+// MARK: - Pane
 
-/// "My tasks" — a 50/50 grid: DevOps work items on the left, GitHub issues for
-/// the account on the right. Rows link out to their web UIs.
-struct DashboardTasksSection: View {
+/// The task side of the dashboard's 50/50 split: work items when the PR queue
+/// is filtered to DevOps, GitHub issues when filtered to GitHub, both stacked
+/// when the filter is cleared. Rows link out to their web UIs.
+struct DashboardTasksPane: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var model: DashboardTasksModel
+    /// Mirrors the PR queue's source filter, so one set of pills drives both
+    /// halves of the split.
+    let source: PullRequestSource?
 
     private let rowLimit = 8
 
@@ -68,9 +72,16 @@ struct DashboardTasksSection: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            workItemsCard
-            issuesCard
+        VStack(alignment: .leading, spacing: 12) {
+            switch source {
+            case .azureDevOps:
+                workItemsCard
+            case .gitHub:
+                issuesCard
+            case nil:
+                workItemsCard
+                issuesCard
+            }
         }
         .task { model.load(appState: appState) }
         .onAppCommand { command in

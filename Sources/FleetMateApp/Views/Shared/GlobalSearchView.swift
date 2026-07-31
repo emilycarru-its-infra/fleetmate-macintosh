@@ -193,18 +193,21 @@ enum GlobalSearchScanner {
 
 // MARK: - Field
 
-/// The dashboard's top-right global search box.
+/// The dashboard's global search box. `large` is the front-and-center hero
+/// variant; the default is compact for toolbar-like placements.
 struct GlobalSearchField: View {
     @Binding var query: String
     var focused: FocusState<Bool>.Binding
+    var large: Bool = false
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: large ? 8 : 6) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-                .appFont(.callout)
-            TextField("Search everything…", text: $query)
+                .appFont(large ? .title3 : .callout)
+            TextField("Search everything — serial, hostname, user, ticket…", text: $query)
                 .textFieldStyle(.plain)
+                .appFont(large ? .title3 : .body)
                 .focused(focused)
                 .onExitCommand { query = "" }
             if !query.isEmpty {
@@ -213,19 +216,20 @@ struct GlobalSearchField: View {
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
+                        .appFont(large ? .title3 : .body)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, large ? 14 : 10)
+        .padding(.vertical, large ? 10 : 6)
         .background(Color.secondary.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: large ? 12 : 8))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: large ? 12 : 8)
                 .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
         )
-        .frame(width: 280)
+        .frame(maxWidth: large ? .infinity : 280)
     }
 }
 
@@ -236,6 +240,7 @@ struct GlobalSearchField: View {
 /// clearing the query.
 struct GlobalSearchResultsPanel: View {
     let results: [GlobalSearchResult]
+    var width: CGFloat = 420
     let onSelect: (GlobalSearchResult) -> Void
 
     private var grouped: [(GlobalSearchResult.Category, [GlobalSearchResult])] {
@@ -272,7 +277,7 @@ struct GlobalSearchResultsPanel: View {
             }
             .padding(.bottom, 8)
         }
-        .frame(width: 420)
+        .frame(width: width)
         .frame(maxHeight: 480)
         .fixedSize(horizontal: false, vertical: true)
         .background(.regularMaterial)

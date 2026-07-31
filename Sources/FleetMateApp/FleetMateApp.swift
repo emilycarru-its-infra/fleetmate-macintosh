@@ -145,6 +145,9 @@ class AppState: ObservableObject {
     @Published var cachedUsers: [SnipeUser] = []
     @Published var cachedEntraUsers: [EntraUser] = []
     @Published var cachedGroups: [EntraGroup] = []
+    /// Snipe activity log for the dashboard feed — cached so tab switches
+    /// don't blank the feed while it refetches.
+    @Published var cachedSnipeActivity: [SnipeActivityLog] = []
     /// Device members per group id, filled at launch right after the groups
     /// load — so Identity opens with every group expandable instantly and
     /// device-name search can say which groups a device belongs to. Lives

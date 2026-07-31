@@ -11,6 +11,8 @@ public actor GitHubProjectsTaskProvider: TaskProvider {
 
     private let config: GitHubProviderConfig
     private let service: GitHubProjectsService
+    /// For the issues fallback when no Projects v2 board is configured.
+    private let searchClient: GitHubGraphQLClient
     private var projectId: String?
     private var statusField: GitHubProjectField?
     private var fields: [GitHubProjectField]?
@@ -18,6 +20,7 @@ public actor GitHubProjectsTaskProvider: TaskProvider {
     public init(config: GitHubProviderConfig) {
         self.config = config
         self.service = GitHubProjectsService(config: config)
+        self.searchClient = GitHubGraphQLClient(config: config)
     }
 
     public func authenticate() async throws -> Bool {
@@ -26,14 +29,30 @@ public actor GitHubProjectsTaskProvider: TaskProvider {
             dbg.warn("GitHub TaskProvider: service.authenticate() failed", category: "github-provider")
             return false
         }
-        try await resolveProject()
-        dbg.info("GitHub TaskProvider: projectId=\(projectId ?? "nil")", category: "github-provider")
-        return projectId != nil
+        try? await resolveProject()
+        dbg.info("GitHub TaskProvider: projectId=\(projectId ?? "nil") (nil → issues fallback)", category: "github-provider")
+        return true
     }
 
     public func listTasks(filter: TaskFilter?) async throws -> [UnifiedTask] {
         dbg.info("GitHub TaskProvider listTasks", category: "github-provider")
-        try await ensureProject()
+        // No Projects v2 board configured? Fall back to the account's issues —
+        // an empty board when your issues are one search away helps nobody.
+        if (try? await ensureProject()) == nil || projectId == nil {
+            var tasks = try await searchMyIssues(
+                limit: filter?.limit ?? 100,
+                includeClosed: filter?.includeClosed ?? false
+            )
+            if let search = filter?.searchText, !search.isEmpty {
+                let q = search.lowercased()
+                tasks = tasks.filter {
+                    $0.title.lowercased().contains(q) ||
+                    ($0.description?.lowercased().contains(q) ?? false)
+                }
+            }
+            dbg.info("GitHub TaskProvider: \(tasks.count) issues via fallback search", category: "github-provider")
+            return tasks
+        }
 
         let limit = filter?.limit ?? 100
         let items = try await service.listProjectItems(projectId: projectId!, limit: limit)
@@ -144,7 +163,10 @@ public actor GitHubProjectsTaskProvider: TaskProvider {
     }
 
     public func listBuckets() async throws -> [TaskBucket] {
-        try await ensureProject()
+        guard (try? await ensureProject()) != nil, projectId != nil else {
+            return [TaskBucket(id: "open", name: "Open", order: 0),
+                    TaskBucket(id: "closed", name: "Closed", order: 1)]
+        }
         guard let sf = statusField else { return [] }
 
         return sf.options.enumerated().map { i, opt in
@@ -153,7 +175,7 @@ public actor GitHubProjectsTaskProvider: TaskProvider {
     }
 
     public func listLabels() async throws -> [TaskLabel] {
-        try await ensureProject()
+        guard (try? await ensureProject()) != nil, projectId != nil else { return [] }
         let items = try await service.listProjectItems(projectId: projectId!, limit: 200)
 
         let labelNames = Set(items.compactMap(\.content).flatMap(\.labels))
@@ -195,6 +217,51 @@ public actor GitHubProjectsTaskProvider: TaskProvider {
             statusField = fields?.first {
                 $0.name.lowercased() == "status" && $0.dataType == "SINGLE_SELECT"
             }
+        }
+    }
+
+    // MARK: - Issues fallback (no Projects v2 board)
+
+    /// Open issues involving the signed-in account, shaped as tasks. The full
+    /// issue sidebar works off `externalUrl`, so these are first-class rows.
+    private func searchMyIssues(limit: Int, includeClosed: Bool) async throws -> [UnifiedTask] {
+        let q = "is:issue involves:@me sort:updated-desc" + (includeClosed ? "" : " is:open")
+        let query = """
+        query($q: String!, $first: Int!) {
+          search(query: $q, type: ISSUE, first: $first) {
+            nodes {
+              ... on Issue {
+                id title body url state createdAt updatedAt closedAt
+                assignees(first: 10) { nodes { login } }
+                labels(first: 20) { nodes { name } }
+              }
+            }
+          }
+        }
+        """
+        let data = try await searchClient.executeRaw(query: query, variables: ["q": q, "first": limit])
+        let nodes = (data["search"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+        let iso = ISO8601DateFormatter()
+        return nodes.compactMap { node -> UnifiedTask? in
+            guard let id = node["id"] as? String,
+                  let title = node["title"] as? String,
+                  let url = node["url"] as? String else { return nil }
+            let state: TaskState = (node["state"] as? String)?.uppercased() == "CLOSED" ? .closed : .open
+            let assignees = ((node["assignees"] as? [String: Any])?["nodes"] as? [[String: Any]])?
+                .compactMap { $0["login"] as? String } ?? []
+            let labels = ((node["labels"] as? [String: Any])?["nodes"] as? [[String: Any]])?
+                .compactMap { $0["name"] as? String } ?? []
+            func date(_ key: String) -> Date? {
+                (node[key] as? String).flatMap { iso.date(from: $0) }
+            }
+            return UnifiedTask(
+                id: id, provider: providerId, title: title,
+                description: node["body"] as? String, state: state,
+                assignees: assignees, labels: labels,
+                bucket: state == .closed ? "Closed" : "Open",
+                createdAt: date("createdAt") ?? Date(), updatedAt: date("updatedAt") ?? Date(), closedAt: date("closedAt"),
+                externalUrl: url, priority: nil
+            )
         }
     }
 

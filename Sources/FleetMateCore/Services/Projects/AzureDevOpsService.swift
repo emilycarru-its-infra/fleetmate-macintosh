@@ -903,6 +903,185 @@ public class AzureDevOpsService {
         )
     }
 
+    // MARK: - PR detail (in-app viewer)
+
+    /// Everything the in-app viewer needs: description, commits, comment
+    /// threads and per-file red/green diffs. Azure DevOps has no unified-diff
+    /// endpoint, so file diffs are computed client-side from the blob contents
+    /// at the PR's last merged source/target commits.
+    public func getPullRequestDetail(
+        repository: String,
+        pullRequestId: Int,
+        project: String? = nil
+    ) async throws -> PullRequestDetail {
+        let repo = repository.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repository
+        let prBase = "/_apis/git/repositories/\(repo)/pullRequests/\(pullRequestId)"
+
+        let head: AzdoPrHead = try await request("GET", path: "\(prBase)?api-version=7.0", forProject: project)
+        let commits: AzdoPrCommitsResponse = try await request("GET", path: "\(prBase)/commits?api-version=7.0", forProject: project)
+        let threads: AzdoPrThreadsFull = try await request("GET", path: "\(prBase)/threads?api-version=7.0", forProject: project)
+
+        var files: [DiffFile] = []
+        var truncated = false
+        if let source = head.lastMergeSourceCommit?.commitId,
+           let target = head.lastMergeTargetCommit?.commitId {
+            let iterations: AzdoPrIterationsResponse = try await request(
+                "GET", path: "\(prBase)/iterations?api-version=7.0", forProject: project
+            )
+            if let latest = iterations.value.map(\.id).max() {
+                let changes: AzdoPrChangesResponse = try await request(
+                    "GET",
+                    path: "\(prBase)/iterations/\(latest)/changes?api-version=7.0&$compareTo=0",
+                    forProject: project
+                )
+                let fileCap = 40
+                let entries = changes.changeEntries ?? []
+                truncated = entries.count > fileCap
+                for entry in entries.prefix(fileCap) {
+                    guard let path = entry.item?.path, entry.item?.isFolder != true else { continue }
+                    let changeType = (entry.changeType ?? "").lowercased()
+                    let old = changeType.contains("add")
+                        ? "" : await itemContent(repo: repo, path: path, commit: target, project: project)
+                    let new = changeType.contains("delete")
+                        ? "" : await itemContent(repo: repo, path: path, commit: source, project: project)
+                    guard old != nil || new != nil else { continue }
+                    var file = DiffBuilder.build(
+                        fileName: path.hasPrefix("/") ? String(path.dropFirst()) : path,
+                        old: old ?? "",
+                        new: new ?? ""
+                    )
+                    if changeType.contains("delete") { file.newPath = "/dev/null" }
+                    files.append(file)
+                }
+            }
+        }
+
+        let comments: [PullRequestComment] = threads.value
+            .filter { $0.isDeleted != true }
+            .flatMap { thread in
+                (thread.comments ?? [])
+                    .filter { !($0.content ?? "").isEmpty }
+                    .map { comment in
+                        PullRequestComment(
+                            id: "\(thread.id)-\(comment.id ?? 0)",
+                            authorName: comment.author?.displayName ?? "unknown",
+                            body: comment.content ?? "",
+                            date: PullRequestDateParser.parse(comment.publishedDate),
+                            isSystem: comment.commentType == "system"
+                        )
+                    }
+            }
+            .sorted { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) }
+
+        return PullRequestDetail(
+            body: head.description,
+            commits: commits.value.map {
+                PullRequestCommit(
+                    id: $0.commitId,
+                    message: $0.comment ?? "",
+                    authorName: $0.author?.name,
+                    date: PullRequestDateParser.parse($0.author?.date)
+                )
+            },
+            comments: comments,
+            files: files,
+            truncated: truncated
+        )
+    }
+
+    /// Text content of one file at one commit, or nil for binary/oversized/
+    /// missing. Failures degrade to nil — a single unreadable file shouldn't
+    /// sink the whole diff.
+    private func itemContent(repo: String, path: String, commit: String, project: String?) async -> String? {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "/._-")
+        let encodedPath = path.addingPercentEncoding(withAllowedCharacters: allowed) ?? path
+        do {
+            let item: AzdoItemContent = try await request(
+                "GET",
+                path: "/_apis/git/repositories/\(repo)/items?path=\(encodedPath)&versionDescriptor.versionType=commit&versionDescriptor.version=\(commit)&includeContent=true&$format=json&api-version=7.0",
+                forProject: project
+            )
+            guard let content = item.content, content.count < 400_000 else { return nil }
+            return content
+        } catch {
+            return nil
+        }
+    }
+
+    private struct AzdoPrHead: Decodable {
+        let description: String?
+        let lastMergeSourceCommit: AzdoCommitPointer?
+        let lastMergeTargetCommit: AzdoCommitPointer?
+    }
+
+    private struct AzdoCommitPointer: Decodable {
+        let commitId: String?
+    }
+
+    private struct AzdoPrCommitsResponse: Decodable {
+        let value: [AzdoPrCommit]
+    }
+
+    private struct AzdoPrCommit: Decodable {
+        let commitId: String
+        let comment: String?
+        let author: AzdoSignature?
+    }
+
+    private struct AzdoSignature: Decodable {
+        let name: String?
+        let date: String?
+    }
+
+    private struct AzdoPrIterationsResponse: Decodable {
+        let value: [AzdoPrIteration]
+    }
+
+    private struct AzdoPrIteration: Decodable {
+        let id: Int
+    }
+
+    private struct AzdoPrChangesResponse: Decodable {
+        let changeEntries: [AzdoPrChangeEntry]?
+    }
+
+    private struct AzdoPrChangeEntry: Decodable {
+        let changeType: String?
+        let item: AzdoChangeItem?
+    }
+
+    private struct AzdoChangeItem: Decodable {
+        let path: String?
+        let isFolder: Bool?
+    }
+
+    private struct AzdoItemContent: Decodable {
+        let content: String?
+    }
+
+    private struct AzdoPrThreadsFull: Decodable {
+        let value: [AzdoPrThread]
+    }
+
+    private struct AzdoPrThread: Decodable {
+        let id: Int
+        let isDeleted: Bool?
+        let comments: [AzdoPrThreadComment]?
+    }
+
+    private struct AzdoPrThreadComment: Decodable {
+        let id: Int?
+        let content: String?
+        let commentType: String?
+        let publishedDate: String?
+        let author: AzdoCommentAuthor?
+    }
+
+    private struct AzdoCommentAuthor: Decodable {
+        let displayName: String?
+    }
+
     /// Abandon a pull request.
     ///
     /// Reversible in Azure DevOps — an abandoned PR can be reactivated — but it

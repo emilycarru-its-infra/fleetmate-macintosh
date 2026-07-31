@@ -136,6 +136,10 @@ class AppState: ObservableObject {
     @Published var cachedUsers: [SnipeUser] = []
     @Published var cachedEntraUsers: [EntraUser] = []
     @Published var cachedGroups: [EntraGroup] = []
+    /// Device members per group id, filled at launch right after the groups
+    /// load — so Identity opens with every group expandable instantly and
+    /// device-name search can say which groups a device belongs to.
+    @Published var cachedGroupDevices: [String: [EntraDevice]] = [:]
 
     /// The dashboard's pull request queue.
     ///
@@ -408,6 +412,40 @@ class AppState: ObservableObject {
         azeSessionState = warmed ? .warm : .failed
     }
 
+    /// Fill `cachedGroupDevices` for every cached group that doesn't have its
+    /// members yet. Runs a few fetches at a time — enough to finish quickly
+    /// over the warm elevation session without stampeding it.
+    func preloadGroupMembers() async {
+        let pending = cachedGroups.compactMap(\.id).filter { cachedGroupDevices[$0] == nil }
+        guard !pending.isEmpty else { return }
+        dbg.info("Preloading members for \(pending.count) groups...", category: "preload")
+        let maxConcurrent = 4
+        await withTaskGroup(of: (String, [EntraDevice])?.self) { group in
+            var iterator = pending.makeIterator()
+            var inFlight = 0
+            func addNext() {
+                guard let id = iterator.next() else { return }
+                inFlight += 1
+                group.addTask { @MainActor in
+                    do {
+                        return (id, try await self.graphService.getGroupDeviceMembers(id))
+                    } catch {
+                        dbg.error("Members preload failed for group \(id): \(error)", category: "preload")
+                        return nil
+                    }
+                }
+            }
+            for _ in 0..<maxConcurrent { addNext() }
+            while inFlight > 0 {
+                guard let result = await group.next() else { break }
+                inFlight -= 1
+                if let (id, devices) = result { cachedGroupDevices[id] = devices }
+                addNext()
+            }
+        }
+        dbg.info("Group members preloaded: \(cachedGroupDevices.count) groups cached", category: "preload")
+    }
+
     /// Preload all data sources concurrently in the background
     func preloadAllData() async {
         dbg.info("preloadAllData starting", category: "preload")
@@ -475,7 +513,8 @@ class AppState: ObservableObject {
                 }
             }
 
-            // Preload groups
+            // Preload groups, then their device members, so Identity opens
+            // instant instead of lazy-loading each group on first expand.
             if config.isSystemsGraphConfigured && !isGroupsCacheValid {
                 group.addTask { @MainActor in
                     dbg.info("Preloading groups...", category: "preload")
@@ -483,9 +522,14 @@ class AppState: ObservableObject {
                         let groups = try await self.graphService.searchGroups("Devices-", limit: DeviceGroupFetch.limit)
                         self.updateGroupsCache(groups)
                         dbg.info("Groups preloaded: \(groups.count) groups", category: "preload")
+                        await self.preloadGroupMembers()
                     } catch {
                         dbg.error("Groups preload FAILED: \(error)", category: "preload")
                     }
+                }
+            } else if config.isSystemsGraphConfigured {
+                group.addTask { @MainActor in
+                    await self.preloadGroupMembers()
                 }
             }
             

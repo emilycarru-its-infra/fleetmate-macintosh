@@ -181,6 +181,9 @@ struct DashboardView: View {
                             .padding(.horizontal, 16)
                             .padding(.top, 16)
                             .padding(.bottom, 16)
+                        kpiHeaderRow
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 16)
                         chartGrid
                             .padding(.horizontal, 16)
                             .padding(.bottom, 16)
@@ -266,7 +269,6 @@ struct DashboardView: View {
             if isAnyLoading {
                 ProgressView().controlSize(.small)
             }
-            kpiHeaderRow
         }
     }
 
@@ -402,10 +404,10 @@ struct DashboardView: View {
 
     // MARK: - KPI Grid (2x2)
 
-    /// The four KPI cards, compacted into the header's empty right side.
+    /// The four KPI cards in one row, between the PR/tasks split and the charts.
     private var kpiHeaderRow: some View {
         let cfg = appState.config
-        return HStack(spacing: 10) {
+        return HStack(spacing: 12) {
             if cfg.isGraphConfigured {
                 KPICard(kpi: KPI(title: "Managed Devices", value: "\(deviceCount)", icon: "laptopcomputer", color: .blue, loading: isLoadingFleet, tab: .devices)) { navigate(to: .devices) }
             }
@@ -419,7 +421,6 @@ struct DashboardView: View {
                 KPICard(kpi: KPI(title: "Open Tickets", value: "\(openTicketCount)", icon: "ticket", color: .purple, loading: isLoadingTickets, tab: .tickets)) { navigate(to: .tickets) }
             }
         }
-        .fixedSize()
     }
 
     // MARK: - Chart Grid (flowing, Assets by Category first)

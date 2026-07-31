@@ -105,6 +105,9 @@ class AppState: ObservableObject {
     @Published var navigateToInventorySearch: String?
     /// DevOps work item to open in the Projects tab on arrival.
     @Published var navigateToWorkItemId: Int?
+    /// A filter to apply in a module tab on arrival — how dashboard chart
+    /// wedges/bars deep-link into their section pre-filtered.
+    @Published var navigateToModuleFilter: ModuleFilterLink?
     
     // MARK: - Auth Manager
     @Published var authManager: AuthManager

@@ -226,6 +226,10 @@ struct BoardsView: View {
                 // from the task list and do die with the view, so rebuild them.
                 filters.buildFromTasks(allTasks)
             }
+            consumePendingWorkItem()
+        }
+        .onChange(of: appState.navigateToWorkItemId) { _, _ in
+            consumePendingWorkItem()
         }
         .alert("Sync Complete", isPresented: $showSyncAlert) {
             Button("OK", role: .cancel) { }
@@ -771,6 +775,24 @@ struct BoardsView: View {
     }
 
     // MARK: - Load Tasks (all providers via registry)
+
+    /// Open a work item handed off from the dashboard. If it isn't in the
+    /// loaded list (filters, paging), a stub task lets the sidebar self-load
+    /// full detail from just the id.
+    private func consumePendingWorkItem() {
+        guard let id = appState.navigateToWorkItemId else { return }
+        appState.navigateToWorkItemId = nil
+        if let match = allTasks.first(where: { $0.id == String(id) && $0.provider == "azdevops" }) {
+            selectedTask = match
+        } else {
+            selectedTask = UnifiedTask(
+                id: String(id),
+                provider: "azdevops",
+                title: "Loading #\(id)…"
+            )
+        }
+        showDetailSidebar = true
+    }
 
     private func loadTasks() {
         Task {

@@ -17,6 +17,14 @@ final class PullRequestQueueModel: ObservableObject {
     /// it starts active, with GitHub visible one click away.
     @Published var selectedSource: PullRequestSource? = .azureDevOps
 
+    /// Narrow the queue to one repository (secondary pill row); nil = all.
+    @Published var selectedRepo: String?
+
+    /// Once the user picks a pill themselves, loads stop re-asserting the
+    /// DevOps-first default. Without this, the first load — which runs before
+    /// DevOps SSO lands — would clear the default and it would never return.
+    private var userTouchedFilter = false
+
     private var loadTask: Task<Void, Never>?
 
     /// Last successful GitHub fetch, kept so a rate-limited refresh degrades to
@@ -26,9 +34,29 @@ final class PullRequestQueueModel: ObservableObject {
     /// rate limits are per-hour, so hammering it just resets nothing.
     private var gitHubBackoffUntil: Date?
 
-    var visiblePullRequests: [UnifiedPullRequest] {
+    /// Source-filtered but not repo-filtered — what the repo pills count over.
+    var sourcePullRequests: [UnifiedPullRequest] {
         guard let selectedSource else { return queue.pullRequests }
         return queue.pullRequests.filter { $0.source == selectedSource }
+    }
+
+    var visiblePullRequests: [UnifiedPullRequest] {
+        guard let selectedRepo else { return sourcePullRequests }
+        return sourcePullRequests.filter { $0.repository == selectedRepo }
+    }
+
+    /// Repositories in the current source scope with their PR counts, busiest
+    /// first — the secondary filter row. Hidden unless there's a real choice.
+    var repoCounts: [(repo: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for pr in sourcePullRequests { counts[pr.repository, default: 0] += 1 }
+        guard counts.count > 1 else { return [] }
+        return counts.map { ($0.key, $0.value) }
+            .sorted { $0.1 == $1.1 ? $0.0 < $1.0 : $0.1 > $1.1 }
+    }
+
+    func toggleRepo(_ repo: String) {
+        selectedRepo = (selectedRepo == repo) ? nil : repo
     }
 
     func section(_ relation: PullRequestRelation) -> [UnifiedPullRequest] {
@@ -84,9 +112,10 @@ final class PullRequestQueueModel: ObservableObject {
         sources.insert(.gitHub)
         availableSources = sources
 
-        // The DevOps-first default only makes sense when DevOps is in play.
-        if !devOpsReady && selectedSource == .azureDevOps {
-            selectedSource = nil
+        // Re-assert the DevOps-first default until the user picks a pill —
+        // early loads run before DevOps SSO lands, and must not erase it.
+        if !userTouchedFilter {
+            selectedSource = devOpsReady ? .azureDevOps : selectedSource
         }
 
         var merged = PullRequestQueue()
@@ -152,7 +181,9 @@ final class PullRequestQueueModel: ObservableObject {
 
     /// Select a provider to filter by; selecting the active one clears the filter.
     func toggle(_ source: PullRequestSource) {
+        userTouchedFilter = true
         selectedSource = (selectedSource == source) ? nil : source
+        selectedRepo = nil
     }
 }
 
@@ -178,6 +209,8 @@ struct PullRequestQueueSection: View {
         VStack(alignment: .leading, spacing: 10) {
             header
 
+            repoFilterRow
+
             ForEach(model.errors) { error in
                 Label("\(error.source.displayName): \(error.message)", systemImage: "exclamationmark.triangle")
                     .appFont(.caption)
@@ -196,10 +229,55 @@ struct PullRequestQueueSection: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
 
-                DashboardTasksPane(model: tasksModel, source: model.selectedSource)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                DashboardTasksPane(
+                    model: tasksModel,
+                    source: model.selectedSource,
+                    repoFilter: model.selectedRepo
+                )
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
+    }
+
+    /// Secondary filter: one pill per repository in the current source scope,
+    /// busiest first. Only rendered when there's a real choice to make.
+    @ViewBuilder
+    private var repoFilterRow: some View {
+        let repos = model.repoCounts
+        if !repos.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(repos.prefix(14), id: \.repo) { entry in
+                        repoChip(entry.repo, count: entry.count)
+                    }
+                }
+            }
+        }
+    }
+
+    private func repoChip(_ repo: String, count: Int) -> some View {
+        let isSelected = model.selectedRepo == repo
+        return Button(action: {
+            withAnimation(.smooth(duration: 0.15)) { model.toggleRepo(repo) }
+        }) {
+            HStack(spacing: 4) {
+                Image(systemName: "folder")
+                    .appFont(.caption2)
+                Text(repo).appFont(.caption2, weight: .medium)
+                Text("\(count)")
+                    .appFont(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.75) : Color.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.1))
+            .foregroundStyle(isSelected ? Color.white : Color.secondary)
+            .clipShape(Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(isSelected ? "Clear the \(repo) filter" : "Show only \(repo)")
     }
 
     // MARK: Header

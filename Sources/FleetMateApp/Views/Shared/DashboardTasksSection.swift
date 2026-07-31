@@ -61,14 +61,23 @@ struct DashboardTasksPane: View {
     /// Mirrors the PR queue's source filter, so one set of pills drives both
     /// halves of the split.
     let source: PullRequestSource?
+    /// The PR queue's repo pill, applied to GitHub issues too.
+    var repoFilter: String?
 
-    private let rowLimit = 8
+    private let rowLimit = 20
 
     private var activeWorkItems: [WorkItem] {
         let closed: Set<String> = ["done", "closed", "removed", "completed", "resolved"]
         return appState.cachedWorkItems
             .filter { !closed.contains(($0.fields?.state ?? "").lowercased()) }
             .sorted { ($0.fields?.changedDate ?? "") > ($1.fields?.changedDate ?? "") }
+    }
+
+    private var visibleIssues: [GitHubIssueSummary] {
+        guard let repoFilter else { return model.issues }
+        return model.issues.filter {
+            $0.repository.split(separator: "/").last.map(String.init) == repoFilter
+        }
     }
 
     var body: some View {
@@ -121,7 +130,9 @@ struct DashboardTasksPane: View {
 
     private func workItemRow(_ item: WorkItem) -> some View {
         Button {
-            if let url = workItemWebUrl(item) { NSWorkspace.shared.open(url) }
+            // In-app: hand off to the Projects tab, which opens the sidebar.
+            appState.navigateToWorkItemId = item.id
+            appState.navigateToTab = .projects
         } label: {
             HStack(spacing: 8) {
                 Text("#\(item.id)")
@@ -140,6 +151,11 @@ struct DashboardTasksPane: View {
         }
         .buttonStyle(.plain)
         .help(item.fields?.title ?? "")
+        .contextMenu {
+            Button("Open in Azure DevOps") {
+                if let url = workItemWebUrl(item) { NSWorkspace.shared.open(url) }
+            }
+        }
     }
 
     private func workItemWebUrl(_ item: WorkItem) -> URL? {
@@ -155,13 +171,13 @@ struct DashboardTasksPane: View {
         taskCard(
             title: "GitHub issues",
             mark: PullRequestSource.gitHub.brandMark,
-            count: model.issues.count,
+            count: visibleIssues.count,
             emptyText: model.isLoadingIssues ? "Loading…" : "No open issues",
             errorText: model.issuesError
         ) {
-            ForEach(Array(model.issues.prefix(rowLimit).enumerated()), id: \.element.id) { index, issue in
+            ForEach(Array(visibleIssues.prefix(rowLimit).enumerated()), id: \.element.id) { index, issue in
                 issueRow(issue)
-                if index < min(model.issues.count, rowLimit) - 1 { Divider() }
+                if index < min(visibleIssues.count, rowLimit) - 1 { Divider() }
             }
         }
     }
@@ -235,9 +251,11 @@ struct DashboardTasksPane: View {
                 } else {
                     content()
                 }
+                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func statePill(_ state: String, tint: Color) -> some View {

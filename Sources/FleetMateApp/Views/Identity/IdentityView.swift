@@ -55,15 +55,27 @@ struct GroupsContentView: View {
     @State private var searchText = ""
     @State private var isLoading = false
     @State private var expandedGroupIds: Set<String> = []
-    @State private var groupDevices: [String: [EntraDevice]] = [:]
     @State private var loadingGroupIds: Set<String> = []
 
     var groups: [EntraGroup] { appState.cachedGroups }
 
+    /// Members live on AppState so the preload warms them and tab switches
+    /// don't throw them away.
+    private var groupDevices: [String: [EntraDevice]] { appState.cachedGroupDevices }
+
+    /// Matches on group name OR member device name — the member cache is warm
+    /// from the launch preload, so searching "ALLAGUO" surfaces every group
+    /// that Mac belongs to.
     var filteredGroups: [EntraGroup] {
         if searchText.isEmpty { return groups }
-        return groups.filter {
-            $0.displayName?.localizedCaseInsensitiveContains(searchText) ?? false
+        return groups.filter { group in
+            if group.displayName?.localizedCaseInsensitiveContains(searchText) ?? false {
+                return true
+            }
+            let members = appState.cachedGroupDevices[group.id ?? ""] ?? []
+            return members.contains {
+                $0.displayName?.localizedCaseInsensitiveContains(searchText) ?? false
+            }
         }
     }
 
@@ -103,11 +115,14 @@ struct GroupsContentView: View {
             } else {
                 List {
                     ForEach(filteredGroups) { group in
+                        // While searching, every surviving group auto-expands
+                        // showing only its matching members — the point is to
+                        // see at a glance which groups hold the search term.
                         GroupDisclosureRow(
                             group: group,
-                            isExpanded: expandedGroupIds.contains(group.id ?? ""),
+                            isExpanded: !searchText.isEmpty || expandedGroupIds.contains(group.id ?? ""),
                             isLoadingMembers: loadingGroupIds.contains(group.id ?? ""),
-                            devices: groupDevices[group.id ?? ""] ?? [],
+                            devices: visibleMembers(of: group),
                             onToggle: { toggleGroup(group) }
                         )
                     }
@@ -121,13 +136,27 @@ struct GroupsContentView: View {
         .searchable(text: $searchText, prompt: "Filter groups…")
         .findFocusesSearchField()
         .toolbar {
-            ToolbarItemGroup(placement: .automatic) {
-                if !groups.isEmpty {
-                    Text("\(filteredGroups.count) of \(groups.count)")
-                        .appFont(.caption)
-                        .monospacedDigit()
-                        .foregroundColor(.secondary)
+            // The count is passive text — keep it out of the glass entirely,
+            // or macOS 26 fuses it and the refresh button into one odd capsule.
+            if !groups.isEmpty {
+                if #available(macOS 26.0, *) {
+                    ToolbarItem(placement: .automatic) {
+                        Text("\(filteredGroups.count) of \(groups.count)")
+                            .appFont(.caption)
+                            .monospacedDigit()
+                            .foregroundColor(.secondary)
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                } else {
+                    ToolbarItem(placement: .automatic) {
+                        Text("\(filteredGroups.count) of \(groups.count)")
+                            .appFont(.caption)
+                            .monospacedDigit()
+                            .foregroundColor(.secondary)
+                    }
                 }
+            }
+            ToolbarItem(placement: .automatic) {
                 Button(action: loadDeviceGroups) {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
@@ -155,6 +184,17 @@ struct GroupsContentView: View {
         }
     }
 
+    /// While searching, narrow each group's member list to the matching
+    /// devices; a group that matched by its own name keeps its full list.
+    private func visibleMembers(of group: EntraGroup) -> [EntraDevice] {
+        let all = groupDevices[group.id ?? ""] ?? []
+        guard !searchText.isEmpty else { return all }
+        let matching = all.filter {
+            $0.displayName?.localizedCaseInsensitiveContains(searchText) ?? false
+        }
+        return matching.isEmpty ? all : matching
+    }
+
     private func toggleGroup(_ group: EntraGroup) {
         guard let groupId = group.id else { return }
         if expandedGroupIds.contains(groupId) {
@@ -174,10 +214,10 @@ struct GroupsContentView: View {
             defer { loadingGroupIds.remove(groupId) }
             do {
                 let devices = try await appState.graphService.getGroupDeviceMembers(groupId)
-                groupDevices[groupId] = devices
+                appState.cachedGroupDevices[groupId] = devices
             } catch {
                 appState.errorMessage = "Failed to load group members: \(error.localizedDescription)"
-                groupDevices[groupId] = []
+                appState.cachedGroupDevices[groupId] = []
             }
         }
     }

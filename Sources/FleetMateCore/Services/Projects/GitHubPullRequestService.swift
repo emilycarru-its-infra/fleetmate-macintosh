@@ -108,6 +108,55 @@ public actor GitHubPullRequestService {
         (try? await client.authenticate()) ?? false
     }
 
+    // MARK: - Issues
+
+    /// Open issues involving the signed-in account (author, assignee or
+    /// mention), newest activity first. Throws so the caller can distinguish a
+    /// rate limit from "no issues".
+    public func getMyIssues(limit: Int = 50) async throws -> [GitHubIssueSummary] {
+        let query = """
+        query($q: String!, $first: Int!) {
+          search(query: $q, type: ISSUE, first: $first) {
+            nodes {
+              ... on Issue {
+                number
+                title
+                url
+                state
+                updatedAt
+                author { login }
+                repository { nameWithOwner }
+              }
+            }
+          }
+        }
+        """
+        let data = try await client.executeRaw(query: query, variables: [
+            "q": "is:issue is:open archived:false involves:@me sort:updated-desc",
+            "first": limit
+        ])
+
+        let nodes = (data["search"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+        let issues: [GitHubIssueSummary] = nodes.compactMap { node in
+            guard
+                let number = node["number"] as? Int,
+                let url = node["url"] as? String,
+                let repo = (node["repository"] as? [String: Any])?["nameWithOwner"] as? String
+            else { return nil }
+            return GitHubIssueSummary(
+                number: number,
+                title: node["title"] as? String ?? "(untitled)",
+                repository: repo,
+                state: (node["state"] as? String)?.capitalized ?? "Open",
+                authorLogin: (node["author"] as? [String: Any])?["login"] as? String,
+                updatedAt: PullRequestDateParser.parse(node["updatedAt"] as? String),
+                webUrl: url
+            )
+        }
+        dbg.info("GitHub getMyIssues → \(issues.count) issues", category: "github")
+        return issues
+    }
+
     // MARK: - Mapping
 
     private func absorb(

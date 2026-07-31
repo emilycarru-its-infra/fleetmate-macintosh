@@ -13,14 +13,50 @@ final class PullRequestQueueModel: ObservableObject {
     @Published private(set) var lastLoaded: Date?
 
     /// The provider the queue is filtered to, or nil for all of them. Selecting
-    /// the active filter again clears it.
-    @Published var selectedSource: PullRequestSource?
+    /// the active filter again clears it. DevOps is the working queue here —
+    /// it starts active, with GitHub visible one click away.
+    @Published var selectedSource: PullRequestSource? = .azureDevOps
+
+    /// Narrow the queue to one repository (secondary pill row); nil = all.
+    @Published var selectedRepo: String?
+
+    /// Once the user picks a pill themselves, loads stop re-asserting the
+    /// DevOps-first default. Without this, the first load — which runs before
+    /// DevOps SSO lands — would clear the default and it would never return.
+    private var userTouchedFilter = false
 
     private var loadTask: Task<Void, Never>?
 
-    var visiblePullRequests: [UnifiedPullRequest] {
+    /// Last successful GitHub fetch, kept so a rate-limited refresh degrades to
+    /// stale rows instead of an empty section.
+    private var cachedGitHub: PullRequestQueue?
+    /// While set (and in the future), GitHub is not queried at all — GraphQL
+    /// rate limits are per-hour, so hammering it just resets nothing.
+    private var gitHubBackoffUntil: Date?
+
+    /// Source-filtered but not repo-filtered — what the repo pills count over.
+    var sourcePullRequests: [UnifiedPullRequest] {
         guard let selectedSource else { return queue.pullRequests }
         return queue.pullRequests.filter { $0.source == selectedSource }
+    }
+
+    var visiblePullRequests: [UnifiedPullRequest] {
+        guard let selectedRepo else { return sourcePullRequests }
+        return sourcePullRequests.filter { $0.repository == selectedRepo }
+    }
+
+    /// Repositories in the current source scope with their PR counts, busiest
+    /// first — the secondary filter row. Hidden unless there's a real choice.
+    var repoCounts: [(repo: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for pr in sourcePullRequests { counts[pr.repository, default: 0] += 1 }
+        guard counts.count > 1 else { return [] }
+        return counts.map { ($0.key, $0.value) }
+            .sorted { $0.1 == $1.1 ? $0.0 < $1.0 : $0.1 > $1.1 }
+    }
+
+    func toggleRepo(_ repo: String) {
+        selectedRepo = (selectedRepo == repo) ? nil : repo
     }
 
     func section(_ relation: PullRequestRelation) -> [UnifiedPullRequest] {
@@ -71,18 +107,30 @@ final class PullRequestQueueModel: ObservableObject {
         let devOpsReady = appState.config.isDevOpsConfigured && appState.devOpsService.hasValidToken
         let gitHubConfig = appState.config.tasks?.providers.github ?? GitHubProviderConfig()
 
+        // Configuration decides which pills exist — not token state. Gating
+        // DevOps on its token made the pill vanish whenever SSO lapsed,
+        // silently stranding the queue on GitHub with no way back.
         var sources: Set<PullRequestSource> = []
-        if devOpsReady { sources.insert(.azureDevOps) }
+        if appState.config.isDevOpsConfigured { sources.insert(.azureDevOps) }
         sources.insert(.gitHub)
         availableSources = sources
+
+        // Re-assert the DevOps-first default until the user picks a pill —
+        // early loads run before DevOps SSO lands, and must not erase it.
+        if !userTouchedFilter {
+            selectedSource = devOpsReady ? .azureDevOps : selectedSource
+        }
 
         var merged = PullRequestQueue()
 
         // Azure DevOps runs on the shared, token-injected service (main-actor
-        // bound); GitHub is an actor and can run concurrently with it.
-        let gitHubTask = Task.detached(priority: .userInitiated) {
-            await GitHubPullRequestService(config: gitHubConfig).getMyPullRequests()
-        }
+        // bound); GitHub is an actor and can run concurrently with it — unless
+        // it rate-limited us recently, in which case its cached rows stand in.
+        let gitHubInBackoff = (gitHubBackoffUntil ?? .distantPast) > Date()
+        let gitHubTask: Task<PullRequestQueue, Never>? = gitHubInBackoff ? nil
+            : Task.detached(priority: .userInitiated) {
+                await GitHubPullRequestService(config: gitHubConfig).getMyPullRequests()
+            }
 
         if devOpsReady {
             do {
@@ -94,7 +142,23 @@ final class PullRequestQueueModel: ObservableObject {
             }
         }
 
-        merged.merge(await gitHubTask.value)
+        if let gitHubTask {
+            let gitHub = await gitHubTask.value
+            if let rateLimit = gitHub.errors.first(where: {
+                $0.source == .gitHub && $0.message.localizedCaseInsensitiveContains("rate limit")
+            }) {
+                gitHubBackoffUntil = Date().addingTimeInterval(15 * 60)
+                dbg.info("GitHub PR queue rate-limited, backing off 15 min: \(rateLimit.message)", category: "dashboard")
+                mergeGitHubFallback(into: &merged)
+            } else {
+                cachedGitHub = PullRequestQueue(
+                    pullRequests: gitHub.pullRequests.filter { $0.source == .gitHub }
+                )
+                merged.merge(gitHub)
+            }
+        } else {
+            mergeGitHubFallback(into: &merged)
+        }
 
         // Not being signed into gh is a normal state, not a fault — the
         // Authentication panel owns reporting it. Real API failures stay.
@@ -107,9 +171,28 @@ final class PullRequestQueueModel: ObservableObject {
         lastLoaded = Date()
     }
 
+    /// Rate-limited: show the last good GitHub rows with a quiet note instead of
+    /// an empty section and a scary banner.
+    private func mergeGitHubFallback(into merged: inout PullRequestQueue) {
+        let until = gitHubBackoffUntil ?? Date()
+        let time = until.formatted(date: .omitted, time: .shortened)
+        if let cachedGitHub {
+            merged.merge(cachedGitHub)
+            merged.errors.append(PullRequestQueueError(
+                source: .gitHub, message: "Rate limited — showing earlier results, retrying after \(time)"
+            ))
+        } else {
+            merged.errors.append(PullRequestQueueError(
+                source: .gitHub, message: "Rate limited — retrying after \(time)"
+            ))
+        }
+    }
+
     /// Select a provider to filter by; selecting the active one clears the filter.
     func toggle(_ source: PullRequestSource) {
+        userTouchedFilter = true
         selectedSource = (selectedSource == source) ? nil : source
+        selectedRepo = nil
     }
 }
 
@@ -121,6 +204,9 @@ final class PullRequestQueueModel: ObservableObject {
 struct PullRequestQueueSection: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var model: PullRequestQueueModel
+    /// The task tables sharing this section's 50/50 split; the source pills in
+    /// the header filter both sides at once.
+    @ObservedObject var tasksModel: DashboardTasksModel
 
     @AppStorage("dashboard.prQueue.collapsed.createdByMe") private var createdCollapsed = false
     @AppStorage("dashboard.prQueue.collapsed.assignedToMe") private var assignedCollapsed = false
@@ -132,6 +218,8 @@ struct PullRequestQueueSection: View {
         VStack(alignment: .leading, spacing: 10) {
             header
 
+            repoFilterRow
+
             ForEach(model.errors) { error in
                 Label("\(error.source.displayName): \(error.message)", systemImage: "exclamationmark.triangle")
                     .appFont(.caption)
@@ -139,13 +227,66 @@ struct PullRequestQueueSection: View {
                     .lineLimit(2)
             }
 
-            group(.createdByMe, isCollapsed: $createdCollapsed)
-            group(.assignedToMe, isCollapsed: $assignedCollapsed)
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
+                    group(.createdByMe, isCollapsed: $createdCollapsed)
+                    group(.assignedToMe, isCollapsed: $assignedCollapsed)
 
-            if !model.isLoading && model.visiblePullRequests.isEmpty {
-                emptyState
+                    if !model.isLoading && model.visiblePullRequests.isEmpty {
+                        emptyState
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                DashboardTasksPane(
+                    model: tasksModel,
+                    source: model.selectedSource,
+                    repoFilter: model.selectedRepo
+                )
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
+    }
+
+    /// Secondary filter: one pill per repository in the current source scope,
+    /// busiest first. Only rendered when there's a real choice to make.
+    @ViewBuilder
+    private var repoFilterRow: some View {
+        let repos = model.repoCounts
+        if !repos.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(repos.prefix(14), id: \.repo) { entry in
+                        repoChip(entry.repo, count: entry.count)
+                    }
+                }
+            }
+        }
+    }
+
+    private func repoChip(_ repo: String, count: Int) -> some View {
+        let isSelected = model.selectedRepo == repo
+        return Button(action: {
+            withAnimation(.smooth(duration: 0.15)) { model.toggleRepo(repo) }
+        }) {
+            HStack(spacing: 4) {
+                Image(systemName: "folder")
+                    .appFont(.caption2)
+                Text(repo).appFont(.caption2, weight: .medium)
+                Text("\(count)")
+                    .appFont(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.75) : Color.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.1))
+            .foregroundStyle(isSelected ? Color.white : Color.secondary)
+            .clipShape(Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(isSelected ? "Clear the \(repo) filter" : "Show only \(repo)")
     }
 
     // MARK: Header
@@ -227,6 +368,8 @@ struct PullRequestQueueSection: View {
             let visible = isExpanded ? items : Array(items.prefix(collapsedRowLimit))
 
             GroupBox {
+                // Top-aligned in however much height the box is given, so a
+                // short queue keeps regular rows with empty space below.
                 VStack(alignment: .leading, spacing: 0) {
                     Button(action: { isCollapsed.wrappedValue.toggle() }) {
                         HStack(spacing: 6) {
@@ -274,6 +417,7 @@ struct PullRequestQueueSection: View {
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
     }
@@ -282,7 +426,19 @@ struct PullRequestQueueSection: View {
     private var emptyState: some View {
         GroupBox {
             VStack(spacing: 6) {
-                if let filtered = model.selectedSource {
+                if model.selectedSource == .azureDevOps,
+                   appState.config.isDevOpsConfigured, !appState.devOpsService.hasValidToken {
+                    // Not empty — unauthenticated. "DevOps 0" with no
+                    // explanation looked like the queue vanished.
+                    Image(systemName: "clock")
+                        .appFont(.title2)
+                        .foregroundStyle(.secondary)
+                    Text("Waiting for Azure DevOps sign-in…")
+                        .appFont(.callout)
+                    Text("The queue loads automatically once SSO completes.")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let filtered = model.selectedSource {
                     // Empty because of the filter, not because the queue is clear —
                     // saying "nothing waiting on you" here would be a lie.
                     Image(systemName: "line.3.horizontal.decrease.circle")
@@ -352,6 +508,10 @@ struct PullRequestRow: View {
                 actionButtons
             }
         }
+        // A row is a row: without this, a tall proposal (short queue beside a
+        // tall task table) stretches the indicator bar and floats the buttons
+        // mid-air instead of leaving the box's extra space empty.
+        .fixedSize(horizontal: false, vertical: true)
         .background(isHovering ? Color.secondary.opacity(0.08) : Color.clear)
         .onHover { isHovering = $0 }
         .confirmationDialog(
@@ -378,7 +538,10 @@ struct PullRequestRow: View {
 
     private var rowButton: some View {
         Button(action: open) {
-            HStack(alignment: .top, spacing: 10) {
+            // Center alignment so rows with reviewer bubbles line up the same
+            // as rows without them — top alignment made the trailing cluster
+            // sit visibly higher whenever bubbles grew the row.
+            HStack(alignment: .center, spacing: 10) {
                 Rectangle()
                     .fill(pullRequest.source.tint)
                     .frame(width: 3)
@@ -387,7 +550,6 @@ struct PullRequestRow: View {
                 BrandIcon(mark: pullRequest.source.brandMark, size: 12)
                     .foregroundStyle(pullRequest.source.tint)
                     .frame(width: 16)
-                    .padding(.top, 2)
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {

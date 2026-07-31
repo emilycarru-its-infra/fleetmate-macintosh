@@ -417,26 +417,13 @@ struct DeviceMemberRow: View {
                     .appFont(.caption)
                     .textSelection(.enabled)
                 
-                HStack(spacing: 8) {
-                    if let os = device.operatingSystem {
-                        Text(os)
-                            .appFont(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                    if device.isCompliant == true {
-                        Label("Compliant", systemImage: "checkmark.circle.fill")
-                            .appFont(.caption2)
-                            .foregroundColor(.green)
-                    } else if device.isCompliant == false {
-                        Label("Non-compliant", systemImage: "xmark.circle.fill")
-                            .appFont(.caption2)
-                            .foregroundColor(.red)
-                    }
-                    if device.isManaged == true {
-                        Text("Managed")
-                            .appFont(.caption2)
-                            .foregroundColor(.secondary)
-                    }
+                // Just the OS here — compliance is a Devices-tab concern, and
+                // painting red "Non-compliant" across a membership list made
+                // group browsing read like an incident report.
+                if let os = device.operatingSystem {
+                    Text(os)
+                        .appFont(.caption2)
+                        .foregroundColor(.secondary)
                 }
             }
             

@@ -142,7 +142,7 @@ struct DashboardView: View {
             }
         }
         .frame(maxHeight: .infinity)
-        .overlay(alignment: .topTrailing) { searchResultsOverlay }
+        .overlay(alignment: .top) { searchResultsOverlay }
         .toolbar { dashboardToolbar }
         .onAppCommand { command in
             if command == .refresh { Task { await refreshAll() } }
@@ -262,21 +262,24 @@ struct DashboardView: View {
     // MARK: - Header
 
     private var headerSection: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Dashboard")
-                    .appFont(.largeTitle, weight: .bold)
-                Text("Fleet overview across all connected systems")
-                    .foregroundStyle(.secondary)
+        // Title leads; the search floats dead center of the row, echoing the
+        // centered tab bar above it.
+        ZStack {
+            HStack(alignment: .center, spacing: 16) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Dashboard")
+                        .appFont(.largeTitle, weight: .bold)
+                    Text("Fleet overview across all connected systems")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if isAnyLoading {
+                    ProgressView().controlSize(.small)
+                }
             }
-            Spacer()
-            if isAnyLoading {
-                ProgressView().controlSize(.small)
-            }
-            // The search shares the title row — generous, but capped so the
-            // title keeps its breathing room.
             GlobalSearchField(query: $searchQuery, focused: $searchFocused, large: true)
-                .frame(maxWidth: 560)
+                .frame(maxWidth: 700)
+                .frame(maxWidth: .infinity, alignment: .center)
         }
     }
 
@@ -285,16 +288,15 @@ struct DashboardView: View {
     @ViewBuilder
     private var searchResultsOverlay: some View {
         if !searchQuery.isEmpty && !searchResults.isEmpty {
-            ZStack(alignment: .topTrailing) {
+            ZStack(alignment: .top) {
                 // Tap anywhere outside the panel to dismiss.
                 Color.black.opacity(0.001)
                     .contentShape(Rectangle())
                     .onTapGesture { searchQuery = "" }
-                GlobalSearchResultsPanel(results: searchResults, width: 560) { hit in
+                GlobalSearchResultsPanel(results: searchResults, width: 700) { hit in
                     openSearchResult(hit)
                 }
-                // Flush under the field: same width, same trailing edge.
-                .padding(.trailing, 16)
+                // Centered flush under the centered field, matching width.
                 .padding(.top, 70)
             }
             .transition(.opacity)

@@ -469,6 +469,7 @@ struct AuthSettingsView: View {
                     // hands off to Terminal rather than pretending to run inline.
                     Button("gh auth login") {
                         cliSignInResult[.github] = CliSignIn.ghLoginInTerminal()
+                        pollForGhLogin()
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
@@ -489,6 +490,20 @@ struct AuthSettingsView: View {
                         .controlSize(.small)
                         .help(CliSignIn.azLoginCommandDescription(config: appState.config))
                 }
+            }
+
+            // Every card gets a Re-check: sign-ins finish outside the app
+            // (Terminal, browser), so the card has to be re-probeable on demand.
+            if case .authenticating = system.state {
+                EmptyView()
+            } else {
+                Button {
+                    recheck(system.systemId)
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .controlSize(.small)
+                .help("Re-check status")
             }
         }
     }
@@ -524,6 +539,36 @@ struct AuthSettingsView: View {
                     snipeService: appState.snipeService,
                     devOpsService: appState.devOpsService
                 )
+            }
+        }
+    }
+
+    /// Re-probe one system so its card reflects a sign-in that just happened
+    /// outside the app.
+    private func recheck(_ id: AuthSystemId) {
+        cliSignInResult[id] = nil
+        Task {
+            await appState.authManager.probeSystem(
+                id,
+                graphService: appState.graphService,
+                tdxService: appState.tdxService,
+                snipeService: appState.snipeService,
+                devOpsService: appState.devOpsService
+            )
+        }
+    }
+
+    /// The Terminal handoff means the app never sees `gh auth login` finish,
+    /// so watch for the session appearing instead of making the user Re-check.
+    private func pollForGhLogin() {
+        Task {
+            for _ in 0..<36 {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                await appState.authManager.probeGitHub()
+                if case .valid = appState.authManager.systems[.github]?.state {
+                    cliSignInResult[.github] = nil
+                    return
+                }
             }
         }
     }

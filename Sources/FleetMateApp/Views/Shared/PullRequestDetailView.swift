@@ -9,12 +9,17 @@ import FleetMateCore
 /// renderer is ported from MunkiStudio's DiffView with dark-mode-aware colors.
 struct PullRequestDetailView: View {
     let pullRequest: UnifiedPullRequest
+    /// Called after Complete/Abandon so the queue behind the sheet refreshes.
+    var onActionCompleted: (() -> Void)?
 
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
 
     @State private var detail: PullRequestDetail?
     @State private var loadError: String?
+    @State private var pendingAction: PullRequestRow.PullRequestAction?
+    @State private var runningAction: PullRequestRow.PullRequestAction?
+    @State private var actionError: String?
 
     /// ~80% of the hosting window, measured at presentation time — sheets
     /// can't observe their parent window, so the size is captured up front.
@@ -61,6 +66,23 @@ struct PullRequestDetailView: View {
                 }
             }
             Spacer()
+
+            // Same at-a-glance cluster the queue row shows.
+            reviewerBubbles
+            HStack(spacing: 3) {
+                Image(systemName: "bubble.left").appFont(fixed: 10)
+                Text("\(pullRequest.commentCount)").appFont(.caption).monospacedDigit()
+            }
+            .foregroundStyle(pullRequest.commentCount > 0 ? .secondary : .tertiary)
+            Text(timestampLabel)
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+
+            if showsActions {
+                actionButton(.complete)
+                actionButton(.abandon)
+            }
+
             Button {
                 if let url = URL(string: pullRequest.webUrl) { NSWorkspace.shared.open(url) }
             } label: {
@@ -78,6 +100,118 @@ struct PullRequestDetailView: View {
             .keyboardShortcut(.cancelAction)
         }
         .padding(14)
+        .confirmationDialog(
+            pendingAction.map { "\($0.title) !\(pullRequest.number)?" } ?? "",
+            isPresented: Binding(get: { pendingAction != nil }, set: { if !$0 { pendingAction = nil } }),
+            presenting: pendingAction
+        ) { action in
+            Button(action.title, role: action == .abandon ? .destructive : nil) {
+                perform(action)
+            }
+            Button("Cancel", role: .cancel) { pendingAction = nil }
+        }
+        .alert(
+            "Action failed",
+            isPresented: Binding(get: { actionError != nil }, set: { if !$0 { actionError = nil } })
+        ) {
+            Button("OK", role: .cancel) { actionError = nil }
+        } message: {
+            Text(actionError ?? "")
+        }
+    }
+
+    private var showsActions: Bool {
+        guard pullRequest.source == .azureDevOps else { return false }
+        return pullRequest.state == .open || pullRequest.state == .draft
+    }
+
+    @ViewBuilder
+    private var reviewerBubbles: some View {
+        let shown = Array(pullRequest.reviewers.prefix(4))
+        let overflow = pullRequest.reviewers.count - shown.count
+        if !shown.isEmpty {
+            HStack(spacing: -4) {
+                ForEach(shown) { reviewer in
+                    Text(reviewer.initials)
+                        .appFont(fixed: 8, weight: .semibold)
+                        .foregroundStyle(.white)
+                        .frame(width: 18, height: 18)
+                        .background(Circle().fill(reviewer.vote.tint))
+                        .overlay(Circle().stroke(Color(nsColor: .windowBackgroundColor), lineWidth: 1.5))
+                        .help("\(reviewer.displayName) — \(reviewer.vote.label)")
+                }
+                if overflow > 0 {
+                    Text("+\(overflow)")
+                        .appFont(fixed: 8, weight: .semibold)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 18, height: 18)
+                        .background(Circle().fill(Color.secondary.opacity(0.2)))
+                }
+            }
+        }
+    }
+
+    private var timestampLabel: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        if let updated = pullRequest.updatedAt, updated != pullRequest.createdAt {
+            return "Updated \(formatter.localizedString(for: updated, relativeTo: Date()))"
+        }
+        if let created = pullRequest.createdAt {
+            return "Created \(formatter.localizedString(for: created, relativeTo: Date()))"
+        }
+        return ""
+    }
+
+    private func actionButton(_ action: PullRequestRow.PullRequestAction) -> some View {
+        Button {
+            pendingAction = action
+        } label: {
+            HStack(spacing: 3) {
+                if runningAction == action {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: action.icon).appFont(fixed: 9, weight: .bold)
+                }
+                Text(action.title).appFont(fixed: 11, weight: .medium)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(action.tint.opacity(0.15))
+            .foregroundStyle(action.tint)
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(runningAction != nil)
+    }
+
+    private func perform(_ action: PullRequestRow.PullRequestAction) {
+        pendingAction = nil
+        runningAction = action
+        Task {
+            defer { runningAction = nil }
+            do {
+                switch action {
+                case .complete:
+                    try await appState.devOpsService.completePullRequest(
+                        repository: pullRequest.repository,
+                        pullRequestId: pullRequest.number,
+                        project: pullRequest.container
+                    )
+                case .abandon:
+                    try await appState.devOpsService.abandonPullRequest(
+                        repository: pullRequest.repository,
+                        pullRequestId: pullRequest.number,
+                        project: pullRequest.container
+                    )
+                }
+                onActionCompleted?()
+                dismiss()
+            } catch {
+                actionError = "Could not \(action.title.lowercased()) !\(pullRequest.number): "
+                    + error.localizedDescription
+            }
+        }
     }
 
     // MARK: Content

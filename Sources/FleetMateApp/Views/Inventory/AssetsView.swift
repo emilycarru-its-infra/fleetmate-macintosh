@@ -201,6 +201,7 @@ struct AssetsView: View {
                 filters.buildFromAssets(appState.cachedAssets)
             }
             consumeInventorySearch(appState.navigateToInventorySearch)
+            consumeModuleFilter()
         }
         .onChange(of: appState.navigateToFilter) { _, filter in
             if let filter, !filter.isEmpty {
@@ -211,6 +212,7 @@ struct AssetsView: View {
         .onChange(of: appState.navigateToInventorySearch) { _, text in
             consumeInventorySearch(text)
         }
+        .onChange(of: appState.navigateToModuleFilter) { _, _ in consumeModuleFilter() }
         .onChange(of: appState.cachedAssets) { _, newAssets in
             filters.buildFromAssets(newAssets)
         }
@@ -459,6 +461,16 @@ struct AssetsView: View {
         guard let text, !text.isEmpty else { return }
         searchText = text
         appState.navigateToInventorySearch = nil
+    }
+
+    /// Apply a dashboard widget's deep-linked filter (a status wedge or
+    /// category bar).
+    private func consumeModuleFilter() {
+        guard let link = appState.navigateToModuleFilter, link.tab == .inventory,
+              let category = AssetFilterCategory(rawValue: link.category) else { return }
+        appState.navigateToModuleFilter = nil
+        filters.selectedValues[category] = [resolveFilterValue(link.value, in: filters.availableValues[category])]
+        showFilters = true
     }
 
     private func loadAllAssets() {

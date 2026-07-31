@@ -6,22 +6,35 @@ struct GroupsView: View {
     @State private var searchText = ""
     @State private var isLoading = false
     @State private var expandedGroupIds: Set<String> = []
-    @State private var groupDevices: [String: [EntraDevice]] = [:]
     @State private var loadingGroupIds: Set<String> = []
     @State private var pendingRemoval: (group: EntraGroup, device: EntraDevice)?
     @State private var pendingRemediation: EntraGroup?
     @State private var addMemberTarget: EntraGroup?
     @State private var addMemberObjectId: String = ""
     
-    // Use cached groups from appState
+    // Use cached groups and members from appState — members are preloaded at
+    // launch so expanding a group and searching by device are both instant.
     var groups: [EntraGroup] { appState.cachedGroups }
+    var groupDevices: [String: [EntraDevice]] { appState.cachedGroupDevices }
+
+    /// True when this group's own name doesn't match the search but one of its
+    /// device members does — the search result the group is shown *for*.
+    private func matchesByDevice(_ group: EntraGroup) -> Bool {
+        guard !searchText.isEmpty, let id = group.id else { return false }
+        return groupDevices[id]?.contains {
+            $0.displayName?.localizedCaseInsensitiveContains(searchText) ?? false
+        } ?? false
+    }
 
     var filteredGroups: [EntraGroup] {
         if searchText.isEmpty {
             return groups
         }
+        // A device name is as valid a query as a group name: searching for an
+        // Intune device surfaces every group it's a member of.
         return groups.filter {
-            $0.displayName?.localizedCaseInsensitiveContains(searchText) ?? false
+            ($0.displayName?.localizedCaseInsensitiveContains(searchText) ?? false)
+                || matchesByDevice($0)
         }
     }
 
@@ -103,11 +116,14 @@ struct GroupsView: View {
             } else {
                 List {
                     ForEach(filteredGroups) { group in
+                        // A group found via one of its devices auto-expands so
+                        // the device you searched for is visible in it.
                         GroupDisclosureRow(
                             group: group,
-                            isExpanded: expandedGroupIds.contains(group.id ?? ""),
+                            isExpanded: expandedGroupIds.contains(group.id ?? "") || matchesByDevice(group),
                             isLoadingMembers: loadingGroupIds.contains(group.id ?? ""),
                             devices: groupDevices[group.id ?? ""] ?? [],
+                            highlightedDeviceFilter: matchesByDevice(group) ? searchText : nil,
                             onToggle: { toggleGroup(group) },
                             onRemoveMember: { device in pendingRemoval = (group, device) },
                             onDeployRemediation: { pendingRemediation = group },
@@ -121,6 +137,9 @@ struct GroupsView: View {
         .task {
             if !appState.isGroupsCacheValid {
                 loadDeviceGroups()
+            } else {
+                // Groups may be cached from before members were preloaded.
+                await appState.preloadGroupMembers()
             }
         }
         .alert("Remove from group?", isPresented: Binding(
@@ -172,7 +191,7 @@ struct GroupsView: View {
             do {
                 try await appState.graphService.addGroupMember(group: groupId, objectId: objectId)
                 let devices = try await appState.graphService.getGroupDeviceMembers(groupId)
-                groupDevices[groupId] = devices
+                appState.cachedGroupDevices[groupId] = devices
             } catch {
                 appState.errorMessage = "Failed to add member: \(error.localizedDescription)"
             }
@@ -204,7 +223,7 @@ struct GroupsView: View {
                 try await appState.graphService.removeGroupMember(group: groupId, objectId: objectId)
                 // Refresh this group's member list.
                 let devices = try await appState.graphService.getGroupDeviceMembers(groupId)
-                groupDevices[groupId] = devices
+                appState.cachedGroupDevices[groupId] = devices
             } catch {
                 appState.errorMessage = "Failed to remove member: \(error.localizedDescription)"
             }
@@ -221,6 +240,7 @@ struct GroupsView: View {
             do {
                 let fetchedGroups = try await appState.graphService.searchGroups("Devices-", limit: DeviceGroupFetch.limit)
                 appState.updateGroupsCache(fetchedGroups)
+                await appState.preloadGroupMembers()
             } catch {
                 appState.errorMessage = "Failed to load device groups: \(error.localizedDescription)"
             }
@@ -241,6 +261,8 @@ struct GroupsView: View {
         }
     }
 
+    /// Fallback for a group whose members haven't landed in the launch
+    /// preload yet — expanding it fetches on demand as before.
     private func loadGroupMembers(_ group: EntraGroup) {
         guard let groupId = group.id else { return }
 
@@ -250,10 +272,10 @@ struct GroupsView: View {
 
             do {
                 let devices = try await appState.graphService.getGroupDeviceMembers(groupId)
-                groupDevices[groupId] = devices
+                appState.cachedGroupDevices[groupId] = devices
             } catch {
                 appState.errorMessage = "Failed to load group members: \(error.localizedDescription)"
-                groupDevices[groupId] = []
+                appState.cachedGroupDevices[groupId] = []
             }
         }
     }
@@ -264,10 +286,18 @@ struct GroupDisclosureRow: View {
     let isExpanded: Bool
     let isLoadingMembers: Bool
     let devices: [EntraDevice]
+    /// When the group was surfaced by a device-name search, the search text —
+    /// matching member rows get highlighted so the hit is findable at a glance.
+    var highlightedDeviceFilter: String? = nil
     let onToggle: () -> Void
     var onRemoveMember: (EntraDevice) -> Void = { _ in }
     var onDeployRemediation: () -> Void = {}
     var onAddMember: () -> Void = {}
+
+    private func isHighlighted(_ device: EntraDevice) -> Bool {
+        guard let filter = highlightedDeviceFilter, !filter.isEmpty else { return false }
+        return device.displayName?.localizedCaseInsensitiveContains(filter) ?? false
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -355,7 +385,7 @@ struct GroupDisclosureRow: View {
                                 .foregroundColor(.secondary)
                             
                             ForEach(devices) { device in
-                                DeviceMemberRow(device: device)
+                                DeviceMemberRow(device: device, isHighlighted: isHighlighted(device))
                                     .contextMenu {
                                         Button("Remove from group", role: .destructive) {
                                             onRemoveMember(device)
@@ -374,6 +404,7 @@ struct GroupDisclosureRow: View {
 
 struct DeviceMemberRow: View {
     let device: EntraDevice
+    var isHighlighted: Bool = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -413,8 +444,12 @@ struct DeviceMemberRow: View {
         }
         .padding(.vertical, 2)
         .padding(.leading, 8)
-        .background(Color.secondary.opacity(0.05))
+        .background(isHighlighted ? Color.accentColor.opacity(0.12) : Color.secondary.opacity(0.05))
         .cornerRadius(4)
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(isHighlighted ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
+        )
     }
 
     private var deviceIcon: String {

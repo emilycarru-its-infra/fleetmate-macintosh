@@ -61,7 +61,7 @@ struct GroupsContentView: View {
 
     /// Members live on AppState so the preload warms them and tab switches
     /// don't throw them away.
-    private var groupDevices: [String: [EntraDevice]] { appState.cachedGroupMembers }
+    private var groupDevices: [String: [EntraDevice]] { appState.cachedGroupDevices }
 
     /// Matches on group name OR member device name — the member cache is warm
     /// from the launch preload, so searching "ALLAGUO" surfaces every group
@@ -72,7 +72,7 @@ struct GroupsContentView: View {
             if group.displayName?.localizedCaseInsensitiveContains(searchText) ?? false {
                 return true
             }
-            let members = appState.cachedGroupMembers[group.id ?? ""] ?? []
+            let members = appState.cachedGroupDevices[group.id ?? ""] ?? []
             return members.contains {
                 $0.displayName?.localizedCaseInsensitiveContains(searchText) ?? false
             }
@@ -186,10 +186,10 @@ struct GroupsContentView: View {
             defer { loadingGroupIds.remove(groupId) }
             do {
                 let devices = try await appState.graphService.getGroupDeviceMembers(groupId)
-                appState.cachedGroupMembers[groupId] = devices
+                appState.cachedGroupDevices[groupId] = devices
             } catch {
                 appState.errorMessage = "Failed to load group members: \(error.localizedDescription)"
-                appState.cachedGroupMembers[groupId] = []
+                appState.cachedGroupDevices[groupId] = []
             }
         }
     }

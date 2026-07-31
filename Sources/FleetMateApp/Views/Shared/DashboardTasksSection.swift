@@ -332,7 +332,7 @@ struct DashboardTasksPane: View {
                 Color.clear.frame(height: 1)
             }
         }
-        .frame(width: width, alignment: .center)
+        .frame(width: width, alignment: .leading)
     }
 
     private func statePill(_ state: String, tint: Color) -> some View {

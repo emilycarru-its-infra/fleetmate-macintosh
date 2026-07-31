@@ -100,32 +100,73 @@ struct DashboardTasksPane: View {
 
     // MARK: DevOps work items
 
+    @State private var workItemSearch = ""
+
+    private var visibleWorkItems: [WorkItem] {
+        guard !workItemSearch.isEmpty else { return activeWorkItems }
+        return activeWorkItems.filter { item in
+            let f = item.fields
+            return String(item.id).contains(workItemSearch)
+                || (f?.title?.localizedCaseInsensitiveContains(workItemSearch) ?? false)
+                || (f?.areaPath?.localizedCaseInsensitiveContains(workItemSearch) ?? false)
+                || (f?.iterationPath?.localizedCaseInsensitiveContains(workItemSearch) ?? false)
+                || (f?.workItemType?.localizedCaseInsensitiveContains(workItemSearch) ?? false)
+        }
+    }
+
+    /// Bespoke card (not `taskCard`): it carries its own search field and a
+    /// scrollable full list rather than a capped one.
     private var workItemsCard: some View {
-        taskCard(
-            title: "Work items",
-            mark: PullRequestSource.azureDevOps.brandMark,
-            count: activeWorkItems.count,
-            emptyText: "No active work items"
-        ) {
-            ForEach(Array(activeWorkItems.prefix(rowLimit).enumerated()), id: \.element.id) { index, item in
-                workItemRow(item)
-                if index < min(activeWorkItems.count, rowLimit) - 1 { Divider() }
-            }
-            if activeWorkItems.count > rowLimit {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 6) {
+                    BrandIcon(mark: PullRequestSource.azureDevOps.brandMark, size: 11)
+                    Text("Work items").appFont(.subheadline, weight: .semibold)
+                    Text("\(visibleWorkItems.count)")
+                        .appFont(.caption2).monospacedDigit()
+                        .padding(.horizontal, 6).padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.15))
+                        .clipShape(Capsule())
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    HStack(spacing: 4) {
+                        Image(systemName: "magnifyingglass")
+                            .appFont(.caption2)
+                            .foregroundStyle(.secondary)
+                        TextField("Filter", text: $workItemSearch)
+                            .textFieldStyle(.plain)
+                            .appFont(.caption)
+                            .frame(width: 110)
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.secondary.opacity(0.08))
+                    .clipShape(Capsule())
+                }
+                .padding(.vertical, 6)
+
                 Divider()
-                Button {
-                    appState.navigateToTab = .projects
-                } label: {
-                    Text("Show all \(activeWorkItems.count) in Projects")
+
+                if visibleWorkItems.isEmpty {
+                    Text(workItemSearch.isEmpty ? "No active work items" : "No matches")
                         .appFont(.caption)
                         .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 5)
-                        .contentShape(Rectangle())
+                        .padding(.vertical, 10)
+                    Spacer(minLength: 0)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(visibleWorkItems.enumerated()), id: \.element.id) { index, item in
+                                workItemRow(item)
+                                if index < visibleWorkItems.count - 1 { Divider() }
+                            }
+                        }
+                    }
                 }
-                .buttonStyle(.plain)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func workItemRow(_ item: WorkItem) -> some View {
@@ -144,6 +185,21 @@ struct DashboardTasksPane: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 6)
+                if let area = breadcrumb(item.fields?.areaPath) {
+                    Text(area)
+                        .appFont(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                        .frame(maxWidth: 150, alignment: .trailing)
+                }
+                if let type = item.fields?.workItemType {
+                    statePill(type, tint: .teal)
+                }
+                if let iteration = breadcrumb(item.fields?.iterationPath)?
+                    .split(separator: "›").last.map({ $0.trimmingCharacters(in: .whitespaces) }) {
+                    statePill(iteration, tint: .gray)
+                }
                 statePill(item.fields?.state ?? "", tint: .indigo)
             }
             .padding(.vertical, 5)
@@ -156,6 +212,12 @@ struct DashboardTasksPane: View {
                 if let url = workItemWebUrl(item) { NSWorkspace.shared.open(url) }
             }
         }
+    }
+
+    /// "Projects\\Web\\Frontend" → "Projects › Web › Frontend".
+    private func breadcrumb(_ path: String?) -> String? {
+        guard let path, !path.isEmpty else { return nil }
+        return path.split(separator: "\\").joined(separator: " › ")
     }
 
     private func workItemWebUrl(_ item: WorkItem) -> URL? {

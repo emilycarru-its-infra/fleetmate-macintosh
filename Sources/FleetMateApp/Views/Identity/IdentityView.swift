@@ -115,11 +115,14 @@ struct GroupsContentView: View {
             } else {
                 List {
                     ForEach(filteredGroups) { group in
+                        // While searching, every surviving group auto-expands
+                        // showing only its matching members — the point is to
+                        // see at a glance which groups hold the search term.
                         GroupDisclosureRow(
                             group: group,
-                            isExpanded: expandedGroupIds.contains(group.id ?? ""),
+                            isExpanded: !searchText.isEmpty || expandedGroupIds.contains(group.id ?? ""),
                             isLoadingMembers: loadingGroupIds.contains(group.id ?? ""),
-                            devices: groupDevices[group.id ?? ""] ?? [],
+                            devices: visibleMembers(of: group),
                             onToggle: { toggleGroup(group) }
                         )
                     }
@@ -133,13 +136,17 @@ struct GroupsContentView: View {
         .searchable(text: $searchText, prompt: "Filter groups…")
         .findFocusesSearchField()
         .toolbar {
-            ToolbarItemGroup(placement: .automatic) {
-                if !groups.isEmpty {
+            // Two separate items, not a group — grouped, the count text and
+            // the refresh button fused into one glass capsule.
+            if !groups.isEmpty {
+                ToolbarItem(placement: .automatic) {
                     Text("\(filteredGroups.count) of \(groups.count)")
                         .appFont(.caption)
                         .monospacedDigit()
                         .foregroundColor(.secondary)
                 }
+            }
+            ToolbarItem(placement: .automatic) {
                 Button(action: loadDeviceGroups) {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
@@ -165,6 +172,17 @@ struct GroupsContentView: View {
                 appState.errorMessage = "Failed to load device groups: \(error.localizedDescription)"
             }
         }
+    }
+
+    /// While searching, narrow each group's member list to the matching
+    /// devices; a group that matched by its own name keeps its full list.
+    private func visibleMembers(of group: EntraGroup) -> [EntraDevice] {
+        let all = groupDevices[group.id ?? ""] ?? []
+        guard !searchText.isEmpty else { return all }
+        let matching = all.filter {
+            $0.displayName?.localizedCaseInsensitiveContains(searchText) ?? false
+        }
+        return matching.isEmpty ? all : matching
     }
 
     private func toggleGroup(_ group: EntraGroup) {

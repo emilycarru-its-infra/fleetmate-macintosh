@@ -28,6 +28,9 @@ struct ActivityItem: Identifiable {
     let tab: AppTab
     var deviceId: String?
     var ticketId: Int?
+    /// Who/where context: ticket requestor, work-item area, device user,
+    /// asset allocation. Middle column of the feed's grid.
+    var context: String?
 }
 
 struct AlertPill: Hashable {
@@ -64,7 +67,9 @@ struct DashboardView: View {
     @State private var assetCategoryBars: [ChartBar] = []
     @State private var errorCategoryBars: [ChartBar] = []
     @State private var activityItems: [ActivityItem] = []
-    @State private var snipeActivity: [SnipeActivityLog] = []
+    /// Snipe's activity log lives on AppState — refetching it per tab switch
+    /// left the feed blank for seconds every time the Dashboard came back.
+    private var snipeActivity: [SnipeActivityLog] { appState.cachedSnipeActivity }
 
     // "My pull requests" queue across Azure DevOps + GitHub. Owned by AppState so
     // it outlives this view — see AppState.pullRequestQueue.
@@ -91,6 +96,11 @@ struct DashboardView: View {
     @State private var isLoadingInventory = false
     @State private var showAuthPopover = false
     @State private var activityFilter: AppTab? = nil
+
+    // Global search (top right): query + debounced results over the caches.
+    @State private var searchQuery = ""
+    @State private var searchResults: [GlobalSearchResult] = []
+    @FocusState private var searchFocused: Bool
 
     // Draggable split
     @State private var splitFraction: CGFloat = 0.7
@@ -132,11 +142,27 @@ struct DashboardView: View {
             }
         }
         .frame(maxHeight: .infinity)
+        .overlay(alignment: .top) { searchResultsOverlay }
         .toolbar { dashboardToolbar }
         .onAppCommand { command in
             if command == .refresh { Task { await refreshAll() } }
+            if command == .find { searchFocused = true }
         }
-        .task { await loadAllSections() }
+        .task(id: searchQuery) {
+            guard searchQuery.trimmingCharacters(in: .whitespaces).count >= 2 else {
+                searchResults = []
+                return
+            }
+            // Debounce; the task id change cancels a superseded scan.
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled else { return }
+            searchResults = GlobalSearchScanner.search(searchQuery, appState: appState)
+        }
+        .task {
+            // Paint from the warm caches immediately; the loads refresh after.
+            buildActivityFeed()
+            await loadAllSections()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in }
         .onChange(of: appState.cachedDevices.count) { _, _ in refreshSection(.devices) }
         .onChange(of: appState.cachedAssets.count) { _, _ in refreshSection(.assets) }
@@ -159,9 +185,12 @@ struct DashboardView: View {
                 // Left panel: widgets
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        kpiGrid
-                        PullRequestQueueSection(model: pullRequestModel)
+                        PullRequestQueueSection(model: pullRequestModel, tasksModel: appState.dashboardTasks)
                             .environmentObject(appState)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 16)
+                            .padding(.bottom, 16)
+                        kpiHeaderRow
                             .padding(.horizontal, 16)
                             .padding(.bottom, 16)
                         chartGrid
@@ -233,18 +262,62 @@ struct DashboardView: View {
     // MARK: - Header
 
     private var headerSection: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Dashboard")
-                    .appFont(.largeTitle, weight: .bold)
-                Text("Fleet overview across all connected systems")
-                    .foregroundStyle(.secondary)
+        // Title leads; the search floats dead center of the row, echoing the
+        // centered tab bar above it.
+        ZStack {
+            HStack(alignment: .center, spacing: 16) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Dashboard")
+                        .appFont(.largeTitle, weight: .bold)
+                    Text("Fleet overview across all connected systems")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if isAnyLoading {
+                    ProgressView().controlSize(.small)
+                }
             }
-            Spacer()
-            if isAnyLoading {
-                ProgressView().controlSize(.small)
-            }
+            GlobalSearchField(query: $searchQuery, focused: $searchFocused, large: true)
+                .frame(maxWidth: 700)
+                .frame(maxWidth: .infinity, alignment: .center)
         }
+    }
+
+    // MARK: - Global Search
+
+    @ViewBuilder
+    private var searchResultsOverlay: some View {
+        if !searchQuery.isEmpty && !searchResults.isEmpty {
+            ZStack(alignment: .top) {
+                // Tap anywhere outside the panel to dismiss.
+                Color.black.opacity(0.001)
+                    .contentShape(Rectangle())
+                    .onTapGesture { searchQuery = "" }
+                GlobalSearchResultsPanel(results: searchResults, width: 700) { hit in
+                    openSearchResult(hit)
+                }
+                // Centered flush under the centered field, matching width.
+                .padding(.top, 70)
+            }
+            .transition(.opacity)
+        }
+    }
+
+    private func openSearchResult(_ hit: GlobalSearchResult) {
+        switch hit.category {
+        case .devices:
+            navigate(to: .devices, deviceId: hit.deviceId)
+        case .inventory:
+            appState.navigateToInventorySearch = hit.inventoryFilter
+            navigate(to: .inventory)
+        case .tickets:
+            navigate(to: .tickets, ticketId: hit.ticketId)
+        case .workItems:
+            navigate(to: .projects)
+        case .users, .groups:
+            navigate(to: .identity)
+        }
+        searchQuery = ""
     }
 
     // MARK: - Connect Prompt
@@ -342,10 +415,10 @@ struct DashboardView: View {
 
     // MARK: - KPI Grid (2x2)
 
-    private var kpiGrid: some View {
+    /// The four KPI cards in one row, between the PR/tasks split and the charts.
+    private var kpiHeaderRow: some View {
         let cfg = appState.config
-        let cols = Array(repeating: GridItem(.flexible(), spacing: 16), count: 2)
-        return LazyVGrid(columns: cols, spacing: 16) {
+        return HStack(spacing: 12) {
             if cfg.isGraphConfigured {
                 KPICard(kpi: KPI(title: "Managed Devices", value: "\(deviceCount)", icon: "laptopcomputer", color: .blue, loading: isLoadingFleet, tab: .devices)) { navigate(to: .devices) }
             }
@@ -359,7 +432,6 @@ struct DashboardView: View {
                 KPICard(kpi: KPI(title: "Open Tickets", value: "\(openTicketCount)", icon: "ticket", color: .purple, loading: isLoadingTickets, tab: .tickets)) { navigate(to: .tickets) }
             }
         }
-        .padding(16)
     }
 
     // MARK: - Chart Grid (flowing, Assets by Category first)
@@ -374,7 +446,7 @@ struct DashboardView: View {
                     } else if assetCategoryBars.isEmpty {
                         emptyState("No asset data")
                     } else {
-                        barChart(assetCategoryBars, height: 180)
+                        barChart(assetCategoryBars, height: 180, tab: .inventory, filterCategory: "Category")
                     }
                 }
             }
@@ -386,7 +458,9 @@ struct DashboardView: View {
                     } else if osSlices.isEmpty {
                         emptyState("No device data")
                     } else {
-                        TreemapChart(slices: osSlices, height: 180)
+                        TreemapChart(slices: osSlices, height: 180) { label in
+                            openChartFilter(tab: .devices, category: "Platform", label: label)
+                        }
                     }
                 }
             }
@@ -399,7 +473,7 @@ struct DashboardView: View {
                         emptyState("No ticket data")
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
-                            donutChart(ticketStatusSlices, size: 180)
+                            donutChart(ticketStatusSlices, size: 180, tab: .tickets, filterCategory: "Status")
                             if slaViolatedCount > 0 {
                                 Text("\(slaViolatedCount) SLA violated")
                                     .appFont(.caption2).foregroundStyle(.red)
@@ -413,7 +487,7 @@ struct DashboardView: View {
                     } else if ticketPriorityBars.isEmpty {
                         emptyState("No ticket data")
                     } else {
-                        barChart(ticketPriorityBars, height: 120)
+                        barChart(ticketPriorityBars, height: 120, tab: .tickets, filterCategory: "Priority")
                     }
                 }
             }
@@ -426,7 +500,7 @@ struct DashboardView: View {
                         emptyState("No work item data")
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
-                            donutChart(workItemSlices, size: 180)
+                            donutChart(workItemSlices, size: 180, tab: .projects)
                             if !sprintInfo.isEmpty {
                                 Text(sprintInfo).appFont(.caption2).foregroundStyle(.secondary)
                             }
@@ -460,7 +534,7 @@ struct DashboardView: View {
                     } else if complianceSlices.isEmpty {
                         emptyState("No device data")
                     } else {
-                        donutChart(complianceSlices, size: 180)
+                        donutChart(complianceSlices, size: 180, tab: .devices, filterCategory: "Compliance")
                     }
                 }
             }
@@ -473,7 +547,7 @@ struct DashboardView: View {
                         emptyState("No asset data")
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
-                            donutChart(assetStatusSlices, size: 180, tab: .inventory)
+                            donutChart(assetStatusSlices, size: 180, tab: .inventory, filterCategory: "Status")
                             Text("\(deployedCount) deployed - \(unassignedCount) unassigned")
                                 .appFont(.caption2).foregroundStyle(.secondary)
                         }
@@ -522,7 +596,9 @@ struct DashboardView: View {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(filteredActivityItems) { item in
                                 Button(action: { navigate(to: item.tab, deviceId: item.deviceId, ticketId: item.ticketId) }) {
-                                    HStack(spacing: 4) {
+                                    // Same invisible-grid treatment as the task
+                                    // tables: fixed columns so rows line up.
+                                    HStack(spacing: 6) {
                                         Image(systemName: item.icon)
                                             .appFont(fixed: 11)
                                             .foregroundStyle(.secondary)
@@ -532,15 +608,35 @@ struct DashboardView: View {
                                             .lineLimit(1)
                                             .foregroundStyle(.primary)
                                             .frame(maxWidth: .infinity, alignment: .leading)
-                                        Text(item.detail)
-                                            .appFont(fixed: 11)
-                                            .lineLimit(1)
-                                            .foregroundStyle(.secondary)
-                                            .frame(width: 80, alignment: .leading)
+                                        if let context = item.context, !context.isEmpty {
+                                            Text(context)
+                                                .appFont(fixed: 10)
+                                                .lineLimit(1)
+                                                .truncationMode(.head)
+                                                .foregroundStyle(.secondary)
+                                                .frame(width: 130, alignment: .trailing)
+                                        } else {
+                                            Color.clear.frame(width: 130, height: 1)
+                                        }
+                                        Group {
+                                            if item.detail.isEmpty {
+                                                Color.clear.frame(height: 1)
+                                            } else {
+                                                Text(item.detail)
+                                                    .appFont(fixed: 10, weight: .medium)
+                                                    .lineLimit(1)
+                                                    .padding(.horizontal, 7)
+                                                    .padding(.vertical, 2)
+                                                    .background(Color.secondary.opacity(0.12))
+                                                    .foregroundStyle(.secondary)
+                                                    .clipShape(Capsule())
+                                            }
+                                        }
+                                        .frame(width: 82, alignment: .center)
                                         Text(item.time)
                                             .appFont(.caption2)
                                             .foregroundStyle(.tertiary)
-                                            .fixedSize()
+                                            .frame(width: 52, alignment: .trailing)
                                     }
                                     .padding(.vertical, 7)
                                     .padding(.horizontal, 4)
@@ -612,7 +708,11 @@ struct DashboardView: View {
         }
     }
 
-    private func donutChart(_ slices: [ChartSlice], size: CGFloat, tab: AppTab? = nil) -> some View {
+    /// Wedge click → open the tab with that value filtered. Deliberately a real
+    /// tap gesture, NOT `.chartAngleSelection`: angle selection tracks the
+    /// pointer continuously, so merely resting the cursor on a donut navigated
+    /// tabs — the long-mysterious "app randomly opens Inventory" bug.
+    private func donutChart(_ slices: [ChartSlice], size: CGFloat, tab: AppTab? = nil, filterCategory: String? = nil) -> some View {
         Chart(slices) { slice in
             SectorMark(
                 angle: .value("Count", slice.value),
@@ -630,25 +730,48 @@ struct DashboardView: View {
         }
         .chartForegroundStyleScale(domain: slices.map(\.label), range: slices.map(\.color))
         .chartLegend(position: .trailing, alignment: .center, spacing: 8)
-        .chartAngleSelection(value: .init(get: { nil as Int? }, set: { newValue in
-            if let value = newValue, let tab {
-                // Find which slice was tapped based on cumulative angle
-                var cumulative = 0
-                for slice in slices {
-                    cumulative += slice.value
-                    if value <= cumulative {
-                        // Extract the status name from "deployed (1620)" → "deployed"
-                        let filterName = slice.label.components(separatedBy: " (").first ?? slice.label
-                        navigate(to: tab, filter: filterName)
-                        break
+        .chartOverlay { proxy in
+            GeometryReader { geo in
+                Rectangle().fill(Color.clear).contentShape(Rectangle())
+                    .onTapGesture { location in
+                        guard let tab, let plotAnchor = proxy.plotFrame else { return }
+                        let plot = geo[plotAnchor]
+                        let dx = location.x - plot.midX
+                        let dy = location.y - plot.midY
+                        let radius = (dx * dx + dy * dy).squareRoot()
+                        let outer = min(plot.width, plot.height) / 2
+                        guard radius <= outer, radius >= outer * 0.4 else { return }
+                        // SectorMarks start at 12 o'clock and run clockwise.
+                        var angle = atan2(dy, dx) + .pi / 2
+                        if angle < 0 { angle += 2 * .pi }
+                        let fraction = angle / (2 * .pi)
+                        let total = slices.reduce(0) { $0 + $1.value }
+                        guard total > 0 else { return }
+                        var cumulative = 0.0
+                        for slice in slices {
+                            cumulative += Double(slice.value) / Double(total)
+                            if fraction <= cumulative {
+                                openChartFilter(tab: tab, category: filterCategory, label: slice.label)
+                                break
+                            }
+                        }
                     }
-                }
             }
-        }))
+        }
         .frame(height: size)
     }
 
-    private func barChart(_ bars: [ChartBar], height: CGFloat) -> some View {
+    /// Bar/wedge deep-link: strip any "(count)" suffix from the label, stash
+    /// the filter for the destination tab, and go.
+    private func openChartFilter(tab: AppTab, category: String?, label: String) {
+        let value = label.components(separatedBy: " (").first ?? label
+        if let category {
+            appState.navigateToModuleFilter = ModuleFilterLink(tab: tab, category: category, value: value)
+        }
+        navigate(to: tab)
+    }
+
+    private func barChart(_ bars: [ChartBar], height: CGFloat, tab: AppTab? = nil, filterCategory: String? = nil) -> some View {
         Chart(bars) { bar in
             BarMark(
                 x: .value("Count", bar.value),
@@ -668,6 +791,17 @@ struct DashboardView: View {
             // AxisValueLabel is chart content, not a View, so it takes a resolved
             // Font rather than the .appFont modifier.
             AxisMarks { _ in AxisValueLabel().font(AppTextStyle.caption2.font(scale: fontScale)) }
+        }
+        .chartOverlay { proxy in
+            GeometryReader { geo in
+                Rectangle().fill(Color.clear).contentShape(Rectangle())
+                    .onTapGesture { location in
+                        guard let tab, let plotAnchor = proxy.plotFrame else { return }
+                        let plot = geo[plotAnchor]
+                        guard let label: String = proxy.value(atY: location.y - plot.origin.y) else { return }
+                        openChartFilter(tab: tab, category: filterCategory, label: label)
+                    }
+            }
         }
         .frame(height: max(height, CGFloat(bars.count) * 28))
     }
@@ -916,7 +1050,7 @@ struct DashboardView: View {
 
         // Fetch recent activity log (last 24h worth, up to 50 entries)
         do {
-            snipeActivity = try await appState.snipeService.getActivityLog(limit: 50)
+            appState.cachedSnipeActivity = try await appState.snipeService.getActivityLog(limit: 50)
         } catch {
             dbg.error("Dashboard snipe activity: \(error)", category: "dashboard")
         }
@@ -929,6 +1063,9 @@ struct DashboardView: View {
         let isoAlt = ISO8601DateFormatter()
         isoAlt.formatOptions = [.withInternetDateTime]
         let cutoff = Date().addingTimeInterval(-86400) // last 24 hours
+        // Inventory moves slower than tickets and syncs — a day of Snipe
+        // activity is often near-empty, so it looks back a week.
+        let inventoryCutoff = Date().addingTimeInterval(-7 * 86400)
 
         func parse(_ str: String?) -> Date? {
             guard let s = str else { return nil }
@@ -945,7 +1082,8 @@ struct DashboardView: View {
             let title = String((t.title ?? "").prefix(50))
             items.append(ActivityItem(icon: "ticket", name: "#\(t.id ?? 0)  \(title)",
                                       detail: t.statusName ?? "",
-                                      time: formatRelative(date), timestamp: date, tab: .tickets, ticketId: t.id))
+                                      time: formatRelative(date), timestamp: date, tab: .tickets, ticketId: t.id,
+                                      context: t.requestorName))
         }
 
         // Work items – all changed in last 24h
@@ -958,7 +1096,8 @@ struct DashboardView: View {
             let title = String((w.fields?.title ?? "").prefix(50))
             items.append(ActivityItem(icon: "list.bullet.rectangle", name: "#\(w.id)  \(title)",
                                       detail: w.fields?.state ?? "",
-                                      time: formatRelative(date), timestamp: date, tab: .projects))
+                                      time: formatRelative(date), timestamp: date, tab: .projects,
+                                      context: w.fields?.areaPath?.split(separator: "\\").joined(separator: " › ")))
         }
 
         // Devices – all synced in last 24h
@@ -969,21 +1108,23 @@ struct DashboardView: View {
             })
             .sorted(by: { $0.1 > $1.1 }) {
             items.append(ActivityItem(icon: "laptopcomputer", name: d.deviceName ?? "Device",
-                                      detail: "\(d.operatingSystem ?? "") · synced",
-                                      time: formatRelative(date), timestamp: date, tab: .devices, deviceId: d.id))
+                                      detail: "synced",
+                                      time: formatRelative(date), timestamp: date, tab: .devices, deviceId: d.id,
+                                      context: d.userDisplayName ?? d.operatingSystem))
         }
 
-        // Assets – all updated in last 24h
+        // Assets – updated within the inventory window
         for a in appState.cachedAssets {
-            if let dateStr = a.updatedAt?.value, let date = parse(dateStr), date > cutoff {
+            if let dateStr = a.updatedAt?.value, let date = parse(dateStr), date > inventoryCutoff {
                 let name = a.name ?? a.assetTag ?? "Asset"
                 items.append(ActivityItem(icon: "shippingbox", name: name,
                                           detail: a.statusLabel?.name ?? "",
-                                          time: formatRelative(date), timestamp: date, tab: .inventory))
+                                          time: formatRelative(date), timestamp: date, tab: .inventory,
+                                          context: a.assignedTo?.name ?? a.rtdLocation?.name))
             }
         }
 
-        // Snipe activity log – filter to last 24h
+        // Snipe activity log – inventory window
         let dateFmt = DateFormatter()
         dateFmt.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSSZ"
         let dateFmtAlt = DateFormatter()
@@ -992,7 +1133,7 @@ struct DashboardView: View {
         for entry in snipeActivity {
             let dateStr = entry.createdAt?.value
             let date = dateStr.flatMap { parse($0) ?? dateFmt.date(from: $0) ?? dateFmtAlt.date(from: $0) }
-            if let date = date, date > cutoff {
+            if let date = date, date > inventoryCutoff {
                 let action = entry.actionType ?? "activity"
                 let itemName = entry.item?.name ?? "item"
                 let admin = entry.admin?.name ?? ""
@@ -1022,6 +1163,8 @@ struct DashboardView: View {
 struct TreemapChart: View {
     let slices: [ChartSlice]
     let height: CGFloat
+    /// Block click → deep-link into the owning tab, filtered to that value.
+    var onSelect: ((String) -> Void)? = nil
 
     @State private var hoveredSlice: ChartSlice? = nil
     @State private var hoveredRect: CGRect = .zero
@@ -1054,6 +1197,7 @@ struct TreemapChart: View {
                                 hoveredSlice = isHovering ? slice : nil
                                 hoveredRect = isHovering ? rect : .zero
                             }
+                            .onTapGesture { onSelect?(slice.label) }
                     }
                     // Hover tooltip
                     if let slice = hoveredSlice {

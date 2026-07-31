@@ -613,6 +613,8 @@ struct TicketsView: View {
                 appState.navigateToTicketId = nil
             }
         }
+        .onChange(of: appState.navigateToModuleFilter) { _, _ in consumeModuleFilter() }
+        .task { consumeModuleFilter() }
         .onChange(of: appState.cachedTickets) { _, newTickets in
             applyMeMode()
             filters.buildFromTickets(newTickets)
@@ -780,7 +782,7 @@ struct TicketsView: View {
                 .frame(minWidth: 380)
             if selectedTicket != nil {
                 detailSidebarView
-                    .frame(minWidth: 440, idealWidth: 660, maxWidth: 900)
+                    .frame(minWidth: 440, idealWidth: 900, maxWidth: 1100)
                     .background(Color(nsColor: .windowBackgroundColor))
             }
         }
@@ -796,7 +798,7 @@ struct TicketsView: View {
                 .frame(minWidth: 380)
             if selectedTicket != nil {
                 detailSidebarView
-                    .frame(minWidth: 440, idealWidth: 660, maxWidth: 900)
+                    .frame(minWidth: 440, idealWidth: 900, maxWidth: 1100)
                     .background(Color(nsColor: .windowBackgroundColor))
             }
         }
@@ -1959,6 +1961,15 @@ struct TicketsView: View {
         }
         datePreset = .term(termSeason, termYear)
         loadTickets()
+    }
+
+    /// Apply a dashboard widget's deep-linked filter (a status wedge or
+    /// priority bar).
+    private func consumeModuleFilter() {
+        guard let link = appState.navigateToModuleFilter, link.tab == .tickets,
+              let category = TicketFilterCategory(rawValue: link.category) else { return }
+        appState.navigateToModuleFilter = nil
+        filters.selectedValues[category] = [resolveFilterValue(link.value, in: filters.availableValues[category])]
     }
 
     // MARK: - Data Loading

@@ -188,10 +188,9 @@ struct FleetMateCommands: Commands {
         selectedTab == .tickets || selectedTab == .projects
     }
 
-    /// Every tab but the Dashboard has a search field.
-    private var hasSearchField: Bool {
-        selectedTab != .dashboard
-    }
+    /// Every tab has a search field — the Dashboard's is the global
+    /// cross-system search in its header.
+    private var hasSearchField: Bool { true }
 
     private var hasFilterPanel: Bool {
         [.devices, .inventory, .tickets].contains(selectedTab)

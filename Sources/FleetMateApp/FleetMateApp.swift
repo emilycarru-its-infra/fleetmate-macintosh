@@ -99,6 +99,10 @@ class AppState: ObservableObject {
     @Published var navigateToDeviceId: String?
     @Published var navigateToTicketId: Int?
     @Published var navigateToFilter: String?
+    /// Text dropped into the Inventory search field on arrival — how global
+    /// search lands on a specific asset (serial / tag / name), distinct from
+    /// `navigateToFilter` which drives the status filter.
+    @Published var navigateToInventorySearch: String?
     
     // MARK: - Auth Manager
     @Published var authManager: AuthManager
@@ -136,6 +140,10 @@ class AppState: ObservableObject {
     @Published var cachedUsers: [SnipeUser] = []
     @Published var cachedEntraUsers: [EntraUser] = []
     @Published var cachedGroups: [EntraGroup] = []
+    /// Device members per group id. Lives here, not in the tab views — tab
+    /// switches recreate those views, and refetching members through the aze
+    /// transport costs a serialized container exec per call.
+    @Published var cachedGroupMembers: [String: [EntraDevice]] = [:]
 
     /// The dashboard's pull request queue.
     ///
@@ -146,6 +154,10 @@ class AppState: ObservableObject {
     /// GitHub 0" and a spinner where a populated list had been. Living on
     /// AppState, it survives tab switches like the other caches.
     let pullRequestQueue = PullRequestQueueModel()
+
+    /// The dashboard's task tables (DevOps work items + GitHub issues) —
+    /// AppState-owned for the same tab-switch-survival reason as the PR queue.
+    let dashboardTasks = DashboardTasksModel()
 
     /// Everything the Projects tab loads from Azure DevOps and GitHub.
     ///
@@ -319,6 +331,7 @@ class AppState: ObservableObject {
         cachedUsers = []
         cachedEntraUsers = []
         cachedGroups = []
+        cachedGroupMembers = [:]
     }
     
     // MARK: - Data Loading with Caching
@@ -376,6 +389,26 @@ class AppState: ObservableObject {
     func updateGroupsCache(_ groups: [EntraGroup]) {
         cachedGroups = groups
         groupsCacheTime = Date()
+    }
+
+    /// Warm device members for every cached group, 20 groups per Graph $batch
+    /// call, merging into the cache as each chunk lands so already-warmed rows
+    /// expand instantly while later chunks are still loading.
+    func preloadGroupMembers() async {
+        let ids = cachedGroups.compactMap(\.id).filter { cachedGroupMembers[$0] == nil }
+        guard !ids.isEmpty else { return }
+        dbg.info("Preloading members for \(ids.count) groups...", category: "preload")
+        var warmed = 0
+        for chunk in stride(from: 0, to: ids.count, by: 20).map({ Array(ids[$0..<min($0 + 20, ids.count)]) }) {
+            do {
+                let members = try await graphService.getGroupDeviceMembersBatch(chunk)
+                cachedGroupMembers.merge(members) { _, new in new }
+                warmed += members.count
+            } catch {
+                dbg.error("Group member preload chunk failed: \(error)", category: "preload")
+            }
+        }
+        dbg.info("Group members preloaded for \(warmed)/\(ids.count) groups", category: "preload")
     }
     
     /// Invalidate devices cache (force refresh on next load)
@@ -475,7 +508,8 @@ class AppState: ObservableObject {
                 }
             }
 
-            // Preload groups
+            // Preload groups, then their members — the members are what the
+            // Identity and Devices tabs actually sit spinning on.
             if config.isSystemsGraphConfigured && !isGroupsCacheValid {
                 group.addTask { @MainActor in
                     dbg.info("Preloading groups...", category: "preload")
@@ -486,6 +520,13 @@ class AppState: ObservableObject {
                     } catch {
                         dbg.error("Groups preload FAILED: \(error)", category: "preload")
                     }
+                    await self.preloadGroupMembers()
+                }
+            } else if config.isSystemsGraphConfigured && cachedGroupMembers.isEmpty {
+                // Group list was still fresh, but members have never been loaded
+                // this launch — warm them anyway.
+                group.addTask { @MainActor in
+                    await self.preloadGroupMembers()
                 }
             }
             

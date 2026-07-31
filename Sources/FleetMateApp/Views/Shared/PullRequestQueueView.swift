@@ -13,10 +13,18 @@ final class PullRequestQueueModel: ObservableObject {
     @Published private(set) var lastLoaded: Date?
 
     /// The provider the queue is filtered to, or nil for all of them. Selecting
-    /// the active filter again clears it.
-    @Published var selectedSource: PullRequestSource?
+    /// the active filter again clears it. DevOps is the working queue here —
+    /// it starts active, with GitHub visible one click away.
+    @Published var selectedSource: PullRequestSource? = .azureDevOps
 
     private var loadTask: Task<Void, Never>?
+
+    /// Last successful GitHub fetch, kept so a rate-limited refresh degrades to
+    /// stale rows instead of an empty section.
+    private var cachedGitHub: PullRequestQueue?
+    /// While set (and in the future), GitHub is not queried at all — GraphQL
+    /// rate limits are per-hour, so hammering it just resets nothing.
+    private var gitHubBackoffUntil: Date?
 
     var visiblePullRequests: [UnifiedPullRequest] {
         guard let selectedSource else { return queue.pullRequests }
@@ -76,13 +84,21 @@ final class PullRequestQueueModel: ObservableObject {
         sources.insert(.gitHub)
         availableSources = sources
 
+        // The DevOps-first default only makes sense when DevOps is in play.
+        if !devOpsReady && selectedSource == .azureDevOps {
+            selectedSource = nil
+        }
+
         var merged = PullRequestQueue()
 
         // Azure DevOps runs on the shared, token-injected service (main-actor
-        // bound); GitHub is an actor and can run concurrently with it.
-        let gitHubTask = Task.detached(priority: .userInitiated) {
-            await GitHubPullRequestService(config: gitHubConfig).getMyPullRequests()
-        }
+        // bound); GitHub is an actor and can run concurrently with it — unless
+        // it rate-limited us recently, in which case its cached rows stand in.
+        let gitHubInBackoff = (gitHubBackoffUntil ?? .distantPast) > Date()
+        let gitHubTask: Task<PullRequestQueue, Never>? = gitHubInBackoff ? nil
+            : Task.detached(priority: .userInitiated) {
+                await GitHubPullRequestService(config: gitHubConfig).getMyPullRequests()
+            }
 
         if devOpsReady {
             do {
@@ -94,11 +110,44 @@ final class PullRequestQueueModel: ObservableObject {
             }
         }
 
-        merged.merge(await gitHubTask.value)
+        if let gitHubTask {
+            let gitHub = await gitHubTask.value
+            if let rateLimit = gitHub.errors.first(where: {
+                $0.source == .gitHub && $0.message.localizedCaseInsensitiveContains("rate limit")
+            }) {
+                gitHubBackoffUntil = Date().addingTimeInterval(15 * 60)
+                dbg.info("GitHub PR queue rate-limited, backing off 15 min: \(rateLimit.message)", category: "dashboard")
+                mergeGitHubFallback(into: &merged)
+            } else {
+                cachedGitHub = PullRequestQueue(
+                    pullRequests: gitHub.pullRequests.filter { $0.source == .gitHub }
+                )
+                merged.merge(gitHub)
+            }
+        } else {
+            mergeGitHubFallback(into: &merged)
+        }
 
         guard !Task.isCancelled else { return }
         queue = merged
         lastLoaded = Date()
+    }
+
+    /// Rate-limited: show the last good GitHub rows with a quiet note instead of
+    /// an empty section and a scary banner.
+    private func mergeGitHubFallback(into merged: inout PullRequestQueue) {
+        let until = gitHubBackoffUntil ?? Date()
+        let time = until.formatted(date: .omitted, time: .shortened)
+        if let cachedGitHub {
+            merged.merge(cachedGitHub)
+            merged.errors.append(PullRequestQueueError(
+                source: .gitHub, message: "Rate limited — showing earlier results, retrying after \(time)"
+            ))
+        } else {
+            merged.errors.append(PullRequestQueueError(
+                source: .gitHub, message: "Rate limited — retrying after \(time)"
+            ))
+        }
     }
 
     /// Select a provider to filter by; selecting the active one clears the filter.

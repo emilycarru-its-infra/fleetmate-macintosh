@@ -177,11 +177,7 @@ struct DashboardView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         kpiGrid
-                        PullRequestQueueSection(model: pullRequestModel)
-                            .environmentObject(appState)
-                            .padding(.horizontal, 16)
-                            .padding(.bottom, 16)
-                        DashboardTasksSection(model: appState.dashboardTasks)
+                        PullRequestQueueSection(model: pullRequestModel, tasksModel: appState.dashboardTasks)
                             .environmentObject(appState)
                             .padding(.horizontal, 16)
                             .padding(.bottom, 16)

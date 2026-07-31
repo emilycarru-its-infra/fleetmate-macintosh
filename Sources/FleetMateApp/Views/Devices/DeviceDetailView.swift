@@ -27,13 +27,13 @@ struct DeviceDetailView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     deviceSummarySection
                     Divider()
+                    groupMembershipSection
+                    Divider()
                     enrollmentSection
                     Divider()
                     hardwareSection
                     Divider()
                     complianceSection
-                    Divider()
-                    groupMembershipSection
                     Divider()
                     managedAppsSection
                 }

@@ -223,13 +223,37 @@ struct GlobalSearchField: View {
         }
         .padding(.horizontal, large ? 14 : 10)
         .padding(.vertical, large ? 10 : 6)
-        .background(Color.secondary.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: large ? 12 : 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: large ? 12 : 8)
-                .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
-        )
+        .modifier(SearchFieldChrome(large: large))
         .frame(maxWidth: large ? .infinity : 280)
+    }
+}
+
+/// Glass on the hero variant (real Liquid Glass on macOS 26, material below),
+/// the quiet tinted fill on the compact one.
+private struct SearchFieldChrome: ViewModifier {
+    let large: Bool
+
+    func body(content: Content) -> some View {
+        if large {
+            if #available(macOS 26.0, *) {
+                content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12))
+            } else {
+                content
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
+                    )
+            }
+        } else {
+            content
+                .background(Color.secondary.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
+                )
+        }
     }
 }
 

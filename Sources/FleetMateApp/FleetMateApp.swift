@@ -103,6 +103,8 @@ class AppState: ObservableObject {
     /// search lands on a specific asset (serial / tag / name), distinct from
     /// `navigateToFilter` which drives the status filter.
     @Published var navigateToInventorySearch: String?
+    /// DevOps work item to open in the Projects tab on arrival.
+    @Published var navigateToWorkItemId: Int?
     
     // MARK: - Auth Manager
     @Published var authManager: AuthManager

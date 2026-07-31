@@ -176,10 +176,10 @@ struct DashboardView: View {
                 // Left panel: widgets
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        kpiGrid
                         PullRequestQueueSection(model: pullRequestModel, tasksModel: appState.dashboardTasks)
                             .environmentObject(appState)
                             .padding(.horizontal, 16)
+                            .padding(.top, 16)
                             .padding(.bottom, 16)
                         chartGrid
                             .padding(.horizontal, 16)
@@ -229,6 +229,11 @@ struct DashboardView: View {
 
     @ToolbarContentBuilder
     private var dashboardToolbar: some ToolbarContent {
+        // The global search rides the toolbar so it gets the same glass
+        // treatment as the other toolbar controls.
+        ToolbarItem(placement: .automatic) {
+            GlobalSearchField(query: $searchQuery, focused: $searchFocused)
+        }
         ToolbarItemGroup(placement: .automatic) {
             Button(action: { Task { await refreshAll() } }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
@@ -250,7 +255,7 @@ struct DashboardView: View {
     // MARK: - Header
 
     private var headerSection: some View {
-        HStack(alignment: .firstTextBaseline) {
+        HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Dashboard")
                     .appFont(.largeTitle, weight: .bold)
@@ -261,7 +266,7 @@ struct DashboardView: View {
             if isAnyLoading {
                 ProgressView().controlSize(.small)
             }
-            GlobalSearchField(query: $searchQuery, focused: $searchFocused)
+            kpiHeaderRow
         }
     }
 
@@ -279,7 +284,7 @@ struct DashboardView: View {
                     openSearchResult(hit)
                 }
                 .padding(.trailing, 16)
-                .padding(.top, 58)
+                .padding(.top, 8)
             }
             .transition(.opacity)
         }
@@ -397,10 +402,10 @@ struct DashboardView: View {
 
     // MARK: - KPI Grid (2x2)
 
-    private var kpiGrid: some View {
+    /// The four KPI cards, compacted into the header's empty right side.
+    private var kpiHeaderRow: some View {
         let cfg = appState.config
-        let cols = Array(repeating: GridItem(.flexible(), spacing: 16), count: 2)
-        return LazyVGrid(columns: cols, spacing: 16) {
+        return HStack(spacing: 10) {
             if cfg.isGraphConfigured {
                 KPICard(kpi: KPI(title: "Managed Devices", value: "\(deviceCount)", icon: "laptopcomputer", color: .blue, loading: isLoadingFleet, tab: .devices)) { navigate(to: .devices) }
             }
@@ -414,7 +419,7 @@ struct DashboardView: View {
                 KPICard(kpi: KPI(title: "Open Tickets", value: "\(openTicketCount)", icon: "ticket", color: .purple, loading: isLoadingTickets, tab: .tickets)) { navigate(to: .tickets) }
             }
         }
-        .padding(16)
+        .fixedSize()
     }
 
     // MARK: - Chart Grid (flowing, Assets by Category first)

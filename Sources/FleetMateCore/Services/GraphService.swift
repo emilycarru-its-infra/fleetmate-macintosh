@@ -206,7 +206,10 @@ public class GraphService {
     public func getDeviceGroupMemberships(_ azureADDeviceId: String) async throws -> [DeviceGroupMembership] {
         guard let headers = await headers() else { return [] }
 
-        let url = "\(baseUrl)/devices/\(azureADDeviceId)/memberOf"
+        // Intune's azureADDeviceId is the Entra `deviceId` property, NOT the
+        // directory object id that /devices/{id} takes — address by alternate
+        // key or Graph 404s for every single device.
+        let url = "\(baseUrl)/devices(deviceId='\(azureADDeviceId)')/memberOf"
         let response: DeviceMemberOfResponse = try await fetch(url: url, headers: headers)
         return response.value
     }
@@ -673,6 +676,50 @@ public class GraphService {
         }
 
         return Array(devices.prefix(limit))
+    }
+
+    /// Device members for many groups in one round trip per 20 groups, via
+    /// Graph `$batch`. Through the aze transport every request is a full
+    /// container exec serialized per domain, so batching is the difference
+    /// between seconds and minutes when warming a whole tab's groups.
+    /// Failed sub-requests are skipped — callers treat absence as "not loaded".
+    public func getGroupDeviceMembersBatch(_ groupIds: [String]) async throws -> [String: [EntraDevice]] {
+        guard !groupIds.isEmpty, let headers = await headers() else { return [:] }
+
+        var results: [String: [EntraDevice]] = [:]
+        for chunk in stride(from: 0, to: groupIds.count, by: 20).map({ Array(groupIds[$0..<min($0 + 20, groupIds.count)]) }) {
+            let requests: [[String: Any]] = chunk.map { id in
+                ["id": id, "method": "GET",
+                 "url": "/groups/\(id)/members/microsoft.graph.device?$top=999"]
+            }
+            let response: GroupMembersBatchResponse = try await post(
+                url: "\(baseUrl)/$batch", body: ["requests": requests], headers: headers
+            )
+            for item in response.responses where item.status == 200 {
+                results[item.id] = item.body?.value ?? []
+            }
+        }
+        return results
+    }
+
+    private struct GroupMembersBatchResponse: Decodable {
+        let responses: [Item]
+
+        struct Item: Decodable {
+            let id: String
+            let status: Int
+            let body: EntraDeviceListResponse?
+
+            enum CodingKeys: String, CodingKey { case id, status, body }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                id = try c.decode(String.self, forKey: .id)
+                status = try c.decode(Int.self, forKey: .status)
+                // Error bodies aren't device lists — absence, not a throw.
+                body = try? c.decodeIfPresent(EntraDeviceListResponse.self, forKey: .body)
+            }
+        }
     }
 
     public func searchGroups(_ query: String, limit: Int = 999) async throws -> [EntraGroup] {

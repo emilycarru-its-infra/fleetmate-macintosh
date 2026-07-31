@@ -99,6 +99,15 @@ class AppState: ObservableObject {
     @Published var navigateToDeviceId: String?
     @Published var navigateToTicketId: Int?
     @Published var navigateToFilter: String?
+    /// Text dropped into the Inventory search field on arrival — how global
+    /// search lands on a specific asset (serial / tag / name), distinct from
+    /// `navigateToFilter` which drives the status filter.
+    @Published var navigateToInventorySearch: String?
+    /// DevOps work item to open in the Projects tab on arrival.
+    @Published var navigateToWorkItemId: Int?
+    /// A filter to apply in a module tab on arrival — how dashboard chart
+    /// wedges/bars deep-link into their section pre-filtered.
+    @Published var navigateToModuleFilter: ModuleFilterLink?
     
     // MARK: - Auth Manager
     @Published var authManager: AuthManager
@@ -136,9 +145,14 @@ class AppState: ObservableObject {
     @Published var cachedUsers: [SnipeUser] = []
     @Published var cachedEntraUsers: [EntraUser] = []
     @Published var cachedGroups: [EntraGroup] = []
+    /// Snipe activity log for the dashboard feed — cached so tab switches
+    /// don't blank the feed while it refetches.
+    @Published var cachedSnipeActivity: [SnipeActivityLog] = []
     /// Device members per group id, filled at launch right after the groups
     /// load — so Identity opens with every group expandable instantly and
-    /// device-name search can say which groups a device belongs to.
+    /// device-name search can say which groups a device belongs to. Lives
+    /// here, not in the tab views: tab switches recreate those views, and a
+    /// refetch through aze costs a serialized container exec per call.
     @Published var cachedGroupDevices: [String: [EntraDevice]] = [:]
 
     /// The dashboard's pull request queue.
@@ -150,6 +164,10 @@ class AppState: ObservableObject {
     /// GitHub 0" and a spinner where a populated list had been. Living on
     /// AppState, it survives tab switches like the other caches.
     let pullRequestQueue = PullRequestQueueModel()
+
+    /// The dashboard's task tables (DevOps work items + GitHub issues) —
+    /// AppState-owned for the same tab-switch-survival reason as the PR queue.
+    let dashboardTasks = DashboardTasksModel()
 
     /// Everything the Projects tab loads from Azure DevOps and GitHub.
     ///
@@ -323,6 +341,7 @@ class AppState: ObservableObject {
         cachedUsers = []
         cachedEntraUsers = []
         cachedGroups = []
+        cachedGroupDevices = [:]
     }
     
     // MARK: - Data Loading with Caching
@@ -381,7 +400,7 @@ class AppState: ObservableObject {
         cachedGroups = groups
         groupsCacheTime = Date()
     }
-    
+
     /// Invalidate devices cache (force refresh on next load)
     func invalidateDevicesCache() { devicesCacheTime = nil }
     
@@ -413,34 +432,19 @@ class AppState: ObservableObject {
     }
 
     /// Fill `cachedGroupDevices` for every cached group that doesn't have its
-    /// members yet. Runs a few fetches at a time — enough to finish quickly
-    /// over the warm elevation session without stampeding it.
+    /// members yet — 20 groups per Graph `$batch` call, merging as each chunk
+    /// lands. Through aze every request is one serialized container exec, so
+    /// batching (not client-side concurrency) is what makes this fast.
     func preloadGroupMembers() async {
         let pending = cachedGroups.compactMap(\.id).filter { cachedGroupDevices[$0] == nil }
         guard !pending.isEmpty else { return }
         dbg.info("Preloading members for \(pending.count) groups...", category: "preload")
-        let maxConcurrent = 4
-        await withTaskGroup(of: (String, [EntraDevice])?.self) { group in
-            var iterator = pending.makeIterator()
-            var inFlight = 0
-            func addNext() {
-                guard let id = iterator.next() else { return }
-                inFlight += 1
-                group.addTask { @MainActor in
-                    do {
-                        return (id, try await self.graphService.getGroupDeviceMembers(id))
-                    } catch {
-                        dbg.error("Members preload failed for group \(id): \(error)", category: "preload")
-                        return nil
-                    }
-                }
-            }
-            for _ in 0..<maxConcurrent { addNext() }
-            while inFlight > 0 {
-                guard let result = await group.next() else { break }
-                inFlight -= 1
-                if let (id, devices) = result { cachedGroupDevices[id] = devices }
-                addNext()
+        for chunk in stride(from: 0, to: pending.count, by: 20).map({ Array(pending[$0..<min($0 + 20, pending.count)]) }) {
+            do {
+                let members = try await graphService.getGroupDeviceMembersBatch(chunk)
+                cachedGroupDevices.merge(members) { _, new in new }
+            } catch {
+                dbg.error("Group member preload chunk failed: \(error)", category: "preload")
             }
         }
         dbg.info("Group members preloaded: \(cachedGroupDevices.count) groups cached", category: "preload")
@@ -513,8 +517,8 @@ class AppState: ObservableObject {
                 }
             }
 
-            // Preload groups, then their device members, so Identity opens
-            // instant instead of lazy-loading each group on first expand.
+            // Preload groups, then their device members — the members are what
+            // the Identity and Devices tabs actually sit spinning on.
             if config.isSystemsGraphConfigured && !isGroupsCacheValid {
                 group.addTask { @MainActor in
                     dbg.info("Preloading groups...", category: "preload")
@@ -522,12 +526,14 @@ class AppState: ObservableObject {
                         let groups = try await self.graphService.searchGroups("Devices-", limit: DeviceGroupFetch.limit)
                         self.updateGroupsCache(groups)
                         dbg.info("Groups preloaded: \(groups.count) groups", category: "preload")
-                        await self.preloadGroupMembers()
                     } catch {
                         dbg.error("Groups preload FAILED: \(error)", category: "preload")
                     }
+                    await self.preloadGroupMembers()
                 }
             } else if config.isSystemsGraphConfigured {
+                // Group list was still fresh — warm any members not yet loaded
+                // this launch (preloadGroupMembers skips groups already cached).
                 group.addTask { @MainActor in
                     await self.preloadGroupMembers()
                 }

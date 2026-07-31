@@ -203,6 +203,8 @@ struct DevicesView: View {
                 appState.navigateToDeviceId = nil
             }
         }
+        .onChange(of: appState.navigateToModuleFilter) { _, _ in consumeModuleFilter() }
+        .task { consumeModuleFilter() }
         .alert("Confirm Reboot", isPresented: $showRebootConfirmation) {
             Button("Cancel", role: .cancel) { }
             Button("Reboot", role: .destructive) {
@@ -283,6 +285,14 @@ struct DevicesView: View {
             return "\(title) \(sortAscending ? "▲" : "▼")"
         }
         return title
+    }
+
+    /// Apply a dashboard widget's deep-linked filter (e.g. a Compliance wedge).
+    private func consumeModuleFilter() {
+        guard let link = appState.navigateToModuleFilter, link.tab == .devices,
+              let category = DeviceFilterCategory(rawValue: link.category) else { return }
+        appState.navigateToModuleFilter = nil
+        filters.selectedValues[category] = [resolveFilterValue(link.value, in: filters.availableValues[category])]
     }
 
     private func loadDevices() {

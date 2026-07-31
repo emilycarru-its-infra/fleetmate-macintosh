@@ -164,6 +164,9 @@ final class PullRequestQueueModel: ObservableObject {
 struct PullRequestQueueSection: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var model: PullRequestQueueModel
+    /// The task tables sharing this section's 50/50 split; the source pills in
+    /// the header filter both sides at once.
+    @ObservedObject var tasksModel: DashboardTasksModel
 
     @AppStorage("dashboard.prQueue.collapsed.createdByMe") private var createdCollapsed = false
     @AppStorage("dashboard.prQueue.collapsed.assignedToMe") private var assignedCollapsed = false
@@ -182,11 +185,19 @@ struct PullRequestQueueSection: View {
                     .lineLimit(2)
             }
 
-            group(.createdByMe, isCollapsed: $createdCollapsed)
-            group(.assignedToMe, isCollapsed: $assignedCollapsed)
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
+                    group(.createdByMe, isCollapsed: $createdCollapsed)
+                    group(.assignedToMe, isCollapsed: $assignedCollapsed)
 
-            if !model.isLoading && model.visiblePullRequests.isEmpty {
-                emptyState
+                    if !model.isLoading && model.visiblePullRequests.isEmpty {
+                        emptyState
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+
+                DashboardTasksPane(model: tasksModel, source: model.selectedSource)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
     }

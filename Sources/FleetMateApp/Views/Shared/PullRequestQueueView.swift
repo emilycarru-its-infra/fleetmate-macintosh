@@ -476,6 +476,7 @@ struct PullRequestRow: View {
 
     @EnvironmentObject private var appState: AppState
     @State private var isHovering = false
+    @State private var showDetail = false
     @State private var pendingAction: PullRequestAction?
     @State private var runningAction: PullRequestAction?
     @State private var actionError: String?
@@ -537,7 +538,8 @@ struct PullRequestRow: View {
     }
 
     private var rowButton: some View {
-        Button(action: open) {
+        // Click opens the in-app viewer; the browser stays one right-click away.
+        Button(action: { showDetail = true }) {
             // Center alignment so rows with reviewer bubbles line up the same
             // as rows without them — top alignment made the trailing cluster
             // sit visibly higher whenever bubbles grew the row.
@@ -583,7 +585,11 @@ struct PullRequestRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(pullRequest.webUrl)
+        .help(pullRequest.title)
+        .sheet(isPresented: $showDetail) {
+            PullRequestDetailView(pullRequest: pullRequest)
+                .environmentObject(appState)
+        }
         .contextMenu {
             Button("Open in Browser") { open() }
             Button("Copy Link") {

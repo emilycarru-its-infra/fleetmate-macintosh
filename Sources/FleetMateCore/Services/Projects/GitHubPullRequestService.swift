@@ -108,6 +108,95 @@ public actor GitHubPullRequestService {
         (try? await client.authenticate()) ?? false
     }
 
+    // MARK: - PR detail (REST)
+
+    /// Everything the in-app viewer needs for one PR: body, commits, comments
+    /// and per-file diffs. REST rather than GraphQL because `/pulls/{n}/files`
+    /// hands back ready-made unified-diff `patch` hunks per file.
+    public func getPullRequestDetail(owner: String, repo: String, number: Int) async throws -> PullRequestDetail {
+        let base = "/repos/\(owner)/\(repo)"
+        let decoder = JSONDecoder()
+
+        async let prData = client.executeREST(path: "\(base)/pulls/\(number)")
+        async let commitsData = client.executeREST(path: "\(base)/pulls/\(number)/commits?per_page=100")
+        async let commentsData = client.executeREST(path: "\(base)/issues/\(number)/comments?per_page=100")
+        async let filesData = client.executeREST(path: "\(base)/pulls/\(number)/files?per_page=100")
+
+        let pr = try decoder.decode(RestPullRequest.self, from: try await prData)
+        let commits = try decoder.decode([RestCommit].self, from: try await commitsData)
+        let comments = try decoder.decode([RestComment].self, from: try await commentsData)
+        let files = try decoder.decode([RestFile].self, from: try await filesData)
+
+        let diffFiles: [DiffFile] = files.map { file in
+            if let patch = file.patch {
+                return DiffParser.parseBareHunks(patch, fileName: file.filename)
+            }
+            // Binary or too-large — GitHub omits the patch.
+            return DiffFile(headerLines: [], oldPath: file.filename, newPath: file.filename)
+        }
+
+        return PullRequestDetail(
+            body: pr.body,
+            commits: commits.map {
+                PullRequestCommit(
+                    id: $0.sha,
+                    message: $0.commit.message,
+                    authorName: $0.commit.author?.name ?? $0.author?.login,
+                    date: PullRequestDateParser.parse($0.commit.author?.date)
+                )
+            },
+            comments: comments.map {
+                PullRequestComment(
+                    id: String($0.id),
+                    authorName: $0.user?.login ?? "unknown",
+                    body: $0.body ?? "",
+                    date: PullRequestDateParser.parse($0.createdAt),
+                    isSystem: false
+                )
+            },
+            files: diffFiles,
+            truncated: files.count >= 100
+        )
+    }
+
+    private struct RestPullRequest: Decodable {
+        let body: String?
+    }
+
+    private struct RestCommit: Decodable {
+        let sha: String
+        let commit: Inner
+        let author: RestUser?
+        struct Inner: Decodable {
+            let message: String
+            let author: Signature?
+        }
+        struct Signature: Decodable {
+            let name: String?
+            let date: String?
+        }
+    }
+
+    private struct RestUser: Decodable {
+        let login: String?
+    }
+
+    private struct RestComment: Decodable {
+        let id: Int
+        let user: RestUser?
+        let body: String?
+        let createdAt: String?
+        enum CodingKeys: String, CodingKey {
+            case id, user, body
+            case createdAt = "created_at"
+        }
+    }
+
+    private struct RestFile: Decodable {
+        let filename: String
+        let patch: String?
+    }
+
     // MARK: - Issues
 
     /// Open issues involving the signed-in account (author, assignee or

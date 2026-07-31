@@ -152,6 +152,7 @@ struct TicketsView: View {
     // Comment state
     @State private var newComment = ""
     @State private var isCommentSectionExpanded = false
+    @State private var scrollToCommentToken = 0
     @State private var isCommentPrivate = false
     @State private var isAddingComment = false
     @State private var notifyRequestor = false
@@ -581,6 +582,11 @@ struct TicketsView: View {
             contentSection
         }
         .onChange(of: selectedTicketIds) { _, newIds in
+            // A draft belongs to the ticket it was written on — carrying it to
+            // the next ticket risks posting it to the wrong conversation.
+            newComment = ""
+            isCommentSectionExpanded = false
+            isCommentPrivate = false
             if let ticketId = newIds.first, let unwrappedId = ticketId {
                 loadTicketDetail(ticketId: unwrappedId)
                 loadTicketFeed(ticketId: unwrappedId)
@@ -1082,7 +1088,8 @@ struct TicketsView: View {
                 }
                 .padding([.horizontal, .top])
 
-                ScrollView {
+                ScrollViewReader { proxy in
+                    ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         descriptionSection(ticket: ticket)
                             .padding(.top, 10)
@@ -1092,6 +1099,7 @@ struct TicketsView: View {
                         }
                         Divider().padding(.vertical, 8)
                         addCommentSection(ticket: ticket)
+                            .id("addComment")
                         Section {
                             activityFeed
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1108,6 +1116,12 @@ struct TicketsView: View {
                         }
                     }
                     .padding(.horizontal)
+                    }
+                    .onChange(of: scrollToCommentToken) { _, _ in
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            proxy.scrollTo("addComment", anchor: .top)
+                        }
+                    }
                 }
             }
         } else {
@@ -2258,6 +2272,10 @@ struct TicketsView: View {
         let block = "> \(author) wrote:\n\(quoted)\n\n"
         newComment = block + newComment
         isCommentPrivate = entry.isPrivate == true
+        // The comment box folds by default and sits above the feed, so a reply
+        // has to open it and bring it back on screen before focusing.
+        isCommentSectionExpanded = true
+        scrollToCommentToken += 1
         commentFocused = true
     }
 
@@ -2581,16 +2599,18 @@ struct FeedEntryRow: View {
                         .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
-                // Only top-level entries can be quoted: a quote needs a stable
-                // feed entry to point at, and replies aren't addressable.
-                if let onQuote, !isReply {
-                    Button(action: { onQuote(entry) }) {
+                // Every card can be replied to. The quote carries whichever
+                // comment it was clicked on — reply or top-level — even though
+                // the response posts as a new top-level comment (TeamDynamix
+                // has no API for posting inside a thread).
+                if let onQuote {
+                    Button(action: { onQuote(item) }) {
                         Image(systemName: "arrowshape.turn.up.left")
                             .appFont(.caption)
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Quote this in a new comment — TeamDynamix has no API for replying inside a thread")
+                    .help("Reply — quotes this comment in the comment box")
                 }
                 Button(action: { copyToClipboard(item) }) {
                     Image(systemName: "doc.on.doc")

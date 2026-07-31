@@ -587,7 +587,7 @@ struct PullRequestRow: View {
         .buttonStyle(.plain)
         .help(pullRequest.title)
         .sheet(isPresented: $showDetail) {
-            PullRequestDetailView(pullRequest: pullRequest)
+            PullRequestDetailView(pullRequest: pullRequest, onActionCompleted: onActionCompleted)
                 .environmentObject(appState)
         }
         .contextMenu {

@@ -107,8 +107,11 @@ final class PullRequestQueueModel: ObservableObject {
         let devOpsReady = appState.config.isDevOpsConfigured && appState.devOpsService.hasValidToken
         let gitHubConfig = appState.config.tasks?.providers.github ?? GitHubProviderConfig()
 
+        // Configuration decides which pills exist — not token state. Gating
+        // DevOps on its token made the pill vanish whenever SSO lapsed,
+        // silently stranding the queue on GitHub with no way back.
         var sources: Set<PullRequestSource> = []
-        if devOpsReady { sources.insert(.azureDevOps) }
+        if appState.config.isDevOpsConfigured { sources.insert(.azureDevOps) }
         sources.insert(.gitHub)
         availableSources = sources
 

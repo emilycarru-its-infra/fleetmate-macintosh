@@ -368,6 +368,8 @@ struct PullRequestQueueSection: View {
             let visible = isExpanded ? items : Array(items.prefix(collapsedRowLimit))
 
             GroupBox {
+                // Top-aligned in however much height the box is given, so a
+                // short queue keeps regular rows with empty space below.
                 VStack(alignment: .leading, spacing: 0) {
                     Button(action: { isCollapsed.wrappedValue.toggle() }) {
                         HStack(spacing: 6) {
@@ -415,6 +417,7 @@ struct PullRequestQueueSection: View {
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
     }
@@ -493,6 +496,10 @@ struct PullRequestRow: View {
                 actionButtons
             }
         }
+        // A row is a row: without this, a tall proposal (short queue beside a
+        // tall task table) stretches the indicator bar and floats the buttons
+        // mid-air instead of leaving the box's extra space empty.
+        .fixedSize(horizontal: false, vertical: true)
         .background(isHovering ? Color.secondary.opacity(0.08) : Color.clear)
         .onHover { isHovering = $0 }
         .confirmationDialog(
@@ -519,7 +526,10 @@ struct PullRequestRow: View {
 
     private var rowButton: some View {
         Button(action: open) {
-            HStack(alignment: .top, spacing: 10) {
+            // Center alignment so rows with reviewer bubbles line up the same
+            // as rows without them — top alignment made the trailing cluster
+            // sit visibly higher whenever bubbles grew the row.
+            HStack(alignment: .center, spacing: 10) {
                 Rectangle()
                     .fill(pullRequest.source.tint)
                     .frame(width: 3)
@@ -528,7 +538,6 @@ struct PullRequestRow: View {
                 BrandIcon(mark: pullRequest.source.brandMark, size: 12)
                     .foregroundStyle(pullRequest.source.tint)
                     .frame(width: 16)
-                    .padding(.top, 2)
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {

@@ -36,6 +36,7 @@ public actor GitHubGraphQLClient {
     
     /// Executes a GraphQL query/mutation and returns the deserialized "data" portion.
     public func execute<T: Decodable>(query: String, variables: [String: Any]? = nil) async throws -> T {
+        try GitHubRateLimitGate.check()
         let token = try await ensureToken()
         
         var body: [String: Any] = ["query": query]
@@ -67,6 +68,7 @@ public actor GitHubGraphQLClient {
                             // Check for GraphQL errors
                             if let errors = json["errors"] as? [[String: Any]], let first = errors.first {
                                 let message = first["message"] as? String ?? "Unknown GraphQL error"
+                                GitHubRateLimitGate.tripIfRateLimit(message)
                                 continuation.resume(throwing: GitHubGraphQLError.graphQLError(message))
                                 return
                             }
@@ -93,6 +95,7 @@ public actor GitHubGraphQLClient {
     
     /// Executes a GraphQL query and returns raw dictionary data.
     public func executeRaw(query: String, variables: [String: Any]? = nil) async throws -> [String: Any] {
+        try GitHubRateLimitGate.check()
         let token = try await ensureToken()
         
         var body: [String: Any] = ["query": query]
@@ -123,6 +126,7 @@ public actor GitHubGraphQLClient {
                             
                             if let errors = json["errors"] as? [[String: Any]], let first = errors.first {
                                 let message = first["message"] as? String ?? "Unknown GraphQL error"
+                                GitHubRateLimitGate.tripIfRateLimit(message)
                                 continuation.resume(throwing: GitHubGraphQLError.graphQLError(message))
                                 return
                             }
@@ -155,6 +159,7 @@ public actor GitHubGraphQLClient {
         path: String,
         body: [String: Any]? = nil
     ) async throws -> Data {
+        try GitHubRateLimitGate.check()
         let token = try await ensureToken()
         guard let url = URL(string: "https://api.github.com\(path)") else {
             throw GitHubGraphQLError.invalidResponse
@@ -180,6 +185,10 @@ public actor GitHubGraphQLClient {
                     case .success(let data):
                         continuation.resume(returning: data)
                     case .failure(let error):
+                        // 403/429 from REST is the rate limiter — latch it.
+                        if let status = response.response?.statusCode, status == 403 || status == 429 {
+                            GitHubRateLimitGate.trip()
+                        }
                         continuation.resume(throwing: GitHubGraphQLError.networkError(error))
                     }
                 }
@@ -215,5 +224,38 @@ public enum GitHubGraphQLError: Error, LocalizedError {
         case .networkError(let err): return "Network error: \(err.localizedDescription)"
         case .decodingError(let err): return "Decoding error: \(err.localizedDescription)"
         }
+    }
+}
+
+// MARK: - Shared rate-limit gate
+
+/// Process-wide latch shared by every client instance — the dashboard queue,
+/// the issues table, the Projects provider and the PR viewer all construct
+/// their own clients but drain ONE hourly quota. Once GitHub says rate
+/// limited, every call from every instance fails fast until the window ends
+/// instead of burning more budget (each rejected call still costs points).
+enum GitHubRateLimitGate {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var until: Date?
+
+    static func check() throws {
+        lock.lock(); defer { lock.unlock() }
+        if let until, until > Date() {
+            let time = until.formatted(date: .omitted, time: .shortened)
+            throw GitHubGraphQLError.graphQLError("API rate limit exceeded — backing off until \(time)")
+        }
+        until = nil
+    }
+
+    static func trip(for seconds: TimeInterval = 15 * 60) {
+        lock.lock(); defer { lock.unlock() }
+        let candidate = Date().addingTimeInterval(seconds)
+        if until == nil || candidate > until! { until = candidate }
+        dbg.warn("GitHub rate limit tripped — gating all clients for \(Int(seconds))s", category: "github")
+    }
+
+    /// Trip the gate when an upstream message looks like a rate limit.
+    static func tripIfRateLimit(_ message: String) {
+        if message.localizedCaseInsensitiveContains("rate limit") { trip() }
     }
 }

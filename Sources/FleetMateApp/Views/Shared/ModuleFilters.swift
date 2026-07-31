@@ -1,6 +1,23 @@
 import SwiftUI
 import FleetMateCore
 
+// MARK: - Deep-linked filters
+
+/// A dashboard widget's handoff: open `tab` with `category` filtered to
+/// `value`. `category` is the destination's FilterCategory rawValue.
+struct ModuleFilterLink: Equatable {
+    let tab: AppTab
+    let category: String
+    let value: String
+}
+
+/// Match a deep-linked value against the category's actual values, tolerating
+/// case/punctuation drift ("Non-Compliant" label vs "Noncompliant" value).
+func resolveFilterValue(_ incoming: String, in available: [String]?) -> String {
+    let norm: (String) -> String = { $0.lowercased().filter { $0.isLetter || $0.isNumber } }
+    return available?.first { norm($0) == norm(incoming) } ?? incoming
+}
+
 // MARK: - Ticket Filters
 
 enum TicketFilterCategory: String, FilterCategoryProtocol {

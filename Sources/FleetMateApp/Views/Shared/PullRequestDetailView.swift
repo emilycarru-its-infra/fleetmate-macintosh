@@ -15,25 +15,24 @@ struct PullRequestDetailView: View {
 
     @State private var detail: PullRequestDetail?
     @State private var loadError: String?
-    @State private var section: Section = .overview
 
-    enum Section: String, CaseIterable, Identifiable {
-        case overview = "Overview"
-        case commits = "Commits"
-        case changes = "Changes"
-        var id: String { rawValue }
-    }
+    /// ~80% of the hosting window, measured at presentation time — sheets
+    /// can't observe their parent window, so the size is captured up front.
+    private let sheetSize: CGSize = {
+        let host = NSApp.windows
+            .filter { $0.isVisible && !($0 is NSPanel) }
+            .max(by: { $0.frame.width < $1.frame.width })
+        let size = host?.frame.size ?? CGSize(width: 1400, height: 900)
+        return CGSize(width: max(860, size.width * 0.8), height: max(560, size.height * 0.8))
+    }()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            sectionPicker
-            Divider()
             content
         }
-        .frame(minWidth: 860, idealWidth: 1080, maxWidth: 1400,
-               minHeight: 560, idealHeight: 760, maxHeight: 1000)
+        .frame(width: sheetSize.width, height: sheetSize.height)
         .task { await load() }
     }
 
@@ -81,27 +80,6 @@ struct PullRequestDetailView: View {
         .padding(14)
     }
 
-    private var sectionPicker: some View {
-        HStack {
-            Picker("", selection: $section) {
-                Text("Overview").tag(Section.overview)
-                Text("Commits \(detail.map { "(\($0.commits.count))" } ?? "")").tag(Section.commits)
-                Text("Changes \(detail.map { "(\($0.files.count))" } ?? "")").tag(Section.changes)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 420)
-            Spacer()
-            if let detail, detail.truncated {
-                Text("Large PR — showing a capped set of files")
-                    .appFont(.caption2)
-                    .foregroundStyle(.orange)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-    }
-
     // MARK: Content
 
     @ViewBuilder
@@ -114,10 +92,14 @@ struct PullRequestDetailView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let detail {
-            switch section {
-            case .overview: overview(detail)
-            case .commits: commitsList(detail)
-            case .changes: DiffListView(files: detail.files)
+            // One vertical read: Overview, then Commits, then Changes.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    overviewSection(detail)
+                    commitsSection(detail)
+                    changesSection(detail)
+                }
+                .padding(14)
             }
         } else {
             VStack(spacing: 10) {
@@ -130,46 +112,57 @@ struct PullRequestDetailView: View {
         }
     }
 
-    private func overview(_ detail: PullRequestDetail) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if let body = detail.body, !body.isEmpty {
-                    GroupBox {
-                        MarkdownTextView(content: body)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(6)
-                    }
-                } else {
-                    Text("No description.")
-                        .appFont(.callout)
-                        .foregroundStyle(.secondary)
-                }
+    private func sectionHeader(_ title: String, count: Int? = nil) -> some View {
+        HStack(spacing: 6) {
+            Text(title).appFont(.headline)
+            if let count {
+                Text("\(count)")
+                    .appFont(.caption2).monospacedDigit()
+                    .padding(.horizontal, 6).padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.15))
+                    .clipShape(Capsule())
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
 
-                let conversation = detail.comments.filter { !$0.isSystem }
-                let system = detail.comments.filter(\.isSystem)
-
-                if !conversation.isEmpty {
-                    Text("Comments")
-                        .appFont(.headline)
-                    ForEach(conversation) { comment in
-                        commentCard(comment)
-                    }
-                }
-                if !system.isEmpty {
-                    DisclosureGroup("\(system.count) status updates") {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(system) { comment in
-                                Text(comment.body.strippedOfHtml)
-                                    .appFont(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
+    private func overviewSection(_ detail: PullRequestDetail) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("Overview")
+            if let body = detail.body, !body.isEmpty {
+                GroupBox {
+                    MarkdownTextView(content: body)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .appFont(.caption)
+                        .padding(6)
+                }
+            } else {
+                Text("No description.")
+                    .appFont(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            let conversation = detail.comments.filter { !$0.isSystem }
+            let system = detail.comments.filter(\.isSystem)
+
+            if !conversation.isEmpty {
+                sectionHeader("Comments", count: conversation.count)
+                ForEach(conversation) { comment in
+                    commentCard(comment)
                 }
             }
-            .padding(14)
+            if !system.isEmpty {
+                DisclosureGroup("\(system.count) status updates") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(system) { comment in
+                            Text(comment.body.strippedOfHtml)
+                                .appFont(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .appFont(.caption)
+            }
         }
     }
 
@@ -193,39 +186,63 @@ struct PullRequestDetailView: View {
         }
     }
 
-    private func commitsList(_ detail: PullRequestDetail) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(detail.commits) { commit in
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        Text(commit.shortSha)
-                            .appFont(.caption, design: .monospaced)
-                            .foregroundStyle(.secondary)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(commit.subject)
-                                .appFont(.callout, weight: .medium)
-                            HStack(spacing: 6) {
-                                if let author = commit.authorName {
-                                    Text(author).appFont(.caption).foregroundStyle(.secondary)
-                                }
-                                if let date = commit.date {
-                                    Text(date.formatted(date: .abbreviated, time: .shortened))
-                                        .appFont(.caption2)
-                                        .foregroundStyle(.tertiary)
+    private func commitsSection(_ detail: PullRequestDetail) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Commits", count: detail.commits.count)
+            GroupBox {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(detail.commits.enumerated()), id: \.element.id) { index, commit in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Text(commit.shortSha)
+                                .appFont(.caption, design: .monospaced)
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(commit.subject)
+                                    .appFont(.callout, weight: .medium)
+                                HStack(spacing: 6) {
+                                    if let author = commit.authorName {
+                                        Text(author).appFont(.caption).foregroundStyle(.secondary)
+                                    }
+                                    if let date = commit.date {
+                                        Text(date.formatted(date: .abbreviated, time: .shortened))
+                                            .appFont(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
                                 }
                             }
+                            Spacer()
                         }
-                        Spacer()
+                        .padding(.vertical, 6)
+                        if index < detail.commits.count - 1 { Divider() }
                     }
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 14)
-                    Divider()
+                    if detail.commits.isEmpty {
+                        Text("No commits found.")
+                            .appFont(.callout)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 6)
+                    }
                 }
-                if detail.commits.isEmpty {
-                    Text("No commits found.")
-                        .appFont(.callout)
-                        .foregroundStyle(.secondary)
-                        .padding(14)
+            }
+        }
+    }
+
+    private func changesSection(_ detail: PullRequestDetail) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                sectionHeader("Changes", count: detail.files.count)
+                if detail.truncated {
+                    Text("Large PR — showing a capped set of files")
+                        .appFont(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
+            if detail.files.isEmpty {
+                Text("The diff couldn't be produced for this pull request.")
+                    .appFont(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(detail.files) { file in
+                    DiffFileCard(file: file)
                 }
             }
         }
@@ -257,31 +274,6 @@ struct PullRequestDetailView: View {
 }
 
 // MARK: - Diff rendering (ported from MunkiStudio's DiffView)
-
-/// Scrolling list of file cards, each with hunk cards of red/green line rows.
-struct DiffListView: View {
-    let files: [DiffFile]
-
-    var body: some View {
-        if files.isEmpty {
-            ContentUnavailableView(
-                "No file changes",
-                systemImage: "doc.text",
-                description: Text("The diff couldn't be produced for this pull request.")
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(files) { file in
-                        DiffFileCard(file: file)
-                    }
-                }
-                .padding(14)
-            }
-        }
-    }
-}
 
 struct DiffFileCard: View {
     let file: DiffFile

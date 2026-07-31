@@ -200,12 +200,16 @@ struct AssetsView: View {
             if !appState.cachedAssets.isEmpty {
                 filters.buildFromAssets(appState.cachedAssets)
             }
+            consumeInventorySearch(appState.navigateToInventorySearch)
         }
         .onChange(of: appState.navigateToFilter) { _, filter in
             if let filter, !filter.isEmpty {
                 filters.selectedValues[.status] = [filter]
                 appState.navigateToFilter = nil
             }
+        }
+        .onChange(of: appState.navigateToInventorySearch) { _, text in
+            consumeInventorySearch(text)
         }
         .onChange(of: appState.cachedAssets) { _, newAssets in
             filters.buildFromAssets(newAssets)
@@ -447,6 +451,14 @@ struct AssetsView: View {
         case .location:
             Text(asset.location?.name?.htmlDecoded ?? "-").lineLimit(1)
         }
+    }
+
+    /// Land a global-search hit: drop the query into the search field and clear
+    /// the handoff so it doesn't re-fire on the next visit.
+    private func consumeInventorySearch(_ text: String?) {
+        guard let text, !text.isEmpty else { return }
+        searchText = text
+        appState.navigateToInventorySearch = nil
     }
 
     private func loadAllAssets() {

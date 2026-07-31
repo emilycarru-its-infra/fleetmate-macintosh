@@ -55,10 +55,13 @@ struct GroupsContentView: View {
     @State private var searchText = ""
     @State private var isLoading = false
     @State private var expandedGroupIds: Set<String> = []
-    @State private var groupDevices: [String: [EntraDevice]] = [:]
     @State private var loadingGroupIds: Set<String> = []
 
     var groups: [EntraGroup] { appState.cachedGroups }
+
+    /// Members live on AppState so the preload warms them and tab switches
+    /// don't throw them away.
+    private var groupDevices: [String: [EntraDevice]] { appState.cachedGroupMembers }
 
     var filteredGroups: [EntraGroup] {
         if searchText.isEmpty { return groups }
@@ -174,10 +177,10 @@ struct GroupsContentView: View {
             defer { loadingGroupIds.remove(groupId) }
             do {
                 let devices = try await appState.graphService.getGroupDeviceMembers(groupId)
-                groupDevices[groupId] = devices
+                appState.cachedGroupMembers[groupId] = devices
             } catch {
                 appState.errorMessage = "Failed to load group members: \(error.localizedDescription)"
-                groupDevices[groupId] = []
+                appState.cachedGroupMembers[groupId] = []
             }
         }
     }

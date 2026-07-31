@@ -681,28 +681,17 @@ struct AssetDetailSidebar: View {
 
                     HStack(alignment: .top, spacing: 12) {
                         groupCard("inventory")
-                        overviewCard
+                        metadataCard
                     }
 
                     HStack(alignment: .top, spacing: 12) {
                         hardwareCard
-                        specTilesSection
+                        groupCard("procurement")
                     }
-
-                    groupCard("procurement")
 
                     // Remaining taxonomy groups in their render order.
                     ForEach(["management", "networking", "identity"], id: \.self) { slug in
                         groupCard(slug)
-                    }
-
-                    // Metadata, like the web's bottom card. The checkout /
-                    // audit dates live in the Overview card at the top now.
-                    sectionCard("Metadata", systemImage: "cylinder.split.1x2") {
-                        detailRow("BYOD", value: (asset.byod ?? false) ? "Yes" : "No")
-                        detailRow("Requestable", value: (asset.requestable ?? false) ? "Yes" : "No")
-                        detailRow("Created", value: asset.createdAt?.formatted)
-                        detailRow("Updated", value: asset.updatedAt?.formatted)
                     }
 
                     if let notes = asset.notes, !notes.isEmpty {
@@ -780,7 +769,6 @@ struct AssetDetailSidebar: View {
             .filter {
                 groupSlug(for: $0.key, field: $0.value) == group.slug
                     && !hiddenFields.contains($0.key)
-                    && !chipFields.contains($0.key)
             }
             .sorted { a, b in
                 // Canonical (web) order first; fields the mirror doesn't know
@@ -802,7 +790,6 @@ struct AssetDetailSidebar: View {
                 groupSlug(for: $0.key, field: $0.value) == "other"
                     && !($0.value.value?.isEmpty ?? true)
                     && !hiddenFields.contains($0.key)
-                    && !chipFields.contains($0.key)
             }
     }
 
@@ -840,89 +827,6 @@ struct AssetDetailSidebar: View {
         }
         .buttonStyle(.plain)
         .help(help)
-    }
-
-    // MARK: - Spec tiles (ReportMate layout language)
-
-    private var chipName: String? {
-        let value = asset.customFieldByName("Chip")?.value ?? ""
-        return value.isEmpty || value == "-" ? nil : value
-    }
-
-    private var isLaptop: Bool {
-        (asset.category?.name ?? "").lowercased().contains("laptop")
-    }
-
-    private func specValue(_ field: String) -> String {
-        let value = asset.customFieldByName(field)?.value ?? ""
-        return value.isEmpty || value == "-" ? "—" : value
-    }
-
-    /// The four SoC members. On Apple Silicon the CPU tile falls back to the
-    /// chip name — on an M-series machine the chip IS the CPU.
-    private var socTiles: [AssetSpecTile.Model] {
-        [
-            .init(icon: "cpu", label: "CPU", tint: .red,
-                  value: specValue("CPU") == "—" ? (chipName ?? "—") : specValue("CPU")),
-            .init(icon: "memorychip", label: "Memory", tint: .yellow, value: specValue("Memory")),
-            .init(icon: "square.3.layers.3d", label: "GPU", tint: .green, value: specValue("GPU")),
-            .init(icon: "brain", label: "NPU", tint: .pink, value: specValue("NPU")),
-        ]
-    }
-
-    /// Desktops show 7 tiles; laptops add Battery as the 8th.
-    private var peripheralTiles: [AssetSpecTile.Model] {
-        var tiles: [AssetSpecTile.Model] = [
-            .init(icon: "internaldrive", label: "Storage", tint: .purple, value: specValue("Storage")),
-            .init(icon: "display", label: "Display", tint: .blue, value: specValue("Display")),
-        ]
-        if isLaptop {
-            tiles.append(.init(icon: "battery.75percent", label: "Battery", tint: .green, value: specValue("Battery")))
-        }
-        return tiles
-    }
-
-    private var tileColumns: [GridItem] {
-        [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
-    }
-
-    @ViewBuilder
-    private var specTilesSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let chip = chipName {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("\(chip) Chip")
-                        .appFont(.subheadline, weight: .bold)
-                    Text("Unified Memory Architecture")
-                        .appFont(.caption2)
-                        .foregroundColor(.secondary)
-                }
-                LazyVGrid(columns: tileColumns, spacing: 8) {
-                    ForEach(socTiles) { AssetSpecTile(model: $0) }
-                }
-                .padding(8)
-                .background(Color.secondary.opacity(0.04))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-                        .foregroundColor(Color.secondary.opacity(0.35))
-                )
-            } else {
-                LazyVGrid(columns: tileColumns, spacing: 8) {
-                    ForEach(socTiles) { AssetSpecTile(model: $0) }
-                }
-            }
-            LazyVGrid(columns: tileColumns, spacing: 8) {
-                ForEach(peripheralTiles) { AssetSpecTile(model: $0) }
-            }
-        }
-    }
-
-    /// Fields rendered outside the group cards (the tiles, plus the Hardware
-    /// card's Architecture row), excluded there so nothing repeats.
-    private var chipFields: Set<String> {
-        ["Chip", "CPU", "Memory", "GPU", "NPU", "Storage", "Display", "Battery", "Architecture"]
     }
 
     // MARK: - Prioritized cards
@@ -970,11 +874,6 @@ struct AssetDetailSidebar: View {
             detailRow("Model", value: asset.model?.name)
             detailRow("Category", value: asset.category?.name)
             detailRow("Manufacturer", value: asset.manufacturer?.name)
-            detailRow("Architecture",
-                      value: asset.customFieldByName("Architecture")?.value,
-                      copyable: true,
-                      editKey: asset.customFieldByName("Architecture")?.field,
-                      alwaysShow: asset.customFieldByName("Architecture") != nil)
             if let specs = assetFieldGroups.first(where: { $0.slug == "specs" }) {
                 ForEach(customFields(in: specs), id: \.key) { fieldName, field in
                     detailRow(fieldName, value: field.value, copyable: true,
@@ -1028,11 +927,11 @@ struct AssetDetailSidebar: View {
         }
     }
 
-    /// The checkout/audit/EOL dates the web shows right under the photo —
-    /// every row always visible, so a missing audit reads as "not audited"
-    /// instead of the row quietly not existing.
-    private var overviewCard: some View {
-        sectionCard("Overview", systemImage: "calendar") {
+    /// Dates, flags and record info in one card — the old Overview rows
+    /// (checkout/audit/EOL, every row always visible so a missing audit reads
+    /// as "not audited") merged with the record metadata.
+    private var metadataCard: some View {
+        sectionCard("Metadata", systemImage: "cylinder.split.1x2") {
             detailRow("Last Checkout", value: asset.lastCheckout?.formatted, alwaysShow: true)
             detailRow("Expected Checkin", value: asset.expectedCheckin?.formatted, alwaysShow: true)
             detailRow("Last Audit", value: asset.lastAuditDate?.formatted, alwaysShow: true)
@@ -1040,6 +939,10 @@ struct AssetDetailSidebar: View {
             detailRow("Decommission", value: asset.decommissionDate?.formatted, alwaysShow: true)
             detailRow("Supplier", value: asset.supplier?.name, alwaysShow: true)
             detailRow("Device EOL", value: deviceEolText, alwaysShow: true)
+            detailRow("BYOD", value: (asset.byod ?? false) ? "Yes" : "No")
+            detailRow("Requestable", value: (asset.requestable ?? false) ? "Yes" : "No")
+            detailRow("Created", value: asset.createdAt?.formatted)
+            detailRow("Updated", value: asset.updatedAt?.formatted)
         }
     }
 
@@ -1407,51 +1310,6 @@ struct LifecycleBar: View {
             .frame(height: 6)
         }
         .padding(.vertical, 2)
-    }
-}
-
-// MARK: - Spec Tile
-
-/// One hardware fact as a tile: tinted icon and label, value in the tint —
-/// the same visual grammar ReportMate's hardware page uses, so the two tools
-/// describe a machine the same way.
-struct AssetSpecTile: View {
-    struct Model: Identifiable {
-        let icon: String
-        let label: String
-        let tint: Color
-        let value: String
-        var id: String { label }
-    }
-
-    let model: Model
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 5) {
-                Image(systemName: model.icon)
-                    .appFont(fixed: 12)
-                    .foregroundStyle(model.tint)
-                Text(model.label)
-                    .appFont(fixed: 10, weight: .semibold)
-                    .foregroundColor(.secondary)
-                    .textCase(.uppercase)
-            }
-            Text(model.value)
-                .appFont(fixed: 14, weight: .bold)
-                .foregroundStyle(model.value == "—" ? Color.secondary : model.tint)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color(NSColor.controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
-        )
-        .help("\(model.label): \(model.value)")
     }
 }
 

@@ -1217,7 +1217,8 @@ struct TicketsView: View {
                     .tint(.green)
                     .controlSize(.small)
                     .disabled(isSaving)
-                    .help("Save changes")
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .help("Save changes (⌘↩)")
                 }
 
                 if saveSucceeded {
@@ -1798,9 +1799,8 @@ struct TicketsView: View {
                             isAddingComment = false
                         }
                     }
-                    .keyboardShortcut(.return, modifiers: .command)
                     .disabled(newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingComment)
-                    .help("Post Comment (⌘↩)")
+                    .help("Post comment")
                 }
 
                 // Notify options

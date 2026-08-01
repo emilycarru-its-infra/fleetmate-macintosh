@@ -81,7 +81,39 @@ class AppState: ObservableObject {
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .joined(separator: " | ")
             dbg.info("Tab \(oldValue.rawValue) → \(selectedTab.rawValue) via: \(frames)", category: "tabs")
+            // Browser-style history: any organic navigation pushes the old tab
+            // and clears the forward stack; Back/Forward set the flag so their
+            // own writes don't re-record.
+            if !isNavigatingTabHistory {
+                tabBackStack.append(oldValue)
+                tabForwardStack.removeAll()
+            }
         }
+    }
+
+    // MARK: - Tab history (Back / Forward, ⌘[ / ⌘])
+
+    private var tabBackStack: [AppTab] = []
+    private var tabForwardStack: [AppTab] = []
+    private var isNavigatingTabHistory = false
+
+    var canGoBack: Bool { !tabBackStack.isEmpty }
+    var canGoForward: Bool { !tabForwardStack.isEmpty }
+
+    func goBack() {
+        guard let previous = tabBackStack.popLast() else { return }
+        isNavigatingTabHistory = true
+        tabForwardStack.append(selectedTab)
+        selectedTab = previous
+        isNavigatingTabHistory = false
+    }
+
+    func goForward() {
+        guard let next = tabForwardStack.popLast() else { return }
+        isNavigatingTabHistory = true
+        tabBackStack.append(selectedTab)
+        selectedTab = next
+        isNavigatingTabHistory = false
     }
     @Published var navigateToTab: AppTab? {
         didSet {

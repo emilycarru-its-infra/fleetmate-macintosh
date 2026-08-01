@@ -475,6 +475,10 @@ struct DiffFileCard: View {
 struct DiffHunkCard: View {
     let hunk: DiffHunk
 
+    /// Visible width of the hunk, so short lines' tints still run edge to
+    /// edge — the scroll content is only as wide as the longest line.
+    @State private var visibleWidth: CGFloat = 0
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(hunk.header)
@@ -492,7 +496,15 @@ struct DiffHunkCard: View {
                         DiffLineRow(line: line)
                     }
                 }
+                .frame(minWidth: visibleWidth, alignment: .leading)
             }
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { visibleWidth = geo.size.width }
+                        .onChange(of: geo.size.width) { _, width in visibleWidth = width }
+                }
+            )
         }
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(

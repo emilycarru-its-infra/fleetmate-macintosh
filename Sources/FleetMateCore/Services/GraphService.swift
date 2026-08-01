@@ -658,6 +658,73 @@ public class GraphService {
         return Array(members.prefix(limit))
     }
 
+    /// User members of a group, transitively — users in nested subgroups are
+    /// included, devices are excluded by the OData cast. Lean projection: just
+    /// what a list row needs; the inspector fetches the full profile on demand.
+    public func getGroupUserMembersTransitive(_ groupNameOrId: String, limit: Int = 5000) async throws -> [EntraUser] {
+        guard let headers = await headers() else { return [] }
+
+        var groupId = groupNameOrId
+        if UUID(uuidString: groupNameOrId) == nil {
+            guard let group = try await getGroupByName(groupNameOrId) else { return [] }
+            groupId = group.id ?? ""
+        }
+
+        let select = "$select=id,displayName,userPrincipalName,mail,accountEnabled,jobTitle,department"
+        var url = "\(baseUrl)/groups/\(groupId)/transitiveMembers/microsoft.graph.user?\(select)&$top=\(pageSize(for: limit))"
+        var users: [EntraUser] = []
+
+        while URL(string: url) != nil, users.count < limit {
+            let response: GroupMembersResponse = try await fetch(url: url, headers: headers)
+            users.append(contentsOf: response.value)
+            if let nextLink = response.nextLink { url = nextLink } else { break }
+        }
+
+        return Array(users.prefix(limit))
+    }
+
+    /// User members for many groups in one `$batch` round trip per 20 — the
+    /// fallback when there is no single umbrella group to walk transitively.
+    /// Failed sub-requests are skipped, mirroring the device batch above.
+    public func getGroupUserMembersBatch(_ groupIds: [String]) async throws -> [String: [EntraUser]] {
+        guard !groupIds.isEmpty, let headers = await headers() else { return [:] }
+
+        var results: [String: [EntraUser]] = [:]
+        for chunk in stride(from: 0, to: groupIds.count, by: 20).map({ Array(groupIds[$0..<min($0 + 20, groupIds.count)]) }) {
+            let requests: [[String: Any]] = chunk.map { id in
+                ["id": id, "method": "GET",
+                 "url": "/groups/\(id)/members/microsoft.graph.user?$select=id,displayName,userPrincipalName,mail,accountEnabled,jobTitle,department&$top=999"]
+            }
+            let response: GroupUserMembersBatchResponse = try await post(
+                url: "\(baseUrl)/$batch", body: ["requests": requests], headers: headers
+            )
+            for item in response.responses where item.status == 200 {
+                results[item.id] = item.body?.value ?? []
+            }
+        }
+        return results
+    }
+
+    private struct GroupUserMembersBatchResponse: Decodable {
+        let responses: [Item]
+
+        struct Item: Decodable {
+            let id: String
+            let status: Int
+            let body: GroupMembersResponse?
+
+            enum CodingKeys: String, CodingKey { case id, status, body }
+
+            init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                id = try c.decode(String.self, forKey: .id)
+                status = try c.decode(Int.self, forKey: .status)
+                // Error bodies aren't user lists — absence, not a throw.
+                body = try? c.decodeIfPresent(GroupMembersResponse.self, forKey: .body)
+            }
+        }
+    }
+
     public func getGroupDeviceMembers(_ groupId: String, limit: Int = 100) async throws -> [EntraDevice] {
         guard let headers = await headers() else { return [] }
 

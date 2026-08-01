@@ -237,8 +237,22 @@ struct UsersContentView: View {
         u.id ?? u.userPrincipalName ?? u.displayName ?? ""
     }
 
+    /// What the sidebar lists: an explicit Entra search result if one ran,
+    /// otherwise the preloaded Devices-Assigned roster — live-filtered as you
+    /// type, with Return still escalating to a full Entra search.
+    private var displayedUsers: [EntraUser] {
+        if !searchResults.isEmpty { return searchResults }
+        let base = appState.cachedEntraUsers
+        guard !searchText.isEmpty else { return base }
+        return base.filter {
+            ($0.displayName?.localizedCaseInsensitiveContains(searchText) ?? false)
+                || ($0.userPrincipalName?.localizedCaseInsensitiveContains(searchText) ?? false)
+                || ($0.mail?.localizedCaseInsensitiveContains(searchText) ?? false)
+        }
+    }
+
     private var selectedUser: EntraUser? {
-        searchResults.first { rowId($0) == selectedId }
+        displayedUsers.first { rowId($0) == selectedId }
     }
 
     var body: some View {
@@ -253,6 +267,9 @@ struct UsersContentView: View {
         .searchable(text: $searchText, prompt: "Search users…")
         .findFocusesSearchField()
         .onSubmit(of: .search) { searchUser() }
+        // Editing the text invalidates the last Entra search, dropping back to
+        // the live filter over the preloaded roster.
+        .onChange(of: searchText) { _, _ in searchResults = [] }
         .onAppCommand { command in
             // Entra is queried on demand, so a refresh re-runs the current
             // search rather than reloading a cache there isn't one of.
@@ -272,16 +289,25 @@ struct UsersContentView: View {
                     "Not Configured",
                     systemImage: "gear.badge.xmark",
                     description: Text("Microsoft Graph is not configured.")))
-            } else if searchResults.isEmpty {
-                centered(ContentUnavailableView(
-                    searchText.isEmpty ? "Search for Users" : "No Results",
-                    systemImage: searchText.isEmpty ? "person.crop.circle.badge.questionmark" : "person.slash",
-                    description: Text(searchText.isEmpty
-                        ? "Enter a name or email to search Entra."
-                        : "No users match “\(searchText)”.")))
+            } else if displayedUsers.isEmpty {
+                if searchText.isEmpty {
+                    // The Devices-Assigned roster preloads at launch — an empty
+                    // list here just means it hasn't landed yet.
+                    centered(VStack(spacing: 10) {
+                        ProgressView()
+                        Text("Loading users…")
+                            .appFont(.callout)
+                            .foregroundColor(.secondary)
+                    })
+                } else {
+                    centered(ContentUnavailableView(
+                        "No Results",
+                        systemImage: "person.slash",
+                        description: Text("No users match “\(searchText)”. Press Return to search all of Entra.")))
+                }
             } else {
                 List(selection: $selectedId) {
-                    ForEach(searchResults) { user in
+                    ForEach(displayedUsers) { user in
                         UserSidebarRow(user: user).tag(rowId(user))
                     }
                 }

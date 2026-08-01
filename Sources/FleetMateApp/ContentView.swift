@@ -32,6 +32,23 @@ struct ContentView: View {
             )
             .onPreferenceChange(WindowWidthKey.self) { windowWidth = $0 }
             .toolbar {
+                // Browser-style history, mirrored on ⌘[ / ⌘].
+                ToolbarItemGroup(placement: .navigation) {
+                    Button {
+                        appState.goBack()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                    }
+                    .help("Back (⌘[)")
+                    .disabled(!appState.canGoBack)
+                    Button {
+                        appState.goForward()
+                    } label: {
+                        Image(systemName: "chevron.right")
+                    }
+                    .help("Forward (⌘])")
+                    .disabled(!appState.canGoForward)
+                }
                 ToolbarItem(placement: .principal) {
                     GlassTabBar(selectedTab: $appState.selectedTab, tabs: availableTabs, availableWidth: windowWidth)
                 }

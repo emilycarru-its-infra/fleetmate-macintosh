@@ -695,6 +695,8 @@ struct BoardsView: View {
                     }
                 }
                 .focusable()
+                // Keyboard focus without the blue AppKit ring around the whole pane.
+                .focusEffectDisabled()
                 .onKeyPress(.upArrow) { moveTaskSelection(by: -1); return .handled }
                 .onKeyPress(.downArrow) { moveTaskSelection(by: 1); return .handled }
             }

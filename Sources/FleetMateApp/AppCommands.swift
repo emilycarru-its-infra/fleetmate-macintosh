@@ -123,6 +123,15 @@ struct FleetMateCommands: Commands {
         }
 
         CommandGroup(before: .toolbar) {
+            Button("Back") { appState.goBack() }
+                .keyboardShortcut("[", modifiers: .command)
+                .disabled(!appState.canGoBack)
+            Button("Forward") { appState.goForward() }
+                .keyboardShortcut("]", modifiers: .command)
+                .disabled(!appState.canGoForward)
+
+            Divider()
+
             ForEach(Array(AppTab.allCases.enumerated()), id: \.element.id) { index, tab in
                 Button(tab.rawValue) { appState.selectedTab = tab }
                     .keyboardShortcut(tabShortcut(index), modifiers: .command)

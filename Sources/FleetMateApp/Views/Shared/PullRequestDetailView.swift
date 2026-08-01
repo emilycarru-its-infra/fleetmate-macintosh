@@ -210,6 +210,7 @@ struct PullRequestDetailView: View {
             } catch {
                 actionError = "Could not \(action.title.lowercased()) !\(pullRequest.number): "
                     + error.localizedDescription
+                appState.pullRequestQueue.load(appState: appState, force: true)
             }
         }
     }

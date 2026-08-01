@@ -482,6 +482,36 @@ class AppState: ObservableObject {
         dbg.info("Group members preloaded: \(cachedGroupDevices.count) groups cached", category: "preload")
     }
 
+    /// The umbrella group whose user members become the Users tab's default
+    /// list — everyone with an assigned device.
+    static let assignedUsersGroup = "Devices-Assigned"
+
+    /// Fill `cachedEntraUsers` with the people in `Devices-Assigned` so the
+    /// Users tab opens populated instead of demanding a search first — and so
+    /// global search has a user index to match against. Devices in the group
+    /// are excluded by the Graph OData cast; only users come back.
+    func preloadAssignedUsers() async {
+        guard cachedEntraUsers.isEmpty else { return }
+        do {
+            var users = try await graphService.getGroupUserMembersTransitive(Self.assignedUsersGroup)
+            if users.isEmpty {
+                // No single umbrella group — aggregate the Devices-Assigned-*
+                // family instead, deduplicating people in several groups.
+                let groups = try await graphService.searchGroups(Self.assignedUsersGroup, limit: DeviceGroupFetch.limit)
+                let byGroup = try await graphService.getGroupUserMembersBatch(groups.compactMap(\.id))
+                var seen = Set<String>()
+                users = byGroup.values.flatMap { $0 }.filter { seen.insert($0.id ?? UUID().uuidString).inserted }
+            }
+            cachedEntraUsers = users.sorted {
+                ($0.displayName ?? "").localizedCaseInsensitiveCompare($1.displayName ?? "") == .orderedAscending
+            }
+            usersCacheTime = Date()
+            dbg.info("Assigned users preloaded: \(cachedEntraUsers.count) users", category: "preload")
+        } catch {
+            dbg.error("Assigned users preload FAILED: \(error)", category: "preload")
+        }
+    }
+
     /// Preload all data sources concurrently in the background
     func preloadAllData() async {
         dbg.info("preloadAllData starting", category: "preload")
@@ -568,6 +598,13 @@ class AppState: ObservableObject {
                 // this launch (preloadGroupMembers skips groups already cached).
                 group.addTask { @MainActor in
                     await self.preloadGroupMembers()
+                }
+            }
+
+            // Preload the Users tab's default list: everyone in Devices-Assigned.
+            if config.isGraphConfigured && cachedEntraUsers.isEmpty {
+                group.addTask { @MainActor in
+                    await self.preloadAssignedUsers()
                 }
             }
             

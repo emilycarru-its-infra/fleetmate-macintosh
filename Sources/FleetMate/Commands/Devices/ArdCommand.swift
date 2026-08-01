@@ -830,7 +830,7 @@ struct ArdDockSetAdminSubcommand: AsyncParsableCommand {
         let script = """
         /usr/local/bin/dockutil --remove all --no-restart
         /usr/local/bin/dockutil --add /Applications/System\\ Preferences.app --no-restart
-        /usr/local/bin/dockutil --add /Applications/Software\\ Center.app --no-restart
+        /usr/local/bin/dockutil --add /Applications/Managed\\ Software\\ Center.app --no-restart
         /usr/local/bin/dockutil --add /Applications/Safari.app --no-restart
         /usr/local/bin/dockutil --add /Applications/Utilities/Terminal.app --no-restart
         /usr/local/bin/dockutil --add /Applications/Utilities/Console.app --no-restart

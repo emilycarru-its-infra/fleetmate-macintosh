@@ -280,6 +280,9 @@ struct UsersContentView: View {
                 if isLoading { ProgressView().controlSize(.small) }
             }
         }
+        .task {
+            await appState.preloadAssignedUsers()
+        }
     }
 
     private var sidebar: some View {
@@ -290,14 +293,29 @@ struct UsersContentView: View {
                     systemImage: "gear.badge.xmark",
                     description: Text("Microsoft Graph is not configured.")))
             } else if displayedUsers.isEmpty {
-                if searchText.isEmpty {
-                    // The Devices-Assigned roster preloads at launch — an empty
-                    // list here just means it hasn't landed yet.
+                if searchText.isEmpty,
+                   !appState.assignedUsersLoadAttempted || appState.isAssignedUsersLoading {
                     centered(VStack(spacing: 10) {
                         ProgressView()
                         Text("Loading users…")
                             .appFont(.callout)
                             .foregroundColor(.secondary)
+                    })
+                } else if searchText.isEmpty {
+                    centered(ContentUnavailableView {
+                        Label(
+                            appState.assignedUsersLoadError == nil ? "No Assigned Users" : "Couldn't Load Users",
+                            systemImage: appState.assignedUsersLoadError == nil
+                                ? "person.2.slash"
+                                : "exclamationmark.triangle"
+                        )
+                    } description: {
+                        Text(appState.assignedUsersLoadError
+                            ?? "No assigned users were found on managed devices.")
+                    } actions: {
+                        Button("Try Again") {
+                            Task { await appState.preloadAssignedUsers(force: true) }
+                        }
                     })
                 } else {
                     centered(ContentUnavailableView(
@@ -334,7 +352,11 @@ struct UsersContentView: View {
     }
 
     private func searchUser() {
-        guard appState.config.isGraphConfigured, !searchText.isEmpty else { return }
+        guard appState.config.isGraphConfigured else { return }
+        guard !searchText.isEmpty else {
+            Task { await appState.preloadAssignedUsers(force: true) }
+            return
+        }
         Task {
             isLoading = true
             defer { isLoading = false }

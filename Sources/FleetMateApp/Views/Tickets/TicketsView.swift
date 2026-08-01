@@ -157,7 +157,6 @@ struct TicketsView: View {
     @State private var isAddingComment = false
     @State private var notifyRequestor = false
     @State private var notifyResponsible = false
-    @State private var notifyGroup = false
 
     // Feed filter
     @State private var feedFilter: FeedFilterType = .comments
@@ -587,6 +586,8 @@ struct TicketsView: View {
             newComment = ""
             isCommentSectionExpanded = false
             isCommentPrivate = false
+            notifyRequestor = false
+            notifyResponsible = false
             if let ticketId = newIds.first, let unwrappedId = ticketId {
                 loadTicketDetail(ticketId: unwrappedId)
                 loadTicketFeed(ticketId: unwrappedId)
@@ -1216,7 +1217,8 @@ struct TicketsView: View {
                     .tint(.green)
                     .controlSize(.small)
                     .disabled(isSaving)
-                    .help("Save changes")
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .help("Save changes (⌘↩)")
                 }
 
                 if saveSucceeded {
@@ -1797,9 +1799,8 @@ struct TicketsView: View {
                             isAddingComment = false
                         }
                     }
-                    .keyboardShortcut(.return, modifiers: .command)
                     .disabled(newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingComment)
-                    .help("Post Comment (⌘↩)")
+                    .help("Post comment")
                 }
 
                 // Notify options
@@ -1807,19 +1808,18 @@ struct TicketsView: View {
                     Text("Notify:")
                         .appFont(.body)
                         .foregroundColor(.secondary)
-                    if let requestor = ticket.requestorName, !requestor.isEmpty {
+                    if let requestor = ticket.requestorName,
+                       !requestor.isEmpty,
+                       Self.notificationEmail(ticket.requestorEmail) != nil {
                         Toggle("Requestor: \(requestor)", isOn: $notifyRequestor)
                             .toggleStyle(.checkbox)
                             .appFont(.body)
                     }
-                    if let responsible = ticket.responsibleFullName, !responsible.isEmpty,
-                       ticket.responsibleUid != ticket.requestorUid {
+                    if let responsible = ticket.responsibleFullName,
+                       !responsible.isEmpty,
+                       ticket.responsibleUid != ticket.requestorUid,
+                       Self.notificationEmail(ticket.responsibleEmail) != nil {
                         Toggle("Responsible: \(responsible)", isOn: $notifyResponsible)
-                            .toggleStyle(.checkbox)
-                            .appFont(.body)
-                    }
-                    if let group = ticket.responsibleGroupName, !group.isEmpty {
-                        Toggle("Group: \(group)", isOn: $notifyGroup)
                             .toggleStyle(.checkbox)
                             .appFont(.body)
                     }
@@ -2250,22 +2250,41 @@ struct TicketsView: View {
     }
 
     private func addComment(ticket: TdxTicket) async {
-        var notifyIds: [String] = []
-        if notifyRequestor, let uid = ticket.requestorUid { notifyIds.append(uid) }
-        if notifyResponsible, let uid = ticket.responsibleUid { notifyIds.append(uid) }
+        var notificationEmails: [String] = []
+        if notifyRequestor, let email = Self.notificationEmail(ticket.requestorEmail) {
+            notificationEmails.append(email)
+        }
+        if notifyResponsible, let email = Self.notificationEmail(ticket.responsibleEmail) {
+            notificationEmails.append(email)
+        }
+        notificationEmails = notificationEmails.reduce(into: []) { result, email in
+            guard !result.contains(where: { $0.caseInsensitiveCompare(email) == .orderedSame }) else { return }
+            result.append(email)
+        }
 
         do {
             _ = try await appState.tdxService.addComment(
                 ticketId: ticket.id ?? 0,
                 comment: newComment,
                 isPrivate: isCommentPrivate,
-                notify: notifyIds.isEmpty ? nil : notifyIds
+                notifyEmails: notificationEmails.isEmpty ? nil : notificationEmails
             )
             newComment = ""
+            notifyRequestor = false
+            notifyResponsible = false
             loadTicketFeed(ticketId: ticket.id ?? 0)
         } catch {
             saveErrorMessage = "Comment failed: \(error.localizedDescription)"
         }
+    }
+
+    private static func notificationEmail(_ value: String?) -> String? {
+        guard let email = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !email.isEmpty,
+              email.contains("@") else {
+            return nil
+        }
+        return email
     }
 
     /// Seed the comment box with a quote of an existing entry.
@@ -2753,4 +2772,3 @@ struct TicketColumnResizeHandle: View {
     TicketsView()
         .environmentObject(AppState())
 }
-

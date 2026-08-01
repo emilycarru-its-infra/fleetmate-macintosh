@@ -572,14 +572,20 @@ public class TdxService {
     /// failure here looks exactly like a successful post that the feed hasn't
     /// caught up with yet.
     @discardableResult
-    public func addComment(ticketId: Int, comment: String, isPrivate: Bool = false, isRichHtml: Bool = false, notify: [String]? = nil) async throws -> TdxFeedEntry? {
+    public func addComment(
+        ticketId: Int,
+        comment: String,
+        isPrivate: Bool = false,
+        isRichHtml: Bool = false,
+        notifyEmails: [String]? = nil
+    ) async throws -> TdxFeedEntry? {
         guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
 
         let request = CreateFeedEntryRequest(
             comments: comment,
             isPrivate: isPrivate,
             isRichHtml: isRichHtml,
-            notify: notify
+            notify: notifyEmails
         )
 
         let url = config.tdxTicketsUrl("\(ticketId)/feed")

@@ -689,6 +689,10 @@ struct PullRequestRow: View {
             } catch {
                 actionError = "Could not \(action.title.lowercased()) !\(pullRequest.number): "
                     + error.localizedDescription
+                // The most common failure is stale queue state (for example,
+                // the PR was already abandoned in Azure DevOps). Reconcile
+                // immediately so that row cannot invite the same action again.
+                appState.pullRequestQueue.load(appState: appState, force: true)
             }
         }
     }

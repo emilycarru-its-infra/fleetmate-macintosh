@@ -194,6 +194,18 @@ final class PullRequestQueueModel: ObservableObject {
         selectedSource = (selectedSource == source) ? nil : source
         selectedRepo = nil
     }
+
+    /// A pull request was completed or abandoned from inside the app. Drop the
+    /// row immediately — Azure DevOps finishes the merge asynchronously, so an
+    /// instant refetch still reports the PR active and would resurrect it —
+    /// then reconcile against the server once it has had time to settle.
+    func noteActionCompleted(_ pullRequest: UnifiedPullRequest, appState: AppState) {
+        queue.pullRequests.removeAll { $0.id == pullRequest.id }
+        Task {
+            try? await Task.sleep(for: .seconds(5))
+            self.load(appState: appState, force: true)
+        }
+    }
 }
 
 // MARK: - Section
@@ -395,7 +407,7 @@ struct PullRequestQueueSection: View {
                         Divider()
                         ForEach(Array(visible.enumerated()), id: \.element.id) { index, pr in
                             PullRequestRow(pullRequest: pr) {
-                                model.load(appState: appState, force: true)
+                                model.noteActionCompleted(pr, appState: appState)
                             }
                             if index < visible.count - 1 { Divider() }
                         }
@@ -677,6 +689,10 @@ struct PullRequestRow: View {
             } catch {
                 actionError = "Could not \(action.title.lowercased()) !\(pullRequest.number): "
                     + error.localizedDescription
+                // The most common failure is stale queue state (for example,
+                // the PR was already abandoned in Azure DevOps). Reconcile
+                // immediately so that row cannot invite the same action again.
+                appState.pullRequestQueue.load(appState: appState, force: true)
             }
         }
     }

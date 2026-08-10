@@ -2,6 +2,19 @@ import Foundation
 import CryptoKit
 import Compression
 
+private final class WebSocketReceiveGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var completed = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !completed else { return false }
+        completed = true
+        return true
+    }
+}
+
 /// Native reimplementation of the `aze` elevation protocol, so FleetMate has no
 /// dependency on the external `~/bin/aze` script. The container lifecycle and
 /// the exec handshake go through the `az` CLI (which we deliberately keep); only
@@ -279,7 +292,9 @@ public actor ElevationSession {
             }
             let message: URLSessionWebSocketTask.Message
             do {
-                message = try await ws.receive()
+                message = try await receiveMessage(from: ws, timeout: 30)
+            } catch let error as ElevationError {
+                throw error
             } catch {
                 break // closed (the command's `exit`) or errored — parse what we have
             }
@@ -294,6 +309,27 @@ public actor ElevationSession {
         // returns a META/chunk envelope, not the final body, so the websocket layer
         // hands back raw text and the caller decides what a valid capture looks like.
         return ElevationSession.stripAnsi(raw).replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+    }
+
+    /// URLSession's async websocket receive has no read deadline. If ACI leaves
+    /// the socket open without producing a frame, awaiting it can otherwise
+    /// suspend forever and leave the UI's loading state permanent.
+    private func receiveMessage(
+        from webSocket: URLSessionWebSocketTask,
+        timeout: TimeInterval
+    ) async throws -> URLSessionWebSocketTask.Message {
+        try await withCheckedThrowingContinuation { continuation in
+            let gate = WebSocketReceiveGate()
+            webSocket.receive { result in
+                guard gate.claim() else { return }
+                continuation.resume(with: result)
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) {
+                guard gate.claim() else { return }
+                webSocket.cancel(with: .goingAway, reason: nil)
+                continuation.resume(throwing: ElevationError.webSocketTimedOut)
+            }
+        }
     }
 
     /// Build a non-sensitive summary of a session body that failed to parse. The
@@ -512,6 +548,7 @@ public enum ElevationError: Error, CustomStringConvertible {
     case execHandshakeFailed(String)
     case noOutputMarkers(String)
     case corruptedOutput(expected: Int, actual: Int)
+    case webSocketTimedOut
     case commandRejected(String)
     case azLaunchFailed(String)
 
@@ -519,7 +556,7 @@ public enum ElevationError: Error, CustomStringConvertible {
     /// identity failures are not retriable here; they surface to the caller.
     var isCaptureFailure: Bool {
         switch self {
-        case .noOutputMarkers, .corruptedOutput: return true
+        case .noOutputMarkers, .corruptedOutput, .webSocketTimedOut: return true
         default: return false
         }
     }
@@ -531,6 +568,7 @@ public enum ElevationError: Error, CustomStringConvertible {
         case .execHandshakeFailed(let m): return "Exec handshake failed: \(m)"
         case .noOutputMarkers(let summary): return "Could not find output markers in session output (\(summary))"
         case .corruptedOutput(let expected, let actual): return "Elevation output truncated by the exec bridge (expected \(expected) bytes, got \(actual))"
+        case .webSocketTimedOut: return "Elevation websocket produced no data for 30 seconds"
         case .commandRejected(let m): return "Elevation command rejected: \(m)"
         case .azLaunchFailed(let m): return "Could not launch az: \(m)"
         }

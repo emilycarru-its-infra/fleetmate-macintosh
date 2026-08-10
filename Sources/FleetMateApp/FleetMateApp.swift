@@ -81,7 +81,39 @@ class AppState: ObservableObject {
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .joined(separator: " | ")
             dbg.info("Tab \(oldValue.rawValue) → \(selectedTab.rawValue) via: \(frames)", category: "tabs")
+            // Browser-style history: any organic navigation pushes the old tab
+            // and clears the forward stack; Back/Forward set the flag so their
+            // own writes don't re-record.
+            if !isNavigatingTabHistory {
+                tabBackStack.append(oldValue)
+                tabForwardStack.removeAll()
+            }
         }
+    }
+
+    // MARK: - Tab history (Back / Forward, ⌘[ / ⌘])
+
+    private var tabBackStack: [AppTab] = []
+    private var tabForwardStack: [AppTab] = []
+    private var isNavigatingTabHistory = false
+
+    var canGoBack: Bool { !tabBackStack.isEmpty }
+    var canGoForward: Bool { !tabForwardStack.isEmpty }
+
+    func goBack() {
+        guard let previous = tabBackStack.popLast() else { return }
+        isNavigatingTabHistory = true
+        tabForwardStack.append(selectedTab)
+        selectedTab = previous
+        isNavigatingTabHistory = false
+    }
+
+    func goForward() {
+        guard let next = tabForwardStack.popLast() else { return }
+        isNavigatingTabHistory = true
+        tabBackStack.append(selectedTab)
+        selectedTab = next
+        isNavigatingTabHistory = false
     }
     @Published var navigateToTab: AppTab? {
         didSet {
@@ -144,7 +176,12 @@ class AppState: ObservableObject {
     @Published var cachedWorkItems: [WorkItem] = []
     @Published var cachedUsers: [SnipeUser] = []
     @Published var cachedEntraUsers: [EntraUser] = []
+    @Published private(set) var isAssignedUsersLoading = false
+    @Published private(set) var assignedUsersLoadAttempted = false
+    @Published private(set) var assignedUsersLoadError: String?
     @Published var cachedGroups: [EntraGroup] = []
+    private var isPreloadingAllData = false
+    private var preloadAllDataRequested = false
     /// Snipe activity log for the dashboard feed — cached so tab switches
     /// don't blank the feed while it refetches.
     @Published var cachedSnipeActivity: [SnipeActivityLog] = []
@@ -450,8 +487,78 @@ class AppState: ObservableObject {
         dbg.info("Group members preloaded: \(cachedGroupDevices.count) groups cached", category: "preload")
     }
 
+    /// Fill the Users tab from Intune's managed-device assignments. The
+    /// `Devices-Assigned` groups contain device objects, not user objects, so a
+    /// Graph user-member cast over that group family cannot produce this roster.
+    /// Selecting a row hydrates its complete Entra profile on demand.
+    func preloadAssignedUsers(force: Bool = false) async {
+        guard !isAssignedUsersLoading else { return }
+        guard force || cachedEntraUsers.isEmpty else { return }
+
+        isAssignedUsersLoading = true
+        assignedUsersLoadAttempted = true
+        assignedUsersLoadError = nil
+        defer { isAssignedUsersLoading = false }
+        dbg.info("Preloading assigned users...", category: "preload")
+
+        do {
+            let devices: [IntuneDevice]
+            if force || !isDevicesCacheValid {
+                dbg.info("Preloading devices...", category: "preload")
+                devices = try await graphService.getManagedDevices(limit: 10000)
+                updateDevicesCache(devices)
+                dbg.info("Devices preloaded: \(devices.count) devices", category: "preload")
+            } else {
+                devices = cachedDevices
+            }
+
+            var usersByUPN: [String: EntraUser] = [:]
+            for device in devices {
+                guard let upn = device.userPrincipalName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !upn.isEmpty else { continue }
+                let key = upn.lowercased()
+                let displayName = device.userDisplayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let existing = usersByUPN[key], existing.displayName?.isEmpty == false {
+                    continue
+                }
+                usersByUPN[key] = EntraUser(
+                    id: key,
+                    displayName: displayName?.isEmpty == false ? displayName : upn,
+                    userPrincipalName: upn,
+                    mail: upn
+                )
+            }
+
+            cachedEntraUsers = usersByUPN.values.sorted {
+                ($0.displayName ?? "").localizedCaseInsensitiveCompare($1.displayName ?? "") == .orderedAscending
+            }
+            usersCacheTime = Date()
+            dbg.info("Assigned users preloaded: \(cachedEntraUsers.count) users", category: "preload")
+        } catch {
+            assignedUsersLoadError = error.localizedDescription
+            dbg.error("Assigned users preload FAILED: \(error)", category: "preload")
+        }
+    }
+
     /// Preload all data sources concurrently in the background
     func preloadAllData() async {
+        guard !isPreloadingAllData else {
+            preloadAllDataRequested = true
+            dbg.info("preloadAllData already running; queued one reconciliation", category: "preload")
+            return
+        }
+
+        isPreloadingAllData = true
+        defer {
+            isPreloadingAllData = false
+            if preloadAllDataRequested {
+                preloadAllDataRequested = false
+                Task { @MainActor in
+                    await self.preloadAllData()
+                }
+            }
+        }
+
         dbg.info("preloadAllData starting", category: "preload")
         // Pay the container cold start once, up front, for both Graph domains —
         // so the concurrent loads below reuse warm sessions instead of each
@@ -464,17 +571,11 @@ class AppState: ObservableObject {
         dbg.info("  DevOps configured: \(config.isDevOpsConfigured), cache valid: \(isWorkItemsCacheValid)", category: "preload")
 
         await withTaskGroup(of: Void.self) { group in
-            // Preload devices
-            if config.isGraphConfigured && !isDevicesCacheValid {
+            // Managed devices also carry the assigned-user roster used by the
+            // Users tab and global search, so populate both in one request.
+            if config.isGraphConfigured && (!isDevicesCacheValid || cachedEntraUsers.isEmpty) {
                 group.addTask { @MainActor in
-                    dbg.info("Preloading devices...", category: "preload")
-                    do {
-                        let devices = try await self.graphService.getManagedDevices(limit: 10000)
-                        self.updateDevicesCache(devices)
-                        dbg.info("Devices preloaded: \(devices.count) devices", category: "preload")
-                    } catch {
-                        dbg.error("Devices preload FAILED: \(error)", category: "preload")
-                    }
+                    await self.preloadAssignedUsers()
                 }
             }
             
@@ -517,24 +618,21 @@ class AppState: ObservableObject {
                 }
             }
 
-            // Preload groups, then their device members — the members are what
-            // the Identity and Devices tabs actually sit spinning on.
-            if config.isSystemsGraphConfigured && !isGroupsCacheValid {
+            if config.isSystemsGraphConfigured {
                 group.addTask { @MainActor in
-                    dbg.info("Preloading groups...", category: "preload")
-                    do {
-                        let groups = try await self.graphService.searchGroups("Devices-", limit: DeviceGroupFetch.limit)
-                        self.updateGroupsCache(groups)
-                        dbg.info("Groups preloaded: \(groups.count) groups", category: "preload")
-                    } catch {
-                        dbg.error("Groups preload FAILED: \(error)", category: "preload")
+                    if !self.isGroupsCacheValid {
+                        dbg.info("Preloading groups...", category: "preload")
+                        do {
+                            let groups = try await self.graphService.searchGroups("Devices-", limit: DeviceGroupFetch.limit)
+                            self.updateGroupsCache(groups)
+                            dbg.info("Groups preloaded: \(groups.count) groups", category: "preload")
+                        } catch {
+                            dbg.error("Groups preload FAILED: \(error)", category: "preload")
+                        }
                     }
-                    await self.preloadGroupMembers()
-                }
-            } else if config.isSystemsGraphConfigured {
-                // Group list was still fresh — warm any members not yet loaded
-                // this launch (preloadGroupMembers skips groups already cached).
-                group.addTask { @MainActor in
+
+                    // Group list was still fresh — warm any members not yet
+                    // loaded this launch (the method skips cached groups).
                     await self.preloadGroupMembers()
                 }
             }

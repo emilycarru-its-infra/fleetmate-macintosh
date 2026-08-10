@@ -210,6 +210,7 @@ struct PullRequestDetailView: View {
             } catch {
                 actionError = "Could not \(action.title.lowercased()) !\(pullRequest.number): "
                     + error.localizedDescription
+                appState.pullRequestQueue.load(appState: appState, force: true)
             }
         }
     }
@@ -475,6 +476,48 @@ struct DiffFileCard: View {
 struct DiffHunkCard: View {
     let hunk: DiffHunk
 
+    /// Character ranges that actually changed within paired old/new lines —
+    /// the darker "word diff" emphasis GitHub layers on the row tint.
+    private let emphasis: [UUID: Range<Int>]
+
+    /// Visible width of the hunk, so short lines' tints still run edge to
+    /// edge — the scroll content is only as wide as the longest line.
+    @State private var visibleWidth: CGFloat = 0
+
+    init(hunk: DiffHunk) {
+        self.hunk = hunk
+        self.emphasis = Self.intralineEmphasis(hunk.lines)
+    }
+
+    /// Pair each run of deletions with the run of additions that follows it,
+    /// index-wise, and strip the common prefix and suffix of each pair — the
+    /// differing middle is what gets emphasized. Pairs that share nothing get
+    /// no emphasis: the whole-row tint already says the line was replaced.
+    static func intralineEmphasis(_ lines: [DiffLine]) -> [UUID: Range<Int>] {
+        var result: [UUID: Range<Int>] = [:]
+        var i = 0
+        while i < lines.count {
+            guard lines[i].kind == .deletion else { i += 1; continue }
+            var deletions: [Int] = []
+            while i < lines.count, lines[i].kind == .deletion { deletions.append(i); i += 1 }
+            var additions: [Int] = []
+            while i < lines.count, lines[i].kind == .addition { additions.append(i); i += 1 }
+            for (d, a) in zip(deletions, additions) {
+                let old = Array(lines[d].content)
+                let new = Array(lines[a].content)
+                var prefix = 0
+                while prefix < old.count, prefix < new.count, old[prefix] == new[prefix] { prefix += 1 }
+                var suffix = 0
+                while suffix < old.count - prefix, suffix < new.count - prefix,
+                      old[old.count - 1 - suffix] == new[new.count - 1 - suffix] { suffix += 1 }
+                guard prefix + suffix > 0 else { continue }
+                if prefix < old.count - suffix { result[lines[d].id] = prefix..<(old.count - suffix) }
+                if prefix < new.count - suffix { result[lines[a].id] = prefix..<(new.count - suffix) }
+            }
+        }
+        return result
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(hunk.header)
@@ -489,10 +532,18 @@ struct DiffHunkCard: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(hunk.lines) { line in
-                        DiffLineRow(line: line)
+                        DiffLineRow(line: line, emphasis: emphasis[line.id])
                     }
                 }
+                .frame(minWidth: visibleWidth, alignment: .leading)
             }
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { visibleWidth = geo.size.width }
+                        .onChange(of: geo.size.width) { _, width in visibleWidth = width }
+                }
+            )
         }
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .overlay(
@@ -508,13 +559,16 @@ struct DiffHunkCard: View {
 /// appearances read correctly.
 struct DiffLineRow: View {
     let line: DiffLine
+    /// Character range within `content` that actually changed, for the darker
+    /// word-diff tint layered on the row background.
+    var emphasis: Range<Int>? = nil
 
     var body: some View {
         HStack(spacing: 0) {
             numberCell(line.oldLine)
             numberCell(line.newLine)
             Rectangle().fill(gutterColor).frame(width: 3)
-            Text(prefix + line.content)
+            Text(attributedContent)
                 .appFont(fixed: 12, design: .monospaced)
                 .foregroundStyle(textColor)
                 .padding(.horizontal, 6)
@@ -523,6 +577,20 @@ struct DiffLineRow: View {
                 .textSelection(.enabled)
         }
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var attributedContent: AttributedString {
+        var text = AttributedString(prefix + line.content)
+        if let emphasis, emphasis.upperBound <= line.content.count {
+            let start = text.characters.index(text.startIndex, offsetBy: prefix.count + emphasis.lowerBound)
+            let end = text.characters.index(start, offsetBy: emphasis.count)
+            text[start..<end].backgroundColor = emphasisColor
+        }
+        return text
+    }
+
+    private var emphasisColor: Color {
+        line.kind == .addition ? Color.green.opacity(0.32) : Color.red.opacity(0.32)
     }
 
     private func numberCell(_ number: Int?) -> some View {

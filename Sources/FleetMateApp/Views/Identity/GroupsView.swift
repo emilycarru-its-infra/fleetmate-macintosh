@@ -311,16 +311,11 @@ struct GroupDisclosureRow: View {
                     Image(systemName: group.securityEnabled == true ? "shield.fill" : "person.3.fill")
                         .foregroundColor(.accentColor)
                     
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(group.displayName ?? "-")
-                            .appFont(.headline)
-                        if let description = group.description, !description.isEmpty {
-                            Text(description)
-                                .appFont(.caption)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
+                    // Just the name — every group's description is the same
+                    // pipeline boilerplate, so showing it doubled row height
+                    // while saying nothing.
+                    Text(group.displayName ?? "-")
+                        .appFont(.headline)
                     
                     Spacer()
                     

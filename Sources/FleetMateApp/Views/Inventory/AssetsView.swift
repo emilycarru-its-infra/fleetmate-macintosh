@@ -369,6 +369,8 @@ struct AssetsView: View {
                 }
             }
             .focusable()
+            // Keyboard focus without the blue AppKit ring around the whole pane.
+            .focusEffectDisabled()
             .onKeyPress(.upArrow) { moveAssetSelection(by: -1); return .handled }
             .onKeyPress(.downArrow) { moveAssetSelection(by: 1); return .handled }
         }
@@ -455,12 +457,27 @@ struct AssetsView: View {
         }
     }
 
-    /// Land a global-search hit: drop the query into the search field and clear
-    /// the handoff so it doesn't re-fire on the next visit.
+    /// Land a global-search hit: drop the query into the search field, select
+    /// the matching asset and open its sidebar — arriving filtered but
+    /// unselected left the detail pane closed.
     private func consumeInventorySearch(_ text: String?) {
         guard let text, !text.isEmpty else { return }
         searchText = text
         appState.navigateToInventorySearch = nil
+        let exact = appState.cachedAssets.first {
+            $0.serial?.caseInsensitiveCompare(text) == .orderedSame ||
+            $0.assetTag?.caseInsensitiveCompare(text) == .orderedSame ||
+            $0.displayName?.caseInsensitiveCompare(text) == .orderedSame
+        }
+        let loose = exact ?? appState.cachedAssets.first {
+            ($0.serial?.localizedCaseInsensitiveContains(text) ?? false) ||
+            ($0.assetTag?.localizedCaseInsensitiveContains(text) ?? false) ||
+            ($0.displayName?.localizedCaseInsensitiveContains(text) ?? false)
+        }
+        if let hit = loose {
+            selectedAsset = hit
+            selectedAssetIds = [hit.id]
+        }
     }
 
     /// Apply a dashboard widget's deep-linked filter (a status wedge or

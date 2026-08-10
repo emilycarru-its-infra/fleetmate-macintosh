@@ -189,7 +189,7 @@ final class TdxContractTests: XCTestCase {
 
     // MARK: - Feed
 
-    func testAddCommentPostsToTicketFeed() async throws {
+    func testAddCommentPostsNotificationEmailsToTicketFeed() async throws {
         StubURLProtocol.reset(stubs: stubs([
             StubURLProtocol.Stub(pathContains: "/tickets/12/feed", body: #"{"ID":555}"#)
         ]))
@@ -198,7 +198,7 @@ final class TdxContractTests: XCTestCase {
             ticketId: 12,
             comment: "On it",
             isPrivate: true,
-            notify: ["uid-1"]
+            notifyEmails: ["first.last@example.edu"]
         )
 
         let call = try onlyApiCall()
@@ -207,7 +207,7 @@ final class TdxContractTests: XCTestCase {
         let body = try XCTUnwrap(call.jsonObject)
         XCTAssertEqual(body["Comments"] as? String, "On it")
         XCTAssertEqual(body["IsPrivate"] as? Bool, true)
-        XCTAssertEqual(body["Notify"] as? [String], ["uid-1"])
+        XCTAssertEqual(body["Notify"] as? [String], ["first.last@example.edu"])
         XCTAssertEqual(entry?.id, 555)
     }
 

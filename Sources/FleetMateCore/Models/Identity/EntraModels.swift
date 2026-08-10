@@ -52,6 +52,59 @@ public struct EntraUser: Codable, Identifiable, Hashable, Sendable {
     public var email: String {
         mail ?? userPrincipalName ?? ""
     }
+
+    /// A lightweight row that can be created from an Intune device assignment.
+    /// The profile inspector replaces it with the complete Entra record when the
+    /// user is selected.
+    public init(
+        id: String? = nil,
+        displayName: String? = nil,
+        userPrincipalName: String? = nil,
+        accountEnabled: Bool? = nil,
+        jobTitle: String? = nil,
+        department: String? = nil,
+        mail: String? = nil
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.givenName = nil
+        self.surname = nil
+        self.userPrincipalName = userPrincipalName
+        self.userType = nil
+        self.accountEnabled = accountEnabled
+        self.createdDateTime = nil
+        self.lastPasswordChangeDateTime = nil
+        self.passwordPolicies = nil
+        self.jobTitle = jobTitle
+        self.companyName = nil
+        self.department = department
+        self.employeeId = nil
+        self.employeeType = nil
+        self.officeLocation = nil
+        self.mail = mail
+        self.otherMails = nil
+        self.mobilePhone = nil
+        self.businessPhones = nil
+        self.streetAddress = nil
+        self.city = nil
+        self.state = nil
+        self.postalCode = nil
+        self.country = nil
+        self.proxyAddresses = nil
+        self.usageLocation = nil
+        self.preferredLanguage = nil
+        self.onPremisesSyncEnabled = nil
+        self.onPremisesLastSyncDateTime = nil
+        self.onPremisesDistinguishedName = nil
+        self.onPremisesSamAccountName = nil
+        self.onPremisesSecurityIdentifier = nil
+        self.onPremisesImmutableId = nil
+        self.onPremisesUserPrincipalName = nil
+        self.onPremisesDomainName = nil
+        self.memberOf = nil
+        self.manager = nil
+        self.devices = nil
+    }
 }
 
 /// Lightweight reference to another user (e.g. a manager), fetched with a

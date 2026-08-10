@@ -163,7 +163,22 @@ struct DashboardView: View {
             buildActivityFeed()
             await loadAllSections()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in }
+        .task {
+            // The queue reflects mutable server state. Reconcile while the
+            // Dashboard is visible so PRs completed or abandoned elsewhere do
+            // not stay actionable for the cache's full five-minute lifetime.
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(60))
+                } catch {
+                    return
+                }
+                pullRequestModel.load(appState: appState, force: true)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            pullRequestModel.load(appState: appState, force: true)
+        }
         .onChange(of: appState.cachedDevices.count) { _, _ in refreshSection(.devices) }
         .onChange(of: appState.cachedAssets.count) { _, _ in refreshSection(.assets) }
         .onChange(of: appState.cachedTickets.count) { _, _ in refreshSection(.tickets) }

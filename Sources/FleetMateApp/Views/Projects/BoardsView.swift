@@ -248,8 +248,8 @@ struct BoardsView: View {
             }
             if appState.projects.loadedAt != nil {
                 // Warm cache: no fetch, but the filter categories are derived
-                // from the task list and do die with the view, so rebuild them.
-                filters.buildFromTasks(allTasks)
+                // from the loaded data and do die with the view, so rebuild them.
+                rebuildFilterValues()
             }
             consumePendingWorkItem()
         }
@@ -1457,77 +1457,23 @@ struct BoardsView: View {
 
     // MARK: - Load Shared Queries (List view)
 
-    /// Fetch every Shared Query in the resolved DevOps project and run them
-    /// all concurrently. Results are cached on AppState like the task list.
+    /// Delegates to AppState so the view and the launch preload share one
+    /// implementation, then rebuilds the filter picker values, which are
+    /// view-local and derived from both the task list and the query rows.
     private func loadQueries(force: Bool = false) {
-        guard canCreateWorkItem else { return }
-        let project = appState.devOpsService.resolvedProject
-        guard !project.isEmpty else {
-            dbg.debug("loadQueries: no resolved project yet", category: "boards")
-            return
-        }
-        if !force, appState.projects.queriesLoadedAt != nil { return }
-        let service = appState.devOpsService
-
         Task {
             isLoadingQueries = true
             defer { isLoadingQueries = false }
-            do {
-                let queries = try await service.getSharedQueries(project: project)
-                sharedQueries = queries
-
-                let runsById = await withTaskGroup(of: (String, StoredQueryRun)?.self) { group in
-                    for query in queries {
-                        group.addTask {
-                            do {
-                                let run = try await service.runStoredQuery(id: query.id, project: project)
-                                return (query.id, run)
-                            } catch {
-                                dbg.warn("Query '\(query.name)' failed: \(error)", category: "boards")
-                                return nil
-                            }
-                        }
-                    }
-                    var collected: [String: StoredQueryRun] = [:]
-                    for await result in group {
-                        if let (id, run) = result { collected[id] = run }
-                    }
-                    return collected
-                }
-
-                var display: [String: QueryRunDisplay] = [:]
-                for query in queries {
-                    guard let run = runsById[query.id] else { continue }
-                    let rows = run.rows.map {
-                        QueryDisplayRow(
-                            task: $0.item.asUnifiedTask(),
-                            depth: $0.depth,
-                            hasChildren: $0.hasChildren,
-                            queryId: query.id
-                        )
-                    }
-                    display[query.id] = QueryRunDisplay(
-                        query: query,
-                        rows: rows,
-                        truncated: run.truncated,
-                        areaBucket: QueryRunDisplay.areaBucket(rows: rows, queryName: query.name)
-                    )
-                }
-                queryRuns = display
-                appState.projects.queriesLoadedAt = Date()
-
-                // Filter pickers should offer values from query rows too, not
-                // just the recency-capped task list.
-                let queryTasks = display.values.flatMap { $0.rows.map(\.task) }
-                filters.buildFromTasks(allTasks + queryTasks)
-                dbg.info("Loaded \(display.count)/\(queries.count) shared queries with \(queryTasks.count) rows", category: "boards")
-            } catch {
-                dbg.error("loadQueries FAILED: \(error)", category: "boards")
-                if appState.projects.queriesLoadedAt == nil {
-                    appState.errorMessage = "Failed to load shared queries: \(error.localizedDescription)"
-                }
-            }
+            await appState.preloadSharedQueries(force: force)
+            rebuildFilterValues()
         }
+    }
+
+    /// Filter pickers should offer values from query rows too, not just the
+    /// recency-capped task list.
+    private func rebuildFilterValues() {
+        let queryTasks = queryRuns.values.flatMap { $0.rows.map(\.task) }
+        filters.buildFromTasks(allTasks + queryTasks)
     }
 
     // MARK: - Load Azure DevOps Boards

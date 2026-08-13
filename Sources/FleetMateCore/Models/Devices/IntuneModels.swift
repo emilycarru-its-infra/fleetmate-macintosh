@@ -504,6 +504,21 @@ public struct OffboardStepResult: Sendable, Identifiable {
     }
 }
 
+/// One step of a dry run: what would be sent, or why the step drops out.
+public struct OffboardPlannedStep: Sendable, Identifiable {
+    public let step: String
+    public let willRun: Bool
+    public let detail: String
+
+    public var id: String { step }
+
+    public init(step: String, willRun: Bool, detail: String) {
+        self.step = step
+        self.willRun = willRun
+        self.detail = detail
+    }
+}
+
 public struct OffboardResult: Sendable, Identifiable {
     public let identifier: String
     public let deviceName: String?

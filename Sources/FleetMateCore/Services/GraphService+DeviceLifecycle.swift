@@ -265,29 +265,128 @@ public extension GraphService {
         }
     }
 
+    // MARK: - Dry run
+
+    /// What an offboard would do, resolved against live data but writing
+    /// nothing.
+    ///
+    /// Shares every lookup with `offboardDevice`, so a preview cannot drift
+    /// from the run it describes: the ids printed here are the ids that would
+    /// be deleted.
+    func previewOffboard(_ device: IntuneDevice, plan: OffboardPlan) async -> [OffboardPlannedStep] {
+        var steps: [OffboardPlannedStep] = []
+        let platform = device.platform
+
+        switch plan.terminalAction {
+        case .wipe:
+            let body = plan.wipeOptions.requestBody(for: platform)
+            steps.append(OffboardPlannedStep(
+                step: "Wipe",
+                willRun: true,
+                detail: "POST managedDevices/\(device.id)/wipe \(Self.describe(body))"
+            ))
+        case .retire:
+            steps.append(OffboardPlannedStep(
+                step: "Retire",
+                willRun: true,
+                detail: "POST managedDevices/\(device.id)/retire"
+            ))
+        case .none:
+            steps.append(OffboardPlannedStep(step: "Wipe or retire", willRun: false, detail: "Not requested"))
+        }
+
+        if plan.deleteAutopilotRegistration {
+            let target = await resolveAutopilotTarget(for: device, platform: platform)
+            steps.append(OffboardPlannedStep(
+                step: "Delete Autopilot registration",
+                willRun: target.id != nil,
+                detail: target.id.map { "DELETE windowsAutopilotDeviceIdentities/\($0)" } ?? (target.skipReason ?? "skipped")
+            ))
+        }
+
+        if plan.entraAction != .none {
+            let label = plan.entraAction == .delete ? "Delete Entra device" : "Disable Entra device"
+            let target = await resolveEntraTarget(for: device)
+            let verb = plan.entraAction == .delete
+                ? "DELETE devices/"
+                : "PATCH devices/"
+            let suffix = plan.entraAction == .delete ? "" : " {\"accountEnabled\":false}"
+            steps.append(OffboardPlannedStep(
+                step: label,
+                willRun: target.id != nil,
+                detail: target.id.map { "\(verb)\($0)\(suffix)" } ?? (target.skipReason ?? "skipped")
+            ))
+        }
+
+        if plan.deleteIntuneRecord {
+            steps.append(OffboardPlannedStep(
+                step: "Delete Intune record",
+                willRun: true,
+                detail: "DELETE managedDevices/\(device.id)"
+            ))
+        }
+
+        return steps
+    }
+
+    /// Render a request body the way the dry run shows it — sorted so two runs
+    /// of the same plan print identically.
+    static func describe(_ body: [String: Any]) -> String {
+        let pairs = body.keys.sorted().map { key -> String in
+            let value = body[key]
+            if let bool = value as? Bool { return "\"\(key)\":\(bool)" }
+            if let string = value as? String { return "\"\(key)\":\"\(string)\"" }
+            return "\"\(key)\":\(String(describing: value ?? "null"))"
+        }
+        return "{" + pairs.joined(separator: ",") + "}"
+    }
+
     // MARK: - Offboard step helpers
 
-    private func autopilotStep(for device: IntuneDevice, platform: DevicePlatform) async -> OffboardStepResult {
+    /// Resolved downstream record, or why there is nothing to act on.
+    struct LifecycleTarget {
+        let id: String?
+        let skipReason: String?
+    }
+
+    private func resolveAutopilotTarget(for device: IntuneDevice, platform: DevicePlatform) async -> LifecycleTarget {
         guard platform == .windows else {
-            return OffboardStepResult(step: "Delete Autopilot registration", outcome: .skipped, detail: "\(platform.displayName) devices have no Autopilot registration")
+            return LifecycleTarget(id: nil, skipReason: "\(platform.displayName) devices have no Autopilot registration")
         }
         guard let serial = device.serialNumber, !serial.isEmpty else {
-            return OffboardStepResult(step: "Delete Autopilot registration", outcome: .skipped, detail: "Device has no serial number to match on")
+            return LifecycleTarget(id: nil, skipReason: "Device has no serial number to match on")
         }
         guard let autopilot = try? await getAutopilotDeviceBySerial(serial), let autopilotId = autopilot.id else {
-            return OffboardStepResult(step: "Delete Autopilot registration", outcome: .skipped, detail: "No Autopilot registration for \(serial)")
+            return LifecycleTarget(id: nil, skipReason: "No Autopilot registration for \(serial)")
+        }
+        return LifecycleTarget(id: autopilotId, skipReason: nil)
+    }
+
+    private func resolveEntraTarget(for device: IntuneDevice) async -> LifecycleTarget {
+        guard let azureADDeviceId = device.azureADDeviceId, !azureADDeviceId.isEmpty else {
+            return LifecycleTarget(id: nil, skipReason: "Device is not Entra-joined or registered")
+        }
+        guard let entraDevice = try? await getEntraDevice(deviceId: azureADDeviceId), let objectId = entraDevice.id else {
+            return LifecycleTarget(id: nil, skipReason: "No Entra device object for \(azureADDeviceId)")
+        }
+        return LifecycleTarget(id: objectId, skipReason: nil)
+    }
+
+    private func autopilotStep(for device: IntuneDevice, platform: DevicePlatform) async -> OffboardStepResult {
+        let label = "Delete Autopilot registration"
+        let target = await resolveAutopilotTarget(for: device, platform: platform)
+        guard let autopilotId = target.id else {
+            return OffboardStepResult(step: label, outcome: .skipped, detail: target.skipReason)
         }
         let results = (try? await deleteAutopilotDevices([autopilotId])) ?? []
-        return Self.step("Delete Autopilot registration", from: results.first)
+        return Self.step(label, from: results.first)
     }
 
     private func entraStep(for device: IntuneDevice, action: OffboardPlan.EntraAction) async -> OffboardStepResult {
         let label = action == .delete ? "Delete Entra device" : "Disable Entra device"
-        guard let azureADDeviceId = device.azureADDeviceId, !azureADDeviceId.isEmpty else {
-            return OffboardStepResult(step: label, outcome: .skipped, detail: "Device is not Entra-joined or registered")
-        }
-        guard let entraDevice = try? await getEntraDevice(deviceId: azureADDeviceId), let objectId = entraDevice.id else {
-            return OffboardStepResult(step: label, outcome: .skipped, detail: "No Entra device object for \(azureADDeviceId)")
+        let target = await resolveEntraTarget(for: device)
+        guard let objectId = target.id else {
+            return OffboardStepResult(step: label, outcome: .skipped, detail: target.skipReason)
         }
 
         if action == .delete {

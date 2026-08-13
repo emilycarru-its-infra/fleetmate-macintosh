@@ -26,7 +26,7 @@ public class GraphService {
     private var groupCache: [String: (group: EntraGroup, expiry: Date)] = [:]
     private let cacheDuration: TimeInterval
 
-    private let baseUrl = "https://graph.microsoft.com/v1.0"
+    let baseUrl = "https://graph.microsoft.com/v1.0"
     private let graphResourceId = "https://graph.microsoft.com"
 
     // Transport: by default every Graph call runs inside an `aze` session (the
@@ -119,7 +119,7 @@ public class GraphService {
         }
     }
 
-    private func headers() async -> HTTPHeaders? {
+    func headers() async -> HTTPHeaders? {
         // In aze mode auth happens inside the session — return a non-nil empty
         // header set so existing `guard let headers` call sites pass through.
         if useAze { return [:] }
@@ -141,7 +141,7 @@ public class GraphService {
     ///
     /// This is a *page* size, not a cap on the result: every paged call here
     /// follows `@odata.nextLink` until it reaches `limit`.
-    private func pageSize(for limit: Int) -> Int {
+    func pageSize(for limit: Int) -> Int {
         min(limit, config.graphPageSize, Self.maxGraphPageSize)
     }
 
@@ -324,20 +324,35 @@ public class GraphService {
         }
     }
 
-    /// Factory-reset devices. `keepEnrollmentData`/`keepUserData` map to the
-    /// Intune wipe action options (default full wipe).
-    public func wipeDevices(_ deviceIds: [String], keepEnrollmentData: Bool = false, keepUserData: Bool = false) async throws -> [BulkActionResult] {
+    /// Factory-reset devices. The request body is trimmed to the keys the given
+    /// platform accepts — see `WipeOptions.requestBody(for:)`. `.other` sends
+    /// only `keepEnrollmentData`/`keepUserData`, which every platform takes.
+    public func wipeDevices(
+        _ deviceIds: [String],
+        options: WipeOptions = WipeOptions(),
+        platform: DevicePlatform = .other
+    ) async throws -> [BulkActionResult] {
+        try await wipeDevices(deviceIds.map { (id: $0, platform: platform) }, options: options)
+    }
+
+    /// Factory-reset devices whose platforms are already known, so a mixed
+    /// macOS/Windows selection still gets the right options per device.
+    public func wipeDevices(_ devices: [IntuneDevice], options: WipeOptions = WipeOptions()) async throws -> [BulkActionResult] {
+        try await wipeDevices(devices.map { (id: $0.id, platform: $0.platform) }, options: options)
+    }
+
+    private func wipeDevices(_ targets: [(id: String, platform: DevicePlatform)], options: WipeOptions) async throws -> [BulkActionResult] {
         guard let headers = await headers() else { return [] }
 
         return await withTaskGroup(of: BulkActionResult.self) { group in
-            for deviceId in deviceIds {
+            for target in targets {
                 group.addTask {
-                    let url = "\(self.baseUrl)/deviceManagement/managedDevices/\(deviceId)/wipe"
+                    let url = "\(self.baseUrl)/deviceManagement/managedDevices/\(target.id)/wipe"
                     do {
-                        try await self.postAction(url: url, body: ["keepEnrollmentData": keepEnrollmentData, "keepUserData": keepUserData], headers: headers)
-                        return BulkActionResult(deviceId: deviceId, success: true)
+                        try await self.postAction(url: url, body: options.requestBody(for: target.platform), headers: headers)
+                        return BulkActionResult(deviceId: target.id, success: true)
                     } catch {
-                        return BulkActionResult(deviceId: deviceId, success: false, error: error.localizedDescription)
+                        return BulkActionResult(deviceId: target.id, success: false, error: error.localizedDescription)
                     }
                 }
             }
@@ -855,7 +870,7 @@ public class GraphService {
 
     // MARK: - Private Helpers
 
-    private func fetch<T: Decodable>(url: String, headers: HTTPHeaders) async throws -> T {
+    func fetch<T: Decodable>(url: String, headers: HTTPHeaders) async throws -> T {
         if useAze {
             let data = try await azeTransport.send(GraphRequest(method: .get, url: url))
             return try GraphService.graphDecoder.decode(T.self, from: data)
@@ -874,7 +889,7 @@ public class GraphService {
         }
     }
 
-    private func postAction(url: String, body: [String: Any]? = nil, headers: HTTPHeaders) async throws {
+    func postAction(url: String, body: [String: Any]? = nil, headers: HTTPHeaders) async throws {
         if useAze {
             let bodyData = try body.map { try JSONSerialization.data(withJSONObject: $0) }
             _ = try await azeTransport.send(GraphRequest(method: .post, url: url, body: bodyData))
@@ -898,7 +913,7 @@ public class GraphService {
         }
     }
 
-    private func patchAction(url: String, body: [String: Any], headers: HTTPHeaders) async throws {
+    func patchAction(url: String, body: [String: Any], headers: HTTPHeaders) async throws {
         if useAze {
             let bodyData = try JSONSerialization.data(withJSONObject: body)
             _ = try await azeTransport.send(GraphRequest(method: .patch, url: url, body: bodyData))
@@ -918,7 +933,7 @@ public class GraphService {
         }
     }
 
-    private func deleteAction(url: String, headers: HTTPHeaders) async throws {
+    func deleteAction(url: String, headers: HTTPHeaders) async throws {
         if useAze {
             _ = try await azeTransport.send(GraphRequest(method: .delete, url: url))
             return
@@ -937,7 +952,7 @@ public class GraphService {
         }
     }
 
-    private func post<T: Decodable>(url: String, body: [String: Any], headers: HTTPHeaders) async throws -> T {
+    func post<T: Decodable>(url: String, body: [String: Any], headers: HTTPHeaders) async throws -> T {
         if useAze {
             let bodyData = try JSONSerialization.data(withJSONObject: body)
             let data = try await azeTransport.send(GraphRequest(method: .post, url: url, body: bodyData))

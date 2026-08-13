@@ -26,8 +26,11 @@ struct BoardsView: View {
     // View state. Anything genuinely transient — what you typed, what you
     // selected, which sheet is open — stays here. Loaded data lives on AppState
     // (see below) so a tab switch doesn't throw it away.
-    @State private var viewMode: BoardsViewMode = .board
+    // List first: the List mode renders every Shared Query expanded — that,
+    // not the kanban board, is the view Projects should open into.
+    @State private var viewMode: BoardsViewMode = .list
     @State private var isLoading = false
+    @State private var isLoadingQueries = false
     @State private var searchText = ""
     @State private var filterProvider: String? = nil
     @State private var filters = FilterState<TaskFilterCategory>()
@@ -132,6 +135,24 @@ struct BoardsView: View {
         get { appState.projects.statesPerType }
         nonmutating set { appState.projects.statesPerType = newValue }
     }
+    private var sharedQueries: [AdoSharedQuery] {
+        get { appState.projects.sharedQueries }
+        nonmutating set { appState.projects.sharedQueries = newValue }
+    }
+    private var queryRuns: [String: QueryRunDisplay] {
+        get { appState.projects.queryRuns }
+        nonmutating set { appState.projects.queryRuns = newValue }
+    }
+    /// Collapse state as a Binding for the queries list.
+    private var collapsedQueryIdsBinding: Binding<Set<String>> {
+        Binding(
+            get: { appState.projects.collapsedQueryIds },
+            set: { appState.projects.collapsedQueryIds = $0 }
+        )
+    }
+    private var selectedTaskBinding: Binding<UnifiedTask?> {
+        Binding(get: { selectedTask }, set: { selectedTask = $0 })
+    }
 
     // Computed: can we create GitHub issues? (need owner + repo)
     private var canCreateIssue: Bool {
@@ -194,7 +215,7 @@ struct BoardsView: View {
         .onAppCommand { command in
             switch command {
             case .refresh:
-                loadTasks(); loadGhProjectInfo(); loadBoards()
+                loadTasks(); loadGhProjectInfo(); loadBoards(); loadQueries(force: true)
             case .newItem:
                 // The toolbar's + is a menu of three item types; ⌘N takes the
                 // first one this project can actually create.
@@ -221,7 +242,11 @@ struct BoardsView: View {
                 loadBoards()
                 loadTeamMembersForMenu()
                 loadContextMenuData()
-            } else {
+            }
+            if appState.projects.queriesLoadedAt == nil {
+                loadQueries()
+            }
+            if appState.projects.loadedAt != nil {
                 // Warm cache: no fetch, but the filter categories are derived
                 // from the task list and do die with the view, so rebuild them.
                 filters.buildFromTasks(allTasks)
@@ -306,39 +331,43 @@ struct BoardsView: View {
             .help("Filter by backend")
             .onChange(of: filterProvider) { loadTasks() }
             .onChange(of: appState.devOpsProjectReady) { _, ready in
-                if ready { loadTasks(); loadBoards() }
+                if ready { loadTasks(); loadBoards(); loadQueries() }
             }
 
-            Picker("Group", selection: $groupBy) {
-                ForEach(GroupByOption.allCases, id: \.self) { opt in
-                    Text(opt.rawValue).tag(opt)
-                }
-            }
-            .pickerStyle(.menu)
-            .frame(width: 130)
-            .labelsHidden()
-            .help("Group by")
-            .onChange(of: groupBy) { _, newValue in
-                if newValue == .column && availableBoards.isEmpty {
-                    loadBoards()
-                }
-            }
-
-            if groupBy == .column {
-                if isLoadingBoards {
-                    ProgressView().controlSize(.small)
-                } else if !availableBoards.isEmpty {
-                    Picker("Board", selection: selectedBoardNameBinding) {
-                        Text("Select board\u{2026}").tag(nil as String?)
-                        ForEach(availableBoards) { board in
-                            Text(board.name ?? "Unknown").tag(board.name as String?)
-                        }
+            // Group/board pickers only steer the kanban board; the List mode
+            // is the stored-queries view and has no use for them.
+            if viewMode == .board {
+                Picker("Group", selection: $groupBy) {
+                    ForEach(GroupByOption.allCases, id: \.self) { opt in
+                        Text(opt.rawValue).tag(opt)
                     }
-                    .pickerStyle(.menu)
-                    .frame(width: 150)
-                    .labelsHidden()
-                    .help("Board")
-                    .onChange(of: selectedBoardName) { loadBoardColumns() }
+                }
+                .pickerStyle(.menu)
+                .frame(width: 130)
+                .labelsHidden()
+                .help("Group by")
+                .onChange(of: groupBy) { _, newValue in
+                    if newValue == .column && availableBoards.isEmpty {
+                        loadBoards()
+                    }
+                }
+
+                if groupBy == .column {
+                    if isLoadingBoards {
+                        ProgressView().controlSize(.small)
+                    } else if !availableBoards.isEmpty {
+                        Picker("Board", selection: selectedBoardNameBinding) {
+                            Text("Select board\u{2026}").tag(nil as String?)
+                            ForEach(availableBoards) { board in
+                                Text(board.name ?? "Unknown").tag(board.name as String?)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 150)
+                        .labelsHidden()
+                        .help("Board")
+                        .onChange(of: selectedBoardName) { loadBoardColumns() }
+                    }
                 }
             }
 
@@ -349,7 +378,7 @@ struct BoardsView: View {
                     ? "line.3.horizontal.decrease.circle.fill"
                     : "line.3.horizontal.decrease.circle")
             }
-            .disabled(allTasks.isEmpty)
+            .disabled(allTasks.isEmpty && queryRuns.isEmpty)
             .help("Filters")
             .popover(isPresented: $showFilters, arrowEdge: .bottom) {
                 projectsFilterPopover
@@ -393,10 +422,10 @@ struct BoardsView: View {
                 .help("Sync tasks to Planner / Markdown")
             }
 
-            Button(action: { loadTasks(); loadGhProjectInfo(); loadBoards() }) {
+            Button(action: { loadTasks(); loadGhProjectInfo(); loadBoards(); loadQueries(force: true) }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
-            .disabled(isLoading || isLoadingGhInfo)
+            .disabled(isLoading || isLoadingGhInfo || isLoadingQueries)
             .help("Refresh")
         }
     }
@@ -658,7 +687,56 @@ struct BoardsView: View {
         }
     }
 
+    /// The stored-queries view carries the List mode whenever Azure DevOps is
+    /// in play; picking another backend explicitly falls back to the flat list.
+    private var showQueriesList: Bool {
+        canCreateWorkItem && (filterProvider == nil || filterProvider == "azdevops")
+    }
+
+    /// Query runs grouped by area-path bucket, queries A→Z inside each bucket,
+    /// buckets A→Z with "General" last.
+    private var querySections: [(bucket: String, runs: [QueryRunDisplay])] {
+        let runs = sharedQueries.compactMap { queryRuns[$0.id] }
+        let grouped = Dictionary(grouping: runs, by: \.areaBucket)
+        return grouped.keys
+            .sorted { a, b in
+                if a == "General" { return false }
+                if b == "General" { return true }
+                return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
+            }
+            .map { bucket in
+                (bucket, grouped[bucket]!.sorted {
+                    $0.query.name.localizedCaseInsensitiveCompare($1.query.name) == .orderedAscending
+                })
+            }
+    }
+
+    @ViewBuilder
     private var listContent: some View {
+        if showQueriesList {
+            QueriesListView(
+                sections: querySections,
+                isLoading: isLoadingQueries,
+                hasLoadedOnce: appState.projects.queriesLoadedAt != nil,
+                searchText: searchText,
+                filterMatch: { filters.matches($0) },
+                filtersActive: filters.hasActiveFilters,
+                collapsedQueryIds: collapsedQueryIdsBinding,
+                selectedTask: selectedTaskBinding,
+                onOpenQuery: { query in
+                    let urlString = appState.devOpsService.storedQueryWebUrl(queryId: query.id)
+                    if let url = URL(string: urlString) {
+                        NSWorkspace.shared.open(url)
+                    }
+                },
+                contextMenuBuilder: { task in taskContextMenu(for: task) }
+            )
+        } else {
+            legacyListContent
+        }
+    }
+
+    private var legacyListContent: some View {
         Group {
             if isLoading {
                 VStack {
@@ -1377,6 +1455,81 @@ struct BoardsView: View {
         }
     }
 
+    // MARK: - Load Shared Queries (List view)
+
+    /// Fetch every Shared Query in the resolved DevOps project and run them
+    /// all concurrently. Results are cached on AppState like the task list.
+    private func loadQueries(force: Bool = false) {
+        guard canCreateWorkItem else { return }
+        let project = appState.devOpsService.resolvedProject
+        guard !project.isEmpty else {
+            dbg.debug("loadQueries: no resolved project yet", category: "boards")
+            return
+        }
+        if !force, appState.projects.queriesLoadedAt != nil { return }
+        let service = appState.devOpsService
+
+        Task {
+            isLoadingQueries = true
+            defer { isLoadingQueries = false }
+            do {
+                let queries = try await service.getSharedQueries(project: project)
+                sharedQueries = queries
+
+                let runsById = await withTaskGroup(of: (String, StoredQueryRun)?.self) { group in
+                    for query in queries {
+                        group.addTask {
+                            do {
+                                let run = try await service.runStoredQuery(id: query.id, project: project)
+                                return (query.id, run)
+                            } catch {
+                                dbg.warn("Query '\(query.name)' failed: \(error)", category: "boards")
+                                return nil
+                            }
+                        }
+                    }
+                    var collected: [String: StoredQueryRun] = [:]
+                    for await result in group {
+                        if let (id, run) = result { collected[id] = run }
+                    }
+                    return collected
+                }
+
+                var display: [String: QueryRunDisplay] = [:]
+                for query in queries {
+                    guard let run = runsById[query.id] else { continue }
+                    let rows = run.rows.map {
+                        QueryDisplayRow(
+                            task: $0.item.asUnifiedTask(),
+                            depth: $0.depth,
+                            hasChildren: $0.hasChildren,
+                            queryId: query.id
+                        )
+                    }
+                    display[query.id] = QueryRunDisplay(
+                        query: query,
+                        rows: rows,
+                        truncated: run.truncated,
+                        areaBucket: QueryRunDisplay.areaBucket(rows: rows, queryName: query.name)
+                    )
+                }
+                queryRuns = display
+                appState.projects.queriesLoadedAt = Date()
+
+                // Filter pickers should offer values from query rows too, not
+                // just the recency-capped task list.
+                let queryTasks = display.values.flatMap { $0.rows.map(\.task) }
+                filters.buildFromTasks(allTasks + queryTasks)
+                dbg.info("Loaded \(display.count)/\(queries.count) shared queries with \(queryTasks.count) rows", category: "boards")
+            } catch {
+                dbg.error("loadQueries FAILED: \(error)", category: "boards")
+                if appState.projects.queriesLoadedAt == nil {
+                    appState.errorMessage = "Failed to load shared queries: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
     // MARK: - Load Azure DevOps Boards
 
     private func loadBoards() {
@@ -1447,9 +1600,10 @@ struct BoardsView: View {
                 boardProjectMap = projectMap
                 boardTeamMap = teamMap
                 dbg.info("Loaded \(validated.count) validated boards from project '\(resolvedProject)': \(validated.compactMap(\.name).joined(separator: ", "))", category: "boards")
-                // Auto-select the first validated board if none selected
-                if selectedBoardName == nil, let first = validated.first?.name {
-                    selectedBoardName = first
+                // Auto-select Initiatives when present — the birds-eye board
+                // is the one the Board mode should open into — else the first.
+                if selectedBoardName == nil, let pick = preferredBoardName(in: validated) {
+                    selectedBoardName = pick
                     loadBoardColumns()
                 }
             } catch {
@@ -1457,8 +1611,8 @@ struct BoardsView: View {
                 do {
                     let boards = try await appState.devOpsService.getBoards()
                     availableBoards = boards
-                    if selectedBoardName == nil, let first = boards.first?.name {
-                        selectedBoardName = first
+                    if selectedBoardName == nil, let pick = preferredBoardName(in: boards) {
+                        selectedBoardName = pick
                         loadBoardColumns()
                     }
                 } catch {
@@ -1466,6 +1620,13 @@ struct BoardsView: View {
                 }
             }
         }
+    }
+
+    /// Boards should show "Initiatives" first when it exists; a board picked
+    /// alphabetically or by API order buries the birds-eye view.
+    private func preferredBoardName(in boards: [Board]) -> String? {
+        let names = boards.compactMap(\.name)
+        return names.first { $0.caseInsensitiveCompare("Initiatives") == .orderedSame } ?? names.first
     }
 
     private func loadBoardColumns() {
@@ -1491,10 +1652,43 @@ struct BoardsView: View {
                 }
                 boardAllowedTypes = types
                 dbg.info("Loaded \(boardColumnDefs.count) columns for board '\(boardName)': \(boardColumnDefs.map(\.name).joined(separator: ", ")), types: \(types.sorted().joined(separator: ", "))", category: "boards")
+                ensureBoardTypeItems()
             } catch {
                 dbg.debug("Failed to load board columns: \(error)", category: "boards")
                 boardColumnDefs = []
                 boardAllowedTypes = []
+            }
+        }
+    }
+
+    /// Backfill every work item of the selected board's types. The org-wide
+    /// task fetch keeps only the 500 most recently changed items, so items
+    /// that sit still for months — Initiatives above all — never made it onto
+    /// the board at all.
+    private func ensureBoardTypeItems() {
+        guard let boardName = selectedBoardName else { return }
+        let project = boardProjectMap[boardName] ?? appState.devOpsService.resolvedProject
+        let types = Array(boardAllowedTypes)
+        guard !types.isEmpty, !project.isEmpty else { return }
+        Task {
+            do {
+                let items = try await appState.devOpsService.getWorkItemsOfTypes(types, project: project)
+                let tasks = items.map { $0.asUnifiedTask() }
+                var seen = Set(allTasks.map(\.compositeKey))
+                var merged = allTasks
+                var added = 0
+                for task in tasks where !seen.contains(task.compositeKey) {
+                    merged.append(task)
+                    seen.insert(task.compositeKey)
+                    added += 1
+                }
+                if added > 0 {
+                    allTasks = merged
+                    filters.buildFromTasks(merged)
+                }
+                dbg.info("Board '\(boardName)': backfilled \(added) items of types \(types.sorted().joined(separator: ", "))", category: "boards")
+            } catch {
+                dbg.debug("Board type backfill failed: \(error)", category: "boards")
             }
         }
     }

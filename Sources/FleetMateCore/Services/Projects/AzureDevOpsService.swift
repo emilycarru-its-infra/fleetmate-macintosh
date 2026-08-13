@@ -117,7 +117,9 @@ public class AzureDevOpsService {
     // MARK: - REST API Helper
 
     /// Make an authenticated REST API request and decode the JSON response.
-    private func request<T: Decodable>(
+    /// Internal (not private) so same-module extensions in other files —
+    /// AzureDevOpsService+Queries — can build on it.
+    func request<T: Decodable>(
         _ method: String,
         path: String,
         body: Data? = nil,

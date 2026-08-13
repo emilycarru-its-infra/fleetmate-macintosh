@@ -190,74 +190,9 @@ public actor AzureDevOpsTaskProvider: TaskProvider {
     // MARK: - Mapping Helpers
     
     private func mapToUnifiedTask(_ workItem: WorkItem) -> UnifiedTask {
-        let fields = workItem.fields
-        
-        // Parse date strings to Date objects
-        let dateFormatter = ISO8601DateFormatter()
-        dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        
-        let createdDate: Date = {
-            if let dateStr = fields?.createdDate {
-                return dateFormatter.date(from: dateStr) ?? Date.distantPast
-            }
-            return Date.distantPast
-        }()
-        
-        let changedDate: Date = {
-            if let dateStr = fields?.changedDate {
-                return dateFormatter.date(from: dateStr) ?? Date.distantPast
-            }
-            return Date.distantPast
-        }()
-        
-        // Extract assignee display name from IdentityRef
-        let assigneeList: [String] = {
-            if let assignedTo = fields?.assignedTo {
-                return [assignedTo.displayName ?? assignedTo.uniqueName ?? ""]
-            }
-            return []
-        }()
-        
-        // Build provider-specific metadata for filtering
-        var metadata: [String: String] = [:]
-        if let area = fields?.areaPath { metadata["areaPath"] = area }
-        if let iter = fields?.iterationPath { metadata["iterationPath"] = iter }
-        if let wiType = fields?.workItemType { metadata["workItemType"] = wiType }
-        if let state = fields?.state { metadata["state"] = state }
-        if let board = fields?.boardColumn { metadata["boardColumn"] = board }
+        workItem.asUnifiedTask()
+    }
 
-        return UnifiedTask(
-            id: String(workItem.id),
-            provider: providerId,
-            title: fields?.title ?? "",
-            description: fields?.description,
-            state: mapStateFromAdo(fields?.state ?? "New"),
-            assignees: assigneeList,
-            labels: parseTags(fields?.tags),
-            bucket: fields?.iterationPath,
-            dueDate: nil,
-            createdAt: createdDate,
-            updatedAt: changedDate,
-            closedAt: nil,
-            externalUrl: workItem.url?.replacingOccurrences(of: "_apis/wit/workItems", with: "_workitems/edit"),
-            priority: fields?.priority,
-            metadata: metadata
-        )
-    }
-    
-    private func mapStateFromAdo(_ adoState: String) -> TaskState {
-        switch adoState.lowercased() {
-        case "new", "to do", "proposed":
-            return .open
-        case "active", "in progress", "doing", "committed":
-            return .inProgress
-        case "closed", "done", "resolved", "completed", "removed":
-            return .closed
-        default:
-            return .open
-        }
-    }
-    
     private func mapStateToAdo(_ state: TaskState) -> String {
         switch state {
         case .open:
@@ -267,16 +202,6 @@ public actor AzureDevOpsTaskProvider: TaskProvider {
         case .closed:
             return "Closed"
         }
-    }
-    
-    private func parseTags(_ tags: String?) -> [String] {
-        guard let tags = tags, !tags.isEmpty else {
-            return []
-        }
-        
-        return tags.components(separatedBy: CharacterSet(charactersIn: ";,"))
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
     }
     
     /// Escape a value for safe inclusion in a WIQL single-quoted string literal.

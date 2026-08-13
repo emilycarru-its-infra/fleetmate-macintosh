@@ -14,6 +14,7 @@ struct DevOpsCommand: AsyncParsableCommand {
             UpdateItemSubcommand.self,
             SprintsSubcommand.self,
             BoardsSubcommand.self,
+            QueriesSubcommand.self,
             FromErrorSubcommand.self,
             DevOpsTestSubcommand.self
         ],

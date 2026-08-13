@@ -87,6 +87,16 @@ public struct WorkItemQueryResult: Codable {
     public let queryResultType: String?
     public let asOf: String?
     public let workItems: [WorkItemReference]?
+    /// Present instead of `workItems` when the query is tree or one-hop:
+    /// edges where a nil `source` marks a root item.
+    public let workItemRelations: [WorkItemLink]?
+}
+
+/// One edge in a tree / one-hop WIQL result.
+public struct WorkItemLink: Codable {
+    public let rel: String?
+    public let source: WorkItemReference?
+    public let target: WorkItemReference?
 }
 
 public struct WorkItemReference: Codable {

@@ -85,12 +85,15 @@ struct IntuneWipeSubcommand: AsyncParsableCommand {
     @Option(help: "macOS 12+: Erase All Content and Settings behaviour (default, doNotObliterate, obliterateWithWarning, always)")
     var obliteration: WipeOptions.ObliterationBehavior?
 
+    @Flag(help: "Resolve the device and print the request without sending it")
+    var dryRun: Bool = false
+
     @Flag(help: "Required to actually perform the wipe")
     var confirm: Bool = false
 
     func run() async throws {
-        guard confirm else {
-            print("This will factory-reset \(identifier). Re-run with --confirm to proceed.".yellow)
+        guard dryRun || confirm else {
+            print("This will factory-reset \(identifier). Re-run with --confirm to proceed, or --dry-run to see what would be sent.".yellow)
             throw ExitCode.failure
         }
         let service = try graphServiceOrExit()
@@ -102,8 +105,23 @@ struct IntuneWipeSubcommand: AsyncParsableCommand {
             obliterationBehavior: obliteration
         )
 
+        let device = try await resolveDevice(service, identifier)
+
+        if dryRun {
+            let platform = device?.platform ?? .other
+            printDryRunHeader(device: device, identifier: identifier)
+            if device == nil {
+                print("  No Intune device matches — the request would go out with only the keys every platform accepts.".yellow)
+            }
+            print("  POST managedDevices/\(device?.id ?? identifier)/wipe")
+            print("       \(GraphService.describe(options.requestBody(for: platform)))")
+            printDroppedWipeOptions(options, platform: platform)
+            print("\nDry run — nothing was sent.".cyan)
+            return
+        }
+
         let results: [BulkActionResult]
-        if let device = try await resolveDevice(service, identifier) {
+        if let device {
             print("Wiping \(device.deviceName ?? identifier) (\(device.platform.displayName))".cyan)
             results = try await service.wipeDevices([device], options: options)
         } else {
@@ -112,6 +130,36 @@ struct IntuneWipeSubcommand: AsyncParsableCommand {
         }
         try reportBulk(results, action: "wipe")
     }
+}
+
+/// Name the options that were asked for but dropped for this platform, so a
+/// dry run explains a body that is smaller than the flags implied.
+private func printDroppedWipeOptions(_ options: WipeOptions, platform: DevicePlatform) {
+    let body = options.requestBody(for: platform)
+    var dropped: [String] = []
+
+    if options.keepUserData && (body["keepUserData"] as? Bool) != true {
+        dropped.append("--keep-user-data (not supported on \(platform.displayName))")
+    }
+    if options.useProtectedWipe && body["useProtectedWipe"] == nil {
+        dropped.append("--protected (Windows only)")
+    }
+    if let code = options.macOsUnlockCode, !code.isEmpty, body["macOsUnlockCode"] == nil {
+        dropped.append("--unlock-code (macOS/iOS only)")
+    }
+    if options.obliterationBehavior != nil && body["obliterationBehavior"] == nil {
+        dropped.append("--obliteration (macOS only)")
+    }
+
+    guard !dropped.isEmpty else { return }
+    print("  Dropped for this platform:".yellow)
+    for item in dropped { print("    – \(item)".yellow) }
+}
+
+private func printDryRunHeader(device: IntuneDevice?, identifier: String) {
+    let name = device?.deviceName ?? identifier
+    let platform = device?.platform.displayName ?? "unknown platform"
+    print("\n" + "Dry run".bold + " — \(name) (\(platform))")
 }
 
 // MARK: - Retire
@@ -125,15 +173,27 @@ struct IntuneRetireSubcommand: AsyncParsableCommand {
     @Argument(help: "Serial number or managedDevice id")
     var identifier: String
 
+    @Flag(help: "Resolve the device and print the request without sending it")
+    var dryRun: Bool = false
+
     @Flag(help: "Required to actually perform the retire")
     var confirm: Bool = false
 
     func run() async throws {
-        guard confirm else {
-            print("This will unenroll \(identifier). Re-run with --confirm to proceed.".yellow)
+        guard dryRun || confirm else {
+            print("This will unenroll \(identifier). Re-run with --confirm to proceed, or --dry-run to see what would be sent.".yellow)
             throw ExitCode.failure
         }
         let service = try graphServiceOrExit()
+
+        if dryRun {
+            let device = try await resolveDevice(service, identifier)
+            printDryRunHeader(device: device, identifier: identifier)
+            print("  POST managedDevices/\(device?.id ?? identifier)/retire")
+            print("\nDry run — nothing was sent.".cyan)
+            return
+        }
+
         let id = try await resolveDeviceId(service, identifier)
         let results = try await service.retireDevices([id])
         try reportBulk(results, action: "retire")
@@ -159,12 +219,15 @@ struct IntuneFreshStartSubcommand: AsyncParsableCommand {
     @Flag(inversion: .prefixedNo, help: "Preserve the user's data and account")
     var keepUserData: Bool = true
 
+    @Flag(help: "Resolve the device and print the request without sending it")
+    var dryRun: Bool = false
+
     @Flag(help: "Required to actually perform the Fresh Start")
     var confirm: Bool = false
 
     func run() async throws {
-        guard confirm else {
-            print("This will reinstall Windows on \(identifier). Re-run with --confirm to proceed.".yellow)
+        guard dryRun || confirm else {
+            print("This will reinstall Windows on \(identifier). Re-run with --confirm to proceed, or --dry-run to see what would be sent.".yellow)
             throw ExitCode.failure
         }
         let service = try graphServiceOrExit()
@@ -173,6 +236,15 @@ struct IntuneFreshStartSubcommand: AsyncParsableCommand {
             print("\(device.deviceName ?? identifier) is \(device.platform.displayName) — Fresh Start is Windows only.".red)
             throw ExitCode.failure
         }
+
+        if dryRun {
+            printDryRunHeader(device: device, identifier: identifier)
+            print("  POST managedDevices/\(device?.id ?? identifier)/cleanWindowsDevice")
+            print("       {\"keepUserData\":\(keepUserData)}")
+            print("\nDry run — nothing was sent.".cyan)
+            return
+        }
+
         let results = try await service.freshStartDevices([device?.id ?? identifier], keepUserData: keepUserData)
         try reportBulk(results, action: "fresh start")
     }
@@ -194,15 +266,27 @@ struct IntuneDeleteRecordSubcommand: AsyncParsableCommand {
     @Argument(help: "Serial number or managedDevice id")
     var identifier: String
 
+    @Flag(help: "Resolve the device and print the request without sending it")
+    var dryRun: Bool = false
+
     @Flag(help: "Required to actually delete the record")
     var confirm: Bool = false
 
     func run() async throws {
-        guard confirm else {
-            print("This will delete the Intune record for \(identifier). Re-run with --confirm to proceed.".yellow)
+        guard dryRun || confirm else {
+            print("This will delete the Intune record for \(identifier). Re-run with --confirm to proceed, or --dry-run to see what would be sent.".yellow)
             throw ExitCode.failure
         }
         let service = try graphServiceOrExit()
+
+        if dryRun {
+            let device = try await resolveDevice(service, identifier)
+            printDryRunHeader(device: device, identifier: identifier)
+            print("  DELETE managedDevices/\(device?.id ?? identifier)")
+            print("\nDry run — nothing was sent.".cyan)
+            return
+        }
+
         let id = try await resolveDeviceId(service, identifier)
         let results = try await service.deleteManagedDevices([id])
         try reportBulk(results, action: "delete record")
@@ -250,12 +334,15 @@ struct IntuneOffboardSubcommand: AsyncParsableCommand {
     @Flag(help: "Delete the Intune managedDevice record last")
     var deleteRecord: Bool = false
 
+    @Flag(help: "Resolve every downstream record and print the plan without writing anything")
+    var dryRun: Bool = false
+
     @Flag(help: "Required to actually offboard")
     var confirm: Bool = false
 
     func run() async throws {
-        guard confirm else {
-            print("This will offboard \(identifier). Re-run with --confirm to proceed.".yellow)
+        guard dryRun || confirm else {
+            print("This will offboard \(identifier). Re-run with --confirm to proceed, or --dry-run to see the plan.".yellow)
             throw ExitCode.failure
         }
         let service = try graphServiceOrExit()
@@ -276,6 +363,22 @@ struct IntuneOffboardSubcommand: AsyncParsableCommand {
             deleteAutopilotRegistration: deleteAutopilot,
             entraAction: entra
         )
+
+        if dryRun {
+            printDryRunHeader(device: device, identifier: identifier)
+            let steps = await service.previewOffboard(device, plan: plan)
+            for step in steps {
+                if step.willRun {
+                    print("  → \(step.step)".green)
+                    print("       \(step.detail)")
+                } else {
+                    print("  – \(step.step): \(step.detail)".yellow)
+                }
+            }
+            printDroppedWipeOptions(plan.wipeOptions, platform: device.platform)
+            print("\nDry run — nothing was sent.".cyan)
+            return
+        }
 
         print("Offboarding \(device.deviceName ?? identifier) (\(device.platform.displayName))".cyan)
         let result = await service.offboardDevice(device, plan: plan)

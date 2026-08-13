@@ -134,16 +134,27 @@ struct AutopilotDeleteSubcommand: AsyncParsableCommand {
     @Argument(help: "Serial number or Autopilot device id")
     var identifier: String
 
+    @Flag(help: "Resolve the registration and print the request without sending it")
+    var dryRun: Bool = false
+
     @Flag(help: "Required to actually delete the registration")
     var confirm: Bool = false
 
     func run() async throws {
-        guard confirm else {
-            print("This will release the Autopilot registration for \(identifier). Re-run with --confirm to proceed.".yellow)
+        guard dryRun || confirm else {
+            print("This will release the Autopilot registration for \(identifier). Re-run with --confirm to proceed, or --dry-run to see what would be sent.".yellow)
             throw ExitCode.failure
         }
         let service = try autopilotServiceOrExit()
         let autopilotId = try await resolveAutopilotId(service, identifier)
+
+        if dryRun {
+            print("\n" + "Dry run".bold + " — Autopilot \(identifier)")
+            print("  DELETE windowsAutopilotDeviceIdentities/\(autopilotId)")
+            print("\nDry run — nothing was sent.".cyan)
+            return
+        }
+
         let results = try await service.deleteAutopilotDevices([autopilotId])
 
         guard let result = results.first else {

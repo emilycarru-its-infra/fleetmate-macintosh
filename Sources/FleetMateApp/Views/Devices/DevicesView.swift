@@ -28,8 +28,13 @@ struct DevicesView: View {
     @State private var showRebootConfirmation = false
     @State private var showWipeConfirmation = false
     @State private var showRetireConfirmation = false
-    @State private var wipeKeepUserData = false
-    
+    @State private var showFreshStartConfirmation = false
+    @State private var showOffboardConfirmation = false
+    @State private var wipeOptions = WipeOptions()
+    @State private var freshStartKeepUserData = true
+    @State private var offboardPlan = OffboardPlan()
+    @State private var offboardResults: [OffboardResult] = []
+
     // App selection for reinstall
     @State private var availableApps: [MobileApp] = []
     @State private var selectedAppId: String?
@@ -72,7 +77,33 @@ struct DevicesView: View {
         devices.filter { selectedDeviceIds.contains($0.id) }
     }
 
-    var body: some View {
+    /// Fresh Start is a Windows-only Intune action, so it runs against the
+    /// Windows subset rather than refusing a mixed selection outright.
+    var windowsSelection: [IntuneDevice] {
+        selectedDevices.filter { $0.platform == .windows }
+    }
+
+    private var offboardSummary: String {
+        var parts: [String] = []
+        switch offboardPlan.terminalAction {
+        case .wipe: parts.append("factory-reset")
+        case .retire: parts.append("retire")
+        case .none: break
+        }
+        if offboardPlan.deleteAutopilotRegistration { parts.append("delete the Autopilot registration") }
+        switch offboardPlan.entraAction {
+        case .disable: parts.append("disable the Entra device object")
+        case .delete: parts.append("delete the Entra device object")
+        case .none: break
+        }
+        if offboardPlan.deleteIntuneRecord { parts.append("delete the Intune record") }
+
+        guard !parts.isEmpty else { return "No offboard steps are selected." }
+        let steps = parts.count == 1 ? parts[0] : parts.dropLast().joined(separator: ", ") + " and " + parts[parts.count - 1]
+        return "This will \(steps) for \(selectedDeviceIds.count) device(s). This cannot be undone."
+    }
+
+    private var mainContent: some View {
         HSplitView {
             // Main device list
             VStack(alignment: .leading, spacing: 0) {
@@ -171,7 +202,12 @@ struct DevicesView: View {
                     showRebootConfirmation: $showRebootConfirmation,
                     showWipeConfirmation: $showWipeConfirmation,
                     showRetireConfirmation: $showRetireConfirmation,
-                    wipeKeepUserData: $wipeKeepUserData,
+                    showFreshStartConfirmation: $showFreshStartConfirmation,
+                    showOffboardConfirmation: $showOffboardConfirmation,
+                    wipeOptions: $wipeOptions,
+                    freshStartKeepUserData: $freshStartKeepUserData,
+                    offboardPlan: $offboardPlan,
+                    offboardResults: $offboardResults,
                     availableApps: $availableApps,
                     selectedAppId: $selectedAppId,
                     appSearchText: $appSearchText,
@@ -205,38 +241,53 @@ struct DevicesView: View {
         }
         .onChange(of: appState.navigateToModuleFilter) { _, _ in consumeModuleFilter() }
         .task { consumeModuleFilter() }
-        .alert("Confirm Reboot", isPresented: $showRebootConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Reboot", role: .destructive) {
-                performReboot()
+    }
+
+    /// The confirmation alerts, split out of `body`. Chained inline alongside
+    /// the rest of the modifiers they push the view builder past what the type
+    /// checker will solve in reasonable time.
+    private func actionAlerts<V: View>(_ content: V) -> some View {
+        content
+            .alert("Confirm Reboot", isPresented: $showRebootConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Reboot", role: .destructive) { performReboot() }
+            } message: {
+                Text("Are you sure you want to reboot \(selectedDeviceIds.count) device(s)? This will interrupt any active user sessions.")
             }
-        } message: {
-            Text("Are you sure you want to reboot \(selectedDeviceIds.count) device(s)? This will interrupt any active user sessions.")
-        }
-        .alert("Confirm Lock", isPresented: $showLockConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Lock", role: .destructive) {
-                performLock()
+            .alert("Confirm Lock", isPresented: $showLockConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Lock", role: .destructive) { performLock() }
+            } message: {
+                Text("Are you sure you want to lock \(selectedDeviceIds.count) device(s)?")
             }
-        } message: {
-            Text("Are you sure you want to lock \(selectedDeviceIds.count) device(s)?")
-        }
-        .alert("Confirm Wipe", isPresented: $showWipeConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Wipe", role: .destructive) {
-                performWipe()
+            .alert("Confirm Wipe", isPresented: $showWipeConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Wipe", role: .destructive) { performWipe() }
+            } message: {
+                Text("This will factory-reset \(selectedDeviceIds.count) device(s)\(wipeOptions.keepUserData ? ", keeping user data where the platform allows" : ", erasing all data"). This cannot be undone.")
             }
-        } message: {
-            Text("This will factory-reset \(selectedDeviceIds.count) device(s)\(wipeKeepUserData ? ", keeping user data" : ", erasing all data"). This cannot be undone.")
-        }
-        .alert("Confirm Retire", isPresented: $showRetireConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Retire", role: .destructive) {
-                performRetire()
+            .alert("Confirm Retire", isPresented: $showRetireConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Retire", role: .destructive) { performRetire() }
+            } message: {
+                Text("This will remove company data and unenroll \(selectedDeviceIds.count) device(s), leaving personal data intact.")
             }
-        } message: {
-            Text("This will remove company data and unenroll \(selectedDeviceIds.count) device(s), leaving personal data intact.")
-        }
+            .alert("Confirm Fresh Start", isPresented: $showFreshStartConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Fresh Start", role: .destructive) { performFreshStart() }
+            } message: {
+                Text("This will reinstall Windows on \(windowsSelection.count) device(s)\(freshStartKeepUserData ? ", preserving user data" : ", removing user data"). Preinstalled OEM apps are removed and the device stays enrolled.")
+            }
+            .alert("Confirm Offboard", isPresented: $showOffboardConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Offboard", role: .destructive) { performOffboard() }
+            } message: {
+                Text(offboardSummary)
+            }
+    }
+
+    var body: some View {
+        actionAlerts(mainContent)
         .onAppCommand { command in
             switch command {
             case .refresh:       loadDevices()
@@ -400,7 +451,9 @@ struct DevicesView: View {
             defer { isPerformingAction = false }
 
             do {
-                let results = try await appState.graphService.wipeDevices(Array(selectedDeviceIds), keepUserData: wipeKeepUserData)
+                // Pass the device records, not bare ids, so each one's wipe body
+                // is built for its own platform.
+                let results = try await appState.graphService.wipeDevices(selectedDevices, options: wipeOptions)
                 let successful = results.filter { $0.success }.count
                 let failed = results.count - successful
 
@@ -412,6 +465,61 @@ struct DevicesView: View {
             } catch {
                 actionMessage = "Error: \(error.localizedDescription)"
             }
+        }
+    }
+
+    private func performFreshStart() {
+        let targets = windowsSelection
+        guard !targets.isEmpty else {
+            actionMessage = "Fresh Start applies to Windows devices only — none selected"
+            return
+        }
+
+        Task {
+            isPerformingAction = true
+            actionMessage = "Starting Fresh Start on \(targets.count) device(s)..."
+            defer { isPerformingAction = false }
+
+            do {
+                let results = try await appState.graphService.freshStartDevices(
+                    targets.map { $0.id },
+                    keepUserData: freshStartKeepUserData
+                )
+                let successful = results.filter { $0.success }.count
+                let failed = results.count - successful
+
+                if failed == 0 {
+                    actionMessage = "Successfully sent Fresh Start to \(successful) device(s)"
+                } else {
+                    actionMessage = "Fresh Start sent to \(successful) device(s), \(failed) failed"
+                }
+            } catch {
+                actionMessage = "Error: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func performOffboard() {
+        let targets = selectedDevices
+        guard !targets.isEmpty else { return }
+
+        Task {
+            isPerformingAction = true
+            actionMessage = "Offboarding \(targets.count) device(s)..."
+            offboardResults = []
+            defer { isPerformingAction = false }
+
+            var plan = offboardPlan
+            plan.wipeOptions = wipeOptions
+
+            let results = await appState.graphService.offboardDevices(targets, plan: plan)
+            offboardResults = results.sorted { ($0.deviceName ?? $0.identifier) < ($1.deviceName ?? $1.identifier) }
+
+            let succeeded = results.filter { $0.success }.count
+            let failed = results.count - succeeded
+            actionMessage = failed == 0
+                ? "Offboarded \(succeeded) device(s)"
+                : "Offboarded \(succeeded) device(s), \(failed) with failures"
         }
     }
 
@@ -483,19 +591,37 @@ struct DeviceActionsPanel: View {
     @Binding var showRebootConfirmation: Bool
     @Binding var showWipeConfirmation: Bool
     @Binding var showRetireConfirmation: Bool
-    @Binding var wipeKeepUserData: Bool
+    @Binding var showFreshStartConfirmation: Bool
+    @Binding var showOffboardConfirmation: Bool
+    @Binding var wipeOptions: WipeOptions
+    @Binding var freshStartKeepUserData: Bool
+    @Binding var offboardPlan: OffboardPlan
+    @Binding var offboardResults: [OffboardResult]
     @Binding var availableApps: [MobileApp]
     @Binding var selectedAppId: String?
     @Binding var appSearchText: String
-    
+
     let onSync: () -> Void
     let onReboot: () -> Void
     let onLock: () -> Void
     let onLoadApps: () -> Void
     let onReinstallApp: () -> Void
-    
+
     @State private var expandedSections: Set<String> = ["sync", "restart", "lock", "app", "update"]
-    
+
+    /// Platforms present in the selection. Wipe options and whole sections are
+    /// gated on this — Graph rejects a wipe body carrying a key that is foreign
+    /// to the target platform, so a mixed selection only ever gets the keys all
+    /// its platforms share.
+    private var platforms: Set<DevicePlatform> {
+        Set(selectedDevices.map { $0.platform })
+    }
+
+    private var hasWindows: Bool { platforms.contains(.windows) }
+    private var hasApple: Bool { platforms.contains(.macOS) || platforms.contains(.ios) }
+    private var isMixedPlatform: Bool { platforms.count > 1 }
+    private var windowsCount: Int { selectedDevices.filter { $0.platform == .windows }.count }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
@@ -656,8 +782,46 @@ struct DeviceActionsPanel: View {
                                 .appFont(.caption)
                                 .foregroundColor(.secondary)
 
-                            Toggle("Keep user data", isOn: $wipeKeepUserData)
+                            if isMixedPlatform {
+                                Label("Mixed selection — each device gets only the options its platform supports.", systemImage: "info.circle")
+                                    .appFont(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            Toggle("Leave the device enrolled", isOn: $wipeOptions.keepEnrollmentData)
                                 .appFont(.caption)
+
+                            if hasWindows {
+                                Toggle("Keep user data (Windows)", isOn: $wipeOptions.keepUserData)
+                                    .appFont(.caption)
+
+                                Toggle("Protected wipe (Windows)", isOn: $wipeOptions.useProtectedWipe)
+                                    .appFont(.caption)
+                                    .help("Retries until it succeeds and cannot be circumvented by the user. A device interrupted mid-wipe may not boot.")
+                            }
+
+                            if hasApple {
+                                TextField("Recovery PIN (macOS/iOS)", text: Binding(
+                                    get: { wipeOptions.macOsUnlockCode ?? "" },
+                                    set: { wipeOptions.macOsUnlockCode = $0.isEmpty ? nil : $0 }
+                                ))
+                                .textFieldStyle(.roundedBorder)
+                                .appFont(.caption)
+                            }
+
+                            if platforms.contains(.macOS) {
+                                Picker("Erase behaviour", selection: Binding(
+                                    get: { wipeOptions.obliterationBehavior ?? .default },
+                                    set: { wipeOptions.obliterationBehavior = $0 }
+                                )) {
+                                    ForEach(WipeOptions.ObliterationBehavior.allCases) { behavior in
+                                        Text(behavior.displayName).tag(behavior)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .appFont(.caption)
+                                .help("macOS 12 and later. Erase All Content and Settings is instant; the fallback full erase is not.")
+                            }
 
                             Button(action: { showWipeConfirmation = true }) {
                                 Label("Wipe Device", systemImage: "trash.fill")
@@ -666,6 +830,121 @@ struct DeviceActionsPanel: View {
                             .buttonStyle(.borderedProminent)
                             .tint(.red)
                             .disabled(isPerformingAction)
+                        }
+                    }
+
+                    Divider()
+
+                    // Fresh Start Section — Windows only
+                    if hasWindows {
+                        ActionAccordion(
+                            title: "Fresh Start",
+                            icon: "sparkles",
+                            isExpanded: expandedSections.contains("freshstart"),
+                            onToggle: { toggleSection("freshstart") }
+                        ) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Reinstall Windows and remove preinstalled OEM apps. The device stays enrolled and Entra-joined.")
+                                    .appFont(.caption)
+                                    .foregroundColor(.secondary)
+
+                                if isMixedPlatform {
+                                    Text("Applies to the \(windowsCount) Windows device(s) in the selection.")
+                                        .appFont(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                Toggle("Keep user data and account", isOn: $freshStartKeepUserData)
+                                    .appFont(.caption)
+
+                                Button(action: { showFreshStartConfirmation = true }) {
+                                    Label("Fresh Start", systemImage: "sparkles")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.orange)
+                                .disabled(isPerformingAction)
+                            }
+                        }
+
+                        Divider()
+                    }
+
+                    // Offboard Section
+                    ActionAccordion(
+                        title: "Offboard Device",
+                        icon: "shippingbox.and.arrow.backward",
+                        isExpanded: expandedSections.contains("offboard"),
+                        onToggle: { toggleSection("offboard") }
+                    ) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Decommission across Intune, Autopilot and Entra in one pass. Steps that do not apply to a device's platform are skipped.")
+                                .appFont(.caption)
+                                .foregroundColor(.secondary)
+
+                            Picker("Intune action", selection: $offboardPlan.terminalAction) {
+                                ForEach(OffboardPlan.TerminalAction.allCases) { action in
+                                    Text(action.displayName).tag(action)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .appFont(.caption)
+
+                            if offboardPlan.terminalAction == .wipe {
+                                Text("Uses the wipe options set above.")
+                                    .appFont(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+
+                            Toggle("Delete the Autopilot registration", isOn: $offboardPlan.deleteAutopilotRegistration)
+                                .appFont(.caption)
+                                .help("Windows only. Releases the hardware hash so the device can be re-registered elsewhere.")
+
+                            Picker("Entra device", selection: $offboardPlan.entraAction) {
+                                ForEach(OffboardPlan.EntraAction.allCases) { action in
+                                    Text(action.displayName).tag(action)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .appFont(.caption)
+
+                            Toggle("Delete the Intune record", isOn: $offboardPlan.deleteIntuneRecord)
+                                .appFont(.caption)
+
+                            if offboardPlan.deleteIntuneRecord && offboardPlan.terminalAction != .none {
+                                Label("The pending action lives on the Intune record — deleting it before the device checks in cancels the \(offboardPlan.terminalAction == .wipe ? "wipe" : "retire").", systemImage: "exclamationmark.triangle")
+                                    .appFont(.caption)
+                                    .foregroundColor(.orange)
+                            }
+
+                            Button(action: { showOffboardConfirmation = true }) {
+                                Label("Offboard Device", systemImage: "shippingbox.and.arrow.backward")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                            .disabled(isPerformingAction)
+
+                            if !offboardResults.isEmpty {
+                                Divider()
+                                ForEach(offboardResults) { result in
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(result.deviceName ?? result.identifier)
+                                            .appFont(.caption)
+                                            .fontWeight(.medium)
+                                        ForEach(result.steps) { step in
+                                            HStack(alignment: .top, spacing: 4) {
+                                                Image(systemName: stepIcon(step.outcome))
+                                                    .foregroundColor(stepColor(step.outcome))
+                                                Text(step.detail.map { "\(step.step) — \($0)" } ?? step.step)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            .appFont(.caption)
+                                        }
+                                    }
+                                    .padding(.vertical, 2)
+                                }
+                            }
                         }
                     }
 
@@ -753,6 +1032,22 @@ struct DeviceActionsPanel: View {
             } else {
                 expandedSections.insert(section)
             }
+        }
+    }
+
+    private func stepIcon(_ outcome: OffboardStepResult.Outcome) -> String {
+        switch outcome {
+        case .succeeded: return "checkmark.circle.fill"
+        case .skipped: return "minus.circle"
+        case .failed: return "xmark.circle.fill"
+        }
+    }
+
+    private func stepColor(_ outcome: OffboardStepResult.Outcome) -> Color {
+        switch outcome {
+        case .succeeded: return .green
+        case .skipped: return .secondary
+        case .failed: return .red
         }
     }
 }

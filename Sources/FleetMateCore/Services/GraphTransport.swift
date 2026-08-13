@@ -46,6 +46,14 @@ public struct GraphDomainRouter: Sendable {
         if lower.contains("/devicemanagement/") || lower.contains("/deviceappmanagement/") {
             return .devices
         }
+        // Entra device objects are directory data, but only DevOps-Devices
+        // holds Device.ReadWrite.All — the identity MI can read them and not
+        // disable or delete them, so the whole /devices collection goes to the
+        // devices identity. Nested paths like /users/{id}/registeredDevices are
+        // unaffected; they match on their own prefix below.
+        if lower.contains("/v1.0/devices") || lower.contains("/beta/devices") {
+            return .devices
+        }
         // Everything else we touch today (users, groups, directory devices,
         // memberOf) is directory data → DevOps-Identity.
         return .identity

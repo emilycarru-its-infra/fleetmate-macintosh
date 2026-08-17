@@ -47,6 +47,62 @@ struct QueryRunDisplay: Identifiable {
     }
 }
 
+// MARK: - Columns
+
+/// The grid's columns, mirroring the Azure DevOps query results grid.
+/// Title is the flexible column; the rest carry user-resizable widths.
+enum QueriesColumn: String, CaseIterable {
+    case id, title, state, tags, assignee, changed
+
+    var header: String {
+        switch self {
+        case .id: return "ID"
+        case .title: return "Title"
+        case .state: return "State"
+        case .tags: return "Tags"
+        case .assignee: return "Assigned To"
+        case .changed: return "Changed"
+        }
+    }
+
+    var minWidth: Double {
+        switch self {
+        case .id: return 36
+        case .title: return 120
+        default: return 56
+        }
+    }
+}
+
+/// Current column widths as a plain value, passed into each row so rows and
+/// header stay in lockstep. Title is the flexible remainder and carries no
+/// stored width.
+struct QueriesColumnWidths {
+    var id: Double = 44
+    var state: Double = 90
+    var tags: Double = 140
+    var assignee: Double = 130
+    var changed: Double = 80
+
+    func width(_ column: QueriesColumn) -> Double {
+        switch column {
+        case .id: return id
+        case .title: return 0
+        case .state: return state
+        case .tags: return tags
+        case .assignee: return assignee
+        case .changed: return changed
+        }
+    }
+}
+
+/// Active sort. `nil` means the query's own order (tree order for tree
+/// queries) — the default, and the only mode that keeps indentation.
+struct QueriesSort: Equatable {
+    var column: QueriesColumn
+    var ascending: Bool
+}
+
 // MARK: - Queries List View
 
 /// The Projects List view: every Shared Query rendered like the Azure DevOps
@@ -63,6 +119,62 @@ struct QueriesListView<MenuContent: View>: View {
     @Binding var selectedTask: UnifiedTask?
     let onOpenQuery: (AdoSharedQuery) -> Void
     @ViewBuilder var contextMenuBuilder: (UnifiedTask) -> MenuContent
+
+    // Persisted, user-resizable widths. Stored flat on the view so writes
+    // re-render; bundled into QueriesColumnWidths for the rows.
+    @AppStorage("queriesList.width.id") private var idWidth: Double = 44
+    @AppStorage("queriesList.width.state") private var stateWidth: Double = 90
+    @AppStorage("queriesList.width.tags") private var tagsWidth: Double = 140
+    @AppStorage("queriesList.width.assignee") private var assigneeWidth: Double = 130
+    @AppStorage("queriesList.width.changed") private var changedWidth: Double = 80
+
+    @State private var sort: QueriesSort? = nil
+    /// Width of the column being dragged, captured at drag start so the
+    /// translation applies to a stable baseline.
+    @State private var dragBaseWidth: Double? = nil
+
+    private var columnWidths: QueriesColumnWidths {
+        QueriesColumnWidths(
+            id: idWidth, state: stateWidth, tags: tagsWidth,
+            assignee: assigneeWidth, changed: changedWidth
+        )
+    }
+
+    private func setWidth(_ column: QueriesColumn, to value: Double) {
+        let clamped = max(column.minWidth, min(value, 400))
+        switch column {
+        case .id: idWidth = clamped
+        case .title: break
+        case .state: stateWidth = clamped
+        case .tags: tagsWidth = clamped
+        case .assignee: assigneeWidth = clamped
+        case .changed: changedWidth = clamped
+        }
+    }
+
+    init(
+        sections: [(bucket: String, runs: [QueryRunDisplay])],
+        isLoading: Bool,
+        hasLoadedOnce: Bool,
+        searchText: String,
+        filterMatch: @escaping (UnifiedTask) -> Bool,
+        filtersActive: Bool,
+        collapsedQueryIds: Binding<Set<String>>,
+        selectedTask: Binding<UnifiedTask?>,
+        onOpenQuery: @escaping (AdoSharedQuery) -> Void,
+        @ViewBuilder contextMenuBuilder: @escaping (UnifiedTask) -> MenuContent
+    ) {
+        self.sections = sections
+        self.isLoading = isLoading
+        self.hasLoadedOnce = hasLoadedOnce
+        self.searchText = searchText
+        self.filterMatch = filterMatch
+        self.filtersActive = filtersActive
+        self._collapsedQueryIds = collapsedQueryIds
+        self._selectedTask = selectedTask
+        self.onOpenQuery = onOpenQuery
+        self.contextMenuBuilder = contextMenuBuilder
+    }
 
     var body: some View {
         Group {
@@ -82,7 +194,11 @@ struct QueriesListView<MenuContent: View>: View {
                     Spacer()
                 }
             } else {
-                queryList
+                VStack(spacing: 0) {
+                    columnHeaderRow
+                    Divider()
+                    queryList
+                }
             }
         }
     }
@@ -106,6 +222,120 @@ struct QueriesListView<MenuContent: View>: View {
         .focusEffectDisabled()
         .onKeyPress(.upArrow) { moveSelection(by: -1); return .handled }
         .onKeyPress(.downArrow) { moveSelection(by: 1); return .handled }
+    }
+
+    // MARK: Column header
+
+    private var columnHeaderRow: some View {
+        HStack(spacing: 8) {
+            headerCell(.id)
+                .frame(width: columnWidths.id, alignment: .trailing)
+            resizeHandle(.id)
+            headerCell(.title)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            headerCell(.state)
+                .frame(width: columnWidths.state, alignment: .leading)
+            resizeHandle(.state)
+            headerCell(.tags)
+                .frame(width: columnWidths.tags, alignment: .leading)
+            resizeHandle(.tags)
+            headerCell(.assignee)
+                .frame(width: columnWidths.assignee, alignment: .leading)
+            resizeHandle(.assignee)
+            headerCell(.changed)
+                .frame(width: columnWidths.changed, alignment: .trailing)
+            resizeHandle(.changed)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 5)
+        .background(.bar)
+    }
+
+    private func headerCell(_ column: QueriesColumn) -> some View {
+        Button {
+            cycleSort(column)
+        } label: {
+            HStack(spacing: 3) {
+                Text(column.header)
+                    .appFont(.caption, weight: .semibold)
+                    .foregroundColor(sort?.column == column ? .primary : .secondary)
+                if let sort, sort.column == column {
+                    Image(systemName: sort.ascending ? "chevron.up" : "chevron.down")
+                        .appFont(fixed: 8, weight: .bold)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .lineLimit(1)
+        }
+        .buttonStyle(.plain)
+        .help("Sort by \(column.header)")
+    }
+
+    /// Click cycles ascending → descending → back to query order.
+    private func cycleSort(_ column: QueriesColumn) {
+        if let current = sort, current.column == column {
+            sort = current.ascending ? QueriesSort(column: column, ascending: false) : nil
+        } else {
+            sort = QueriesSort(column: column, ascending: true)
+        }
+    }
+
+    /// Slim draggable divider to the right of a fixed-width column.
+    private func resizeHandle(_ column: QueriesColumn) -> some View {
+        Rectangle()
+            .fill(Color.secondary.opacity(0.25))
+            .frame(width: 1, height: 14)
+            .padding(.horizontal, 2)
+            .contentShape(Rectangle().inset(by: -3))
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        if dragBaseWidth == nil {
+                            dragBaseWidth = columnWidths.width(column)
+                        }
+                        if let base = dragBaseWidth {
+                            setWidth(column, to: base + value.translation.width)
+                        }
+                    }
+                    .onEnded { _ in dragBaseWidth = nil }
+            )
+            .onHover { hovering in
+                if hovering { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+    }
+
+    // MARK: Sorting
+
+    /// Rows in display order for one query: the query's own order by default,
+    /// or flat-sorted by the active column. Sorting breaks tree hierarchy, so
+    /// sorted rows drop their indentation, matching the ADO grid.
+    private func displayRows(_ rows: [QueryDisplayRow]) -> [QueryDisplayRow] {
+        guard let sort else { return rows }
+        let sorted = rows.sorted { a, b in
+            let ordered: Bool
+            switch sort.column {
+            case .id:
+                ordered = (Int(a.task.id) ?? 0) < (Int(b.task.id) ?? 0)
+            case .title:
+                ordered = a.task.title.localizedCaseInsensitiveCompare(b.task.title) == .orderedAscending
+            case .state:
+                let sa = a.task.metadata["state"] ?? ""
+                let sb = b.task.metadata["state"] ?? ""
+                ordered = sa.localizedCaseInsensitiveCompare(sb) == .orderedAscending
+            case .tags:
+                let ta = a.task.labels.first ?? ""
+                let tb = b.task.labels.first ?? ""
+                ordered = ta.localizedCaseInsensitiveCompare(tb) == .orderedAscending
+            case .assignee:
+                let aa = a.task.assignees.first ?? ""
+                let ab = b.task.assignees.first ?? ""
+                ordered = aa.localizedCaseInsensitiveCompare(ab) == .orderedAscending
+            case .changed:
+                ordered = a.task.updatedAt < b.task.updatedAt
+            }
+            return sort.ascending ? ordered : !ordered
+        }
+        return sorted
     }
 
     // MARK: Filtering
@@ -173,7 +403,7 @@ struct QueriesListView<MenuContent: View>: View {
     private var flatVisibleTasks: [UnifiedTask] {
         visibleSections.flatMap { section in
             section.runs.flatMap { run, rows in
-                collapsedQueryIds.contains(run.id) ? [] : rows.map(\.task)
+                collapsedQueryIds.contains(run.id) ? [] : displayRows(rows).map(\.task)
             }
         }
     }
@@ -220,10 +450,12 @@ struct QueriesListView<MenuContent: View>: View {
                         .padding(.leading, 44)
                         .padding(.vertical, 6)
                 } else {
-                    ForEach(rows) { row in
+                    ForEach(displayRows(rows)) { row in
                         QueryWorkItemRow(
                             row: row,
-                            isSelected: selectedTask?.compositeKey == row.task.compositeKey
+                            isSelected: selectedTask?.compositeKey == row.task.compositeKey,
+                            widths: columnWidths,
+                            flattened: sort != nil
                         )
                         .contentShape(Rectangle())
                         .contextMenu { contextMenuBuilder(row.task) }
@@ -296,10 +528,13 @@ struct QueriesListView<MenuContent: View>: View {
 
 /// One result row, echoing the Azure DevOps query grid columns:
 /// ID · type icon · title (indented by tree depth) · state · tags ·
-/// assignee · changed date.
+/// assignee · changed date. Column widths come from the shared resizable
+/// set; `flattened` drops the tree indent while a sort is active.
 struct QueryWorkItemRow: View {
     let row: QueryDisplayRow
     let isSelected: Bool
+    var widths = QueriesColumnWidths()
+    var flattened = false
 
     private var task: UnifiedTask { row.task }
 
@@ -309,11 +544,12 @@ struct QueryWorkItemRow: View {
                 .appFont(.caption)
                 .monospacedDigit()
                 .foregroundColor(.secondary)
-                .frame(width: 44, alignment: .trailing)
+                .frame(width: widths.id, alignment: .trailing)
+            spacer(.id)
 
             HStack(spacing: 6) {
                 Color.clear
-                    .frame(width: CGFloat(row.depth) * 18, height: 1)
+                    .frame(width: flattened ? 0 : CGFloat(row.depth) * 18, height: 1)
                 Image(systemName: typeIcon.symbol)
                     .appFont(fixed: 12)
                     .foregroundColor(typeIcon.color)
@@ -331,7 +567,8 @@ struct QueryWorkItemRow: View {
                     .appFont(.caption)
                     .foregroundColor(.secondary)
             }
-            .frame(width: 90, alignment: .leading)
+            .frame(width: widths.state, alignment: .leading)
+            spacer(.state)
 
             HStack(spacing: 4) {
                 ForEach(task.labels.prefix(2), id: \.self) { label in
@@ -344,22 +581,31 @@ struct QueryWorkItemRow: View {
                         .cornerRadius(3)
                 }
             }
-            .frame(width: 140, alignment: .leading)
+            .frame(width: widths.tags, alignment: .leading)
+            spacer(.tags)
 
             Text(task.assignees.first ?? "")
                 .appFont(.caption)
                 .foregroundColor(.secondary)
                 .lineLimit(1)
-                .frame(width: 130, alignment: .leading)
+                .frame(width: widths.assignee, alignment: .leading)
+            spacer(.assignee)
 
             Text(changedDateText)
                 .appFont(.caption)
                 .foregroundColor(.secondary)
-                .frame(width: 80, alignment: .trailing)
+                .frame(width: widths.changed, alignment: .trailing)
+            spacer(.changed)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 5)
         .background(isSelected ? Color.accentColor.opacity(0.1) : Color.clear)
+    }
+
+    /// Mirrors the header's resize-handle footprint so row columns line up
+    /// with header columns exactly.
+    private func spacer(_ column: QueriesColumn) -> some View {
+        Color.clear.frame(width: 5, height: 1)
     }
 
     private var changedDateText: String {

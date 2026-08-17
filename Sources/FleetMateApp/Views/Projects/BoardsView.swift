@@ -31,6 +31,9 @@ struct BoardsView: View {
     @State private var viewMode: BoardsViewMode = .list
     @State private var isLoading = false
     @State private var isLoadingQueries = false
+    /// Items of the selected board's types, fetched without the recency cap.
+    /// Kept apart from allTasks so loadTasks() reloads don't wipe them.
+    @State private var boardBackfillTasks: [UnifiedTask] = []
     @State private var searchText = ""
     @State private var filterProvider: String? = nil
     @State private var filters = FilterState<TaskFilterCategory>()
@@ -163,8 +166,10 @@ struct BoardsView: View {
 
     // Computed: can we create DevOps work items?
     private var canCreateWorkItem: Bool {
-        guard let azdo = (try? FleetMateConfig.load())?.tasks?.providers.azdevops else { return false }
-        return azdo.enabled
+        // An org in config is enough — the tasks: provider section is optional
+        // and plain devops-only configs don't carry it (same gate as the
+        // queries list and the preload).
+        appState.config.isDevOpsConfigured
     }
 
     // Computed: can we create projects? (need at least an owner)
@@ -178,6 +183,17 @@ struct BoardsView: View {
 
     private var filteredTasks: [UnifiedTask] {
         var result = allTasks
+        // Board mode unions in the type backfill: the org-wide fetch keeps
+        // only the 500 most recently changed items, and loadTasks() replaces
+        // allTasks wholesale, so backfilled long-lived items (Initiatives
+        // above all) must live in their own store to survive reloads.
+        if groupBy == .column && !boardBackfillTasks.isEmpty {
+            var seen = Set(result.map(\.compositeKey))
+            for task in boardBackfillTasks where !seen.contains(task.compositeKey) {
+                result.append(task)
+                seen.insert(task.compositeKey)
+            }
+        }
 
         if filters.hasActiveFilters {
             result = result.filter { filters.matches($0) }
@@ -317,34 +333,31 @@ struct BoardsView: View {
                 options: [.list, .board],
                 label: { $0 == .list ? "List" : "Board" }
             )
-
-            Picker("Provider", selection: $filterProvider) {
-                Text("Backend").tag(nil as String?)
-                Text("DevOps").tag("azdevops" as String?)
-                Text("GitHub").tag("github" as String?)
-                Text("Gitea").tag("gitea" as String?)
-                Text("TDX").tag("tdx" as String?)
-            }
-            .pickerStyle(.menu)
-            .frame(width: 120)
-            .labelsHidden()
-            .help("Filter by backend")
-            .onChange(of: filterProvider) { loadTasks() }
             .onChange(of: appState.devOpsProjectReady) { _, ready in
                 if ready { loadTasks(); loadBoards(); loadQueries() }
             }
 
             // Group/board pickers only steer the kanban board; the List mode
-            // is the stored-queries view and has no use for them.
+            // is the stored-queries view and has no use for them. Menus with
+            // explicit Text labels, not Pickers — a labels-hidden menu Picker
+            // renders as an empty pill in the macOS 26 glass toolbar.
             if viewMode == .board {
-                Picker("Group", selection: $groupBy) {
+                Menu {
                     ForEach(GroupByOption.allCases, id: \.self) { opt in
-                        Text(opt.rawValue).tag(opt)
+                        Button {
+                            groupBy = opt
+                        } label: {
+                            if groupBy == opt {
+                                Label(opt.rawValue, systemImage: "checkmark")
+                            } else {
+                                Text(opt.rawValue)
+                            }
+                        }
                     }
+                } label: {
+                    Text(groupBy.rawValue)
                 }
-                .pickerStyle(.menu)
-                .frame(width: 130)
-                .labelsHidden()
+                .frame(minWidth: 110)
                 .help("Group by")
                 .onChange(of: groupBy) { _, newValue in
                     if newValue == .column && availableBoards.isEmpty {
@@ -356,15 +369,22 @@ struct BoardsView: View {
                     if isLoadingBoards {
                         ProgressView().controlSize(.small)
                     } else if !availableBoards.isEmpty {
-                        Picker("Board", selection: selectedBoardNameBinding) {
-                            Text("Select board\u{2026}").tag(nil as String?)
+                        Menu {
                             ForEach(availableBoards) { board in
-                                Text(board.name ?? "Unknown").tag(board.name as String?)
+                                Button {
+                                    selectedBoardName = board.name
+                                } label: {
+                                    if selectedBoardName == board.name {
+                                        Label(board.name ?? "Unknown", systemImage: "checkmark")
+                                    } else {
+                                        Text(board.name ?? "Unknown")
+                                    }
+                                }
                             }
+                        } label: {
+                            Text(selectedBoardName ?? "Select board\u{2026}")
                         }
-                        .pickerStyle(.menu)
-                        .frame(width: 150)
-                        .labelsHidden()
+                        .frame(minWidth: 130)
                         .help("Board")
                         .onChange(of: selectedBoardName) { loadBoardColumns() }
                     }
@@ -582,13 +602,18 @@ struct BoardsView: View {
                     }
                 }
 
+                let columnNames = Set(boardColumnDefs.map(\.name))
                 func columnForTask(_ task: UnifiedTask) -> String {
+                    // The item's own System.BoardColumn field is the
+                    // authority — a state can legally map to several columns
+                    // (ECU's Initiatives boards carry a leftover Resolved
+                    // column whose Initiative mapping is also "New"), and a
+                    // state-first lookup buckets every New item into
+                    // whichever column happened to be inserted last.
+                    if let bc = task.metadata["boardColumn"], columnNames.contains(bc) { return bc }
                     let wiType = task.metadata["workItemType"] ?? ""
                     let state = task.metadata["state"] ?? ""
-                    // Try exact type:state match first
                     if let col = stateToColumn["\(wiType):\(state)"] { return col }
-                    // Fallback to boardColumn metadata if available
-                    if let bc = task.metadata["boardColumn"], !bc.isEmpty { return bc }
                     return "No Column"
                 }
 
@@ -1622,20 +1647,9 @@ struct BoardsView: View {
         Task {
             do {
                 let items = try await appState.devOpsService.getWorkItemsOfTypes(types, project: project)
-                let tasks = items.map { $0.asUnifiedTask() }
-                var seen = Set(allTasks.map(\.compositeKey))
-                var merged = allTasks
-                var added = 0
-                for task in tasks where !seen.contains(task.compositeKey) {
-                    merged.append(task)
-                    seen.insert(task.compositeKey)
-                    added += 1
-                }
-                if added > 0 {
-                    allTasks = merged
-                    filters.buildFromTasks(merged)
-                }
-                dbg.info("Board '\(boardName)': backfilled \(added) items of types \(types.sorted().joined(separator: ", "))", category: "boards")
+                boardBackfillTasks = items.map { $0.asUnifiedTask() }
+                filters.buildFromTasks(allTasks + boardBackfillTasks)
+                dbg.info("Board '\(boardName)': backfilled \(boardBackfillTasks.count) items of types \(types.sorted().joined(separator: ", "))", category: "boards")
             } catch {
                 dbg.debug("Board type backfill failed: \(error)", category: "boards")
             }

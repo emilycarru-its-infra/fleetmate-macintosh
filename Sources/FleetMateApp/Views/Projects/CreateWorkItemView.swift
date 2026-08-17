@@ -28,7 +28,10 @@ struct CreateWorkItemView: View {
     @State private var workItemType = ""
     @State private var assignedTo = ""
     @State private var priority = 2
-    @State private var tags = ""
+    /// Committed tag chips plus whatever is being typed. A comma (or
+    /// semicolon) commits the token and the field stays ready for the next.
+    @State private var tagChips: [String] = []
+    @State private var tagInput = ""
     @State private var areaPath = ""
     @State private var iterationPath = ""
     @State private var isCreating = false
@@ -129,29 +132,33 @@ struct CreateWorkItemView: View {
                     }
                 }
 
-                TextField("Tags", text: $tags)
-
                 // Title sits directly above the description, echoing the ADO
-                // work item editor.
+                // work item editor; tags trail the description.
                 TextField("Title", text: $title)
 
-                Section("Description") {
-                    TextEditor(text: $description)
-                        .appFont(.body, design: .monospaced)
-                        .scrollContentBackground(.hidden)
-                        .padding(6)
-                        .frame(minHeight: 120)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color(nsColor: .textBackgroundColor).opacity(0.5))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
-                        )
-                    Text("Markdown supported")
-                        .appFont(.caption2)
-                        .foregroundColor(.secondary)
+                LabeledContent("Description") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextEditor(text: $description)
+                            .appFont(.body, design: .monospaced)
+                            .scrollContentBackground(.hidden)
+                            .padding(6)
+                            .frame(minHeight: 120)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color(nsColor: .textBackgroundColor).opacity(0.5))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                            )
+                        Text("Markdown supported")
+                            .appFont(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                LabeledContent("Tags") {
+                    tagTokenField
                 }
 
                 if let error = errorMessage {
@@ -187,7 +194,11 @@ struct CreateWorkItemView: View {
         if let p = prefillAssignedTo { assignedTo = p }
         if let p = prefillAreaPath { areaPath = p }
         if let p = prefillIterationPath { iterationPath = p }
-        if let p = prefillTags { tags = p }
+        if let p = prefillTags {
+            tagChips = p.components(separatedBy: CharacterSet(charactersIn: ";,"))
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        }
         if let p = prefillDescription { description = p }
 
         // Use passed-in boards or load fresh
@@ -294,14 +305,73 @@ struct CreateWorkItemView: View {
         }
     }
 
+    // MARK: - Tag token field
+
+    /// Chips plus a live text field on one wrapping line. Typing a comma or
+    /// semicolon commits the token; Return commits whatever is typed.
+    private var tagTokenField: some View {
+        TagFlowLayout(spacing: 5) {
+            ForEach(tagChips, id: \.self) { chip in
+                HStack(spacing: 3) {
+                    Text(chip)
+                        .appFont(.caption)
+                    Button {
+                        tagChips.removeAll { $0 == chip }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .appFont(fixed: 8, weight: .bold)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+            }
+            TextField(tagChips.isEmpty ? "Tags" : "", text: $tagInput)
+                .textFieldStyle(.plain)
+                .frame(minWidth: 90)
+                .onChange(of: tagInput) { _, value in
+                    if value.contains(",") || value.contains(";") {
+                        commitTagInput(all: false)
+                    }
+                }
+                .onSubmit { commitTagInput(all: true) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Split the live input on comma/semicolon and append the finished tokens
+    /// as chips. `all: false` keeps the text after the last separator in the
+    /// field so typing flows on; `all: true` commits everything.
+    private func commitTagInput(all: Bool) {
+        var parts = tagInput.components(separatedBy: CharacterSet(charactersIn: ";,"))
+        let remainder = all ? "" : (parts.popLast() ?? "")
+        for part in parts {
+            let token = part.trimmingCharacters(in: .whitespaces)
+            if !token.isEmpty && !tagChips.contains(where: { $0.caseInsensitiveCompare(token) == .orderedSame }) {
+                tagChips.append(token)
+            }
+        }
+        if all {
+            let token = remainder.trimmingCharacters(in: .whitespaces)
+            if !token.isEmpty && !tagChips.contains(where: { $0.caseInsensitiveCompare(token) == .orderedSame }) {
+                tagChips.append(token)
+            }
+            tagInput = ""
+        } else {
+            tagInput = remainder
+        }
+    }
+
     private func createItem() {
         isCreating = true
         errorMessage = nil
         Task {
             defer { isCreating = false }
             do {
-                let tagList: [String]? = tags.isEmpty ? nil :
-                    tags.components(separatedBy: CharacterSet(charactersIn: ";,")).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                commitTagInput(all: true)
+                let tagList: [String]? = tagChips.isEmpty ? nil : tagChips
 
                 let request = CreateWorkItemRequest(
                     title: title.trimmingCharacters(in: .whitespaces),
@@ -319,6 +389,45 @@ struct CreateWorkItemView: View {
             } catch {
                 errorMessage = error.localizedDescription
             }
+        }
+    }
+}
+
+// MARK: - Tag Flow Layout
+
+/// Wrapping HStack for tag chips: subviews flow left-to-right and wrap onto
+/// new rows as the width runs out.
+struct TagFlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > maxWidth {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: proposal.width ?? x, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
         }
     }
 }

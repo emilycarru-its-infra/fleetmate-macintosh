@@ -53,3 +53,56 @@ private struct PillEnclosure: ViewModifier {
         }
     }
 }
+
+/// Toolbar-safe dropdown. The macOS 26 glass toolbar renders Menu and Picker
+/// labels icon-only (an empty pill with a chevron), so this is a plain text
+/// pill — same construction as SegmentedPill — that presents its options in
+/// a popover.
+struct PillMenu<Value: Hashable>: View {
+    @Binding var selection: Value
+    let options: [Value]
+    let label: (Value) -> String
+
+    @State private var isPresented = false
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(label(selection))
+                .appFont(fixed: 12)
+                .lineLimit(1)
+            Image(systemName: "chevron.up.chevron.down")
+                .appFont(fixed: 9, weight: .semibold)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 24)
+        .background(Capsule().fill(.primary.opacity(0.08)))
+        .contentShape(Capsule())
+        .onTapGesture { isPresented.toggle() }
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 1) {
+                ForEach(options, id: \.self) { option in
+                    Button {
+                        selection = option
+                        isPresented = false
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark")
+                                .appFont(fixed: 10, weight: .semibold)
+                                .opacity(selection == option ? 1 : 0)
+                            Text(label(option))
+                                .appFont(fixed: 12)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(6)
+            .frame(minWidth: 170, alignment: .leading)
+        }
+    }
+}

@@ -338,26 +338,15 @@ struct BoardsView: View {
             }
 
             // Group/board pickers only steer the kanban board; the List mode
-            // is the stored-queries view and has no use for them. Menus with
-            // explicit Text labels, not Pickers — a labels-hidden menu Picker
-            // renders as an empty pill in the macOS 26 glass toolbar.
+            // is the stored-queries view and has no use for them. PillMenu,
+            // not Menu/Picker — the macOS 26 glass toolbar renders those
+            // icon-only, leaving an empty pill.
             if viewMode == .board {
-                Menu {
-                    ForEach(GroupByOption.allCases, id: \.self) { opt in
-                        Button {
-                            groupBy = opt
-                        } label: {
-                            if groupBy == opt {
-                                Label(opt.rawValue, systemImage: "checkmark")
-                            } else {
-                                Text(opt.rawValue)
-                            }
-                        }
-                    }
-                } label: {
-                    Text(groupBy.rawValue)
-                }
-                .frame(minWidth: 110)
+                PillMenu(
+                    selection: $groupBy,
+                    options: GroupByOption.allCases,
+                    label: { $0.rawValue }
+                )
                 .help("Group by")
                 .onChange(of: groupBy) { _, newValue in
                     if newValue == .column && availableBoards.isEmpty {
@@ -369,22 +358,11 @@ struct BoardsView: View {
                     if isLoadingBoards {
                         ProgressView().controlSize(.small)
                     } else if !availableBoards.isEmpty {
-                        Menu {
-                            ForEach(availableBoards) { board in
-                                Button {
-                                    selectedBoardName = board.name
-                                } label: {
-                                    if selectedBoardName == board.name {
-                                        Label(board.name ?? "Unknown", systemImage: "checkmark")
-                                    } else {
-                                        Text(board.name ?? "Unknown")
-                                    }
-                                }
-                            }
-                        } label: {
-                            Text(selectedBoardName ?? "Select board\u{2026}")
-                        }
-                        .frame(minWidth: 130)
+                        PillMenu(
+                            selection: selectedBoardNameBinding,
+                            options: availableBoards.compactMap(\.name).map { Optional($0) },
+                            label: { $0 ?? "Select board\u{2026}" }
+                        )
                         .help("Board")
                         .onChange(of: selectedBoardName) { loadBoardColumns() }
                     }

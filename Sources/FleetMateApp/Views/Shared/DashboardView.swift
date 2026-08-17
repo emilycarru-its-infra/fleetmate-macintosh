@@ -1144,7 +1144,10 @@ struct DashboardView: View {
         dateFmt.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSSSSZ"
         let dateFmtAlt = DateFormatter()
         dateFmtAlt.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        dateFmtAlt.timeZone = TimeZone(identifier: "UTC")
+        // Snipe's bare datetimes are in the instance's configured timezone
+        // (ECU's is Pacific), not UTC — parsing as UTC pushed every activity
+        // row 7 hours into the past.
+        dateFmtAlt.timeZone = TimeZone(identifier: "America/Vancouver")
         for entry in snipeActivity {
             let dateStr = entry.createdAt?.value
             let date = dateStr.flatMap { parse($0) ?? dateFmt.date(from: $0) ?? dateFmtAlt.date(from: $0) }

@@ -115,6 +115,7 @@ struct QueriesListView<MenuContent: View>: View {
     let searchText: String
     let filterMatch: (UnifiedTask) -> Bool
     let filtersActive: Bool
+    let showClosed: Bool
     @Binding var collapsedQueryIds: Set<String>
     @Binding var selectedTask: UnifiedTask?
     let onOpenQuery: (AdoSharedQuery) -> Void
@@ -159,6 +160,7 @@ struct QueriesListView<MenuContent: View>: View {
         searchText: String,
         filterMatch: @escaping (UnifiedTask) -> Bool,
         filtersActive: Bool,
+        showClosed: Bool,
         collapsedQueryIds: Binding<Set<String>>,
         selectedTask: Binding<UnifiedTask?>,
         onOpenQuery: @escaping (AdoSharedQuery) -> Void,
@@ -170,6 +172,7 @@ struct QueriesListView<MenuContent: View>: View {
         self.searchText = searchText
         self.filterMatch = filterMatch
         self.filtersActive = filtersActive
+        self.showClosed = showClosed
         self._collapsedQueryIds = collapsedQueryIds
         self._selectedTask = selectedTask
         self.onOpenQuery = onOpenQuery
@@ -344,7 +347,7 @@ struct QueriesListView<MenuContent: View>: View {
     /// the search shows all its rows; otherwise rows must match, and matching
     /// rows keep their ancestors so tree context survives filtering.
     private var visibleSections: [(bucket: String, runs: [(QueryRunDisplay, [QueryDisplayRow])])] {
-        let narrowing = !searchText.isEmpty || filtersActive
+        let narrowing = !searchText.isEmpty || filtersActive || !showClosed
         var result: [(String, [(QueryRunDisplay, [QueryDisplayRow])])] = []
         for section in sections {
             var visible: [(QueryRunDisplay, [QueryDisplayRow])] = []
@@ -369,7 +372,7 @@ struct QueriesListView<MenuContent: View>: View {
     private func visibleRows(_ run: QueryRunDisplay) -> [QueryDisplayRow] {
         let nameMatch = queryNameMatches(run)
         let searchNarrows = !searchText.isEmpty && !nameMatch
-        guard searchNarrows || filtersActive else { return run.rows }
+        guard searchNarrows || filtersActive || !showClosed else { return run.rows }
 
         var include = Set<Int>()
         var ancestorStack: [Int] = []
@@ -386,6 +389,9 @@ struct QueriesListView<MenuContent: View>: View {
     }
 
     private func rowMatches(_ row: QueryDisplayRow, applySearch: Bool) -> Bool {
+        // Closed rows hide when the toggle is off; a closed ancestor of an
+        // open child still shows via the ancestor-retention pass above.
+        if !showClosed && row.task.state == .closed { return false }
         if filtersActive && !filterMatch(row.task) { return false }
         guard applySearch else { return true }
         let q = searchText

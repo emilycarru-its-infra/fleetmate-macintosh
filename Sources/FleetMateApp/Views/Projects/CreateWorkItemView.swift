@@ -82,9 +82,6 @@ struct CreateWorkItemView: View {
                     }
                 }
 
-                // Title
-                TextField("Title", text: $title)
-
                 // Type — derived from board
                 if !allowedTypes.isEmpty {
                     Picker("Type", selection: $workItemType) {
@@ -134,10 +131,27 @@ struct CreateWorkItemView: View {
 
                 TextField("Tags", text: $tags)
 
+                // Title sits directly above the description, echoing the ADO
+                // work item editor.
+                TextField("Title", text: $title)
+
                 Section("Description") {
                     TextEditor(text: $description)
                         .appFont(.body, design: .monospaced)
-                        .frame(minHeight: 100)
+                        .scrollContentBackground(.hidden)
+                        .padding(6)
+                        .frame(minHeight: 120)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color(nsColor: .textBackgroundColor).opacity(0.5))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+                        )
+                    Text("Markdown supported")
+                        .appFont(.caption2)
+                        .foregroundColor(.secondary)
                 }
 
                 if let error = errorMessage {
@@ -206,8 +220,8 @@ struct CreateWorkItemView: View {
         }
 
         Task {
-            do { teamMembers = try await service.getTeamMembers() } catch {
-                dbg.debug("Create WI: team members load failed: \(error)", category: "azdo")
+            do { teamMembers = try await service.getProjectMembers() } catch {
+                dbg.debug("Create WI: project members load failed: \(error)", category: "azdo")
             }
         }
         Task {

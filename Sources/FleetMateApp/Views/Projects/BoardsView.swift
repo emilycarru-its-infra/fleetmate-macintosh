@@ -749,6 +749,7 @@ struct BoardsView: View {
                 searchText: searchText,
                 filterMatch: { filters.matches($0) },
                 filtersActive: filters.hasActiveFilters,
+                showClosed: showClosed,
                 collapsedQueryIds: collapsedQueryIdsBinding,
                 selectedTask: selectedTaskBinding,
                 onOpenQuery: { query in

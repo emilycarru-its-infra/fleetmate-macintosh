@@ -689,8 +689,11 @@ struct BoardsView: View {
 
     /// The stored-queries view carries the List mode whenever Azure DevOps is
     /// in play; picking another backend explicitly falls back to the flat list.
+    /// Gated on the same config check the preload uses — an org being set is
+    /// enough; `canCreateWorkItem` needs a `tasks:` config section that plain
+    /// devops-only configs don't have.
     private var showQueriesList: Bool {
-        canCreateWorkItem && (filterProvider == nil || filterProvider == "azdevops")
+        appState.config.isDevOpsConfigured && (filterProvider == nil || filterProvider == "azdevops")
     }
 
     /// Query runs grouped by area-path bucket, queries A→Z inside each bucket,

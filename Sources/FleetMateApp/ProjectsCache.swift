@@ -34,7 +34,15 @@ struct ProjectsCache {
 
     var syncEnabled = false
 
+    // Stored queries (Azure DevOps Shared Queries) backing the List view
+    var sharedQueries: [AdoSharedQuery] = []
+    var queryRuns: [String: QueryRunDisplay] = [:]
+    var collapsedQueryIds: Set<String> = []
+
     /// When the task list last loaded. Nil means never — the only case that
     /// should show a full-page spinner.
     var loadedAt: Date?
+
+    /// When the stored queries last loaded, same nil-means-never contract.
+    var queriesLoadedAt: Date?
 }

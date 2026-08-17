@@ -182,6 +182,7 @@ class AppState: ObservableObject {
     @Published var cachedGroups: [EntraGroup] = []
     private var isPreloadingAllData = false
     private var preloadAllDataRequested = false
+    private var sharedQueriesLoadInFlight = false
     /// Snipe activity log for the dashboard feed — cached so tab switches
     /// don't blank the feed while it refetches.
     @Published var cachedSnipeActivity: [SnipeActivityLog] = []
@@ -689,6 +690,11 @@ class AppState: ObservableObject {
         }
         dbg.info("preloadAllData finished", category: "preload")
 
+        // Shared queries load after the fan-out above: they need the resolved
+        // project, and their own fan-out (one WIQL per query) is heavy enough
+        // not to race the first-paint loads.
+        await preloadSharedQueries()
+
         // Probe auth status for all configured systems
         await authManager.probeAll(
             graphService: graphService,
@@ -1138,6 +1144,76 @@ class AppState: ObservableObject {
             }
             // Signal that DevOps is ready — BoardsView observes this to reload
             await MainActor.run { self.devOpsProjectReady = true }
+            await self.preloadSharedQueries()
+        }
+    }
+
+    /// Load every Shared Query in the resolved DevOps project and run them
+    /// all concurrently into the Projects cache. Called from the launch
+    /// preload and again when DevOps auth lands; BoardsView delegates here so
+    /// the view and the preload share one implementation.
+    func preloadSharedQueries(force: Bool = false) async {
+        guard config.isDevOpsConfigured, devOpsService.hasValidToken else { return }
+        let project = devOpsService.resolvedProject
+        guard !project.isEmpty else {
+            dbg.debug("Shared queries preload: no resolved project yet", category: "preload")
+            return
+        }
+        if !force, projects.queriesLoadedAt != nil { return }
+        // The launch preload and the Projects tab can both land here; one
+        // fan-out of 35 concurrent query runs at a time is plenty.
+        guard !sharedQueriesLoadInFlight else { return }
+        sharedQueriesLoadInFlight = true
+        defer { sharedQueriesLoadInFlight = false }
+        let service = devOpsService
+
+        do {
+            let queries = try await service.getSharedQueries(project: project)
+
+            let runsById = await withTaskGroup(of: (String, StoredQueryRun)?.self) { group in
+                for query in queries {
+                    group.addTask {
+                        do {
+                            let run = try await service.runStoredQuery(id: query.id, project: project)
+                            return (query.id, run)
+                        } catch {
+                            dbg.warn("Query '\(query.name)' failed: \(error)", category: "preload")
+                            return nil
+                        }
+                    }
+                }
+                var collected: [String: StoredQueryRun] = [:]
+                for await result in group {
+                    if let (id, run) = result { collected[id] = run }
+                }
+                return collected
+            }
+
+            var display: [String: QueryRunDisplay] = [:]
+            for query in queries {
+                guard let run = runsById[query.id] else { continue }
+                let rows = run.rows.map {
+                    QueryDisplayRow(
+                        task: $0.item.asUnifiedTask(),
+                        depth: $0.depth,
+                        hasChildren: $0.hasChildren,
+                        queryId: query.id
+                    )
+                }
+                display[query.id] = QueryRunDisplay(
+                    query: query,
+                    rows: rows,
+                    truncated: run.truncated,
+                    areaBucket: QueryRunDisplay.areaBucket(rows: rows, queryName: query.name)
+                )
+            }
+            projects.sharedQueries = queries
+            projects.queryRuns = display
+            projects.queriesLoadedAt = Date()
+            let rowCount = display.values.reduce(0) { $0 + $1.rows.count }
+            dbg.info("Shared queries preloaded: \(display.count)/\(queries.count) queries, \(rowCount) rows", category: "preload")
+        } catch {
+            dbg.error("Shared queries preload FAILED: \(error)", category: "preload")
         }
     }
 

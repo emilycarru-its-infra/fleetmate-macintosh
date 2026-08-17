@@ -117,7 +117,9 @@ public class AzureDevOpsService {
     // MARK: - REST API Helper
 
     /// Make an authenticated REST API request and decode the JSON response.
-    private func request<T: Decodable>(
+    /// Internal (not private) so same-module extensions in other files —
+    /// AzureDevOpsService+Queries — can build on it.
+    func request<T: Decodable>(
         _ method: String,
         path: String,
         body: Data? = nil,
@@ -326,6 +328,9 @@ public class AzureDevOpsService {
         ]
         if let desc = request.description {
             ops.append(["op": "add", "path": "/fields/System.Description", "value": desc])
+            // Store the description as Markdown, not HTML — the sheet's
+            // editor is plain text and ADO renders the Markdown natively.
+            ops.append(["op": "add", "path": "/multilineFieldsFormat/System.Description", "value": "markdown"])
         }
         if let assignee = request.assignedTo {
             ops.append(["op": "add", "path": "/fields/System.AssignedTo", "value": assignee])
@@ -348,7 +353,9 @@ public class AzureDevOpsService {
 
         let item: WorkItem = try await self.request(
             "POST",
-            path: "/_apis/wit/workitems/$\(encodedType)?api-version=7.0",
+            // 7.1: the multilineFieldsFormat patch path (Markdown
+            // descriptions) is not recognized by 7.0.
+            path: "/_apis/wit/workitems/$\(encodedType)?api-version=7.1",
             body: body,
             contentType: "application/json-patch+json"
         )
@@ -818,6 +825,66 @@ public class AzureDevOpsService {
             orgLevel: true
         )
         return (response.value ?? []).compactMap { $0.identity }
+    }
+
+    /// Every human member across all of the project's teams, deduped by
+    /// uniqueName and sorted by display name. Groups (isContainer) and
+    /// non-person identities (build service, service principals, managed
+    /// identities — anything without a person-shaped UPN) are filtered out:
+    /// the assignee picker should offer people only.
+    public func getProjectMembers(project: String? = nil) async throws -> [IdentityRef] {
+        let proj = project ?? self.project
+        let encodedProj = proj.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? proj
+
+        struct TeamsResponse: Decodable { let value: [TeamEntry]? }
+        struct TeamEntry: Decodable { let name: String? }
+        struct MembersResponse: Decodable { let value: [MemberEntry]? }
+        struct MemberEntry: Decodable { let identity: MemberIdentity? }
+        struct MemberIdentity: Decodable {
+            let displayName: String?
+            let uniqueName: String?
+            let id: String?
+            let isContainer: Bool?
+        }
+
+        let teams: TeamsResponse = try await request(
+            "GET",
+            path: "/_apis/projects/\(encodedProj)/teams?api-version=7.0",
+            orgLevel: true
+        )
+
+        var byUnique: [String: IdentityRef] = [:]
+        for team in teams.value ?? [] {
+            guard let teamName = team.name else { continue }
+            let encodedTeam = teamName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? teamName
+            do {
+                let response: MembersResponse = try await request(
+                    "GET",
+                    path: "/_apis/projects/\(encodedProj)/teams/\(encodedTeam)/members?api-version=7.0",
+                    orgLevel: true
+                )
+                for entry in response.value ?? [] {
+                    guard let identity = entry.identity, identity.isContainer != true else { continue }
+                    guard let unique = identity.uniqueName, unique.contains("@") else { continue }
+                    let lowered = unique.lowercased()
+                    if lowered.hasPrefix("vstfs:") { continue }
+                    if (identity.displayName ?? "").localizedCaseInsensitiveContains("build service") { continue }
+                    byUnique[lowered] = IdentityRef(
+                        displayName: identity.displayName,
+                        uniqueName: unique,
+                        id: identity.id
+                    )
+                }
+            } catch {
+                // A team without boards (TF400499 and friends) shouldn't sink
+                // the whole roster.
+                continue
+            }
+        }
+        return byUnique.values.sorted {
+            ($0.displayName ?? $0.uniqueName ?? "")
+                .localizedCaseInsensitiveCompare($1.displayName ?? $1.uniqueName ?? "") == .orderedAscending
+        }
     }
 
     // MARK: - Git Repositories

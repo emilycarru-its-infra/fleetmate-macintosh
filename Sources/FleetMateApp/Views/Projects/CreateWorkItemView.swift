@@ -328,7 +328,7 @@ struct CreateWorkItemView: View {
                 .padding(.vertical, 3)
                 .background(Capsule().fill(Color.accentColor.opacity(0.15)))
             }
-            TextField(tagChips.isEmpty ? "Tags" : "", text: $tagInput)
+            TextField("Add tag\u{2026}", text: $tagInput)
                 .textFieldStyle(.plain)
                 .frame(minWidth: 90)
                 .onChange(of: tagInput) { _, value in
@@ -338,7 +338,16 @@ struct CreateWorkItemView: View {
                 }
                 .onSubmit { commitTagInput(all: true) }
         }
+        .padding(6)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color(nsColor: .textBackgroundColor).opacity(0.5))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
+        )
     }
 
     /// Split the live input on comma/semicolon and append the finished tokens

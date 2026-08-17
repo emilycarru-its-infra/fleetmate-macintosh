@@ -118,12 +118,14 @@ extension FilterState where Category == DeviceFilterCategory {
 // MARK: - Project/Task Filters
 
 enum TaskFilterCategory: String, FilterCategoryProtocol {
-    case provider = "Provider"
     case area = "Area"
     case iteration = "Iteration"
     case type = "Type"
     case priority = "Priority"
     case assignee = "Assignee"
+    // Provider stays last: with the backend toolbar dropdown gone, it is the
+    // least-reached-for narrowing and sits at the bottom of the panel.
+    case provider = "Provider"
     var id: String { rawValue }
 }
 

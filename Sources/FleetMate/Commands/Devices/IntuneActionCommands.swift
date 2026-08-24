@@ -304,6 +304,12 @@ struct IntuneOffboardSubcommand: AsyncParsableCommand {
         and the Entra device object, and deletes the Intune record last — \
         deleting it earlier would cancel a wipe the device has not picked up. \
         Steps that do not apply to the platform are reported as skipped.
+
+        A device with no Intune record is not refused. The Autopilot identity \
+        and the Entra object outlive that record, and cleaning them up is the \
+        repair a half-finished cleanup needs — so the steps that are still \
+        possible run, and the ones that needed the Intune record say why they \
+        could not.
         """
     )
 
@@ -346,10 +352,6 @@ struct IntuneOffboardSubcommand: AsyncParsableCommand {
             throw ExitCode.failure
         }
         let service = try graphServiceOrExit()
-        guard let device = try await resolveDevice(service, identifier) else {
-            print("No Intune device matches \(identifier)".red)
-            throw ExitCode.failure
-        }
 
         let plan = OffboardPlan(
             terminalAction: action,
@@ -364,25 +366,54 @@ struct IntuneOffboardSubcommand: AsyncParsableCommand {
             entraAction: entra
         )
 
-        if dryRun {
-            printDryRunHeader(device: device, identifier: identifier)
-            let steps = await service.previewOffboard(device, plan: plan)
-            for step in steps {
-                if step.willRun {
-                    print("  → \(step.step)".green)
-                    print("       \(step.detail)")
-                } else {
-                    print("  – \(step.step): \(step.detail)".yellow)
-                }
+        if let device = try await resolveDevice(service, identifier) {
+            if dryRun {
+                printDryRunHeader(device: device, identifier: identifier)
+                printPlan(await service.previewOffboard(device, plan: plan))
+                printDroppedWipeOptions(plan.wipeOptions, platform: device.platform)
+                print("\nDry run — nothing was sent.".cyan)
+                return
             }
-            printDroppedWipeOptions(plan.wipeOptions, platform: device.platform)
+
+            print("Offboarding \(device.deviceName ?? identifier) (\(device.platform.displayName))".cyan)
+            try printOutcome(await service.offboardDevice(device, plan: plan))
+            return
+        }
+
+        // No Intune record. The Autopilot identity and the Entra object it
+        // stamped outlive that record, and they are precisely what a
+        // half-finished cleanup leaves behind — so resolve those rather than
+        // refuse the run. Nothing at all matching is still a failure.
+        let records = await service.resolveOrphanRecords(identifier)
+        guard !records.isEmpty else {
+            print("No Intune, Autopilot or Entra record matches \(identifier)".red)
+            throw ExitCode.failure
+        }
+
+        let name = records.entra?.displayName ?? records.autopilot?.serialNumber ?? identifier
+        print("\(name) has no Intune record — cleaning up the directory records it left behind".yellow)
+
+        if dryRun {
+            printPlan(service.previewOffboardOrphan(identifier, records: records, plan: plan))
             print("\nDry run — nothing was sent.".cyan)
             return
         }
 
-        print("Offboarding \(device.deviceName ?? identifier) (\(device.platform.displayName))".cyan)
-        let result = await service.offboardDevice(device, plan: plan)
+        try printOutcome(await service.offboardOrphan(identifier, records: records, plan: plan))
+    }
 
+    private func printPlan(_ steps: [OffboardPlannedStep]) {
+        for step in steps {
+            if step.willRun {
+                print("  → \(step.step)".green)
+                print("       \(step.detail)")
+            } else {
+                print("  – \(step.step): \(step.detail)".yellow)
+            }
+        }
+    }
+
+    private func printOutcome(_ result: OffboardResult) throws {
         for step in result.steps {
             switch step.outcome {
             case .succeeded:

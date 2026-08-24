@@ -1,5 +1,25 @@
 import Foundation
 
+/// What a device still has in the directory once its Intune record is gone.
+///
+/// Deleting the Intune managedDevice on its own does not decommission anything:
+/// the Autopilot identity survives by design, and the Entra object it stamped
+/// survives with it, still carrying the ZTDID the next OOBE pass matches on.
+/// None of it can be reached by resolving a managedDevice, because there is no
+/// longer a managedDevice to resolve — which is why this state has to be
+/// modelled separately rather than treated as "device not found".
+public struct OrphanDeviceRecords: Sendable {
+    public let autopilot: WindowsAutopilotDevice?
+    public let entra: EntraDevice?
+
+    public var isEmpty: Bool { autopilot == nil && entra == nil }
+
+    public init(autopilot: WindowsAutopilotDevice?, entra: EntraDevice?) {
+        self.autopilot = autopilot
+        self.entra = entra
+    }
+}
+
 // Device decommission surface: the Intune actions past wipe/retire, the Windows
 // Autopilot registration, and the Entra device object — the three records that
 // outlive a wipe and keep a machine looking enrolled long after it is gone.
@@ -198,22 +218,147 @@ public extension GraphService {
         return try await getDeviceByName(identifier)
     }
 
+    /// Resolve the directory records for an identifier with no Intune record.
+    ///
+    /// The Autopilot identity is the way in: it outlives every wipe and cleanup
+    /// by design, and it carries the `azureActiveDirectoryDeviceId` that finds
+    /// the Entra object. A machine that was never Autopilot-registered cannot be
+    /// reached this way, and says so rather than reporting an empty result as
+    /// success.
+    func resolveOrphanRecords(_ identifier: String) async -> OrphanDeviceRecords {
+        let autopilot = try? await getAutopilotDeviceBySerial(identifier)
+        guard let azureADDeviceId = autopilot?.azureActiveDirectoryDeviceId, !azureADDeviceId.isEmpty else {
+            return OrphanDeviceRecords(autopilot: autopilot, entra: nil)
+        }
+        let entra = try? await getEntraDevice(deviceId: azureADDeviceId)
+        return OrphanDeviceRecords(autopilot: autopilot, entra: entra)
+    }
+
     /// Run a full decommission for one device.
     ///
     /// Steps run in the order they are safe in: the terminal Intune action
     /// first (it needs the record intact), then the Autopilot registration and
     /// the Entra object, and the Intune record last because deleting it cancels
     /// a wipe the device has not picked up yet.
+    ///
+    /// A missing Intune record is a state, not a failure. When one cannot be
+    /// resolved the directory records that outlive it are resolved instead, so
+    /// the half-cleaned machines this command exists to repair are reachable
+    /// rather than refused.
     func offboardDevice(_ identifier: String, plan: OffboardPlan) async throws -> OffboardResult {
-        guard let device = try await resolveManagedDevice(identifier) else {
+        if let device = try await resolveManagedDevice(identifier) {
+            return await offboardDevice(device, plan: plan)
+        }
+
+        let records = await resolveOrphanRecords(identifier)
+        guard !records.isEmpty else {
             return OffboardResult(
                 identifier: identifier,
                 deviceName: nil,
                 platform: .other,
-                steps: [OffboardStepResult(step: "Resolve device", outcome: .failed, detail: "No Intune device matches \(identifier)")]
+                steps: [OffboardStepResult(
+                    step: "Resolve device",
+                    outcome: .failed,
+                    detail: "No Intune, Autopilot or Entra record matches \(identifier)"
+                )]
             )
         }
-        return await offboardDevice(device, plan: plan)
+        return await offboardOrphan(identifier, records: records, plan: plan)
+    }
+
+    /// Decommission a device whose Intune record is already gone.
+    ///
+    /// Every step that needs a managedDevice is reported skipped with the reason
+    /// it was skipped, and every step that is still possible runs. Refusing the
+    /// whole call because one record is missing is what left these machines
+    /// uncleanable.
+    func offboardOrphan(_ identifier: String, records: OrphanDeviceRecords, plan: OffboardPlan) async -> OffboardResult {
+        var steps: [OffboardStepResult] = []
+
+        switch plan.terminalAction {
+        case .wipe, .retire:
+            steps.append(OffboardStepResult(
+                step: plan.terminalAction == .wipe ? "Wipe" : "Retire",
+                outcome: .skipped,
+                detail: "No Intune record — nothing can receive the command"
+            ))
+        case .none:
+            steps.append(OffboardStepResult(step: "Wipe or retire", outcome: .skipped, detail: "Not requested"))
+        }
+
+        if plan.deleteAutopilotRegistration {
+            let label = "Delete Autopilot registration"
+            if let autopilotId = records.autopilot?.id {
+                let results = (try? await deleteAutopilotDevices([autopilotId])) ?? []
+                steps.append(Self.step(label, from: results.first))
+            } else {
+                steps.append(OffboardStepResult(
+                    step: label,
+                    outcome: .skipped,
+                    detail: "No Autopilot registration for \(identifier)"
+                ))
+            }
+        }
+
+        if plan.entraAction != .none {
+            steps.append(await orphanEntraStep(for: records, identifier: identifier, action: plan.entraAction))
+        }
+
+        if plan.deleteIntuneRecord {
+            steps.append(OffboardStepResult(step: "Delete Intune record", outcome: .skipped, detail: "Already gone"))
+        }
+
+        return OffboardResult(
+            identifier: records.autopilot?.serialNumber ?? identifier,
+            deviceName: records.entra?.displayName,
+            platform: records.autopilot != nil ? .windows : .other,
+            steps: steps
+        )
+    }
+
+    /// What an orphan offboard would do, resolved against live data but writing
+    /// nothing. Shares its record lookup with `offboardOrphan`, so the ids
+    /// printed here are the ids that would be deleted.
+    func previewOffboardOrphan(_ identifier: String, records: OrphanDeviceRecords, plan: OffboardPlan) -> [OffboardPlannedStep] {
+        var steps: [OffboardPlannedStep] = []
+
+        switch plan.terminalAction {
+        case .wipe, .retire:
+            steps.append(OffboardPlannedStep(
+                step: plan.terminalAction == .wipe ? "Wipe" : "Retire",
+                willRun: false,
+                detail: "No Intune record — nothing can receive the command"
+            ))
+        case .none:
+            steps.append(OffboardPlannedStep(step: "Wipe or retire", willRun: false, detail: "Not requested"))
+        }
+
+        if plan.deleteAutopilotRegistration {
+            let autopilotId = records.autopilot?.id
+            steps.append(OffboardPlannedStep(
+                step: "Delete Autopilot registration",
+                willRun: autopilotId != nil,
+                detail: autopilotId.map { "DELETE windowsAutopilotDeviceIdentities/\($0)" }
+                    ?? "No Autopilot registration for \(identifier)"
+            ))
+        }
+
+        if plan.entraAction != .none {
+            let objectId = records.entra?.id
+            let verb = plan.entraAction == .delete ? "DELETE devices/" : "PATCH devices/"
+            let suffix = plan.entraAction == .delete ? "" : " {\"accountEnabled\":false}"
+            steps.append(OffboardPlannedStep(
+                step: plan.entraAction == .delete ? "Delete Entra device" : "Disable Entra device",
+                willRun: objectId != nil,
+                detail: objectId.map { "\(verb)\($0)\(suffix)" } ?? "No Entra device object for \(identifier)"
+            ))
+        }
+
+        if plan.deleteIntuneRecord {
+            steps.append(OffboardPlannedStep(step: "Delete Intune record", willRun: false, detail: "Already gone"))
+        }
+
+        return steps
     }
 
     /// Run a full decommission for an already-resolved device.
@@ -387,6 +532,25 @@ public extension GraphService {
         let target = await resolveEntraTarget(for: device)
         guard let objectId = target.id else {
             return OffboardStepResult(step: label, outcome: .skipped, detail: target.skipReason)
+        }
+
+        if action == .delete {
+            let results = (try? await deleteEntraDevices([objectId])) ?? []
+            return Self.step(label, from: results.first)
+        }
+
+        do {
+            try await setEntraDeviceEnabled(objectId: objectId, enabled: false)
+            return OffboardStepResult(step: label, outcome: .succeeded)
+        } catch {
+            return OffboardStepResult(step: label, outcome: .failed, detail: error.localizedDescription)
+        }
+    }
+
+    private func orphanEntraStep(for records: OrphanDeviceRecords, identifier: String, action: OffboardPlan.EntraAction) async -> OffboardStepResult {
+        let label = action == .delete ? "Delete Entra device" : "Disable Entra device"
+        guard let objectId = records.entra?.id else {
+            return OffboardStepResult(step: label, outcome: .skipped, detail: "No Entra device object for \(identifier)")
         }
 
         if action == .delete {

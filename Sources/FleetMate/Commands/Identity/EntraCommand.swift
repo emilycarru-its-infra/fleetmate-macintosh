@@ -15,7 +15,7 @@ struct EntraCommand: AsyncParsableCommand {
             EntraAddMemberSubcommand.self,
             EntraRemoveMemberSubcommand.self,
             EntraSetUserSubcommand.self,
-            AuditSubcommand.self
+            EntraAuditSubcommand.self
         ],
         defaultSubcommand: UserSubcommand.self
     )
@@ -180,7 +180,7 @@ struct GroupSubcommand: AsyncParsableCommand {
 
 // MARK: - Directory Audit Log
 
-struct AuditSubcommand: AsyncParsableCommand {
+struct EntraAuditSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "audit",
         abstract: "Read the directory audit log - who changed a group, user or device"

@@ -14,7 +14,8 @@ struct EntraCommand: AsyncParsableCommand {
             SearchGroupsSubcommand.self,
             EntraAddMemberSubcommand.self,
             EntraRemoveMemberSubcommand.self,
-            EntraSetUserSubcommand.self
+            EntraSetUserSubcommand.self,
+            AuditSubcommand.self
         ],
         defaultSubcommand: UserSubcommand.self
     )
@@ -174,6 +175,78 @@ struct GroupSubcommand: AsyncParsableCommand {
             }
         }
         print("")
+    }
+}
+
+// MARK: - Directory Audit Log
+
+struct AuditSubcommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "audit",
+        abstract: "Read the directory audit log - who changed a group, user or device"
+    )
+
+    @Option(name: [.customShort("t"), .long], help: "Object the change was made to: display name or object id")
+    var target: String?
+
+    @Option(name: [.customShort("a"), .long], help: "Exact activity name, e.g. \"Delete group\"")
+    var activity: String?
+
+    @Option(name: [.customShort("d"), .long], help: "How far back to look in days (0 for no limit)")
+    var days: Int = 7
+
+    @Option(name: .shortAndLong, help: "Maximum entries to show")
+    var limit: Int = 50
+
+    @Flag(name: .shortAndLong, help: "Output as JSON")
+    var json: Bool = false
+
+    func run() async throws {
+        let config = try FleetMateConfig.load()
+        let service = GraphService(config: config)
+
+        guard service.isConfigured else {
+            print("Microsoft Graph not configured.".red)
+            throw ExitCode.failure
+        }
+
+        let filter = DirectoryAuditQuery.filter(target: target, activity: activity, days: days)
+        let events = try await service.getDirectoryAudits(filter: filter, limit: limit)
+
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(events)
+            print(String(data: data, encoding: .utf8) ?? "[]")
+            return
+        }
+
+        guard !events.isEmpty else {
+            print("No matching audit entries.".yellow)
+            // An empty result is ambiguous here in a way it is not elsewhere: the
+            // log is retained for a limited window and the permission is not
+            // granted by default, so say what would explain it.
+            print("The directory audit log retains roughly 30 days, and reading it needs AuditLog.Read.All.".lightBlack)
+            print("A wrong --activity name also matches nothing; it is compared exactly.".lightBlack)
+            return
+        }
+
+        print("")
+        for event in events {
+            let when = String((event.activityDateTime ?? "-").prefix(16)).replacingOccurrences(of: "T", with: " ")
+            let actor = event.actorIsApplication ? event.actor.cyan : event.actor
+            let outcome = (event.result ?? "-").lowercased() == "success"
+                ? (event.result ?? "-").green
+                : (event.result ?? "-").red
+
+            print("\(when)  \(event.activityDisplayName ?? "-")".bold)
+            print("  by:".lightBlue + "     \(actor)")
+            print("  target:".lightBlue + " \(event.targets)")
+            print("  result:".lightBlue + " \(outcome)")
+            print("")
+        }
+
+        print("\(events.count) entr\(events.count == 1 ? "y" : "ies"). Applications are shown in cyan.".lightBlack)
     }
 }
 

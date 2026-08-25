@@ -17,10 +17,81 @@ struct IntuneCommand: AsyncParsableCommand {
             IntuneFreshStartSubcommand.self,
             IntuneDeleteRecordSubcommand.self,
             IntuneOffboardSubcommand.self,
-            IntuneCimianPushSubcommand.self
+            IntuneCimianPushSubcommand.self,
+            IntuneSettingsSubcommand.self
         ],
         defaultSubcommand: IntuneDevicesSubcommand.self
     )
+}
+
+// MARK: - Settings Catalog
+
+struct IntuneSettingsSubcommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "settings",
+        abstract: "Search the Intune Settings Catalog for a setting definition id"
+    )
+
+    @Argument(help: "Words to match against setting id, name, description and keywords")
+    var query: String?
+
+    @Option(name: .shortAndLong, help: "Applicability platform: windows10, macOS, iOS, android")
+    var platform: String?
+
+    @Option(name: .shortAndLong, help: "Maximum matches to show")
+    var limit: Int = 25
+
+    @Flag(name: .shortAndLong, help: "Output as JSON")
+    var json: Bool = false
+
+    func run() async throws {
+        let config = try FleetMateConfig.load()
+        let service = GraphService(config: config)
+
+        guard service.isConfigured else {
+            print("Microsoft Graph not configured.".red)
+            throw ExitCode.failure
+        }
+
+        let settings = try await service.searchSettingsCatalog(
+            query: query, platform: platform, limit: limit)
+
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(settings)
+            print(String(data: data, encoding: .utf8) ?? "[]")
+            return
+        }
+
+        guard !settings.isEmpty else {
+            print("No matching settings.".yellow)
+            // The most common reason to run this is holding an id Graph already
+            // rejected. Nothing found is then the answer, not a failure.
+            print("If you searched for a setting id, no definition by that name exists - which is what".lightBlack)
+            print("\"Setting Id is not found in the Settings Catalog\" means. Try a word from the name instead.".lightBlack)
+            return
+        }
+
+        print("")
+        for setting in settings {
+            print(setting.id.green)
+            print("  name:".lightBlue + "     \(setting.displayName ?? "-")")
+            print("  kind:".lightBlue + "     \(setting.kind)")
+            if let platform = setting.applicability?.platform {
+                print("  platform:".lightBlue + " \(platform)")
+            }
+            if let description = setting.description, !description.isEmpty {
+                let trimmed = description.count > 160
+                    ? String(description.prefix(160)) + "..."
+                    : description
+                print("  about:".lightBlue + "    \(trimmed)")
+            }
+            print("")
+        }
+
+        print("\(settings.count) match(es). Use the id above verbatim as a profile's definitionId.".lightBlack)
+    }
 }
 
 // MARK: - List Devices

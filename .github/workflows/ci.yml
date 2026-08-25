@@ -43,3 +43,9 @@ jobs:
         run: |
           swift build -c release --product fleetmate
           swift build -c release --product FleetMateApp
+
+      # The test target was never built by CI, so a test could not fail here --
+      # it was not compiled, let alone run. Tests that nothing executes are
+      # worse than no tests: they read as coverage.
+      - name: Test
+        run: swift test

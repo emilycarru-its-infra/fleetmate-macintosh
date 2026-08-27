@@ -23,10 +23,23 @@ public actor PlannerSyncService {
     public func authenticate() async throws -> Bool {
         do {
             // Get token from Azure CLI for MS Graph
+            // Same GUI-PATH trap as GitHubTokenSource: resolve `az` absolutely,
+            // since a launched .app inherits a PATH without Homebrew.
+            let az = CliSignIn.resolveExecutable("az")
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = ["az", "account", "get-access-token", "--resource", 
-                               "https://graph.microsoft.com", "--query", "accessToken", "-o", "tsv"]
+            let azArgs = ["account", "get-access-token", "--resource",
+                          "https://graph.microsoft.com", "--query", "accessToken", "-o", "tsv"]
+            if az.hasPrefix("/") {
+                process.executableURL = URL(fileURLWithPath: az)
+                process.arguments = azArgs
+            } else {
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                process.arguments = [az] + azArgs
+            }
+            var environment = ProcessInfo.processInfo.environment
+            environment["PATH"] = (["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+                + [environment["PATH"] ?? ""]).joined(separator: ":")
+            process.environment = environment
             
             let pipe = Pipe()
             process.standardOutput = pipe

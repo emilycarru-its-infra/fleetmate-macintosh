@@ -107,12 +107,27 @@ public actor GitHubTokenSource {
     private func tokenFromGhCli() async -> String? {
         await withCheckedContinuation { continuation in
             Task.detached {
+                // A GUI app's PATH has no Homebrew, so `/usr/bin/env gh` fails to
+                // launch inside the .app bundle even when the Settings probe (which
+                // resolves an absolute path) reports a healthy `gh` session. Resolve
+                // the same way here, and widen PATH for the `env` fallback.
+                let gh = CliSignIn.resolveExecutable("gh")
                 let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                process.arguments = ["gh", "auth", "token"]
+                if gh.hasPrefix("/") {
+                    process.executableURL = URL(fileURLWithPath: gh)
+                    process.arguments = ["auth", "token"]
+                } else {
+                    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                    process.arguments = [gh, "auth", "token"]
+                }
+                var environment = ProcessInfo.processInfo.environment
+                environment["PATH"] = (["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
+                    + [environment["PATH"] ?? ""]).joined(separator: ":")
+                process.environment = environment
                 let pipe = Pipe()
                 process.standardOutput = pipe
                 process.standardError = Pipe()
+                process.standardInput = FileHandle.nullDevice
                 do {
                     try process.run()
                     process.waitUntilExit()

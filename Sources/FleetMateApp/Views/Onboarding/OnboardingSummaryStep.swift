@@ -223,31 +223,18 @@ struct OnboardingSummaryStep: View {
     private func testGraph(config: FleetMateConfig) async -> ConnectionTestResult {
         if wizardState.graphAuthMode == .sso {
             // Check if az CLI is available and logged in to the right tenant
-            let process = Process()
-            let azPath = FileManager.default.fileExists(atPath: "/usr/local/bin/az")
-                ? "/usr/local/bin/az"
-                : "/opt/homebrew/bin/az"
-            process.executableURL = URL(fileURLWithPath: azPath)
-            process.arguments = ["account", "show", "--query", "tenantId", "-o", "tsv"]
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = Pipe()
-            do {
-                try process.run()
-                process.waitUntilExit()
-                if process.terminationStatus == 0 {
-                    let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    if output.lowercased() == wizardState.graphTenantId.lowercased() {
-                        return ConnectionTestResult(service: "Microsoft Graph", success: true, message: "Azure CLI authenticated to correct tenant")
-                    } else {
-                        return ConnectionTestResult(service: "Microsoft Graph", success: false, message: "CLI tenant (\(output.prefix(8))...) doesn't match")
-                    }
-                } else {
-                    return ConnectionTestResult(service: "Microsoft Graph", success: false, message: "Azure CLI not logged in. Run: az login")
-                }
-            } catch {
+            let result = await ProcessRunner.run("az", ["account", "show", "--query", "tenantId", "-o", "tsv"])
+            guard result.exitCode != -1 else {
                 return ConnectionTestResult(service: "Microsoft Graph", success: false, message: "Azure CLI not found")
+            }
+            guard result.succeeded else {
+                return ConnectionTestResult(service: "Microsoft Graph", success: false, message: "Azure CLI not logged in. Run: az login")
+            }
+            let output = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            if output.lowercased() == wizardState.graphTenantId.lowercased() {
+                return ConnectionTestResult(service: "Microsoft Graph", success: true, message: "Azure CLI authenticated to correct tenant")
+            } else {
+                return ConnectionTestResult(service: "Microsoft Graph", success: false, message: "CLI tenant (\(output.prefix(8))...) doesn't match")
             }
         } else {
             // SP mode: try fetching a device

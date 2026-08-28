@@ -351,79 +351,51 @@ public class DevOpsSsoService {
     }
 
     private func runAzCli() async throws -> DevOpsSsoResult {
-        return try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            let pipe = Pipe()
+        let result = await ProcessRunner.run(
+            "az",
+            ["account", "get-access-token", "--resource", Self.devOpsResource, "--output", "json"]
+        )
+        guard result.succeeded else {
+            return .failure("az CLI failed: \(result.stderr.isEmpty ? "status \(result.exitCode)" : result.stderr)")
+        }
 
-            // Find az in common locations
-            let azPaths = ["/opt/homebrew/bin/az", "/usr/local/bin/az", "/usr/bin/az"]
-            let azPath = azPaths.first { FileManager.default.isExecutableFile(atPath: $0) }
-            guard let path = azPath else {
-                continuation.resume(returning: .failure("az CLI not found"))
-                return
+        let data = Data(result.stdout.utf8)
+        guard !data.isEmpty else { return .failure("az CLI returned empty output") }
+
+        struct AzTokenResponse: Decodable {
+            let accessToken: String
+            let expiresOn: String?
+            let expires_on: Int?
+            let tenant: String?
+            let tokenType: String?
+        }
+
+        do {
+            let tokenResp = try JSONDecoder().decode(AzTokenResponse.self, from: data)
+            let userInfo = Self.extractUserInfoFromJwt(tokenResp.accessToken)
+
+            // Calculate expires_in from expires_on timestamp
+            let expiresIn: Int
+            if let ts = tokenResp.expires_on {
+                expiresIn = max(ts - Int(Date().timeIntervalSince1970), 60)
+            } else {
+                expiresIn = 3600
             }
 
-            process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = ["account", "get-access-token", "--resource", Self.devOpsResource, "--output", "json"]
-            process.standardOutput = pipe
-            process.standardError = FileHandle.nullDevice
-            process.environment = ProcessInfo.processInfo.environment
+            // Store token in memory
+            self.accessToken = tokenResp.accessToken
+            self.tokenExpiry = Date().addingTimeInterval(TimeInterval(expiresIn))
+            self.userName = userInfo.name
+            self.userEmail = userInfo.email
 
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(returning: .failure("az CLI launch failed: \(error)"))
-                return
-            }
-
-            process.waitUntilExit()
-
-            guard process.terminationStatus == 0 else {
-                continuation.resume(returning: .failure("az CLI exited with status \(process.terminationStatus)"))
-                return
-            }
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard !data.isEmpty else {
-                continuation.resume(returning: .failure("az CLI returned empty output"))
-                return
-            }
-
-            struct AzTokenResponse: Decodable {
-                let accessToken: String
-                let expiresOn: String?
-                let expires_on: Int?
-                let tenant: String?
-                let tokenType: String?
-            }
-
-            do {
-                let tokenResp = try JSONDecoder().decode(AzTokenResponse.self, from: data)
-                let userInfo = Self.extractUserInfoFromJwt(tokenResp.accessToken)
-
-                // Calculate expires_in from expires_on timestamp
-                let expiresIn: Int
-                if let ts = tokenResp.expires_on {
-                    expiresIn = max(ts - Int(Date().timeIntervalSince1970), 60)
-                } else {
-                    expiresIn = 3600
-                }
-
-                // Store token in memory
-                self.accessToken = tokenResp.accessToken
-                self.tokenExpiry = Date().addingTimeInterval(TimeInterval(expiresIn))
-                self.userName = userInfo.name
-                self.userEmail = userInfo.email
-
-                continuation.resume(returning: .success(
-                    accessToken: tokenResp.accessToken,
-                    expiresIn: expiresIn,
-                    userName: userInfo.name,
-                    userEmail: userInfo.email
-                ))
-            } catch {
-                continuation.resume(returning: .failure("az CLI JSON parse failed: \(error)"))
-            }
+            return .success(
+                accessToken: tokenResp.accessToken,
+                expiresIn: expiresIn,
+                userName: userInfo.name,
+                userEmail: userInfo.email
+            )
+        } catch {
+            return .failure("az CLI JSON parse failed: \(error)")
         }
     }
 

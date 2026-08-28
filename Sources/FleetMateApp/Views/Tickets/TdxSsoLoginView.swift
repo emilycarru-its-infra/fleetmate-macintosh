@@ -605,28 +605,13 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     private static func detectPlatformSsoUpn() async -> String? {
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/app-sso")
-                process.arguments = ["platform", "-s"]
-                
-                let pipe = Pipe()
-                process.standardOutput = pipe
-                process.standardError = FileHandle.nullDevice
-                
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-                } catch {
-                    Self.ssoLogStatic("[PSSO] Failed to run app-sso platform -s: \(error)")
+                let result = ProcessRunner.runSync("/usr/bin/app-sso", ["platform", "-s"])
+                guard result.exitCode != -1 else {
+                    Self.ssoLogStatic("[PSSO] Failed to run app-sso platform -s: \(result.stderr)")
                     continuation.resume(returning: nil)
                     return
                 }
-                
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                guard let output = String(data: data, encoding: .utf8) else {
-                    continuation.resume(returning: nil)
-                    return
-                }
+                let output = result.stdout
                 
                 // Parse the output for UPN entries.
                 // The AD TGT ticket has ticketKeyPath "tgt_ad" and a clean UPN.

@@ -388,27 +388,13 @@ class DevOpsSsoLoginViewModel: NSObject, ObservableObject {
     private static func detectPlatformSsoUpn() async -> String? {
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/app-sso")
-                process.arguments = ["platform", "-s"]
-                let pipe = Pipe()
-                process.standardOutput = pipe
-                process.standardError = FileHandle.nullDevice
-
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-                } catch {
-                    ssoLogStatic("[PSSO] Failed to run app-sso: \(error)")
+                let result = ProcessRunner.runSync("/usr/bin/app-sso", ["platform", "-s"])
+                guard result.exitCode != -1 else {
+                    ssoLogStatic("[PSSO] Failed to run app-sso: \(result.stderr)")
                     continuation.resume(returning: nil)
                     return
                 }
-
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                guard let output = String(data: data, encoding: .utf8) else {
-                    continuation.resume(returning: nil)
-                    return
-                }
+                let output = result.stdout
 
                 var bestUpn: String?
                 for line in output.components(separatedBy: .newlines) {

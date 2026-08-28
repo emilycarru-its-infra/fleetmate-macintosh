@@ -256,31 +256,8 @@ public class SecureShellService {
         sshArgs.append("\(username)@\(host)")
         sshArgs.append(command)
         
-        return try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            process.arguments = sshArgs
-            
-            let stdoutPipe = Pipe()
-            let stderrPipe = Pipe()
-            process.standardOutput = stdoutPipe
-            process.standardError = stderrPipe
-            
-            do {
-                try process.run()
-                process.waitUntilExit()
-                
-                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                
-                let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-                let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-                
-                continuation.resume(returning: (Int(process.terminationStatus), stdout, stderr))
-            } catch {
-                continuation.resume(throwing: error)
-            }
-        }
+        let result = await ProcessRunner.run("/usr/bin/ssh", sshArgs)
+        return (Int(result.exitCode), result.stdout, result.stderr)
     }
     
     private func getPrivateKeyPath() -> String? {
@@ -404,30 +381,7 @@ extension SecureShellService {
     }
     
     private func runProcess(_ path: String, arguments: [String]) async throws -> (exitCode: Int, stdout: String, stderr: String) {
-        return try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = arguments
-            
-            let stdoutPipe = Pipe()
-            let stderrPipe = Pipe()
-            process.standardOutput = stdoutPipe
-            process.standardError = stderrPipe
-            
-            do {
-                try process.run()
-                process.waitUntilExit()
-                
-                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                
-                let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-                let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-                
-                continuation.resume(returning: (Int(process.terminationStatus), stdout, stderr))
-            } catch {
-                continuation.resume(throwing: error)
-            }
-        }
+        let result = await ProcessRunner.run(path, arguments)
+        return (Int(result.exitCode), result.stdout, result.stderr)
     }
 }

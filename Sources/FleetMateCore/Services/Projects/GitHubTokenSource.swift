@@ -103,47 +103,9 @@ public actor GitHubTokenSource {
         return token
     }
 
-    /// Runs `gh auth token` in a detached task to avoid blocking the actor executor.
+    /// Asks the `gh` CLI for the current token.
     private func tokenFromGhCli() async -> String? {
-        await withCheckedContinuation { continuation in
-            Task.detached {
-                // A GUI app's PATH has no Homebrew, so `/usr/bin/env gh` fails to
-                // launch inside the .app bundle even when the Settings probe (which
-                // resolves an absolute path) reports a healthy `gh` session. Resolve
-                // the same way here, and widen PATH for the `env` fallback.
-                let gh = CliSignIn.resolveExecutable("gh")
-                let process = Process()
-                if gh.hasPrefix("/") {
-                    process.executableURL = URL(fileURLWithPath: gh)
-                    process.arguments = ["auth", "token"]
-                } else {
-                    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                    process.arguments = [gh, "auth", "token"]
-                }
-                var environment = ProcessInfo.processInfo.environment
-                environment["PATH"] = (["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
-                    + [environment["PATH"] ?? ""]).joined(separator: ":")
-                process.environment = environment
-                let pipe = Pipe()
-                process.standardOutput = pipe
-                process.standardError = Pipe()
-                process.standardInput = FileHandle.nullDevice
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-                    guard process.terminationStatus == 0 else {
-                        continuation.resume(returning: nil)
-                        return
-                    }
-                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                    let t = String(data: data, encoding: .utf8)?
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    continuation.resume(returning: t?.isEmpty == false ? t : nil)
-                } catch {
-                    continuation.resume(returning: nil)
-                }
-            }
-        }
+        await ProcessRunner.trimmedOutput("gh", ["auth", "token"])
     }
 
     /// Executes GitHub's OAuth Device Flow.

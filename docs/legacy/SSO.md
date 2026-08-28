@@ -260,7 +260,7 @@ Check if Platform SSO is active:
 app-sso platform -s
 ```
 
-Should show AD TGT ticket with UPN (e.g., `adoe@example.edu`). If empty, user may need to sign out and back in to macOS to establish Platform SSO credentials.
+Should show AD TGT ticket with UPN (e.g., `adoe@EXAMPLE.EDU`). If empty, user may need to sign out and back in to macOS to establish Platform SSO credentials.
 
 **Auto-fill not triggering:**
 

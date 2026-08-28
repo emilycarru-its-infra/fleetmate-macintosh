@@ -406,7 +406,7 @@ struct ArdVncCommand: AsyncParsableCommand {
             Screen Sharing using a vnc:// URL — without leaving VS Code.
 
             EXAMPLES
-              fleetmate ard vnc Mac-Studio-Lab-01
+              fleetmate ard vnc Mac-Example-01
               fleetmate ard vnc 10.15.2.15
             """
     )

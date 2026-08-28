@@ -105,7 +105,7 @@ Monitor deployment health and troubleshoot installation failures:
 
 ```bash
 # Look up device by serial, hostname, or asset tag
-fleetmate device L003461
+fleetmate device A000123
 
 # List all installation errors
 fleetmate errors
@@ -127,7 +127,7 @@ fleetmate snipe assets --search "laptop"
 fleetmate snipe assets --status 2 --location 5
 
 # Get asset details (by tag, serial, or ID)
-fleetmate snipe asset L003461
+fleetmate snipe asset A000123
 
 # Asset lifecycle
 fleetmate snipe checkout 923 --user 42 --note "Assigned to new hire"
@@ -135,7 +135,7 @@ fleetmate snipe checkin 923 --note "Returned from user"
 fleetmate snipe audit 923 --location 5
 
 # Users and locations
-fleetmate snipe users --search "bryan"
+fleetmate snipe users --search "smith"
 fleetmate snipe user 42
 fleetmate snipe locations
 
@@ -161,7 +161,7 @@ Asset and ticket management:
 
 ```bash
 # Search assets
-fleetmate tdx assets --search L003461 --limit 10
+fleetmate tdx assets --search A000123 --limit 10
 
 # Get asset details with all fields
 fleetmate tdx asset 243576 --json
@@ -179,21 +179,21 @@ SSH-based remote command execution:
 
 ```bash
 # Execute single command
-fleetmate ssh exec L003461 "hostname"
+fleetmate ssh exec A000123 "hostname"
 fleetmate ssh exec REMOTE-24 "sudo managedsoftwareupdate --checkonly"
 
 # Batch execution
-fleetmate ssh batch L003461 REMOTE-24 STUDIO-10 --command "uptime"
+fleetmate ssh batch A000123 REMOTE-24 STUDIO-10 --command "uptime"
 
 # Test connectivity
-fleetmate ssh test L003461
+fleetmate ssh test A000123
 
 # Retrieve Munki logs
-fleetmate ssh logs L003461 --lines 50
+fleetmate ssh logs A000123 --lines 50
 
 # Run Munki commands
-fleetmate ssh munki check L003461
-fleetmate ssh munki prefs L003461
+fleetmate ssh munki check A000123
+fleetmate ssh munki prefs A000123
 ```
 
 ### Microsoft Graph (Intune/Entra)
@@ -207,9 +207,9 @@ fleetmate intune device 16BQKQ3  # by serial
 fleetmate intune compliance <device-id>
 
 # Entra users
-fleetmate entra user bryan.wong@ecuad.ca
+fleetmate entra user first.last@example.edu
 fleetmate entra groups
-fleetmate entra check-group bryan.wong@ecuad.ca "IT Staff"
+fleetmate entra check-group first.last@example.edu "IT Staff"
 ```
 
 ### Azure DevOps
@@ -241,13 +241,13 @@ Query MunkiReport database (legacy support):
 fleetmate munkireport devices
 
 # Device details
-fleetmate munkireport device L003461
+fleetmate munkireport device A000123
 
 # Munki info
-fleetmate munkireport info L003461
+fleetmate munkireport info A000123
 
 # Managed installs
-fleetmate munkireport installs L003461
+fleetmate munkireport installs A000123
 
 # Installation errors
 fleetmate munkireport errors
@@ -276,8 +276,8 @@ fleetmate lint /path/to/pkginfo
 All commands support `--json` for programmatic consumption:
 
 ```bash
-fleetmate snipe asset L003461 --json | jq .
-fleetmate tdx assets --search L003461 --json | jq .
+fleetmate snipe asset A000123 --json | jq .
+fleetmate tdx assets --search A000123 --json | jq .
 fleetmate intune device 16BQKQ3 --json | jq .
 ```
 
@@ -287,9 +287,9 @@ fleetmate intune device 16BQKQ3 --json | jq .
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `REPORTMATE_URL` | ReportMate API endpoint | `https://reportmate.ecuad.ca` |
+| `REPORTMATE_URL` | ReportMate API endpoint | `https://reportmate.example.edu` |
 | `REPORTMATE_PASSPHRASE` | ReportMate authentication token | `your-token` |
-| `SNIPE_URL` | Snipe-IT base URL | `https://snipe.ecuad.ca` |
+| `SNIPE_URL` | Snipe-IT base URL | `https://snipe.example.edu` |
 | `SNIPE_API_KEY` | Snipe-IT API key | `your-api-key` |
 | `TDX_BASE_URL` | TeamDynamix API endpoint | `https://servicedesk.emilycarru.ca/TDWebApi` |
 | `TDX_APP_ID` | TeamDynamix application ID | `116` |
@@ -314,11 +314,11 @@ All credentials can be stored securely in macOS Keychain:
 
 ```yaml
 reportmate:
-  url: https://reportmate.ecuad.ca
+  url: https://reportmate.example.edu
   passphrase: your-passphrase
 
 snipe:
-  url: https://snipe.ecuad.ca
+  url: https://snipe.example.edu
   api_key: your-api-key
 
 tdx:
@@ -420,7 +420,7 @@ fleetmate configure set tdx-app-id "116"
 
 ```bash
 # Test connectivity
-fleetmate ssh test L003461
+fleetmate ssh test A000123
 
 # Verify key permissions and format
 # Key should be PEM format, no passphrase

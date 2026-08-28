@@ -11,7 +11,7 @@ import Foundation
 /// `ElevationSession` container path. ElevationSession runs as a domain managed
 /// identity (for privileged Graph/Intune elevation); resource tokens for
 /// ReportMate/Snipe must carry the *operator's* identity + role assignment
-/// (e.g. adoe / ReportMate.Admin), which is exactly the local az
+/// (e.g. a staff account / ReportMate.Admin), which is exactly the local az
 /// session's token.
 public actor AzTokenSource {
     public static let shared = AzTokenSource()

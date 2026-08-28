@@ -641,7 +641,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                 } else if let fallback = Self.fallbackUpn {
                     // `app-sso platform -s` doesn't always carry a usable UPN:
                     // on an enrolled Mac it may expose no `upn` key at all and
-                    // mask `loginUserName` as "r***n@ecuad.ca". Without an
+                    // mask `loginUserName` as "a***e@example.edu". Without an
                     // address the Entra page can't be advanced, silent SSO
                     // times out, and every write falls back to the service
                     // account. The signed-in Azure identity supplies the same
@@ -680,7 +680,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                 // auto-choose. This page was misread as a sign-in wall for
                 // months; the session was there all along, one click deep.
                 // The address must match EXACTLY, not as a substring —
-                // "aws-rchristiansen@ecuad.ca" contains "rchristiansen@ecuad.ca"
+                // "aws-adoe@example.edu" contains "adoe@example.edu"
                 // and sorts first, so a contains() check signs into TDX as the
                 // AWS identity and every API call comes back 403.
                 var wanted = '\(escapedUpn)'.toLowerCase();

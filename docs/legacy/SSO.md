@@ -157,10 +157,10 @@ Cookie: (session cookies from SAML flow)
 | Claim | Description | Example |
 |-------|-------------|---------|
 | `given_name` | User's first name | Rod |
-| `name` | Full display name | rchristiansen@ecuad.ca |
-| `unique_name` | Unique identifier | rchristiansen@ecuad.ca |
-| `email` | Email address | rchristiansen@ecuad.ca |
-| `upn` | User Principal Name | rchristiansen@ecuad.ca |
+| `name` | Full display name | adoe@example.edu |
+| `unique_name` | Unique identifier | adoe@example.edu |
+| `email` | Email address | adoe@example.edu |
+| `upn` | User Principal Name | adoe@example.edu |
 | `exp` | Expiry timestamp | 1738300800 |
 
 ### Usage

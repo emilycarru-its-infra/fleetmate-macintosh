@@ -198,7 +198,7 @@ final class TdxContractTests: XCTestCase {
             ticketId: 12,
             comment: "On it",
             isPrivate: true,
-            notifyEmails: ["pisa.liu@ecuad.ca"]
+            notifyEmails: ["first.last@example.edu"]
         )
 
         let call = try onlyApiCall()
@@ -207,7 +207,7 @@ final class TdxContractTests: XCTestCase {
         let body = try XCTUnwrap(call.jsonObject)
         XCTAssertEqual(body["Comments"] as? String, "On it")
         XCTAssertEqual(body["IsPrivate"] as? Bool, true)
-        XCTAssertEqual(body["Notify"] as? [String], ["pisa.liu@ecuad.ca"])
+        XCTAssertEqual(body["Notify"] as? [String], ["first.last@example.edu"])
         XCTAssertEqual(entry?.id, 555)
     }
 
@@ -338,12 +338,12 @@ final class TdxContractTests: XCTestCase {
     func testFindPersonMatchesOnExactEmail() async throws {
         StubURLProtocol.reset(stubs: stubs([
             StubURLProtocol.Stub(pathContains: "/people/lookup", body: """
-            [{"UID":"uid-other","FullName":"Rod Christiansen Jr","PrimaryEmail":"rchristiansen2@ecuad.ca"},
-             {"UID":"uid-me","FullName":"Rod Christiansen","PrimaryEmail":"rchristiansen@ecuad.ca"}]
+            [{"UID":"uid-other","FullName":"Alex Doe Jr","PrimaryEmail":"adoe2@example.edu"},
+             {"UID":"uid-me","FullName":"Alex Doe","PrimaryEmail":"adoe@example.edu"}]
             """)
         ]))
 
-        let person = try await makeService().findPerson(email: "RChristiansen@ECUAD.CA")
+        let person = try await makeService().findPerson(email: "ADoe@EXAMPLE.EDU")
 
         // A prefix match would have picked the first, wrong, record.
         XCTAssertEqual(person?.uid, "uid-me")

@@ -457,50 +457,11 @@ public actor ElevationSession {
     }
 
     private func runAz(_ args: [String]) async throws -> (out: String, err: String, code: Int32) {
-        let azPath = self.azPath
-        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<(String, String, Int32), Error>) in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                if azPath == "az" {
-                    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                    process.arguments = ["az"] + args
-                } else {
-                    process.executableURL = URL(fileURLWithPath: azPath)
-                    process.arguments = args
-                }
-                var env = ProcessInfo.processInfo.environment
-                let extra = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
-                let existing = env["PATH"] ?? ""
-                env["PATH"] = (extra + (existing.isEmpty ? [] : [existing])).joined(separator: ":")
-                process.environment = env
-                let outPipe = Pipe(), errPipe = Pipe()
-                process.standardOutput = outPipe
-                process.standardError = errPipe
-                do {
-                    try process.run()
-                } catch {
-                    cont.resume(throwing: ElevationError.azLaunchFailed(error.localizedDescription))
-                    return
-                }
-                // Drain both pipes concurrently to avoid a deadlock when one
-                // fills its buffer while we block reading the other.
-                var errData = Data()
-                let errGroup = DispatchGroup()
-                errGroup.enter()
-                DispatchQueue.global(qos: .userInitiated).async {
-                    errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-                    errGroup.leave()
-                }
-                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-                errGroup.wait()
-                process.waitUntilExit()
-                cont.resume(returning: (
-                    String(data: outData, encoding: .utf8) ?? "",
-                    String(data: errData, encoding: .utf8) ?? "",
-                    process.terminationStatus
-                ))
-            }
+        let result = await ProcessRunner.run(azPath, args)
+        if result.exitCode == -1 && result.stdout.isEmpty {
+            throw ElevationError.azLaunchFailed(result.stderr)
         }
+        return (result.stdout, result.stderr, result.exitCode)
     }
 }
 

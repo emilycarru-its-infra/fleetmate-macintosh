@@ -135,7 +135,7 @@ fleetmate snipe checkin 923 --note "Returned from user"
 fleetmate snipe audit 923 --location 5
 
 # Users and locations
-fleetmate snipe users --search "bryan"
+fleetmate snipe users --search "smith"
 fleetmate snipe user 42
 fleetmate snipe locations
 

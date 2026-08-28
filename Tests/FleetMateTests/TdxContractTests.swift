@@ -343,7 +343,7 @@ final class TdxContractTests: XCTestCase {
             """)
         ]))
 
-        let person = try await makeService().findPerson(email: "adoe@example.edu")
+        let person = try await makeService().findPerson(email: "ADoe@EXAMPLE.EDU")
 
         // A prefix match would have picked the first, wrong, record.
         XCTAssertEqual(person?.uid, "uid-me")

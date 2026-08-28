@@ -257,16 +257,7 @@ class AuthManager: ObservableObject {
         guard systems[.devops] != nil else { return }
         update(.devops, state: .authenticating)
         let az = resolveAzPath()
-        let success = await Task.detached(priority: .userInitiated) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: az)
-            process.arguments = ["login", "-o", "json"]
-            process.standardOutput = Pipe()
-            process.standardError = Pipe()
-            try? process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
-        }.value
+        let success = await ProcessRunner.run(az, ["login", "-o", "json"]).succeeded
         if success {
             await probeDevOps(devOpsService: devOpsService)
         } else {
@@ -277,15 +268,7 @@ class AuthManager: ObservableObject {
     /// Run `az logout` then mark DevOps as needing re-auth.
     func logoutDevOps(devOpsService: AzureDevOpsService) async {
         let az = resolveAzPath()
-        _ = await Task.detached(priority: .userInitiated) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: az)
-            process.arguments = ["logout"]
-            process.standardOutput = Pipe()
-            process.standardError = Pipe()
-            try? process.run()
-            process.waitUntilExit()
-        }.value
+        _ = await ProcessRunner.run(az, ["logout"])
         devOpsService.clearBearerToken()
         update(.devops, state: .configured)
     }
@@ -350,55 +333,20 @@ class AuthManager: ObservableObject {
     }
     
     private func resolveAzPath() -> String {
-        if FileManager.default.fileExists(atPath: "/opt/homebrew/bin/az") { return "/opt/homebrew/bin/az" }
-        if FileManager.default.fileExists(atPath: "/usr/local/bin/az") { return "/usr/local/bin/az" }
-        return "/usr/bin/env"
+        ProcessRunner.resolve("az")
     }
     
     private func shellOutput(_ executable: String, _ arguments: [String]) async throws -> String {
-        let process = Process()
-        if executable == "/usr/bin/env" {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = arguments
-        } else {
-            process.executableURL = URL(fileURLWithPath: executable)
-            process.arguments = arguments
-        }
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        try process.run()
-        process.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard process.terminationStatus == 0 else { throw AuthError.commandFailed }
-        return String(data: data, encoding: .utf8) ?? ""
+        let result = await ProcessRunner.run(executable, arguments)
+        guard result.succeeded else { throw AuthError.commandFailed }
+        return result.stdout
     }
 
     /// Run a command and return stdout + stderr regardless of exit code —
     /// for tools like `gh auth status` that report state on stderr and exit 1.
     private func shellOutputLenient(_ executable: String, _ arguments: [String]) async -> String {
-        await Task.detached(priority: .userInitiated) {
-            let process = Process()
-            if executable.hasPrefix("/") {
-                process.executableURL = URL(fileURLWithPath: executable)
-                process.arguments = arguments
-            } else {
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                process.arguments = [executable] + arguments
-            }
-            let out = Pipe(), err = Pipe()
-            process.standardOutput = out
-            process.standardError = err
-            do {
-                try process.run()
-            } catch {
-                return ""
-            }
-            let outData = out.fileHandleForReading.readDataToEndOfFile()
-            let errData = err.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            return String(decoding: outData, as: UTF8.self) + String(decoding: errData, as: UTF8.self)
-        }.value
+        let result = await ProcessRunner.run(executable, arguments)
+        return result.stdout + result.stderr
     }
 
     enum AuthError: Error {

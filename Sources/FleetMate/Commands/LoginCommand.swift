@@ -174,26 +174,9 @@ struct LoginCommand: AsyncParsableCommand {
     /// Run `az` synchronously (blocking is fine for a CLI), returning stdout/stderr/exit.
     @discardableResult
     static func sh(_ az: String, _ args: [String]) -> (out: String, err: String, code: Int32) {
-        let p = Process()
-        if az == "az" {
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            p.arguments = ["az"] + args
-        } else {
-            p.executableURL = URL(fileURLWithPath: az)
-            p.arguments = args
-        }
-        var env = ProcessInfo.processInfo.environment
-        env["PATH"] = (["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] + [env["PATH"] ?? ""]).joined(separator: ":")
-        p.environment = env
-        let out = Pipe(), err = Pipe()
-        p.standardOutput = out; p.standardError = err
         // az login opens a browser and needs the user's terminal for prompts.
-        p.standardInput = FileHandle.standardInput
-        do { try p.run() } catch { return ("", "could not launch az: \(error.localizedDescription)", -1) }
-        let outData = out.fileHandleForReading.readDataToEndOfFile()
-        let errData = err.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        return (String(decoding: outData, as: UTF8.self), String(decoding: errData, as: UTF8.self), p.terminationStatus)
+        let result = ProcessRunner.runSync(az, args, inheritStandardInput: true)
+        return (result.stdout, result.stderr, result.exitCode)
     }
 
     // MARK: - Output

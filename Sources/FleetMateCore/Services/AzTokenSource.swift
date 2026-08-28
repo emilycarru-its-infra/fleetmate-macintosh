@@ -44,24 +44,8 @@ public actor AzTokenSource {
     }
 
     private func run(_ args: [String]) -> (out: String, err: String, code: Int32) {
-        let p = Process()
-        if azPath == "az" {
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            p.arguments = ["az"] + args
-        } else {
-            p.executableURL = URL(fileURLWithPath: azPath)
-            p.arguments = args
-        }
-        var env = ProcessInfo.processInfo.environment
-        env["PATH"] = (["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] + [env["PATH"] ?? ""]).joined(separator: ":")
-        p.environment = env
-        let out = Pipe(), err = Pipe()
-        p.standardOutput = out; p.standardError = err
-        do { try p.run() } catch { return ("", "could not launch az: \(error.localizedDescription)", -1) }
-        let o = out.fileHandleForReading.readDataToEndOfFile()
-        let e = err.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        return (String(decoding: o, as: UTF8.self), String(decoding: e, as: UTF8.self), p.terminationStatus)
+        let result = ProcessRunner.runSync(azPath, args)
+        return (result.stdout, result.stderr, result.exitCode)
     }
 }
 

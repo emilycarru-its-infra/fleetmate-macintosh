@@ -110,11 +110,7 @@ public enum CliSignIn {
     /// Absolute path where we can find it — a GUI app's PATH doesn't include
     /// Homebrew, so bare names would resolve only via the `env` fallback.
     public static func resolveExecutable(_ name: String) -> String {
-        for candidate in ["/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)", "/usr/bin/\(name)"]
-        where FileManager.default.isExecutableFile(atPath: candidate) {
-            return candidate
-        }
-        return name
+        ProcessRunner.resolve(name)
     }
 
     private struct RunResult {
@@ -124,46 +120,8 @@ public enum CliSignIn {
     }
 
     private static func run(_ executable: String, _ arguments: [String]) async -> RunResult {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                if executable.hasPrefix("/") {
-                    process.executableURL = URL(fileURLWithPath: executable)
-                    process.arguments = arguments
-                } else {
-                    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                    process.arguments = [executable] + arguments
-                }
-
-                var environment = ProcessInfo.processInfo.environment
-                environment["PATH"] = (["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
-                    + [environment["PATH"] ?? ""]).joined(separator: ":")
-                process.environment = environment
-
-                let out = Pipe(), err = Pipe()
-                process.standardOutput = out
-                process.standardError = err
-                process.standardInput = FileHandle.nullDevice
-
-                do {
-                    try process.run()
-                } catch {
-                    continuation.resume(returning: RunResult(
-                        stdout: "", stderr: "could not launch \(executable): \(error.localizedDescription)", code: -1
-                    ))
-                    return
-                }
-
-                let outData = out.fileHandleForReading.readDataToEndOfFile()
-                let errData = err.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                continuation.resume(returning: RunResult(
-                    stdout: String(decoding: outData, as: UTF8.self),
-                    stderr: String(decoding: errData, as: UTF8.self),
-                    code: process.terminationStatus
-                ))
-            }
-        }
+        let result = await ProcessRunner.run(executable, arguments)
+        return RunResult(stdout: result.stdout, stderr: result.stderr, code: result.exitCode)
     }
 }
 

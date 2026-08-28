@@ -161,7 +161,7 @@ class AppState: ObservableObject {
     @Published var devOpsSsoUserName: String?
     /// UPN the DevOps token was issued to. Azure DevOps work is attributed to the
     /// operator personally -- commits, PRs and work-item edits must carry a real
-    /// `@example.com` identity, never a shared or managed one -- so the panel shows
+    /// `@example.edu` identity, never a shared or managed one -- so the panel shows
     /// which account is signed in rather than just a display name.
     @Published var devOpsSsoUserEmail: String?
     @Published var devOpsProjectReady = false
@@ -973,7 +973,7 @@ class AppState: ObservableObject {
     ///
     /// `app-sso platform -s` is not a reliable source: on an enrolled Mac it
     /// can expose no `upn` key at all and mask `loginUserName` as
-    /// `r***n@example.com`. The Azure identity has the real address.
+    /// `a***e@example.edu`. The Azure identity has the real address.
     func primeTdxSsoUpn() async {
         guard TdxSsoLoginViewModel.fallbackUpn == nil else { return }
 

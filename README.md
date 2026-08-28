@@ -135,7 +135,7 @@ fleetmate snipe checkin 923 --note "Returned from user"
 fleetmate snipe audit 923 --location 5
 
 # Users and locations
-fleetmate snipe users --search "bryan"
+fleetmate snipe users --search "smith"
 fleetmate snipe user 42
 fleetmate snipe locations
 
@@ -203,7 +203,7 @@ Query Intune devices and Entra users:
 ```bash
 # Intune devices
 fleetmate intune devices
-fleetmate intune device EXAMPLE4  # by serial
+fleetmate intune device EXAMPLE1  # by serial
 fleetmate intune compliance <device-id>
 
 # Entra users
@@ -278,7 +278,7 @@ All commands support `--json` for programmatic consumption:
 ```bash
 fleetmate snipe asset ASSET-000 --json | jq .
 fleetmate tdx assets --search ASSET-000 --json | jq .
-fleetmate intune device EXAMPLE4 --json | jq .
+fleetmate intune device EXAMPLE1 --json | jq .
 ```
 
 ## Configuration Reference

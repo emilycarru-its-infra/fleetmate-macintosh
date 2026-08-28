@@ -21,52 +21,25 @@ public actor PlannerSyncService {
     
     /// Authenticate using Azure CLI SSO token for MS Graph.
     public func authenticate() async throws -> Bool {
-        do {
-            // Get token from Azure CLI for MS Graph
-            // Same GUI-PATH trap as GitHubTokenSource: resolve `az` absolutely,
-            // since a launched .app inherits a PATH without Homebrew.
-            let az = CliSignIn.resolveExecutable("az")
-            let process = Process()
-            let azArgs = ["account", "get-access-token", "--resource",
-                          "https://graph.microsoft.com", "--query", "accessToken", "-o", "tsv"]
-            if az.hasPrefix("/") {
-                process.executableURL = URL(fileURLWithPath: az)
-                process.arguments = azArgs
-            } else {
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                process.arguments = [az] + azArgs
-            }
-            var environment = ProcessInfo.processInfo.environment
-            environment["PATH"] = (["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
-                + [environment["PATH"] ?? ""]).joined(separator: ":")
-            process.environment = environment
-            
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = Pipe()
-            
-            try process.run()
-            process.waitUntilExit()
-            
-            guard process.terminationStatus == 0 else {
-                print("Planner: Could not get Graph token from Azure CLI")
-                return false
-            }
-            
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let token = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !token.isEmpty else {
-                print("Planner: Empty token from Azure CLI")
-                return false
-            }
-            
-            accessToken = token
-            print("Planner: Authenticated via Azure CLI")
-            return true
-        } catch {
-            print("Planner: Authentication failed - \(error)")
+        let result = await ProcessRunner.run(
+            "az",
+            ["account", "get-access-token", "--resource",
+             "https://graph.microsoft.com", "--query", "accessToken", "-o", "tsv"]
+        )
+        guard result.succeeded else {
+            print("Planner: Could not get Graph token from Azure CLI. \(result.stderr)")
             return false
         }
+
+        let token = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            print("Planner: Empty token from Azure CLI")
+            return false
+        }
+
+        accessToken = token
+        print("Planner: Authenticated via Azure CLI")
+        return true
     }
     
     private func headers() -> HTTPHeaders {

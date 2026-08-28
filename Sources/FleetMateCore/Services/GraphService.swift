@@ -79,44 +79,22 @@ public class GraphService {
         }
 
         // Use Azure CLI SSO
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/local/bin/az")
-        process.arguments = ["account", "get-access-token", "--resource", graphResourceId, "--query", "accessToken", "-o", "tsv"]
-
-        // Try Homebrew arm64 path if standard path doesn't exist
-        if !FileManager.default.fileExists(atPath: "/usr/local/bin/az") {
-            if FileManager.default.fileExists(atPath: "/opt/homebrew/bin/az") {
-                process.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/az")
-            } else {
-                print("Azure CLI not found. Please install it: brew install azure-cli")
-                return nil
-            }
-        }
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-
-            guard process.terminationStatus == 0 else {
-                print("Azure CLI failed to get token. Run 'az login' first.")
-                return nil
-            }
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let token = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            cachedToken = token
-            tokenExpiry = Date().addingTimeInterval(55 * 60) // 55 minutes
-
-            return token
-        } catch {
-            print("Failed to run Azure CLI: \(error)")
+        let result = await ProcessRunner.run(
+            "az",
+            ["account", "get-access-token", "--resource", graphResourceId, "--query", "accessToken", "-o", "tsv"]
+        )
+        guard result.succeeded else {
+            print("Azure CLI failed to get token. Run 'az login' first. \(result.stderr)")
             return nil
         }
+
+        let token = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return nil }
+
+        cachedToken = token
+        tokenExpiry = Date().addingTimeInterval(55 * 60) // 55 minutes
+
+        return token
     }
 
     func headers() async -> HTTPHeaders? {

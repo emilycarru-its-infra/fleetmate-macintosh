@@ -244,7 +244,7 @@ struct AuthSettingsView: View {
                 // Deliberately not phrased like the Graph rows' "Secretless — az
                 // elevation". Azure DevOps does NOT go through elevation and must
                 // not: every commit, pull request and work-item edit has to be
-                // attributed to the operator's own @ecuad.ca account, not to a
+                // attributed to the operator's own @example.edu account, not to a
                 // managed identity. The token comes straight from `az login`.
                 detailRow("Auth method", "Your az sign-in — no elevation")
                 if let org = cfg.devopsOrganization {

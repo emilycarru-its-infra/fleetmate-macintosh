@@ -523,11 +523,21 @@ struct ArdSecurityFilevaultSubcommand: AsyncParsableCommand {
     }
 }
 
+/// The site's local administrator account name. Naming it in a public repository
+/// tells anyone which account to attack on every Mac in the fleet, so it comes
+/// from the environment; `admin` is the neutral fallback.
+private var localAdminAccount: String {
+    ProcessInfo.processInfo.environment["FLEETMATE_ADMIN_ACCOUNT"] ?? "admin"
+}
+
 struct ArdSecuritySshdSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(commandName: "sshd", abstract: "Check sshd config for known admin entries")
     @OptionGroup var targeting: ArdTargetOptions
     func run() async throws {
-        try await ArdRunner.run(script: "cat /etc/ssh/sshd_config | grep siteadmin", targeting: targeting)
+        try await ArdRunner.run(
+            script: "cat /etc/ssh/sshd_config | grep \(localAdminAccount)",
+            targeting: targeting
+        )
     }
 }
 
@@ -545,11 +555,14 @@ struct ArdSecurityDefenderSubcommand: AsyncParsableCommand {
 }
 
 struct ArdSecurityFindAdminSubcommand: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "find-admin", abstract: "Find local admin account (siteadmin)")
+    static let configuration = CommandConfiguration(
+        commandName: "find-admin",
+        abstract: "Find the site's local admin account (set FLEETMATE_ADMIN_ACCOUNT; defaults to admin)"
+    )
     @OptionGroup var targeting: ArdTargetOptions
     func run() async throws {
         try await ArdRunner.run(
-            script: "ls /Users | grep siteadmin; dscl . -read /Users | grep siteadmin",
+            script: "ls /Users | grep \(localAdminAccount); dscl . -read /Users | grep \(localAdminAccount)",
             targeting: targeting
         )
     }

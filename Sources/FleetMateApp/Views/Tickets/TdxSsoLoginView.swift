@@ -641,7 +641,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                 } else if let fallback = Self.fallbackUpn {
                     // `app-sso platform -s` doesn't always carry a usable UPN:
                     // on an enrolled Mac it may expose no `upn` key at all and
-                    // mask `loginUserName` as "r***n@ecuad.ca". Without an
+                    // mask `loginUserName` as "a***e@example.edu". Without an
                     // address the Entra page can't be advanced, silent SSO
                     // times out, and every write falls back to the service
                     // account. The signed-in Azure identity supplies the same

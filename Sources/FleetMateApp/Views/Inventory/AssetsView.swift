@@ -953,7 +953,7 @@ struct AssetDetailSidebar: View {
                         ForEach(procurementRows, id: \.label) { row in
                             detailRow(row.label, value: row.value, copyable: true,
                                       editKey: row.editKey, alwaysShow: true,
-                                      trailingValue: true)
+                                      labelWidth: 150)
                         }
                     }
                     ForEach(fields, id: \.key) { fieldName, field in
@@ -1098,7 +1098,7 @@ struct AssetDetailSidebar: View {
     @ViewBuilder
     private func detailRow(_ label: String, value: String?, copyable: Bool = false,
                            mono: Bool = false, editKey: String? = nil, alwaysShow: Bool = false,
-                           trailingValue: Bool = false) -> some View {
+                           labelWidth: CGFloat = 110) -> some View {
         if alwaysShow || !(value?.isEmpty ?? true) {
             DetailFieldRow(
                 label: label,
@@ -1109,7 +1109,7 @@ struct AssetDetailSidebar: View {
                 // Snipe's field type decides the editor: a listbox edits as
                 // the dropdown it is on the web, not as free text.
                 options: editKey.flatMap { fieldListboxOptions[$0] },
-                trailingValue: trailingValue,
+                labelWidth: labelWidth,
                 onSave: editKey == nil ? nil : { key, newValue in
                     await saveField(key, newValue)
                 }
@@ -1211,10 +1211,10 @@ struct DetailFieldRow: View {
     /// Listbox choices — when present, editing offers Snipe's dropdown
     /// instead of free text, matching the field's type on the web.
     var options: [String]? = nil
-    /// Sizes the label to its own text on one line and pushes the value to the
-    /// card's right edge. Only Procurement asks for it — its names are long
-    /// enough to wrap in the shared fixed label column.
-    var trailingValue = false
+    /// Width of the label column. Procurement widens it — its names are long
+    /// enough to wrap at the default — so its values still line up in a column
+    /// beside the labels, the way Hardware's do.
+    var labelWidth: CGFloat = 110
     /// Returns an error message, or nil on success.
     var onSave: ((String, String) async -> String?)? = nil
 
@@ -1234,13 +1234,7 @@ struct DetailFieldRow: View {
             Text(label)
                 .appFont(.callout)
                 .foregroundColor(.secondary)
-                .lineLimit(trailingValue ? 1 : nil)
-                .fixedSize(horizontal: trailingValue, vertical: false)
-                .frame(width: trailingValue ? nil : 110, alignment: .leading)
-
-            if trailingValue {
-                Spacer(minLength: 12)
-            }
+                .frame(width: labelWidth, alignment: .leading)
 
             if isEditing {
                 // Controls sit LEFT of the editor — cancel outermost, save
@@ -1291,7 +1285,6 @@ struct DetailFieldRow: View {
                 Text(displayValue.isEmpty ? "—" : displayValue)
                     .appFont(.callout, design: mono ? .monospaced : .default)
                     .foregroundColor(displayValue.isEmpty ? .secondary : .primary)
-                    .multilineTextAlignment(trailingValue ? .trailing : .leading)
                     .textSelection(.enabled)
 
                 if copyable && !displayValue.isEmpty {
@@ -1329,9 +1322,7 @@ struct DetailFieldRow: View {
                         .help(saveError)
                 }
             }
-            if !trailingValue {
-                Spacer()
-            }
+            Spacer()
         }
         .contentShape(Rectangle())
         .onHover { hovered = $0 }

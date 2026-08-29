@@ -895,7 +895,9 @@ struct AssetDetailSidebar: View {
                     Text("Status")
                         .appFont(.callout)
                         .foregroundColor(.secondary)
-                        .frame(width: 110, alignment: .leading)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Spacer(minLength: 12)
                     Picker("", selection: Binding(
                         get: { editStatusId ?? asset.statusLabel?.id ?? 0 },
                         set: { editStatusId = $0; hasEdits = true }
@@ -905,7 +907,7 @@ struct AssetDetailSidebar: View {
                         }
                     }
                     .labelsHidden()
-                    Spacer()
+                    .fixedSize()
                 }
             } else {
                 detailRow("Status", value: asset.statusLabel?.name)
@@ -1224,10 +1226,17 @@ struct DetailFieldRow: View {
 
     var body: some View {
         HStack(alignment: .top) {
+            // The label owns exactly the width its text needs, on one line —
+            // a fixed column wrapped the longer names ("Warranty/Soft Cost")
+            // onto a second row. The spacer below pushes every value to a
+            // common right edge instead.
             Text(label)
                 .appFont(.callout)
                 .foregroundColor(.secondary)
-                .frame(width: 110, alignment: .leading)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+
+            Spacer(minLength: 12)
 
             if isEditing {
                 // Controls sit LEFT of the editor — cancel outermost, save
@@ -1278,6 +1287,7 @@ struct DetailFieldRow: View {
                 Text(displayValue.isEmpty ? "—" : displayValue)
                     .appFont(.callout, design: mono ? .monospaced : .default)
                     .foregroundColor(displayValue.isEmpty ? .secondary : .primary)
+                    .multilineTextAlignment(.trailing)
                     .textSelection(.enabled)
 
                 if copyable && !displayValue.isEmpty {
@@ -1315,7 +1325,6 @@ struct DetailFieldRow: View {
                         .help(saveError)
                 }
             }
-            Spacer()
         }
         .contentShape(Rectangle())
         .onHover { hovered = $0 }

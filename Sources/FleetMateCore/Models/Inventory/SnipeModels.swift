@@ -87,6 +87,27 @@ public struct SnipeAsset: Codable, Identifiable, Hashable, Sendable {
     public let requestable: Bool?
     /// Native column on the ECU fork (F2 lease migration).
     public let decommissionDate: SnipeDateRef?
+    /// Formatted currency string from the transformer, e.g. "$2,711.00".
+    public let purchaseCost: String?
+    /// Depreciated value, formatted currency.
+    public let bookValue: String?
+
+    // Native lease / purchasing columns. The fork's F2 migration promoted this
+    // cluster out of `_snipeit_*` custom fields into typed `assets` columns and
+    // then dropped the custom fields, so these no longer arrive in
+    // `custom_fields` — they are first-class keys on the asset payload.
+    public let leaseContractId: String?
+    public let leaseContractName: String?
+    public let ownershipType: String?
+    public let leaseEndDate: SnipeDateRef?
+    public let leaseRent: SnipeDecimal?
+    public let buyoutCost: SnipeDecimal?
+    public let warrantySoftCost: SnipeDecimal?
+    public let leaseBookValue: SnipeDecimal?
+    public let poNumber: String?
+    public let invoiceNumber: String?
+    public let leaseUsage: String?
+    public let leaseArea: String?
 
     enum CodingKeys: String, CodingKey {
         case id, name, serial, model, category, manufacturer, location, notes
@@ -103,6 +124,20 @@ public struct SnipeAsset: Codable, Identifiable, Hashable, Sendable {
         case customFields = "custom_fields"
         case image, eol, supplier, byod, requestable
         case decommissionDate = "decommission_date"
+        case purchaseCost = "purchase_cost"
+        case bookValue = "book_value"
+        case leaseContractId = "lease_contract_id"
+        case leaseContractName = "lease_contract_name"
+        case ownershipType = "ownership_type"
+        case leaseEndDate = "lease_end_date"
+        case leaseRent = "lease_rent"
+        case buyoutCost = "buyout_cost"
+        case warrantySoftCost = "warranty_soft_cost"
+        case leaseBookValue = "lease_book_value"
+        case poNumber = "po_number"
+        case invoiceNumber = "invoice_number"
+        case leaseUsage = "lease_usage"
+        case leaseArea = "lease_area"
         case expectedCheckin = "expected_checkin"
         case assetEolDate = "asset_eol_date"
         case warrantyMonths = "warranty_months"
@@ -128,10 +163,14 @@ public struct SnipeAsset: Codable, Identifiable, Hashable, Sendable {
         return customFields?[displayName]
     }
 
-    /// Purchase cost (top-level field from Snipe-IT)
-    public var purchaseCost: String? {
-        // Try custom field first, then would need a dedicated field
-        return customFieldByName("Purchase Cost")?.value
+    /// Usage and Area read native first, falling back to the legacy custom
+    /// fields for any instance that predates the fork's F2 migration.
+    public var usage: String? {
+        leaseUsage.flatMap { $0.isEmpty ? nil : $0 } ?? customFieldByName("Usage")?.value
+    }
+
+    public var area: String? {
+        leaseArea.flatMap { $0.isEmpty ? nil : $0 } ?? customFieldByName("Area")?.value
     }
 }
 
@@ -350,6 +389,42 @@ public struct SnipeDateRef: Codable, Sendable {
         formatter.dateFormat = "yyyy-MM-dd"
         formatter.timeZone = TimeZone(identifier: "UTC")
         return formatter.date(from: String(raw.prefix(10)))
+    }
+}
+
+/// A Snipe-IT decimal column. Laravel's `decimal:2` cast serialises as a JSON
+/// string ("2711.00"), but an uncast column comes back as a number — decode
+/// either, and render it as currency.
+public struct SnipeDecimal: Codable, Sendable, Hashable {
+    public let raw: String?
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            raw = nil
+        } else if let string = try? container.decode(String.self) {
+            raw = string
+        } else if let number = try? container.decode(Double.self) {
+            raw = String(number)
+        } else {
+            raw = nil
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(raw)
+    }
+
+    /// "$2,711.00" when the value parses as a number, the raw string otherwise,
+    /// nil when there is nothing to show.
+    public var formatted: String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        guard let value = Double(raw) else { return raw }
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.maximumFractionDigits = 2
+        return formatter.string(from: NSNumber(value: value)) ?? raw
     }
 }
 

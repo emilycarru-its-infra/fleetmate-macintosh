@@ -895,9 +895,7 @@ struct AssetDetailSidebar: View {
                     Text("Status")
                         .appFont(.callout)
                         .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                    Spacer(minLength: 12)
+                        .frame(width: 110, alignment: .leading)
                     Picker("", selection: Binding(
                         get: { editStatusId ?? asset.statusLabel?.id ?? 0 },
                         set: { editStatusId = $0; hasEdits = true }
@@ -907,7 +905,7 @@ struct AssetDetailSidebar: View {
                         }
                     }
                     .labelsHidden()
-                    .fixedSize()
+                    Spacer()
                 }
             } else {
                 detailRow("Status", value: asset.statusLabel?.name)
@@ -954,7 +952,8 @@ struct AssetDetailSidebar: View {
                     if slug == "procurement" {
                         ForEach(procurementRows, id: \.label) { row in
                             detailRow(row.label, value: row.value, copyable: true,
-                                      editKey: row.editKey, alwaysShow: true)
+                                      editKey: row.editKey, alwaysShow: true,
+                                      trailingValue: true)
                         }
                     }
                     ForEach(fields, id: \.key) { fieldName, field in
@@ -1098,7 +1097,8 @@ struct AssetDetailSidebar: View {
     /// every row of the fieldset.
     @ViewBuilder
     private func detailRow(_ label: String, value: String?, copyable: Bool = false,
-                           mono: Bool = false, editKey: String? = nil, alwaysShow: Bool = false) -> some View {
+                           mono: Bool = false, editKey: String? = nil, alwaysShow: Bool = false,
+                           trailingValue: Bool = false) -> some View {
         if alwaysShow || !(value?.isEmpty ?? true) {
             DetailFieldRow(
                 label: label,
@@ -1109,6 +1109,7 @@ struct AssetDetailSidebar: View {
                 // Snipe's field type decides the editor: a listbox edits as
                 // the dropdown it is on the web, not as free text.
                 options: editKey.flatMap { fieldListboxOptions[$0] },
+                trailingValue: trailingValue,
                 onSave: editKey == nil ? nil : { key, newValue in
                     await saveField(key, newValue)
                 }
@@ -1210,6 +1211,10 @@ struct DetailFieldRow: View {
     /// Listbox choices — when present, editing offers Snipe's dropdown
     /// instead of free text, matching the field's type on the web.
     var options: [String]? = nil
+    /// Sizes the label to its own text on one line and pushes the value to the
+    /// card's right edge. Only Procurement asks for it — its names are long
+    /// enough to wrap in the shared fixed label column.
+    var trailingValue = false
     /// Returns an error message, or nil on success.
     var onSave: ((String, String) async -> String?)? = nil
 
@@ -1226,17 +1231,16 @@ struct DetailFieldRow: View {
 
     var body: some View {
         HStack(alignment: .top) {
-            // The label owns exactly the width its text needs, on one line —
-            // a fixed column wrapped the longer names ("Warranty/Soft Cost")
-            // onto a second row. The spacer below pushes every value to a
-            // common right edge instead.
             Text(label)
                 .appFont(.callout)
                 .foregroundColor(.secondary)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
+                .lineLimit(trailingValue ? 1 : nil)
+                .fixedSize(horizontal: trailingValue, vertical: false)
+                .frame(width: trailingValue ? nil : 110, alignment: .leading)
 
-            Spacer(minLength: 12)
+            if trailingValue {
+                Spacer(minLength: 12)
+            }
 
             if isEditing {
                 // Controls sit LEFT of the editor — cancel outermost, save
@@ -1287,7 +1291,7 @@ struct DetailFieldRow: View {
                 Text(displayValue.isEmpty ? "—" : displayValue)
                     .appFont(.callout, design: mono ? .monospaced : .default)
                     .foregroundColor(displayValue.isEmpty ? .secondary : .primary)
-                    .multilineTextAlignment(.trailing)
+                    .multilineTextAlignment(trailingValue ? .trailing : .leading)
                     .textSelection(.enabled)
 
                 if copyable && !displayValue.isEmpty {
@@ -1324,6 +1328,9 @@ struct DetailFieldRow: View {
                         .foregroundColor(.red)
                         .help(saveError)
                 }
+            }
+            if !trailingValue {
+                Spacer()
             }
         }
         .contentShape(Rectangle())

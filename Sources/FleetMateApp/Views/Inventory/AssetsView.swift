@@ -41,9 +41,9 @@ extension FilterState where Category == AssetFilterCategory {
         availableValues[.platform] = extract { $0.customFieldByName("Platform")?.value }
         availableValues[.manufacturer] = extract { $0.manufacturer?.name }
         availableValues[.model] = extract { $0.model?.name }
-        availableValues[.usage] = extract { $0.customFieldByName("Usage")?.value }
+        availableValues[.usage] = extract { $0.usage }
         availableValues[.catalog] = extract { $0.customFieldByName("Catalog")?.value }
-        availableValues[.area] = extract { $0.customFieldByName("Area")?.value }
+        availableValues[.area] = extract { $0.area }
         availableValues[.location] = extract { $0.location?.name }
     }
 
@@ -56,9 +56,9 @@ extension FilterState where Category == AssetFilterCategory {
             case .platform:     value = asset.customFieldByName("Platform")?.value
             case .manufacturer: value = asset.manufacturer?.name
             case .model:        value = asset.model?.name
-            case .usage:        value = asset.customFieldByName("Usage")?.value
+            case .usage:        value = asset.usage
             case .catalog:      value = asset.customFieldByName("Catalog")?.value
-            case .area:         value = asset.customFieldByName("Area")?.value
+            case .area:         value = asset.area
             case .location:     value = asset.location?.name
             }
             if let v = value, !selected.contains(v) { return false }
@@ -126,9 +126,9 @@ struct AssetsView: View {
             case .platform: aVal = a.customFieldByName("Platform")?.value ?? ""; bVal = b.customFieldByName("Platform")?.value ?? ""
             case .manufacturer: aVal = a.manufacturer?.name ?? ""; bVal = b.manufacturer?.name ?? ""
             case .model: aVal = a.model?.name ?? ""; bVal = b.model?.name ?? ""
-            case .usage: aVal = a.customFieldByName("Usage")?.value ?? ""; bVal = b.customFieldByName("Usage")?.value ?? ""
+            case .usage: aVal = a.usage ?? ""; bVal = b.usage ?? ""
             case .catalog: aVal = a.customFieldByName("Catalog")?.value ?? ""; bVal = b.customFieldByName("Catalog")?.value ?? ""
-            case .area: aVal = a.customFieldByName("Area")?.value ?? ""; bVal = b.customFieldByName("Area")?.value ?? ""
+            case .area: aVal = a.area ?? ""; bVal = b.area ?? ""
             case .location: aVal = a.location?.name ?? ""; bVal = b.location?.name ?? ""
             }
             return sortAscending ? aVal.localizedCompare(bVal) == .orderedAscending : aVal.localizedCompare(bVal) == .orderedDescending
@@ -447,11 +447,11 @@ struct AssetsView: View {
         case .model:
             Text(asset.model?.name ?? "-").lineLimit(1)
         case .usage:
-            Text(asset.customFieldByName("Usage")?.value ?? "-").lineLimit(1)
+            Text(asset.usage ?? "-").lineLimit(1)
         case .catalog:
             Text(asset.customFieldByName("Catalog")?.value ?? "-").lineLimit(1)
         case .area:
-            Text(asset.customFieldByName("Area")?.value ?? "-").lineLimit(1)
+            Text(asset.area ?? "-").lineLimit(1)
         case .location:
             Text(asset.location?.name?.htmlDecoded ?? "-").lineLimit(1)
         }
@@ -535,7 +535,9 @@ struct AssetFieldGroup {
 private let assetFieldGroups: [AssetFieldGroup] = [
     AssetFieldGroup(
         slug: "inventory", title: "Inventory", symbol: "clipboard", mono: false,
-        fields: ["Device Management Service", "Fleet", "Catalog", "Usage", "Area"]
+        // Usage and Area are native columns since the fork's F2 migration; the
+        // card renders them itself, they no longer arrive as custom fields.
+        fields: ["Device Management Service", "Fleet", "Catalog"]
     ),
     AssetFieldGroup(
         slug: "specs", title: "Specs", symbol: "cpu", mono: false,
@@ -556,10 +558,9 @@ private let assetFieldGroups: [AssetFieldGroup] = [
     ),
     AssetFieldGroup(
         slug: "procurement", title: "Procurement", symbol: "dollarsign.circle", mono: false,
-        fields: ["Ownership Type", "Lease Contract ID", "Lease Contract Name",
-                 "Lease End Date", "Lease Rent", "Buyout Cost", "Invoice Number",
-                 "PO Number", "Warranty/Soft Cost", "Decommission Date",
-                 "License Type", "Purchase Cost", "Purchase Date"]
+        // The lease/purchasing cluster is native too; only fields still backed
+        // by custom fields belong here.
+        fields: ["License Type"]
     ),
     AssetFieldGroup(
         slug: "identity", title: "Identity", symbol: "touchid", mono: true,
@@ -817,8 +818,26 @@ struct AssetDetailSidebar: View {
             }
     }
 
-    private var hasPurchaseInfo: Bool {
-        !(asset.purchaseCost?.isEmpty ?? true) || asset.purchaseDate?.formatted != nil
+    /// The fork's lease / purchasing cluster, in the web's render order. These
+    /// were `_snipeit_*` custom fields until the F2 migration promoted them to
+    /// native `assets` columns and dropped the custom fields — reading them out
+    /// of `custom_fields` is why the card had gone empty.
+    private var procurementRows: [(label: String, value: String?, editKey: String?)] {
+        [
+            ("Ownership Type", asset.ownershipType, "ownership_type"),
+            ("Lease Contract ID", asset.leaseContractId, "lease_contract_id"),
+            ("Lease Contract Name", asset.leaseContractName, "lease_contract_name"),
+            ("Lease End Date", asset.leaseEndDate?.formatted, "lease_end_date"),
+            ("Lease Rent", asset.leaseRent?.formatted, "lease_rent"),
+            ("Buyout Cost", asset.buyoutCost?.formatted, "buyout_cost"),
+            ("Invoice Number", asset.invoiceNumber, "invoice_number"),
+            ("PO Number", asset.poNumber, "po_number"),
+            ("Warranty/Soft Cost", asset.warrantySoftCost?.formatted, "warranty_soft_cost"),
+            ("Decommission Date", asset.decommissionDate?.formatted, "decommission_date"),
+            ("Book Value", asset.leaseBookValue?.formatted ?? asset.bookValue, nil),
+            ("Purchase Cost", asset.purchaseCost, "purchase_cost"),
+            ("Purchase Date", asset.purchaseDate?.formatted, "purchase_date"),
+        ]
     }
 
     private var unmappedCustomFields: [(key: String, value: SnipeCustomField)] {
@@ -928,11 +947,14 @@ struct AssetDetailSidebar: View {
     private func groupCard(_ slug: String) -> some View {
         if let group = assetFieldGroups.first(where: { $0.slug == slug }) {
             let fields = customFields(in: group)
-            if !fields.isEmpty || (slug == "procurement" && hasPurchaseInfo) {
+            if !fields.isEmpty || slug == "procurement" || slug == "inventory" {
                 sectionCard(group.title, systemImage: group.symbol) {
                     if slug == "procurement" {
-                        detailRow("Purchase Cost", value: asset.purchaseCost)
-                        detailRow("Purchase Date", value: asset.purchaseDate?.formatted)
+                        ForEach(procurementRows, id: \.label) { row in
+                            detailRow(row.label, value: row.value, copyable: true,
+                                      editKey: row.editKey, alwaysShow: true,
+                                      labelWidth: 150)
+                        }
                     }
                     ForEach(fields, id: \.key) { fieldName, field in
                         detailRow(fieldName, value: field.value, copyable: true,
@@ -942,6 +964,13 @@ struct AssetDetailSidebar: View {
                         if slug == "inventory" && fieldName == "Catalog" {
                             detailRow("Location", value: asset.rtdLocation?.name, alwaysShow: true)
                         }
+                    }
+                    if slug == "inventory" {
+                        // Native since the F2 migration, like the lease cluster.
+                        detailRow("Usage", value: asset.leaseUsage, copyable: true,
+                                  editKey: "lease_usage", alwaysShow: true)
+                        detailRow("Area", value: asset.leaseArea, copyable: true,
+                                  editKey: "lease_area", alwaysShow: true)
                     }
                 }
             }
@@ -974,7 +1003,6 @@ struct AssetDetailSidebar: View {
             detailRow("Expected Checkin", value: asset.expectedCheckin?.formatted, alwaysShow: true)
             detailRow("Last Audit", value: asset.lastAuditDate?.formatted, alwaysShow: true)
             detailRow("Next Audit", value: asset.nextAuditDate?.formatted, alwaysShow: true)
-            detailRow("Decommission", value: asset.decommissionDate?.formatted, alwaysShow: true)
             detailRow("Supplier", value: asset.supplier?.name, alwaysShow: true)
             detailRow("Device EOL", value: deviceEolText, alwaysShow: true)
             detailRow("BYOD", value: (asset.byod ?? false) ? "Yes" : "No")
@@ -1069,7 +1097,8 @@ struct AssetDetailSidebar: View {
     /// every row of the fieldset.
     @ViewBuilder
     private func detailRow(_ label: String, value: String?, copyable: Bool = false,
-                           mono: Bool = false, editKey: String? = nil, alwaysShow: Bool = false) -> some View {
+                           mono: Bool = false, editKey: String? = nil, alwaysShow: Bool = false,
+                           labelWidth: CGFloat = 110) -> some View {
         if alwaysShow || !(value?.isEmpty ?? true) {
             DetailFieldRow(
                 label: label,
@@ -1080,6 +1109,7 @@ struct AssetDetailSidebar: View {
                 // Snipe's field type decides the editor: a listbox edits as
                 // the dropdown it is on the web, not as free text.
                 options: editKey.flatMap { fieldListboxOptions[$0] },
+                labelWidth: labelWidth,
                 onSave: editKey == nil ? nil : { key, newValue in
                     await saveField(key, newValue)
                 }
@@ -1181,6 +1211,10 @@ struct DetailFieldRow: View {
     /// Listbox choices — when present, editing offers Snipe's dropdown
     /// instead of free text, matching the field's type on the web.
     var options: [String]? = nil
+    /// Width of the label column. Procurement widens it — its names are long
+    /// enough to wrap at the default — so its values still line up in a column
+    /// beside the labels, the way Hardware's do.
+    var labelWidth: CGFloat = 110
     /// Returns an error message, or nil on success.
     var onSave: ((String, String) async -> String?)? = nil
 
@@ -1200,7 +1234,7 @@ struct DetailFieldRow: View {
             Text(label)
                 .appFont(.callout)
                 .foregroundColor(.secondary)
-                .frame(width: 110, alignment: .leading)
+                .frame(width: labelWidth, alignment: .leading)
 
             if isEditing {
                 // Controls sit LEFT of the editor — cancel outermost, save

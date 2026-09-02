@@ -35,7 +35,7 @@ public class AzureDevOpsService {
 
     /// Whether at least an organization is configured
     public var isConfigured: Bool {
-        !orgUrl.hasSuffix("/") || orgUrl.count > "https://azure-devops.example.com/".count
+        !orgUrl.hasSuffix("/") || orgUrl.count > (config.effectiveDevopsBaseUrl + "/").count
     }
 
     public var baseUrl: String {
@@ -59,7 +59,7 @@ public class AzureDevOpsService {
         let org = config.tasks?.providers.azdevops?.organization
                   ?? config.devopsOrganization
                   ?? ""
-        self.orgUrl = "https://azure-devops.example.com/\(org)"
+        self.orgUrl = "\(config.effectiveDevopsBaseUrl)/\(org)"
 
         // Resolve project: provider-level override > top-level config (may be empty — auto-discovered later)
         self.project = config.tasks?.providers.azdevops?.project

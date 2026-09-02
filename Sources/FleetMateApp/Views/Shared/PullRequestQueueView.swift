@@ -104,7 +104,15 @@ final class PullRequestQueueModel: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        let devOpsReady = appState.config.isDevOpsConfigured && appState.devOpsService.hasValidToken
+        // The az token lasts about an hour. Checking `hasValidToken` here
+        // skipped DevOps for the rest of the session once it lapsed, so the
+        // queue showed "waiting for sign-in" after the app sat idle. Refresh
+        // first; only a session that never signed in or cannot refresh is
+        // treated as not ready.
+        var devOpsReady = false
+        if appState.config.isDevOpsConfigured {
+            devOpsReady = await appState.devOpsService.ensureValidToken()
+        }
         let gitHubConfig = appState.config.tasks?.providers.github ?? GitHubProviderConfig()
 
         // Configuration decides which pills exist — not token state. Gating

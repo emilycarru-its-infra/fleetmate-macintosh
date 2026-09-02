@@ -94,7 +94,6 @@ struct DashboardView: View {
     @State private var isLoadingReportMate = false
     @State private var isLoadingTickets = false
     @State private var isLoadingInventory = false
-    @State private var showAuthPopover = false
     @State private var activityFilter: AppTab? = nil
 
     // Global search (top right): query + debounced results over the caches.
@@ -149,7 +148,8 @@ struct DashboardView: View {
             if command == .find { searchFocused = true }
         }
         .task(id: searchQuery) {
-            guard searchQuery.trimmingCharacters(in: .whitespaces).count >= 2 else {
+            let query = searchQuery.trimmingCharacters(in: .whitespaces)
+            guard query.count >= 2 || parseWorkItemId(query) != nil else {
                 searchResults = []
                 return
             }
@@ -157,6 +157,7 @@ struct DashboardView: View {
             try? await Task.sleep(nanoseconds: 120_000_000)
             guard !Task.isCancelled else { return }
             searchResults = GlobalSearchScanner.search(searchQuery, appState: appState)
+            await appendWorkItemLookup(for: query)
         }
         .task {
             // Paint from the warm caches immediately; the loads refresh after.
@@ -254,6 +255,8 @@ struct DashboardView: View {
 
     // MARK: - Toolbar
 
+    /// Refresh only — the authentication shield lives in ContentView's toolbar
+    /// so it is reachable from every tab, not just this one.
     @ToolbarContentBuilder
     private var dashboardToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .automatic) {
@@ -261,16 +264,6 @@ struct DashboardView: View {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .disabled(isAnyLoading)
-
-            Button(action: { showAuthPopover.toggle() }) {
-                Label("Authentication", systemImage: "lock.shield")
-            }
-            .popover(isPresented: $showAuthPopover, arrowEdge: .bottom) {
-                AuthSettingsView()
-                    .environmentObject(appState)
-                    .frame(width: 480)
-                    .frame(minHeight: 300, idealHeight: 560, maxHeight: 640)
-            }
         }
     }
 
@@ -318,6 +311,20 @@ struct DashboardView: View {
         }
     }
 
+    /// The caches hold only the work items this user is already working on, so
+    /// an id someone was handed — in a ticket, a PR, a hallway — finds nothing.
+    /// Ask Azure DevOps for it directly and fold the answer into the results.
+    private func appendWorkItemLookup(for query: String) async {
+        guard let id = parseWorkItemId(query) else { return }
+        guard appState.config.isDevOpsConfigured, appState.devOpsService.hasValidToken else { return }
+        guard !searchResults.contains(where: { $0.workItemId == id }) else { return }
+        guard let item = try? await appState.devOpsService.getWorkItem(id: id) else { return }
+        // The field may have moved on while the fetch was in flight.
+        guard !Task.isCancelled,
+              parseWorkItemId(searchQuery.trimmingCharacters(in: .whitespaces)) == id else { return }
+        searchResults.insert(GlobalSearchScanner.row(for: item, matchLabel: "ID: AB#\(id)"), at: 0)
+    }
+
     private func openSearchResult(_ hit: GlobalSearchResult) {
         switch hit.category {
         case .devices:
@@ -328,6 +335,9 @@ struct DashboardView: View {
         case .tickets:
             navigate(to: .tickets, ticketId: hit.ticketId)
         case .workItems:
+            if let workItemId = hit.workItemId {
+                appState.navigateToWorkItemId = workItemId
+            }
             navigate(to: .projects)
         case .users, .groups:
             navigate(to: .identity)

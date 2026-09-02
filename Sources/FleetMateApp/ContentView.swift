@@ -11,10 +11,15 @@ private struct WindowWidthKey: PreferenceKey {
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
-    @State private var hasAutoPromptedSso = false
-    @State private var hasAutoPromptedDevOpsSso = false
-    @State private var hasAutoPromptedSnipeSso = false
+    /// When each system's silent SSO was last attempted from a tab switch.
+    /// Previously a one-shot Bool per system: the first failure of the launch
+    /// latched it, so a session that recovered — VPN back, `az login` renewed,
+    /// a fresh Entra PRT — never re-attempted and the tab stayed empty for the
+    /// life of the process. Re-attempt on every visit, no faster than this.
+    @State private var lastSsoAttempt: [AuthSystemId: Date] = [:]
+    private static let ssoRetryInterval: TimeInterval = 60
     @State private var windowWidth: CGFloat = 1000
+    @State private var showAuthPopover = false
 
     private var availableTabs: [AppTab] {
         AppTab.enabledTabs(config: appState.config)
@@ -51,6 +56,21 @@ struct ContentView: View {
                 }
                 ToolbarItem(placement: .principal) {
                     GlassTabBar(selectedTab: $appState.selectedTab, tabs: availableTabs, availableWidth: windowWidth)
+                }
+                // The authentication shield belongs to the window, not to the
+                // Dashboard: auth is what breaks any tab, so it has to be
+                // checkable from whichever tab is showing the breakage.
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: { showAuthPopover.toggle() }) {
+                        Label("Authentication", systemImage: "lock.shield")
+                    }
+                    .help("Authentication status for every connected system")
+                    .popover(isPresented: $showAuthPopover, arrowEdge: .bottom) {
+                        AuthSettingsView()
+                            .environmentObject(appState)
+                            .frame(width: 480)
+                            .frame(minHeight: 300, idealHeight: 560, maxHeight: 640)
+                    }
                 }
                 if appState.authManager.hasServicePrincipalWarning {
                     ToolbarItem(placement: .automatic) {
@@ -90,23 +110,20 @@ struct ContentView: View {
                 // No interactive popups — all web auth is silent/headless only.
                 if newTab == .tickets,
                    !appState.tdxSsoAuthenticated,
-                   !hasAutoPromptedSso,
-                   appState.tdxService.shouldAttemptSso {
-                    hasAutoPromptedSso = true
+                   appState.tdxService.shouldAttemptSso,
+                   shouldRetrySso(.tdx) {
                     appState.attemptSilentTdxSso()
                 }
                 if newTab == .projects,
                    !appState.devOpsSsoAuthenticated,
-                   !hasAutoPromptedDevOpsSso,
-                   appState.isDevOpsSsoConfigured {
-                    hasAutoPromptedDevOpsSso = true
+                   appState.isDevOpsSsoConfigured,
+                   shouldRetrySso(.devops) {
                     appState.attemptSilentDevOpsSso()
                 }
                 if newTab == .inventory,
                    !appState.snipeSsoAuthenticated,
-                   !hasAutoPromptedSnipeSso,
-                   appState.snipeService.shouldAttemptSso {
-                    hasAutoPromptedSnipeSso = true
+                   appState.snipeService.shouldAttemptSso,
+                   shouldRetrySso(.snipe) {
                     appState.attemptSilentSnipeSso()
                 }
             }
@@ -124,6 +141,18 @@ struct ContentView: View {
                 OnboardingWizardView()
                     .environmentObject(appState)
             }
+    }
+
+    /// True when enough time has passed to try this system's silent SSO again,
+    /// recording the attempt. Throttled so a burst of tab switches doesn't fan
+    /// out a burst of headless auth attempts.
+    private func shouldRetrySso(_ system: AuthSystemId) -> Bool {
+        let now = Date()
+        if let last = lastSsoAttempt[system], now.timeIntervalSince(last) < Self.ssoRetryInterval {
+            return false
+        }
+        lastSsoAttempt[system] = now
+        return true
     }
 
     private func validateSelectedTab() {

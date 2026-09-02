@@ -103,6 +103,15 @@ public struct FleetMateConfig: Codable {
     // Azure DevOps settings
     // NO PAT — Azure DevOps uses SSO only (browser OAuth2 or Azure CLI with Platform SSO).
     public var devopsOrganization: String?
+    /// Azure DevOps host. The public build ships a neutral placeholder; the real
+    /// host lives in config.yaml (devops_base_url) or AZDEVOPS_URL, never in code.
+    public var devopsBaseUrl: String?
+    public static let defaultDevopsBaseUrl = "https://azure-devops.example.com"
+    /// Configured host without a trailing slash, else the placeholder default.
+    public var effectiveDevopsBaseUrl: String {
+        let raw = (devopsBaseUrl ?? FleetMateConfig.defaultDevopsBaseUrl)
+        return raw.hasSuffix("/") ? String(raw.dropLast()) : raw
+    }
     public var devopsProject: String?
     public var devopsClientId: String?
     public var devopsTenantId: String?
@@ -177,6 +186,7 @@ public struct FleetMateConfig: Codable {
         case systemsGraphId = "systems_graph_id"
         case systemsGraphSecret = "systems_graph_secret"
         case devopsOrganization = "devops_organization"
+        case devopsBaseUrl = "devops_base_url"
         case devopsProject = "devops_project"
         // NO PAT — Azure DevOps uses SSO only
         case devopsClientId = "devops_client_id"
@@ -322,6 +332,7 @@ public struct FleetMateConfig: Codable {
         
         // Azure DevOps
         if let v = str("devops_organization"), !v.isEmpty { config.devopsOrganization = v }
+        if let v = str("devops_base_url"), !v.isEmpty { config.devopsBaseUrl = v }
         if let v = str("devops_project"), !v.isEmpty { config.devopsProject = v }
         if let v = str("devops_client_id"), !v.isEmpty { config.devopsClientId = v }
         if let v = str("devops_tenant_id"), !v.isEmpty { config.devopsTenantId = v }
@@ -467,6 +478,7 @@ public struct FleetMateConfig: Codable {
         if let v = get("systemsGraphId")     { config.systemsGraphId = v }
         if let v = get("systemsGraphSecret") { config.systemsGraphSecret = v }
         if let v = get("devopsOrganization") { config.devopsOrganization = v }
+        if let v = get("devopsBaseUrl") { config.devopsBaseUrl = v }
         if let v = get("devopsProject")      { config.devopsProject = v }
         if let v = get("devopsClientId")     { config.devopsClientId = v }
         if let v = get("devopsTenantId")     { config.devopsTenantId = v }
@@ -547,6 +559,7 @@ public struct FleetMateConfig: Codable {
 
         // Azure DevOps
         if let v = env["DEVOPS_ORGANIZATION"] { config.devopsOrganization = v }
+        if let v = env["AZDEVOPS_URL"] { config.devopsBaseUrl = v }
         if let v = env["DEVOPS_PROJECT"] { config.devopsProject = v }
         // NO PAT — Azure DevOps uses SSO only
         if let v = env["DEVOPS_CLIENT_ID"] { config.devopsClientId = v }
@@ -777,6 +790,7 @@ public struct FleetMateConfig: Codable {
         set("systemsGraphId", config.systemsGraphId)
         set("systemsGraphSecret", config.systemsGraphSecret)
         set("devopsOrganization", config.devopsOrganization)
+        set("devopsBaseUrl", config.devopsBaseUrl)
         set("devopsProject", config.devopsProject)
         set("devopsClientId", config.devopsClientId)
         set("devopsTenantId", config.devopsTenantId)

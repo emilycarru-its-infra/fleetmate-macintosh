@@ -224,7 +224,7 @@ struct DashboardTasksPane: View {
         guard let org = appState.config.devopsOrganization,
               let project = item.fields?.teamProject?.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
         else { return nil }
-        return URL(string: "https://azure-devops.example.com/\(org)/\(project)/_workitems/edit/\(item.id)")
+        return URL(string: "\(appState.config.effectiveDevopsBaseUrl)/\(org)/\(project)/_workitems/edit/\(item.id)")
     }
 
     // MARK: GitHub issues

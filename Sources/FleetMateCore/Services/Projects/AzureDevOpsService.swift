@@ -51,6 +51,26 @@ public class AzureDevOpsService {
         return Date().addingTimeInterval(60) < tokenExpiry
     }
 
+    /// Whether SSO has ever handed us a token this session, expired or not.
+    /// An expired token is a refresh away from working; no token at all
+    /// means sign-in has not happened.
+    public var hasBearerToken: Bool {
+        guard let token = bearerToken else { return false }
+        return !token.isEmpty
+    }
+
+    /// Make sure the token is usable before a caller decides whether to hit
+    /// the API at all. Access tokens from `az` last about an hour; callers
+    /// that gated on `hasValidToken` alone stopped asking once it lapsed and
+    /// never reached the refresh inside `request`, so the app looked signed
+    /// out after sitting idle. Returns whether a valid token is now held.
+    @discardableResult
+    public func ensureValidToken() async -> Bool {
+        if hasValidToken { return true }
+        guard hasBearerToken else { return false }
+        return await refreshToken()
+    }
+
     public init(config: FleetMateConfig) {
         self.config = config
         self.cacheDuration = TimeInterval(config.cacheMinutes * 60)

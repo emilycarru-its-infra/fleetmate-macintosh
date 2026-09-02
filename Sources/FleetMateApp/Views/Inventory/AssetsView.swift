@@ -14,6 +14,11 @@ enum AssetSortField: String, CaseIterable {
     case catalog = "Catalog"
     case area = "Area"
     case location = "Location"
+    case lastActivity = "Last Activity"
+
+    /// Date-backed columns sort newest-first by default and compare on their
+    /// raw timestamp rather than as display text.
+    var isDate: Bool { self == .lastActivity }
 }
 
 // MARK: - Asset Filter Categories
@@ -72,8 +77,8 @@ struct AssetsView: View {
     @EnvironmentObject var appState: AppState
     @State private var isLoading = false
     @State private var searchText = ""
-    @State private var sortField: AssetSortField = .assetTag
-    @State private var sortAscending = true
+    @State private var sortField: AssetSortField = .lastActivity
+    @State private var sortAscending = false
     @State private var selectedAsset: SnipeAsset?
     @State private var selectedAssetIds: Set<Int> = []
     @State private var lastClickedIndex: Int?
@@ -83,7 +88,8 @@ struct AssetsView: View {
     @State private var columnWidths: [AssetSortField: CGFloat] = [
         .assetTag: 120, .serial: 110, .name: 160, .status: 110,
         .category: 110, .platform: 100, .manufacturer: 120, .model: 120,
-        .usage: 100, .catalog: 100, .area: 100, .location: 120
+        .usage: 100, .catalog: 100, .area: 100, .location: 120,
+        .lastActivity: 140
     ]
     @State private var visibleColumns: Set<AssetSortField> = Set(AssetSortField.allCases)
     @State private var showColumnPicker = false
@@ -115,6 +121,17 @@ struct AssetsView: View {
         }
 
         return result.sorted { a, b in
+            // Snipe-IT timestamps are "yyyy-MM-dd HH:mm:ss", so the raw string
+            // orders the same way the instant does — no parsing needed. Assets
+            // with no timestamp sort last in either direction.
+            if sortField.isDate {
+                let aVal = a.lastActivityDate?.value
+                let bVal = b.lastActivityDate?.value
+                guard let aVal else { return false }
+                guard let bVal else { return true }
+                return sortAscending ? aVal < bVal : aVal > bVal
+            }
+
             let aVal: String
             let bVal: String
             switch sortField {
@@ -130,6 +147,7 @@ struct AssetsView: View {
             case .catalog: aVal = a.customFieldByName("Catalog")?.value ?? ""; bVal = b.customFieldByName("Catalog")?.value ?? ""
             case .area: aVal = a.area ?? ""; bVal = b.area ?? ""
             case .location: aVal = a.location?.name ?? ""; bVal = b.location?.name ?? ""
+            case .lastActivity: aVal = ""; bVal = ""
             }
             return sortAscending ? aVal.localizedCompare(bVal) == .orderedAscending : aVal.localizedCompare(bVal) == .orderedDescending
         }
@@ -399,7 +417,7 @@ struct AssetsView: View {
         HStack(spacing: 0) {
             Button(action: {
                 if sortField == field { sortAscending.toggle() }
-                else { sortField = field; sortAscending = true }
+                else { sortField = field; sortAscending = !field.isDate }
             }) {
                 HStack(spacing: 3) {
                     Text(field.rawValue)
@@ -454,6 +472,8 @@ struct AssetsView: View {
             Text(asset.area ?? "-").lineLimit(1)
         case .location:
             Text(asset.location?.name?.htmlDecoded ?? "-").lineLimit(1)
+        case .lastActivity:
+            Text(asset.lastActivityDate?.formatted ?? "-").lineLimit(1)
         }
     }
 

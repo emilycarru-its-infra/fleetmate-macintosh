@@ -30,7 +30,7 @@ public actor AzureDevOpsTaskProvider: TaskProvider {
     
     public func authenticate() async throws -> Bool {
         dbg.info("AzDO TaskProvider authenticate() starting (enabled=\(isEnabled), hasToken=\(service.hasValidToken), org=\(mainConfig.devopsOrganization ?? "nil"), project=\(mainConfig.devopsProject ?? "nil"), baseUrl=\(service.baseUrl))", category: "azdo-provider")
-        guard service.hasValidToken else {
+        guard await service.ensureValidToken() else {
             dbg.warn("AzDO TaskProvider: no valid Bearer token — skipping auth", category: "azdo-provider")
             authenticated = false
             return false
@@ -49,7 +49,7 @@ public actor AzureDevOpsTaskProvider: TaskProvider {
     
     public func listTasks(filter: TaskFilter?) async throws -> [UnifiedTask] {
         dbg.info("AzDO TaskProvider listTasks (authenticated=\(authenticated), hasToken=\(service.hasValidToken))", category: "azdo-provider")
-        guard service.hasValidToken else {
+        guard await service.ensureValidToken() else {
             dbg.warn("AzDO TaskProvider listTasks: no token, returning empty", category: "azdo-provider")
             return []
         }

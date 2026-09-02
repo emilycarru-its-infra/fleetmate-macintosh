@@ -351,7 +351,7 @@ struct OnboardingSummaryStep: View {
         guard let org = config.devopsOrganization else {
             return ConnectionTestResult(service: "Azure DevOps", success: false, message: "No organization")
         }
-        let urlString = "https://azure-devops.example.com/\(org)"
+        let urlString = "\(config.effectiveDevopsBaseUrl)/\(org)"
         guard let url = URL(string: urlString) else {
             return ConnectionTestResult(service: "Azure DevOps", success: false, message: "Invalid org name")
         }

@@ -16,9 +16,31 @@ PRODUCT_NAME := FleetMate
 VERSION := 1.0.0
 
 # Signing Configuration
+# The default identity is a placeholder so the public repo never carries a real
+# certificate subject. Every signing target refuses to run with it: a build
+# signed with a missing identity comes out ad-hoc signed, notarization then
+# returns Invalid, and nothing else in the chain notices. Override it on the
+# command line or in .env.
 SIGNING_IDENTITY ?= Developer ID Application: Example Organisation (TEAMID0000)
+SIGNING_IDENTITY_PLACEHOLDER := Developer ID Application: Example Organisation (TEAMID0000)
 KEYCHAIN ?=
 NOTARIZATION_PROFILE ?= notarization_credentials
+
+# Submit $(1) to the notary service and fail unless Apple accepted it.
+# notarytool exits 0 on a completed submission whether the status is Accepted
+# or Invalid, so the status line is the only signal. On anything else, print
+# Apple's log so the reason is in the build output.
+define notarize-and-check
+_out=$$(mktemp); \
+xcrun notarytool submit "$(1)" --keychain-profile "$(NOTARIZATION_PROFILE)" --wait 2>&1 | tee "$$_out"; \
+if ! grep -q "status: Accepted" "$$_out"; then \
+	_id=$$(grep -m1 '^  id: ' "$$_out" | awk '{print $$2}'); \
+	echo "$(RED)Error: notarization was not accepted$(NC)"; \
+	[ -n "$$_id" ] && xcrun notarytool log "$$_id" --keychain-profile "$(NOTARIZATION_PROFILE)" || true; \
+	rm -f "$$_out"; exit 1; \
+fi; \
+rm -f "$$_out"
+endef
 
 # App Configuration
 APP_PRODUCT_NAME := FleetMateApp
@@ -99,9 +121,22 @@ release-signed: release sign notarize
 	@echo "$(GREEN)✓ Release binary signed and notarized!$(NC)"
 
 # Sign the binary
-sign: release
+# Refuse to sign with the placeholder identity or one the keychain cannot find.
+check-signing-identity:
+	@if [ "$(SIGNING_IDENTITY)" = "$(SIGNING_IDENTITY_PLACEHOLDER)" ]; then \
+		echo "$(RED)Error: SIGNING_IDENTITY is the placeholder '$(SIGNING_IDENTITY)'$(NC)"; \
+		echo "Pass the real identity: make <target> SIGNING_IDENTITY=\"Developer ID Application: <Org> (<TEAMID>)\""; \
+		exit 1; \
+	fi; \
+	if ! security find-identity -v -p codesigning $(KEYCHAIN) 2>/dev/null | grep -Fq "\"$(SIGNING_IDENTITY)\""; then \
+		echo "$(RED)Error: no codesigning identity named '$(SIGNING_IDENTITY)' in the keychain$(NC)"; \
+		security find-identity -v -p codesigning $(KEYCHAIN) 2>/dev/null | grep "Developer ID" || echo "  (no Developer ID identities found)"; \
+		exit 1; \
+	fi
+
+sign: release check-signing-identity
 	@echo "$(BLUE)Signing binary...$(NC)"
-	@REAL_BIN_PATH=$$(swift build -c release --show-bin-path)/$(BINARY_NAME); \
+	@set -e; REAL_BIN_PATH=$$(swift build -c release --show-bin-path)/$(BINARY_NAME); \
 	if [ ! -f "$$REAL_BIN_PATH" ]; then \
 		echo "$(RED)Error: Binary not found at $$REAL_BIN_PATH$(NC)"; \
 		exit 1; \
@@ -119,7 +154,9 @@ sign: release
 			--timestamp \
 			"$$REAL_BIN_PATH"; \
 	fi; \
-	codesign --verify --verbose "$$REAL_BIN_PATH"
+	codesign --verify --verbose "$$REAL_BIN_PATH"; \
+	codesign -dvv "$$REAL_BIN_PATH" 2>&1 | grep -Fq "Authority=$(SIGNING_IDENTITY)" || { \
+		echo "$(RED)Error: binary is not signed by '$(SIGNING_IDENTITY)'$(NC)"; exit 1; }
 	@echo "$(GREEN)✓ Binary signed successfully$(NC)"
 	@REAL_BIN_PATH=$$(swift build -c release --show-bin-path)/$(BINARY_NAME); \
 	codesign -dvvv "$$REAL_BIN_PATH" 2>&1 | grep -E "Authority|TeamIdentifier|Timestamp"
@@ -133,17 +170,15 @@ notarize: sign
 		echo "  xcrun notarytool store-credentials"; \
 		exit 1; \
 	fi
-	@REAL_BIN_PATH=$$(swift build -c release --show-bin-path)/$(BINARY_NAME); \
+	@set -e; REAL_BIN_PATH=$$(swift build -c release --show-bin-path)/$(BINARY_NAME); \
 	echo "Creating notarization archive..."; \
 	mkdir -p $(BUILD_DIR)/notarize; \
 	cp "$$REAL_BIN_PATH" "$(BUILD_DIR)/notarize/$(BINARY_NAME)"; \
 	ditto -c -k --keepParent "$(BUILD_DIR)/notarize/$(BINARY_NAME)" "$(BUILD_DIR)/$(BINARY_NAME)-notarize.zip"; \
 	echo "Submitting to Apple notary service..."; \
-	xcrun notarytool submit "$(BUILD_DIR)/$(BINARY_NAME)-notarize.zip" \
-		--keychain-profile "$(NOTARIZATION_PROFILE)" \
-		--wait; \
+	$(call notarize-and-check,$(BUILD_DIR)/$(BINARY_NAME)-notarize.zip); \
 	echo "Stapling notarization ticket..."; \
-	xcrun stapler staple "$$REAL_BIN_PATH" || echo "$(YELLOW)Note: Stapling may not work for executables$(NC)"; \
+	xcrun stapler staple "$$REAL_BIN_PATH" || echo "$(YELLOW)Note: a bare executable cannot carry a stapled ticket; Apple keeps it server-side$(NC)"; \
 	rm -rf "$(BUILD_DIR)/notarize" "$(BUILD_DIR)/$(BINARY_NAME)-notarize.zip"
 	@echo "$(GREEN)✓ Binary notarized successfully$(NC)"
 
@@ -213,9 +248,9 @@ release-app:
 	@echo "$(GREEN)✓ App bundle assembled: $(APP_BUNDLE)$(NC)"
 
 # Sign the .app bundle
-sign-app: release-app
+sign-app: release-app check-signing-identity
 	@echo "$(BLUE)Signing .app bundle...$(NC)"
-	@if [ ! -d "$(APP_BUNDLE)" ]; then \
+	@set -e; if [ ! -d "$(APP_BUNDLE)" ]; then \
 		echo "$(RED)Error: App bundle not found at $(APP_BUNDLE)$(NC)"; \
 		exit 1; \
 	fi; \
@@ -234,7 +269,9 @@ sign-app: release-app
 			--entitlements "$(APP_ENTITLEMENTS)" \
 			"$(APP_BUNDLE)"; \
 	fi; \
-	codesign --verify --verbose "$(APP_BUNDLE)"
+	codesign --verify --verbose "$(APP_BUNDLE)"; \
+	codesign -dvv "$(APP_BUNDLE)" 2>&1 | grep -Fq "Authority=$(SIGNING_IDENTITY)" || { \
+		echo "$(RED)Error: app bundle is not signed by '$(SIGNING_IDENTITY)'$(NC)"; exit 1; }
 	@echo "$(GREEN)✓ App bundle signed successfully$(NC)"
 	@codesign -dvvv "$(APP_BUNDLE)" 2>&1 | grep -E "Authority|TeamIdentifier|Timestamp"
 
@@ -247,12 +284,10 @@ notarize-app: sign-app
 		echo "  xcrun notarytool store-credentials"; \
 		exit 1; \
 	fi
-	@echo "Creating notarization archive..."; \
+	@set -e; echo "Creating notarization archive..."; \
 	ditto -c -k --keepParent "$(APP_BUNDLE)" "$(BUILD_DIR)/$(PRODUCT_NAME)-App-notarize.zip"; \
 	echo "Submitting to Apple notary service..."; \
-	xcrun notarytool submit "$(BUILD_DIR)/$(PRODUCT_NAME)-App-notarize.zip" \
-		--keychain-profile "$(NOTARIZATION_PROFILE)" \
-		--wait; \
+	$(call notarize-and-check,$(BUILD_DIR)/$(PRODUCT_NAME)-App-notarize.zip); \
 	echo "Stapling notarization ticket..."; \
 	xcrun stapler staple "$(APP_BUNDLE)"; \
 	rm -f "$(BUILD_DIR)/$(PRODUCT_NAME)-App-notarize.zip"

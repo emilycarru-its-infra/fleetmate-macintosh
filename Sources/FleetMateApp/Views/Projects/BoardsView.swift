@@ -35,6 +35,10 @@ struct BoardsView: View {
     /// Kept apart from allTasks so loadTasks() reloads don't wipe them.
     @State private var boardBackfillTasks: [UnifiedTask] = []
     @State private var searchText = ""
+    /// A work item named by id in the search field that the loaded queries do
+    /// not contain — resolved straight from Azure DevOps.
+    @State private var directWorkItemHit: UnifiedTask?
+    @State private var isResolvingDirectHit = false
     @State private var filterProvider: String? = nil
     @State private var filters = FilterState<TaskFilterCategory>()
     @State private var showFilters = false
@@ -244,8 +248,9 @@ struct BoardsView: View {
                 break
             }
         }
-        .searchable(text: $searchText, prompt: "Search tasks...")
+        .searchable(text: $searchText, prompt: "Search tasks or AB# id...")
         .findFocusesSearchField()
+        .task(id: searchText) { await resolveDirectWorkItemHit() }
         .toolbar { projectsToolbar }
         .task {
             // Only load when nothing has ever loaded. Previously this keyed off
@@ -719,6 +724,53 @@ struct BoardsView: View {
 
     @ViewBuilder
     private var listContent: some View {
+        VStack(spacing: 0) {
+            directWorkItemHitBanner
+            queriesOrLegacyList
+        }
+    }
+
+    /// Searching an id that is in none of the shared queries — most ids are not,
+    /// the queries only cover active work — used to say "no results". Offer the
+    /// item itself instead.
+    @ViewBuilder
+    private var directWorkItemHitBanner: some View {
+        if let hit = directWorkItemHit {
+            Button {
+                selectedTask = hit
+                showDetailSidebar = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.right.circle.fill")
+                        .foregroundStyle(.tint)
+                    Text("AB#\(hit.id)")
+                        .appFont(.callout, weight: .semibold)
+                        .monospacedDigit()
+                    Text(hit.title)
+                        .appFont(.callout)
+                        .lineLimit(1)
+                    Spacer()
+                    if let state = hit.metadata["state"] {
+                        Text(state)
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Not in any shared query")
+                        .appFont(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .background(Color.accentColor.opacity(0.08))
+            Divider()
+        }
+    }
+
+    @ViewBuilder
+    private var queriesOrLegacyList: some View {
         if showQueriesList {
             QueriesListView(
                 sections: querySections,
@@ -728,6 +780,8 @@ struct BoardsView: View {
                 filterMatch: { filters.matches($0) },
                 filtersActive: filters.hasActiveFilters,
                 showClosed: showClosed,
+                loadError: appState.projects.queriesLoadError,
+                onRetry: { retryQueries() },
                 collapsedQueryIds: collapsedQueryIdsBinding,
                 selectedTask: selectedTaskBinding,
                 onOpenQuery: { query in
@@ -866,6 +920,34 @@ struct BoardsView: View {
     /// Open a work item handed off from the dashboard. If it isn't in the
     /// loaded list (filters, paging), a stub task lets the sidebar self-load
     /// full detail from just the id.
+    /// Resolve a bare / `AB#` id in the search field to a work item, unless one
+    /// of the loaded rows already answers it. Debounced, and cancelled by the
+    /// next keystroke through the `.task(id:)` it hangs off.
+    private func resolveDirectWorkItemHit() async {
+        guard let id = parseWorkItemId(searchText) else {
+            directWorkItemHit = nil
+            return
+        }
+        let alreadyListed = queryRuns.values.contains { run in
+            run.rows.contains { $0.task.id == String(id) && $0.task.provider == "azdevops" }
+        }
+        guard !alreadyListed else {
+            directWorkItemHit = nil
+            return
+        }
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        guard !Task.isCancelled else { return }
+        guard appState.config.isDevOpsConfigured, appState.devOpsService.hasValidToken else {
+            directWorkItemHit = nil
+            return
+        }
+        isResolvingDirectHit = true
+        defer { isResolvingDirectHit = false }
+        let item = try? await appState.devOpsService.getWorkItem(id: id)
+        guard !Task.isCancelled else { return }
+        directWorkItemHit = item?.asUnifiedTask()
+    }
+
     private func consumePendingWorkItem() {
         guard let id = appState.navigateToWorkItemId else { return }
         appState.navigateToWorkItemId = nil
@@ -1467,6 +1549,17 @@ struct BoardsView: View {
     /// Delegates to AppState so the view and the launch preload share one
     /// implementation, then rebuilds the filter picker values, which are
     /// view-local and derived from both the task list and the query rows.
+    /// The empty state's Retry: re-attempt DevOps sign-in first, since a
+    /// refused load is nearly always an auth problem, then reload the queries
+    /// once the token lands.
+    private func retryQueries() {
+        appState.projects.queriesLoadError = nil
+        if !appState.devOpsSsoAuthenticated, appState.isDevOpsSsoConfigured {
+            appState.attemptSilentDevOpsSso()
+        }
+        loadQueries(force: true)
+    }
+
     private func loadQueries(force: Bool = false) {
         Task {
             isLoadingQueries = true

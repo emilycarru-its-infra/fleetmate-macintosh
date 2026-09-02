@@ -1153,10 +1153,15 @@ class AppState: ObservableObject {
     /// preload and again when DevOps auth lands; BoardsView delegates here so
     /// the view and the preload share one implementation.
     func preloadSharedQueries(force: Bool = false) async {
-        guard config.isDevOpsConfigured, devOpsService.hasValidToken else { return }
+        guard config.isDevOpsConfigured else { return }
+        guard devOpsService.hasValidToken else {
+            projects.queriesLoadError = "Not signed in to Azure DevOps."
+            return
+        }
         let project = devOpsService.resolvedProject
         guard !project.isEmpty else {
             dbg.debug("Shared queries preload: no resolved project yet", category: "preload")
+            projects.queriesLoadError = "No Azure DevOps project resolved yet."
             return
         }
         if !force, projects.queriesLoadedAt != nil { return }
@@ -1210,10 +1215,15 @@ class AppState: ObservableObject {
             projects.sharedQueries = queries
             projects.queryRuns = display
             projects.queriesLoadedAt = Date()
+            projects.queriesLoadError = nil
             let rowCount = display.values.reduce(0) { $0 + $1.rows.count }
             dbg.info("Shared queries preloaded: \(display.count)/\(queries.count) queries, \(rowCount) rows", category: "preload")
         } catch {
             dbg.error("Shared queries preload FAILED: \(error)", category: "preload")
+            projects.queriesLoadError = error.localizedDescription
+            // The request was refused, not answered — surface it on the auth
+            // panel too, so the shield says why the tab is empty.
+            authManager.update(.devops, state: .failed(message: error.localizedDescription))
         }
     }
 

@@ -147,6 +147,16 @@ public struct SnipeAsset: Codable, Identifiable, Hashable, Sendable {
     /// Name with HTML entities decoded
     public var displayName: String? { name?.htmlDecoded }
 
+    /// The most recent thing that happened to this asset — whichever of the
+    /// edit, checkout and audit timestamps is latest. Snipe-IT writes them all
+    /// as "yyyy-MM-dd HH:mm:ss", so the raw strings compare chronologically.
+    public var lastActivityDate: SnipeDateRef? {
+        [updatedAt, lastCheckout, lastAuditDate]
+            .compactMap { $0 }
+            .filter { $0.value?.isEmpty == false }
+            .max { ($0.value ?? "") < ($1.value ?? "") }
+    }
+
     /// Get custom field value by database column name
     func customFieldValue(_ columnName: String) -> String? {
         guard let fields = customFields else { return nil }

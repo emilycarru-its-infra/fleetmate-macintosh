@@ -60,7 +60,10 @@ struct ContentView: View {
                 // The authentication shield belongs to the window, not to the
                 // Dashboard: auth is what breaks any tab, so it has to be
                 // checkable from whichever tab is showing the breakage.
-                ToolbarItem(placement: .primaryAction) {
+                // `.confirmationAction` is the far-trailing slot: AppKit appends
+                // the searchable field after `.primaryAction` items, which left
+                // the shield stranded mid-toolbar on every tab that has a search.
+                ToolbarItem(placement: .confirmationAction) {
                     Button(action: { showAuthPopover.toggle() }) {
                         Label("Authentication", systemImage: "lock.shield")
                     }

@@ -60,10 +60,16 @@ struct ContentView: View {
                 // The authentication shield belongs to the window, not to the
                 // Dashboard: auth is what breaks any tab, so it has to be
                 // checkable from whichever tab is showing the breakage.
-                // `.confirmationAction` is the far-trailing slot: AppKit appends
-                // the searchable field after `.primaryAction` items, which left
-                // the shield stranded mid-toolbar on every tab that has a search.
-                ToolbarItem(placement: .confirmationAction) {
+                //
+                // A tab's `.searchable` field is a toolbar item AppKit places
+                // last of its own accord, so no placement of ours lands to the
+                // right of it — the shield ended up stranded mid-toolbar. On
+                // macOS 26 the search field can be positioned explicitly, so
+                // claim it here and declare the shield after it.
+                if #available(macOS 26.0, *) {
+                    DefaultToolbarItem(kind: .search, placement: .automatic)
+                }
+                ToolbarItem(placement: .primaryAction) {
                     Button(action: { showAuthPopover.toggle() }) {
                         Label("Authentication", systemImage: "lock.shield")
                     }

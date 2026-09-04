@@ -497,6 +497,7 @@ struct PullRequestRow: View {
     @EnvironmentObject private var appState: AppState
     @State private var isHovering = false
     @State private var showDetail = false
+    @State private var copiedReference = false
     @State private var pendingAction: PullRequestAction?
     @State private var runningAction: PullRequestAction?
     @State private var actionError: String?
@@ -573,6 +574,8 @@ struct PullRequestRow: View {
                     .foregroundStyle(pullRequest.source.tint)
                     .frame(width: 16)
 
+                referenceBadge
+
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(pullRequest.title)
@@ -616,6 +619,7 @@ struct PullRequestRow: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(pullRequest.webUrl, forType: .string)
             }
+            Button("Copy ID (\(pullRequest.number))") { copyReference() }
         }
     }
 
@@ -722,9 +726,37 @@ struct PullRequestRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 3))
     }
 
+    /// The PR number, leading the row so it can be read down the list, and
+    /// clickable because reading it is usually a step towards pasting it into
+    /// a command. Copies the bare number: that is what `az repos pr` and `gh`
+    /// take, and the `!`/`#` sigil is only there to say which system it is.
+    private var referenceBadge: some View {
+        Button(action: copyReference) {
+            Text(pullRequest.reference)
+                .appFont(fixed: 10, weight: .medium)
+                .monospacedDigit()
+                .foregroundStyle(copiedReference ? Color.green : .secondary)
+                .lineLimit(1)
+                .frame(width: 52, alignment: .trailing)
+        }
+        .buttonStyle(.plain)
+        .help(copiedReference ? "Copied \(pullRequest.number)" : "Copy \(pullRequest.number) to the clipboard")
+        .textSelection(.enabled)
+    }
+
+    private func copyReference() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("\(pullRequest.number)", forType: .string)
+        copiedReference = true
+        Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            copiedReference = false
+        }
+    }
+
     private var subtitle: some View {
         HStack(spacing: 4) {
-            Text("\(pullRequest.authorName) request \(pullRequest.reference) into")
+            Text("\(pullRequest.authorName) requested into")
                 .lineLimit(1)
             Image(systemName: "shippingbox").appFont(fixed: 9)
             Text("\(pullRequest.container)/\(pullRequest.repository)")

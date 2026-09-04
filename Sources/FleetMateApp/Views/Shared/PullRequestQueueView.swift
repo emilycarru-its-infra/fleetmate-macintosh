@@ -723,7 +723,7 @@ struct PullRequestRow: View {
     /// receive clicks on macOS, and a number nobody can click is a number
     /// nobody can copy.
     private var leadingCluster: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 4) {
             Rectangle()
                 .fill(pullRequest.source.tint)
                 .frame(width: 3)
@@ -764,7 +764,7 @@ struct PullRequestRow: View {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(isHovering ? Color.secondary.opacity(0.12) : .clear)
             )
-            .frame(width: 72, alignment: .trailing)
+            .frame(width: 58, alignment: .trailing)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

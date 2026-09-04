@@ -525,6 +525,7 @@ struct PullRequestRow: View {
         // The row's body and its action buttons are siblings rather than nested:
         // a Button inside a Button doesn't reliably receive clicks on macOS.
         HStack(spacing: 6) {
+            leadingCluster
             rowButton
             if showsActions {
                 actionButtons
@@ -565,17 +566,6 @@ struct PullRequestRow: View {
             // as rows without them — top alignment made the trailing cluster
             // sit visibly higher whenever bubbles grew the row.
             HStack(alignment: .center, spacing: 10) {
-                Rectangle()
-                    .fill(pullRequest.source.tint)
-                    .frame(width: 3)
-                    .clipShape(RoundedRectangle(cornerRadius: 1.5))
-
-                BrandIcon(mark: pullRequest.source.brandMark, size: 12)
-                    .foregroundStyle(pullRequest.source.tint)
-                    .frame(width: 16)
-
-                referenceBadge
-
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(pullRequest.title)
@@ -726,22 +716,59 @@ struct PullRequestRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 3))
     }
 
-    /// The PR number, leading the row so it can be read down the list, and
-    /// clickable because reading it is usually a step towards pasting it into
-    /// a command. Copies the bare number: that is what `az repos pr` and `gh`
-    /// take, and the `!`/`#` sigil is only there to say which system it is.
+    /// The row's leading edge: source bar, source mark, and the PR number.
+    ///
+    /// A sibling of the row button rather than a child of it — the same reason
+    /// the action buttons are, since a Button inside a Button doesn't reliably
+    /// receive clicks on macOS, and a number nobody can click is a number
+    /// nobody can copy.
+    private var leadingCluster: some View {
+        HStack(spacing: 10) {
+            Rectangle()
+                .fill(pullRequest.source.tint)
+                .frame(width: 3)
+                .clipShape(RoundedRectangle(cornerRadius: 1.5))
+
+            BrandIcon(mark: pullRequest.source.brandMark, size: 12)
+                .foregroundStyle(pullRequest.source.tint)
+                .frame(width: 16)
+
+            referenceBadge
+        }
+        .padding(.leading, 0)
+    }
+
+    /// Azure DevOps numbers show bare — the source mark beside them already
+    /// says where they come from, and the `!` only added noise to a column
+    /// meant to be read straight down.
+    private var badgeLabel: String {
+        pullRequest.source == .gitHub ? "#\(pullRequest.number)" : "\(pullRequest.number)"
+    }
+
+    /// Copies the bare number: that is what `az repos pr` and `gh` take.
     private var referenceBadge: some View {
         Button(action: copyReference) {
-            Text(pullRequest.reference)
-                .appFont(fixed: 10, weight: .medium)
-                .monospacedDigit()
-                .foregroundStyle(copiedReference ? Color.green : .secondary)
-                .lineLimit(1)
-                .frame(width: 52, alignment: .trailing)
+            HStack(spacing: 3) {
+                Text(badgeLabel)
+                    .appFont(fixed: 10, weight: .medium)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                Image(systemName: copiedReference ? "checkmark" : "doc.on.doc")
+                    .appFont(fixed: 8)
+                    .opacity(copiedReference || isHovering ? 1 : 0)
+            }
+            .foregroundStyle(copiedReference ? Color.green : .secondary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(isHovering ? Color.secondary.opacity(0.12) : .clear)
+            )
+            .frame(width: 72, alignment: .trailing)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(copiedReference ? "Copied \(pullRequest.number)" : "Copy \(pullRequest.number) to the clipboard")
-        .textSelection(.enabled)
     }
 
     private func copyReference() {

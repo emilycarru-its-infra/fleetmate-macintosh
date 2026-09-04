@@ -122,6 +122,12 @@ struct TicketsView: View {
     @State private var showClosed = false
     @State private var meModeApplied = false
 
+    /// Tickets found by resolving the search text to a requestor and asking
+    /// TDX for their tickets. The loaded set is bounded by the date range and
+    /// the responsible group, so a person's tickets are routinely outside it —
+    /// filtering what is already in memory can never find them.
+    @State private var requestorHits: [TdxTicket] = []
+
     // Date range
     @State private var datePreset: DateRangePreset = DateRangePreset.currentTerm
     @State private var customDateFrom: Date = Calendar.current.date(byAdding: .month, value: -1, to: Date())!
@@ -371,6 +377,8 @@ struct TicketsView: View {
 
     var filteredTickets: [TdxTicket] {
         var result = tickets
+        let known = Set(result.compactMap(\.id))
+        result += requestorHits.filter { hit in hit.id.map { !known.contains($0) } ?? false }
 
         // Show closed toggle (off by default = hide closed)
         if !showClosed {
@@ -390,6 +398,7 @@ struct TicketsView: View {
             result = result.filter {
                 ($0.title?.localizedCaseInsensitiveContains(searchText) ?? false) ||
                 ($0.requestorName?.localizedCaseInsensitiveContains(searchText) ?? false) ||
+                ($0.requestorEmail?.localizedCaseInsensitiveContains(searchText) ?? false) ||
                 "\($0.id ?? 0)".contains(searchText)
             }
         }
@@ -638,7 +647,8 @@ struct TicketsView: View {
             case .find:          break  // handled by findFocusesSearchField()
             }
         }
-        .searchable(text: $searchText, prompt: "Search tickets...")
+        .searchable(text: $searchText, prompt: "Search tickets or requestor...")
+        .task(id: searchText) { await resolveRequestorHits() }
         .findFocusesSearchField()
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
@@ -1973,6 +1983,32 @@ struct TicketsView: View {
     }
 
     // MARK: - Data Loading
+
+    /// Resolve the search text to people, then pull their tickets from TDX.
+    ///
+    /// Two round trips rather than one: the ticket search takes requestor UIDs,
+    /// not a name, so the name has to become a person first.
+    private func resolveRequestorHits() async {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        guard query.count >= 2, appState.config.isTdxConfigured else {
+            requestorHits = []
+            return
+        }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        guard !Task.isCancelled else { return }
+
+        guard let people = try? await appState.tdxService.searchPeople(searchText: query, maxResults: 10) else { return }
+        let uids = people.compactMap(\.uid)
+        guard !uids.isEmpty else {
+            if !Task.isCancelled { requestorHits = [] }
+            return
+        }
+
+        let request = TicketSearchRequest(requestorUids: uids, maxResults: 200)
+        guard let found = try? await appState.tdxService.searchTickets(search: request, maxResults: 200) else { return }
+        guard !Task.isCancelled else { return }
+        requestorHits = found
+    }
 
     private func loadTickets() {
         guard appState.config.isTdxConfigured else { return }

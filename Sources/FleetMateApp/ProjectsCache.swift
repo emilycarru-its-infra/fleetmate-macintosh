@@ -45,4 +45,9 @@ struct ProjectsCache {
 
     /// When the stored queries last loaded, same nil-means-never contract.
     var queriesLoadedAt: Date?
+
+    /// Why the last shared-queries load produced nothing. An empty list and a
+    /// refused request look identical on screen otherwise, and the refusal is
+    /// the one the user can act on.
+    var queriesLoadError: String?
 }

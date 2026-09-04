@@ -497,6 +497,7 @@ struct PullRequestRow: View {
     @EnvironmentObject private var appState: AppState
     @State private var isHovering = false
     @State private var showDetail = false
+    @State private var copiedReference = false
     @State private var pendingAction: PullRequestAction?
     @State private var runningAction: PullRequestAction?
     @State private var actionError: String?
@@ -524,6 +525,7 @@ struct PullRequestRow: View {
         // The row's body and its action buttons are siblings rather than nested:
         // a Button inside a Button doesn't reliably receive clicks on macOS.
         HStack(spacing: 6) {
+            leadingCluster
             rowButton
             if showsActions {
                 actionButtons
@@ -564,15 +566,6 @@ struct PullRequestRow: View {
             // as rows without them — top alignment made the trailing cluster
             // sit visibly higher whenever bubbles grew the row.
             HStack(alignment: .center, spacing: 10) {
-                Rectangle()
-                    .fill(pullRequest.source.tint)
-                    .frame(width: 3)
-                    .clipShape(RoundedRectangle(cornerRadius: 1.5))
-
-                BrandIcon(mark: pullRequest.source.brandMark, size: 12)
-                    .foregroundStyle(pullRequest.source.tint)
-                    .frame(width: 16)
-
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(pullRequest.title)
@@ -616,6 +609,7 @@ struct PullRequestRow: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(pullRequest.webUrl, forType: .string)
             }
+            Button("Copy ID (\(pullRequest.number))") { copyReference() }
         }
     }
 
@@ -722,9 +716,74 @@ struct PullRequestRow: View {
             .clipShape(RoundedRectangle(cornerRadius: 3))
     }
 
+    /// The row's leading edge: source bar, source mark, and the PR number.
+    ///
+    /// A sibling of the row button rather than a child of it — the same reason
+    /// the action buttons are, since a Button inside a Button doesn't reliably
+    /// receive clicks on macOS, and a number nobody can click is a number
+    /// nobody can copy.
+    private var leadingCluster: some View {
+        HStack(spacing: 4) {
+            Rectangle()
+                .fill(pullRequest.source.tint)
+                .frame(width: 3)
+                .clipShape(RoundedRectangle(cornerRadius: 1.5))
+
+            BrandIcon(mark: pullRequest.source.brandMark, size: 12)
+                .foregroundStyle(pullRequest.source.tint)
+                .frame(width: 16)
+
+            referenceBadge
+        }
+        .padding(.leading, 0)
+    }
+
+    /// Azure DevOps numbers show bare — the source mark beside them already
+    /// says where they come from, and the `!` only added noise to a column
+    /// meant to be read straight down.
+    private var badgeLabel: String {
+        pullRequest.source == .gitHub ? "#\(pullRequest.number)" : "\(pullRequest.number)"
+    }
+
+    /// Copies the bare number: that is what `az repos pr` and `gh` take.
+    private var referenceBadge: some View {
+        Button(action: copyReference) {
+            HStack(spacing: 3) {
+                Text(badgeLabel)
+                    .appFont(fixed: 10, weight: .medium)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                Image(systemName: copiedReference ? "checkmark" : "doc.on.doc")
+                    .appFont(fixed: 8)
+                    .opacity(copiedReference || isHovering ? 1 : 0)
+            }
+            .foregroundStyle(copiedReference ? Color.green : .secondary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(isHovering ? Color.secondary.opacity(0.12) : .clear)
+            )
+            .frame(width: 58, alignment: .trailing)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(copiedReference ? "Copied \(pullRequest.number)" : "Copy \(pullRequest.number) to the clipboard")
+    }
+
+    private func copyReference() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("\(pullRequest.number)", forType: .string)
+        copiedReference = true
+        Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            copiedReference = false
+        }
+    }
+
     private var subtitle: some View {
         HStack(spacing: 4) {
-            Text("\(pullRequest.authorName) request \(pullRequest.reference) into")
+            Text("\(pullRequest.authorName) requested into")
                 .lineLimit(1)
             Image(systemName: "shippingbox").appFont(fixed: 9)
             Text("\(pullRequest.container)/\(pullRequest.repository)")

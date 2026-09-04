@@ -396,6 +396,29 @@ public struct FleetMateConfig: Codable {
         }
 
         // Log level
+        // Azure DevOps, as flat top-level keys. This loader runs whenever the
+        // Codable decode of config.yaml fails, which is the normal case — the
+        // file's nested sections are camelCase and the Codable shape is not —
+        // so anything only the decoder knew about was silently lost. Without
+        // these, `devops_base_url` never reached the config and every Azure
+        // DevOps call went to the public build's placeholder host, failing DNS
+        // resolution and reading as an outage rather than as unread config.
+        if let v = (yaml["devops_base_url"] ?? yaml["devopsBaseUrl"]) as? String, !v.isEmpty {
+            config.devopsBaseUrl = v
+        }
+        if let v = (yaml["devops_organization"] ?? yaml["devopsOrganization"]) as? String, !v.isEmpty {
+            config.devopsOrganization = v
+        }
+        if let v = (yaml["devops_project"] ?? yaml["devopsProject"]) as? String, !v.isEmpty {
+            config.devopsProject = v
+        }
+        if let v = (yaml["devops_client_id"] ?? yaml["devopsClientId"]) as? String, !v.isEmpty {
+            config.devopsClientId = v
+        }
+        if let v = (yaml["devops_tenant_id"] ?? yaml["devopsTenantId"]) as? String, !v.isEmpty {
+            config.devopsTenantId = v
+        }
+
         if let ll = (yaml["logLevel"] ?? yaml["log_level"]) as? String {
             config.logLevel = ll
         }

@@ -116,6 +116,10 @@ struct QueriesListView<MenuContent: View>: View {
     let filterMatch: (UnifiedTask) -> Bool
     let filtersActive: Bool
     let showClosed: Bool
+    /// Why the last load returned nothing, when it failed rather than came back
+    /// empty. Drives the empty state's wording and its Retry button.
+    let loadError: String?
+    let onRetry: () -> Void
     @Binding var collapsedQueryIds: Set<String>
     @Binding var selectedTask: UnifiedTask?
     let onOpenQuery: (AdoSharedQuery) -> Void
@@ -161,6 +165,8 @@ struct QueriesListView<MenuContent: View>: View {
         filterMatch: @escaping (UnifiedTask) -> Bool,
         filtersActive: Bool,
         showClosed: Bool,
+        loadError: String?,
+        onRetry: @escaping () -> Void,
         collapsedQueryIds: Binding<Set<String>>,
         selectedTask: Binding<UnifiedTask?>,
         onOpenQuery: @escaping (AdoSharedQuery) -> Void,
@@ -173,6 +179,8 @@ struct QueriesListView<MenuContent: View>: View {
         self.filterMatch = filterMatch
         self.filtersActive = filtersActive
         self.showClosed = showClosed
+        self.loadError = loadError
+        self.onRetry = onRetry
         self._collapsedQueryIds = collapsedQueryIds
         self._selectedTask = selectedTask
         self.onOpenQuery = onOpenQuery
@@ -189,11 +197,27 @@ struct QueriesListView<MenuContent: View>: View {
                 }
             } else if sections.isEmpty {
                 VStack {
-                    ContentUnavailableView(
-                        "No Shared Queries",
-                        systemImage: "rectangle.stack.badge.questionmark",
-                        description: Text("No Shared Queries found in the DevOps project, or they are still loading.")
-                    )
+                    if let loadError {
+                        // A refused request is not an empty project. Saying so
+                        // is the difference between "nothing to see" and "your
+                        // Azure DevOps sign-in needs attention".
+                        ContentUnavailableView {
+                            Label("Couldn't Load Shared Queries", systemImage: "exclamationmark.triangle")
+                        } description: {
+                            Text(loadError)
+                        } actions: {
+                            Button("Retry", action: onRetry)
+                                .buttonStyle(.borderedProminent)
+                        }
+                    } else {
+                        ContentUnavailableView {
+                            Label("No Shared Queries", systemImage: "rectangle.stack.badge.questionmark")
+                        } description: {
+                            Text("No Shared Queries found in the DevOps project.")
+                        } actions: {
+                            Button("Reload", action: onRetry)
+                        }
+                    }
                     Spacer()
                 }
             } else {
@@ -395,6 +419,8 @@ struct QueriesListView<MenuContent: View>: View {
         if filtersActive && !filterMatch(row.task) { return false }
         guard applySearch else { return true }
         let q = searchText
+        // People paste ids with an AB or # prefix; the stored id is bare digits.
+        if let idQuery = parseWorkItemId(q) { return row.task.id == String(idQuery) }
         if row.task.title.localizedCaseInsensitiveContains(q) { return true }
         if row.task.id.contains(q) { return true }
         if row.task.assignees.contains(where: { $0.localizedCaseInsensitiveContains(q) }) { return true }

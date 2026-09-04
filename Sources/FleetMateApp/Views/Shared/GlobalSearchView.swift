@@ -36,7 +36,22 @@ struct GlobalSearchResult: Identifiable, Hashable {
     // Navigation payloads — whichever applies to the category.
     var deviceId: String?
     var ticketId: Int?
+    var workItemId: Int?
     var inventoryFilter: String?
+}
+
+/// A work-item id the way people actually type it: bare digits, or carrying a
+/// `#` or `AB#` prefix copied out of Azure Boards.
+/// Nil for anything else, so a search for "5030 Ridgeway" stays a text search.
+func parseWorkItemId(_ rawQuery: String) -> Int? {
+    var text = rawQuery.trimmingCharacters(in: .whitespaces)
+    for prefix in ["AB#", "ab#", "AB", "ab", "#"] where text.hasPrefix(prefix) {
+        text = String(text.dropFirst(prefix.count))
+        break
+    }
+    text = text.trimmingCharacters(in: .whitespaces)
+    guard !text.isEmpty, text.count <= 9, text.allSatisfy(\.isNumber) else { return nil }
+    return Int(text)
 }
 
 // MARK: - Scanner
@@ -49,7 +64,7 @@ enum GlobalSearchScanner {
 
     static func search(_ rawQuery: String, appState: AppState) -> [GlobalSearchResult] {
         let query = rawQuery.trimmingCharacters(in: .whitespaces)
-        guard query.count >= 2 else { return [] }
+        guard query.count >= 2 || parseWorkItemId(query) != nil else { return [] }
 
         var results: [GlobalSearchResult] = []
         results += devices(query, appState.cachedDevices)
@@ -140,22 +155,38 @@ enum GlobalSearchScanner {
         .prefix(perCategoryLimit).map { $0 }
     }
 
-    private static func workItems(_ q: String, _ items: [WorkItem]) -> [GlobalSearchResult] {
-        items.compactMap { item -> GlobalSearchResult? in
-            guard let (label, value) = firstMatch(q, [
-                ("ID", String(item.id)),
-                ("Title", item.fields?.title),
-                ("Assigned", item.fields?.assignedTo?.displayName)
-            ]) else { return nil }
-            return GlobalSearchResult(
-                category: .workItems,
-                id: "wi-\(item.id)",
-                title: item.fields?.title ?? "Work item \(item.id)",
-                subtitle: ["#\(item.id)", item.fields?.state].compactMap { $0 }.joined(separator: " · "),
-                matchLabel: "\(label): \(value)"
-            )
+    static func workItems(_ q: String, _ items: [WorkItem]) -> [GlobalSearchResult] {
+        // A prefixed id names the bare-digit id underneath it; a substring
+        // scan for the whole string never matches, so resolve that form first.
+        let idQuery = parseWorkItemId(q)
+        return items.compactMap { item -> GlobalSearchResult? in
+            let matched: (String, String)?
+            if let idQuery, item.id == idQuery {
+                matched = ("ID", String(item.id))
+            } else {
+                matched = firstMatch(q, [
+                    ("ID", String(item.id)),
+                    ("Title", item.fields?.title),
+                    ("Assigned", item.fields?.assignedTo?.displayName)
+                ])
+            }
+            guard let (label, value) = matched else { return nil }
+            return row(for: item, matchLabel: "\(label): \(value)")
         }
         .prefix(perCategoryLimit).map { $0 }
+    }
+
+    /// One work-item row, shared by the cached scan and the live id lookup.
+    static func row(for item: WorkItem, matchLabel: String) -> GlobalSearchResult {
+        GlobalSearchResult(
+            category: .workItems,
+            id: "wi-\(item.id)",
+            title: item.fields?.title ?? "Work item \(item.id)",
+            subtitle: ["AB#\(item.id)", item.fields?.workItemType, item.fields?.state]
+                .compactMap { $0 }.joined(separator: " · "),
+            matchLabel: matchLabel,
+            workItemId: item.id
+        )
     }
 
     private static func users(_ q: String, _ users: [EntraUser]) -> [GlobalSearchResult] {

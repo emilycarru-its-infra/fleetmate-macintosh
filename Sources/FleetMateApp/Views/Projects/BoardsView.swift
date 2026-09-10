@@ -273,9 +273,13 @@ struct BoardsView: View {
                 rebuildFilterValues()
             }
             consumePendingWorkItem()
+            consumePendingGitHubIssue()
         }
         .onChange(of: appState.navigateToWorkItemId) { _, _ in
             consumePendingWorkItem()
+        }
+        .onChange(of: appState.navigateToGitHubIssueUrl) { _, _ in
+            consumePendingGitHubIssue()
         }
         .alert("Sync Complete", isPresented: $showSyncAlert) {
             Button("OK", role: .cancel) { }
@@ -958,6 +962,25 @@ struct BoardsView: View {
                 id: String(id),
                 provider: "azdevops",
                 title: "Loading #\(id)…"
+            )
+        }
+        showDetailSidebar = true
+    }
+
+    private func consumePendingGitHubIssue() {
+        guard let url = appState.navigateToGitHubIssueUrl else { return }
+        appState.navigateToGitHubIssueUrl = nil
+        if let match = allTasks.first(where: { $0.provider == "github" && $0.externalUrl == url }) {
+            selectedTask = match
+        } else {
+            // The issue sidebar resolves owner, repo and number from the URL
+            // and loads the rest itself, so a stub is enough to open it.
+            let number = url.split(separator: "/").last.map(String.init) ?? ""
+            selectedTask = UnifiedTask(
+                id: number,
+                provider: "github",
+                title: "Loading #\(number)…",
+                externalUrl: url
             )
         }
         showDetailSidebar = true

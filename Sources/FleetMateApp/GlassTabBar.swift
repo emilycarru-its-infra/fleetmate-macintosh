@@ -29,7 +29,13 @@ struct GlassTabBar: View {
                             .appFont(fixed: 11)
                         Text(tab.rawValue)
                             .appFont(fixed: 13, weight: selectedTab == tab ? .semibold : .regular)
+                            .lineLimit(1)
                     }
+                    // The principal toolbar item gets squeezed by AppKit when the
+                    // search field and trailing buttons want room, and SwiftUI
+                    // answered by truncating the labels ("Mana…"). A tab name is
+                    // never worth less than its full width.
+                    .fixedSize(horizontal: true, vertical: false)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
                     .contentShape(Capsule())
@@ -48,6 +54,7 @@ struct GlassTabBar: View {
             }
         }
         .padding(3)
+        .fixedSize(horizontal: true, vertical: false)
         .modifier(GlassEffectModifier())
     }
 }

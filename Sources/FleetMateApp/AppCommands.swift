@@ -20,6 +20,8 @@ enum AppCommand: Equatable {
     case clearFilters
     case showListView
     case showBoardView
+    case scan
+    case selectOnline
 }
 
 /// A command plus a unique token.
@@ -120,6 +122,15 @@ struct FleetMateCommands: Commands {
             Button("Find") { appState.perform(.find) }
                 .keyboardShortcut("f", modifiers: .command)
                 .disabled(!hasSearchField)
+        }
+
+        CommandMenu("Manage") {
+            Button("Scan Room") { appState.perform(.scan) }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .disabled(selectedTab != .manage)
+            Button("Select All Online") { appState.perform(.selectOnline) }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+                .disabled(selectedTab != .manage)
         }
 
         CommandGroup(before: .toolbar) {

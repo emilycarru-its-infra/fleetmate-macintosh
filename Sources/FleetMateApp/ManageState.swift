@@ -12,7 +12,7 @@ final class ManageState: ObservableObject {
     @Published private(set) var config: ManageConfig
     private var repoRoot: String?
     private var reportMate: ReportMateService?
-    private let store: ManageStateStore
+    let store: ManageStateStore
 
     // MARK: - Roster
 
@@ -41,8 +41,21 @@ final class ManageState: ObservableObject {
     // MARK: - Probe
 
     @Published private(set) var machineInfos: [String: MachineInfo] = [:]
-    @Published private(set) var sshUnavailable: Set<String> = []
+    @Published var sshUnavailable: Set<String> = []
     @Published private(set) var isFetchingInfo = false
+
+    // MARK: - Command runner
+
+    @Published var commandCategories: [CommandCategory] = []
+    @Published var selectedCategoryID: UUID?
+    @Published var selectedCommandID: UUID?
+    @Published var customCommand = ""
+    @Published var commandHistory: [CommandHistoryEntry] = []
+    @Published var results: [String: CommandRunResult] = [:]
+    @Published var isRunning = false
+    @Published var runLabel = ""
+    var runStartedAt: Date?
+    var runTask: Task<Void, Never>?
 
     init(config: ManageConfig?, repoRoot: String?, reportMate: ReportMateService?, store: ManageStateStore = ManageStateStore()) {
         self.config = config ?? ManageConfig()
@@ -50,6 +63,7 @@ final class ManageState: ObservableObject {
         self.reportMate = reportMate
         self.store = store
         self.customGroups = store.loadCustomGroups()
+        loadCommandLibrary()
     }
 
     /// Apply a saved config: reload the roster when its source changed.
@@ -63,6 +77,7 @@ final class ManageState: ObservableObject {
             || previous.includeRetired != self.config.includeRetired
             || previous.includeProvisioning != self.config.includeProvisioning
         if rosterChanged || roster.isEmpty { loadRoster() }
+        if previous.commandsPath != self.config.commandsPath { loadCommandLibrary() }
     }
 
     // MARK: - Roster loading
@@ -150,8 +165,10 @@ final class ManageState: ObservableObject {
     func clearView() {
         scanTask?.cancel()
         scanTask = nil
+        killCommand()
         selection.clear()
         selectedComputerIDs = []
+        results = [:]
         scanResults = [:]
         scanSummary = ScanSummary()
         machineInfos = [:]
@@ -186,6 +203,8 @@ final class ManageState: ObservableObject {
     private func viewChanged(selectAll: Bool = false) {
         scanTask?.cancel()
         scanTask = nil
+        killCommand()
+        results = [:]
         isScanning = false
         scanStatus = ""
         scanResults = [:]
@@ -273,7 +292,7 @@ final class ManageState: ObservableObject {
 
     // MARK: - Machine info
 
-    private func makeExecutor() -> SecureShellService {
+    func makeExecutor() -> SecureShellService {
         SecureShellService(config: config.toSecureShellConfig(), reportMate: nil)
     }
 

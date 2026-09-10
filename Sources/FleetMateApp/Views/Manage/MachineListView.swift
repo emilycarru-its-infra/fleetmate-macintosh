@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import FleetMateCore
 
 enum MachineRowDensity: String {
@@ -15,6 +16,8 @@ struct MachineListView: View {
     @AppStorage("manage.rowDensity") private var densityRaw = MachineRowDensity.extended.rawValue
     @State private var showAddDevice = false
     @State private var showSSHTabPicker = false
+    @State private var pendingQuickAction: ManageQuickAction?
+    @State private var pendingPackageURL: URL?
 
     private var density: MachineRowDensity { MachineRowDensity(rawValue: densityRaw) ?? .extended }
 
@@ -138,6 +141,8 @@ struct MachineListView: View {
 
             Divider().frame(height: 12)
 
+            let onlineSelected = manage.onlineSelectedComputers.count
+            let actionsDisabled = manage.isRunning || manage.isScanning || onlineSelected == 0
             Menu {
                 Button {
                     showSSHTabPicker = true
@@ -145,6 +150,24 @@ struct MachineListView: View {
                     Label("Open SSH Tabs…", systemImage: "terminal")
                 }
                 .disabled(manage.onlineCount == 0)
+
+                Button {
+                    choosePackage()
+                } label: {
+                    Label("Install Package…", systemImage: "shippingbox")
+                }
+                .disabled(actionsDisabled)
+
+                Divider()
+
+                ForEach(ManageQuickAction.allCases) { action in
+                    Button(role: .destructive) {
+                        pendingQuickAction = action
+                    } label: {
+                        Label("\(action.title)…", systemImage: action.icon)
+                    }
+                    .disabled(actionsDisabled)
+                }
             } label: {
                 Image(systemName: "ellipsis.circle").appFont(fixed: 12)
             }
@@ -157,6 +180,49 @@ struct MachineListView: View {
         .background(.regularMaterial)
         .sheet(isPresented: $showSSHTabPicker) {
             SSHTabPickerSheet(manage: manage, isPresented: $showSSHTabPicker)
+        }
+        .confirmationDialog(
+            pendingQuickAction?.confirmation(count: manage.onlineSelectedComputers.count).title ?? "",
+            isPresented: Binding(get: { pendingQuickAction != nil }, set: { if !$0 { pendingQuickAction = nil } }),
+            titleVisibility: .visible
+        ) {
+            if let action = pendingQuickAction {
+                Button(action.title, role: .destructive) {
+                    manage.runQuickCommand(action.script, label: action.title)
+                    pendingQuickAction = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingQuickAction = nil }
+        } message: {
+            if let action = pendingQuickAction {
+                Text(action.confirmation(count: manage.onlineSelectedComputers.count).message)
+            }
+        }
+        .confirmationDialog(
+            "Install \(pendingPackageURL?.lastPathComponent ?? "package") on \(manage.onlineSelectedComputers.count) machine\(manage.onlineSelectedComputers.count == 1 ? "" : "s")?",
+            isPresented: Binding(get: { pendingPackageURL != nil }, set: { if !$0 { pendingPackageURL = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Install", role: .destructive) {
+                if let url = pendingPackageURL { manage.installPackage(at: url) }
+                pendingPackageURL = nil
+            }
+            Button("Cancel", role: .cancel) { pendingPackageURL = nil }
+        } message: {
+            Text("The package is copied to each machine and run with the system installer as root.")
+        }
+    }
+
+    private func choosePackage() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [UTType(filenameExtension: "pkg") ?? .package]
+        panel.title = "Choose a package to install"
+        panel.prompt = "Choose"
+        if panel.runModal() == .OK, let url = panel.url {
+            pendingPackageURL = url
         }
     }
 }
@@ -250,6 +316,17 @@ struct MachineRow: View {
                 .buttonStyle(.borderless)
                 .disabled(manage.isScanning || manage.rescanningSerials.contains(computer.id))
                 .help("Rescan this machine")
+
+                if let result = manage.results[computer.id] {
+                    if result.status == .running {
+                        ProgressView().scaleEffect(0.5).frame(width: 14, height: 14)
+                    } else {
+                        Image(systemName: result.status.icon)
+                            .foregroundStyle(result.status.tint)
+                            .appFont(fixed: 11)
+                            .help(result.status.label)
+                    }
+                }
             }
             .foregroundStyle(isOnline ? Color.secondary : Color(NSColor.quaternaryLabelColor))
         }

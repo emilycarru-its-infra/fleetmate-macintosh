@@ -610,3 +610,110 @@ public struct AnyCodable: Codable, @unchecked Sendable {
         }
     }
 }
+
+// MARK: - Fleet network addresses (/api/v1/network)
+
+/// One device from the fleet network endpoint. The response is a plain JSON
+/// array; interface detail lives under `raw`, `isUp` is an integer flag, and
+/// types are capitalised ("Ethernet", "WiFi").
+public struct ReportMateNetworkDevice: Decodable, Sendable {
+    public var serialNumber: String
+    public var operatingSystem: String?
+    public var raw: ReportMateNetworkRaw?
+
+    public init(serialNumber: String, operatingSystem: String? = nil, raw: ReportMateNetworkRaw? = nil) {
+        self.serialNumber = serialNumber
+        self.operatingSystem = operatingSystem
+        self.raw = raw
+    }
+
+    public var isMac: Bool { operatingSystem == "macOS" }
+
+    /// The best private LAN IPv4 for this device. Priority: wired on the
+    /// staff and curriculum subnets, then wireless on the wireless subnet,
+    /// then any other private 10.x address with wired preferred.
+    public func bestIP() -> String? {
+        let interfaces = (raw?.interfaces ?? []).filter(\.isUsableNetworkInterface)
+        func ipv4s(_ predicate: (ReportMateNetworkInterface) -> Bool) -> [String] {
+            interfaces.filter(predicate).flatMap(\.ipv4Addresses)
+        }
+        let wired = ipv4s { $0.normalizedType == "ethernet" }
+        let wireless = ipv4s { $0.normalizedType == "wifi" || $0.normalizedType == "wireless" }
+
+        if let ip = wired.first(where: { $0.hasPrefix("10.15.") || $0.hasPrefix("10.16.") }) { return ip }
+        if let ip = wireless.first(where: { $0.hasPrefix("10.17.") }) { return ip }
+        if let ip = (wired + wireless).first(where: { $0.hasPrefix("10.") }) { return ip }
+        return nil
+    }
+}
+
+public struct ReportMateNetworkRaw: Decodable, Sendable {
+    public var interfaces: [ReportMateNetworkInterface]?
+
+    public init(interfaces: [ReportMateNetworkInterface]?) {
+        self.interfaces = interfaces
+    }
+}
+
+public struct ReportMateNetworkInterface: Decodable, Sendable {
+    public var name: String?
+    public var type: String?
+    public var macAddress: String?
+    public var isUp: Int?
+    public var isActive: Bool?
+    public var status: String?
+    public var addresses: [ReportMateNetworkAddress]?
+    public var ipAddresses: [String]?
+
+    public init(name: String? = nil, type: String? = nil, macAddress: String? = nil, isUp: Int? = nil,
+                isActive: Bool? = nil, status: String? = nil, addresses: [ReportMateNetworkAddress]? = nil,
+                ipAddresses: [String]? = nil) {
+        self.name = name
+        self.type = type
+        self.macAddress = macAddress
+        self.isUp = isUp
+        self.isActive = isActive
+        self.status = status
+        self.addresses = addresses
+        self.ipAddresses = ipAddresses
+    }
+
+    public var normalizedType: String {
+        (type ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    public var isUsableNetworkInterface: Bool {
+        guard normalizedType != "loopback" else { return false }
+        if let isUp { return isUp != 0 }
+        if let isActive { return isActive }
+        if let status { return status.caseInsensitiveCompare("up") == .orderedSame }
+        return false
+    }
+
+    public var ipv4Addresses: [String] {
+        let structured = (addresses ?? [])
+            .filter { $0.family.caseInsensitiveCompare("ipv4") == .orderedSame }
+            .map(\.address)
+        let flat = (ipAddresses ?? []).filter(Self.isIPv4)
+        return structured + flat
+    }
+
+    static func isIPv4(_ value: String) -> Bool {
+        let parts = value.split(separator: ".")
+        guard parts.count == 4 else { return false }
+        return parts.allSatisfy { part in
+            guard let octet = Int(part), (0...255).contains(octet) else { return false }
+            return String(octet) == part
+        }
+    }
+}
+
+public struct ReportMateNetworkAddress: Decodable, Sendable {
+    public var address: String
+    public var family: String
+
+    public init(address: String, family: String) {
+        self.address = address
+        self.family = family
+    }
+}

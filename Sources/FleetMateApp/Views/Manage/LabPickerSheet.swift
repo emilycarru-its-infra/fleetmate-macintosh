@@ -8,6 +8,10 @@ struct LabPickerSheet: View {
 
     @State private var selectedIDs: Set<String> = []
     @State private var searchText = ""
+    @State private var isDropTargeted = false
+
+    /// Drag payloads carry a marker so a stray text drop cannot select anything.
+    private static let dragPrefix = "fleetmate-lab-picker:"
 
     private struct AreaGroup: Identifiable {
         var id: String { name }
@@ -100,7 +104,16 @@ struct LabPickerSheet: View {
                                 VStack(spacing: 8) {
                                     Image(systemName: "tray").appFont(fixed: 22).foregroundStyle(.secondary)
                                     Text("No labs selected").appFont(.caption).foregroundStyle(.secondary)
+                                    Text("Drag areas or labs here").appFont(.caption2).foregroundStyle(.tertiary)
                                 }
+                            }
+                        }
+                        .onDrop(of: [.plainText], isTargeted: $isDropTargeted, perform: handleDrop)
+                        .overlay {
+                            if isDropTargeted {
+                                RoundedRectangle(cornerRadius: 6)
+                                    .strokeBorder(Color.accentColor, lineWidth: 2)
+                                    .padding(4)
                             }
                         }
                     Divider()
@@ -149,6 +162,7 @@ struct LabPickerSheet: View {
             CountBadge(value: group.computerCount)
         }
         .contentShape(Rectangle())
+        .onDrag { NSItemProvider(object: (Self.dragPrefix + "area:" + group.name) as NSString) }
     }
 
     private func labRow(_ room: RosterRoom) -> some View {
@@ -170,6 +184,7 @@ struct LabPickerSheet: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { toggle(room) }
+        .onDrag { NSItemProvider(object: (Self.dragPrefix + "room:" + room.id) as NSString) }
     }
 
     private func selectedLabRow(_ room: RosterRoom) -> some View {
@@ -193,5 +208,33 @@ struct LabPickerSheet: View {
 
     private func toggle(_ room: RosterRoom) {
         if selectedIDs.contains(room.id) { selectedIDs.remove(room.id) } else { selectedIDs.insert(room.id) }
+    }
+
+    // MARK: - Drag and drop
+
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        var accepted = false
+        for provider in providers where provider.canLoadObject(ofClass: NSString.self) {
+            accepted = true
+            provider.loadObject(ofClass: NSString.self) { object, _ in
+                guard let payload = object as? String else { return }
+                Task { @MainActor in applyDropPayload(payload) }
+            }
+        }
+        return accepted
+    }
+
+    private func applyDropPayload(_ payload: String) {
+        guard payload.hasPrefix(Self.dragPrefix) else { return }
+        let value = String(payload.dropFirst(Self.dragPrefix.count))
+        if value.hasPrefix("room:") {
+            let roomID = String(value.dropFirst("room:".count))
+            if manage.roster.labs.contains(where: { $0.id == roomID }) { selectedIDs.insert(roomID) }
+        } else if value.hasPrefix("area:") {
+            let area = String(value.dropFirst("area:".count))
+            if let group = areaGroups.first(where: { $0.name == area }) {
+                selectedIDs.formUnion(group.rooms.map(\.id))
+            }
+        }
     }
 }

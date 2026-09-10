@@ -645,6 +645,7 @@ struct TicketsView: View {
             case .showListView:  viewMode = .table
             case .showBoardView: viewMode = .board
             case .find:          break  // handled by findFocusesSearchField()
+            case .scan, .selectOnline: break
             }
         }
         .searchable(text: $searchText, prompt: "Search tickets or requestor...")

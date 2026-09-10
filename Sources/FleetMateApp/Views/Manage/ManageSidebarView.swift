@@ -20,6 +20,10 @@ struct ManageSidebarView: View {
     @AppStorage("manage.sidebar.staff") private var staffExpanded = false
     @AppStorage("manage.sidebar.faculty") private var facultyExpanded = false
     @AppStorage("manage.sidebar.groups") private var groupsExpanded = true
+    /// User-chosen row order per section, kept across launches.
+    @AppStorage("manage.sidebar.rowOrder") private var rowOrderJSON = "{}"
+    @State private var dropTargetRoomID: String?
+    private static let reorderDragPrefix = "fleetmate-sidebar-order:"
 
     private var isSearching: Bool { !searchText.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -138,28 +142,28 @@ struct ManageSidebarView: View {
                             CountBadge(value: manage.roster.labs.reduce(0) { $0 + $1.count })
                         }
                     }
-                    if labsExpanded { roomRows(manage.roster.labs, icon: "building.2") }
+                    if labsExpanded { roomRows(manage.roster.labs, icon: "building.2", section: "labs") }
                 }
 
                 if !manage.roster.kiosks.isEmpty {
                     SidebarSectionHeader(title: "Kiosks", isExpanded: $kiosksExpanded) {
                         CountBadge(value: manage.roster.kiosks.reduce(0) { $0 + $1.count })
                     }
-                    if kiosksExpanded { roomRows(manage.roster.kiosks, icon: "display") }
+                    if kiosksExpanded { roomRows(manage.roster.kiosks, icon: "display", section: "kiosks") }
                 }
 
                 if !manage.roster.staff.isEmpty {
                     SidebarSectionHeader(title: "Staff", isExpanded: $staffExpanded) {
                         CountBadge(value: manage.roster.staff.reduce(0) { $0 + $1.count })
                     }
-                    if staffExpanded { roomRows(manage.roster.staff, icon: "person.2") }
+                    if staffExpanded { roomRows(manage.roster.staff, icon: "person.2", section: "staff") }
                 }
 
                 if !manage.roster.faculty.isEmpty {
                     SidebarSectionHeader(title: "Faculty", isExpanded: $facultyExpanded) {
                         CountBadge(value: manage.roster.faculty.reduce(0) { $0 + $1.count })
                     }
-                    if facultyExpanded { roomRows(manage.roster.faculty, icon: "graduationcap") }
+                    if facultyExpanded { roomRows(manage.roster.faculty, icon: "graduationcap", section: "faculty") }
                 }
 
                 SidebarSectionHeader(title: "Custom Groups", isExpanded: $groupsExpanded) {
@@ -195,11 +199,63 @@ struct ManageSidebarView: View {
         }
     }
 
-    private func roomRows(_ rooms: [RosterRoom], icon: String) -> some View {
-        ForEach(rooms) { room in
+    /// Rows in the user's order. Drag a row onto another to move it there;
+    /// the order is remembered per section. "Reset order" in the context
+    /// menu goes back to the roster's own order (largest lab first).
+    private func roomRows(_ rooms: [RosterRoom], icon: String, section: String) -> some View {
+        let ordered = rowOrder.apply(rooms, section: section)
+        return ForEach(ordered) { room in
             SidebarRoomRow(room: room, icon: icon, isSelected: manage.selection.roomIDs.contains(room.id))
+                .overlay(alignment: .top) {
+                    if dropTargetRoomID == room.id {
+                        Rectangle().fill(Color.accentColor).frame(height: 2).padding(.horizontal, 6)
+                    }
+                }
                 .onTapGesture { manage.selectRoom(room, extending: extendSelection) }
+                .onDrag { NSItemProvider(object: (Self.reorderDragPrefix + section + ":" + room.id) as NSString) }
+                .onDrop(of: [.plainText], isTargeted: dropTargetBinding(for: room.id)) { providers in
+                    handleReorderDrop(providers, section: section, targetID: room.id, defaultOrder: rooms.map(\.id))
+                }
+                .contextMenu {
+                    if rowOrder.hasCustomOrder(section) {
+                        Button("Reset order") { updateRowOrder { $0.reset(section) } }
+                    }
+                }
         }
+    }
+
+    private var rowOrder: SidebarRowOrder { SidebarRowOrder.load(rowOrderJSON) }
+
+    private func updateRowOrder(_ change: (inout SidebarRowOrder) -> Void) {
+        var order = rowOrder
+        change(&order)
+        rowOrderJSON = order.json()
+    }
+
+    private func dropTargetBinding(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { dropTargetRoomID == id },
+            set: { targeted in
+                if targeted { dropTargetRoomID = id } else if dropTargetRoomID == id { dropTargetRoomID = nil }
+            }
+        )
+    }
+
+    private func handleReorderDrop(_ providers: [NSItemProvider], section: String, targetID: String, defaultOrder: [String]) -> Bool {
+        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else { return false }
+        provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let payload = object as? String, payload.hasPrefix(Self.reorderDragPrefix) else { return }
+            let value = String(payload.dropFirst(Self.reorderDragPrefix.count))
+            guard let colon = value.firstIndex(of: ":") else { return }
+            let fromSection = String(value[..<colon])
+            let draggedID = String(value[value.index(after: colon)...])
+            guard fromSection == section, draggedID != targetID else { return }
+            Task { @MainActor in
+                updateRowOrder { $0.move(draggedID, onto: targetID, in: section, defaultOrder: defaultOrder) }
+                dropTargetRoomID = nil
+            }
+        }
+        return true
     }
 
     private func renameRow(_ group: CustomGroup) -> some View {
@@ -242,6 +298,54 @@ struct ManageSidebarView: View {
     private var extendSelection: Bool {
         NSEvent.modifierFlags.contains(.command)
     }
+}
+
+// MARK: - Row order
+
+/// The user's row order for each sidebar section, stored as JSON
+/// {"labs": ["Illustration Lab", ...]}. Rooms not in the list keep the
+/// roster's order after the ones that are, so new labs show up at the end
+/// instead of vanishing.
+struct SidebarRowOrder {
+    var bySection: [String: [String]] = [:]
+
+    static func load(_ json: String) -> SidebarRowOrder {
+        guard let data = json.data(using: .utf8),
+              let parsed = try? JSONDecoder().decode([String: [String]].self, from: data) else { return SidebarRowOrder() }
+        return SidebarRowOrder(bySection: parsed)
+    }
+
+    func json() -> String {
+        guard let data = try? JSONEncoder().encode(bySection), let text = String(data: data, encoding: .utf8) else { return "{}" }
+        return text
+    }
+
+    func hasCustomOrder(_ section: String) -> Bool { !(bySection[section] ?? []).isEmpty }
+
+    func apply(_ rooms: [RosterRoom], section: String) -> [RosterRoom] {
+        let saved = bySection[section] ?? []
+        guard !saved.isEmpty else { return rooms }
+        let byID = Dictionary(rooms.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var seen = Set<String>()
+        var result: [RosterRoom] = []
+        for id in saved {
+            if let room = byID[id], seen.insert(id).inserted { result.append(room) }
+        }
+        for room in rooms where seen.insert(room.id).inserted { result.append(room) }
+        return result
+    }
+
+    /// Drop `dragged` on `target`: it takes the target's slot, pushing the
+    /// target down when coming from above and up when coming from below.
+    mutating func move(_ dragged: String, onto target: String, in section: String, defaultOrder: [String]) {
+        var ids = apply(defaultOrder.map { RosterRoom(number: $0, computers: []) }, section: section).map(\.id)
+        guard let from = ids.firstIndex(of: dragged), let to = ids.firstIndex(of: target), from != to else { return }
+        ids.remove(at: from)
+        ids.insert(dragged, at: min(to, ids.count))
+        bySection[section] = ids
+    }
+
+    mutating func reset(_ section: String) { bySection[section] = nil }
 }
 
 // MARK: - Rows

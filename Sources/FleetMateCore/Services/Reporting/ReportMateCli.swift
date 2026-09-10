@@ -20,7 +20,7 @@ public struct ReportMateCli: Sendable {
     /// absent (a hand-copied app, a fresh install before the postinstall ran).
     static let candidateDirectories = [
         "/usr/local/bin",
-        "/Applications/ReportMate.app/Contents/MacOS",
+        "/Applications/ReportMate.app/Contents/Helpers",
         "/opt/homebrew/bin",
     ]
 

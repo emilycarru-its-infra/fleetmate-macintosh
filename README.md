@@ -11,6 +11,7 @@ FleetMate is a unified command-line interface for managing IT assets across mult
 - **Ticketing** - TeamDynamix ticket and asset management
 - **Identity & Device** - Microsoft Entra ID and Intune integration
 - **Remote Execution** - SecureShell (SSH) based remote command execution
+- **Manage** - Lab operations from the roster: scan a room, see who is online, open SSH or Screen Sharing, run the command library across the room
 - **Rich Output** - Beautiful tables with color formatting and JSON export support
 - **Secure Credentials** - All secrets stored in macOS Keychain
 - **Flexible Config** - Environment variables, Keychain, or YAML configuration
@@ -196,6 +197,45 @@ fleetmate ssh munki check ASSET-000
 fleetmate ssh munki prefs ASSET-000
 ```
 
+### Manage (lab operations)
+
+The Manage tab from the command line. Rooms come from the enrollment roster, machines are resolved through ReportMate and mDNS, and commands run over the fleet SSH key.
+
+List the roster's rooms, optionally one section:
+
+```bash
+fleetmate manage rooms
+fleetmate manage rooms --section labs --json
+```
+
+Scan a room and see who is online, with the address each machine was found at:
+
+```bash
+fleetmate manage scan "Foundation Studio"
+```
+
+Run a library command by its label, or a literal script, on every online machine in a room. Caution and destructive commands ask first unless `--yes` is given; output streams per machine:
+
+```bash
+fleetmate manage run "Foundation Studio" "Uptime"
+fleetmate manage run D2210 "sudo /usr/local/munki/managedsoftwareupdate --checkonly" --concurrent 8
+fleetmate manage run "Foundation Studio" "Restart" --yes --json
+```
+
+Inspect and audit the command library (the operator's copy under `~/Library/Application Support/FleetMate/manage/commands.yaml`, or the one bundled with FleetMate):
+
+```bash
+fleetmate manage library --category System
+fleetmate manage audit
+fleetmate manage audit --bundled
+```
+
+Bring a ScanLab installation's custom groups, history and added commands into FleetMate. The app does this once on its own; the command repeats it:
+
+```bash
+fleetmate manage import-scanlab
+```
+
 ### Microsoft Graph (Intune/Entra)
 
 Query Intune devices and Entra users:
@@ -330,6 +370,15 @@ tdx:
 secure_shell:
   default_username: administrator
   key_path: ~/.ssh/id_rsa
+
+manage:
+  enabled: true
+  roster_path: ~/Developer/Munki/deployment/enroll/computers.csv
+  ssh_key_path: ~/.ssh/id_rsa.macadmins
+  ssh_user: macadmins
+  terminal_theme: Homebrew
+  include_retired: false
+  probe_concurrency: 12
 
 logging:
   path: /var/log/fleetmate

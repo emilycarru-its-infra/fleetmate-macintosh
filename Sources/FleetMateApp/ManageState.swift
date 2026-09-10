@@ -64,6 +64,23 @@ final class ManageState: ObservableObject {
         self.store = store
         self.customGroups = store.loadCustomGroups()
         loadCommandLibrary()
+        importScanLabOnce()
+    }
+
+    /// First launch with ScanLab state on the Mac: carry its custom
+    /// groups, history and added commands over, once. The CLI can repeat
+    /// it with `fleetmate manage import-scanlab`.
+    private static let scanLabImportedKey = "manage.scanLabImported"
+
+    private func importScanLabOnce() {
+        guard !UserDefaults.standard.bool(forKey: Self.scanLabImportedKey) else { return }
+        let importer = ScanLabImport(store: store)
+        guard importer.hasSource else { return }
+        let report = importer.run()
+        UserDefaults.standard.set(true, forKey: Self.scanLabImportedKey)
+        dbg.info("ScanLab import: \(report.summary)", category: "manage")
+        if report.groupsAdded > 0 { customGroups = store.loadCustomGroups() }
+        if report.commandsAdded > 0 || report.historyAdded > 0 { loadCommandLibrary() }
     }
 
     /// Apply a saved config: reload the roster when its source changed.

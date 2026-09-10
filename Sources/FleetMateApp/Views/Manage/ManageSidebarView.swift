@@ -280,6 +280,15 @@ struct SidebarRoomRow: View {
     let icon: String
     let isSelected: Bool
 
+    /// Area, room, and size: "Foundation · D3370 · 30 machines".
+    private var subtitle: String {
+        var parts: [String] = []
+        if let area = room.displayName, !area.isEmpty { parts.append(area) }
+        if let location = room.location, !location.isEmpty { parts.append(location) }
+        parts.append(room.count == 1 ? "1 machine" : "\(room.count) machines")
+        return parts.joined(separator: " · ")
+    }
+
     var body: some View {
         HStack {
             Image(systemName: icon)
@@ -290,7 +299,7 @@ struct SidebarRoomRow: View {
                 Text(room.number)
                     .appFont(.body)
                     .lineLimit(1)
-                Text(room.displayName.map { "\($0) · \(room.count) machines" } ?? "\(room.count) machines")
+                Text(subtitle)
                     .appFont(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

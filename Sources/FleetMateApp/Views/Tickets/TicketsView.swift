@@ -2805,7 +2805,9 @@ struct TicketColumnResizeHandle: View {
     }
 }
 
+#if DEBUG
 #Preview {
     TicketsView()
         .environmentObject(AppState())
 }
+#endif

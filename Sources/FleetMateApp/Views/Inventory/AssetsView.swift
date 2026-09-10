@@ -1662,7 +1662,9 @@ struct ColumnResizeHandle: View {
     }
 }
 
+#if DEBUG
 #Preview {
     AssetsView()
         .environmentObject(AppState())
 }
+#endif

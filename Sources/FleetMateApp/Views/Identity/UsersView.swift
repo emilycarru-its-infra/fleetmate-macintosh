@@ -257,7 +257,9 @@ struct FlowLayout: Layout {
     }
 }
 
+#if DEBUG
 #Preview {
     UsersView()
         .environmentObject(AppState())
 }
+#endif

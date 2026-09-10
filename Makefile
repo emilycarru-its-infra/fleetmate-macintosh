@@ -7,6 +7,21 @@ ifneq (,$(wildcard ./.env))
 	export
 endif
 
+# SDK selection. Xcode 26 (which CI uses) builds against the macOS 26 SDK. The
+# Command Line Tools 27 beta default to the macOS 27 SDK and ship none of the
+# SwiftUI macro plugins, so a SwiftUI build against it fails inside the first
+# dependency that expands @State as a macro. On a Mac with only the Command
+# Line Tools, build against the macOS 26 SDK they still carry. An SDKROOT set
+# in the environment or .env wins.
+CLT_SDK_26 := /Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk
+ifeq ($(SDKROOT),)
+ifneq (,$(findstring CommandLineTools,$(shell xcode-select -p 2>/dev/null)))
+ifneq (,$(wildcard $(CLT_SDK_26)))
+export SDKROOT := $(CLT_SDK_26)
+endif
+endif
+endif
+
 # Configuration
 BINARY_NAME := fleetmate
 BUILD_DIR := .build

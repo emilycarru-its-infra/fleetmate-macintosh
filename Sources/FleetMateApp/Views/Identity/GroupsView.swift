@@ -478,7 +478,9 @@ struct GroupTypeBadge: View {
     }
 }
 
+#if DEBUG
 #Preview {
     GroupsView()
         .environmentObject(AppState())
 }
+#endif

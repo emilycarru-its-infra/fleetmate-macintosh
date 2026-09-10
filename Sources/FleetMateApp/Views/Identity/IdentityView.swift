@@ -379,7 +379,9 @@ struct UsersContentView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     IdentityView()
         .environmentObject(AppState())
 }
+#endif

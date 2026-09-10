@@ -229,7 +229,9 @@ extension Notification.Name {
     static let editAuthSystem = Notification.Name("editAuthSystem")
 }
 
+#if DEBUG
 #Preview {
     SettingsView()
         .environmentObject(AppState())
 }
+#endif

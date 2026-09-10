@@ -246,6 +246,20 @@ public class ReportMateService {
         return try await fetch(url) ?? []
     }
     
+    /// Serial to best LAN address for every Mac the fleet network endpoint
+    /// knows. One call covers the fleet, including WiFi-only and sleeping
+    /// Macs that never answer mDNS.
+    public func getNetworkAddressMap(limit: Int = 1000) async throws -> [String: String] {
+        logger.debug("Fetching fleet network addresses...")
+        let url = "\(baseUrl)/api/v1/network?limit=\(limit)"
+        let devices: [ReportMateNetworkDevice] = try await fetch(url) ?? []
+        var map: [String: String] = [:]
+        for device in devices where device.isMac {
+            if let ip = device.bestIP() { map[device.serialNumber] = ip }
+        }
+        return map
+    }
+
     /// Get full device details with all modules
     public func getFullDevice(_ serialNumber: String) async throws -> FullDevice? {
         logger.debug("Fetching full device data for \(serialNumber)")

@@ -14,6 +14,7 @@ struct MachineListView: View {
     @ObservedObject var manage: ManageState
     @AppStorage("manage.rowDensity") private var densityRaw = MachineRowDensity.extended.rawValue
     @State private var showAddDevice = false
+    @State private var showSSHTabPicker = false
 
     private var density: MachineRowDensity { MachineRowDensity(rawValue: densityRaw) ?? .extended }
 
@@ -134,10 +135,29 @@ struct MachineListView: View {
             .buttonStyle(.borderless)
             .disabled(manage.isFetchingInfo || manage.isScanning || manage.onlineCount == 0)
             .help("Fetch machine info (user, OS, uptime, remote access)")
+
+            Divider().frame(height: 12)
+
+            Menu {
+                Button {
+                    showSSHTabPicker = true
+                } label: {
+                    Label("Open SSH Tabs…", systemImage: "terminal")
+                }
+                .disabled(manage.onlineCount == 0)
+            } label: {
+                Image(systemName: "ellipsis.circle").appFont(fixed: 12)
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: 20)
+            .help("Actions")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(.regularMaterial)
+        .sheet(isPresented: $showSSHTabPicker) {
+            SSHTabPickerSheet(manage: manage, isPresented: $showSSHTabPicker)
+        }
     }
 }
 
@@ -195,6 +215,29 @@ struct MachineRow: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 4) {
+                if density == .extended {
+                    Button { manage.openScreenSharing(for: computer) } label: {
+                        Image(systemName: "rectangle.on.rectangle").appFont(fixed: 11)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(!isOnline)
+                    .help("Screen Sharing")
+
+                    Button { manage.openSSH(for: computer) } label: {
+                        Image(systemName: "terminal").appFont(fixed: 11)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(!isOnline)
+                    .help("SSH")
+                }
+
+                Button { manage.openSSHAndScreenSharing(for: computer) } label: {
+                    Image(systemName: "link").appFont(fixed: 11)
+                }
+                .buttonStyle(.borderless)
+                .disabled(!isOnline)
+                .help("SSH and Screen Sharing")
+
                 Button {
                     Task { await manage.rescan(computer) }
                 } label: {
@@ -243,14 +286,25 @@ struct MachineRow: View {
                 .help("The host answered but rejected the configured key or user")
         } else if let info {
             HStack(spacing: 6) {
-                StatusCapsule(
-                    text: info.sshPortListening ? "SSH ready" : "SSH not listening",
-                    systemImage: info.sshPortListening ? "terminal.fill" : "terminal",
-                    tint: info.sshPortListening ? .manageSuccess : .manageWarning)
-                StatusCapsule(
-                    text: info.screenSharingReady ? "Screen Sharing ready" : "Screen Sharing off",
-                    systemImage: info.screenSharingReady ? "rectangle.on.rectangle" : "rectangle.slash",
-                    tint: info.screenSharingReady ? .manageSuccess : .manageWarning)
+                Button { manage.openSSH(for: computer) } label: {
+                    StatusCapsule(
+                        text: info.sshPortListening ? "SSH ready" : "SSH not listening",
+                        systemImage: info.sshPortListening ? "terminal.fill" : "terminal",
+                        tint: info.sshPortListening ? .manageSuccess : .manageWarning)
+                }
+                .buttonStyle(.plain)
+                .disabled(!info.sshPortListening)
+                .help(info.sshPortListening ? "Open SSH" : "SSH is not listening")
+
+                Button { manage.openScreenSharing(for: computer) } label: {
+                    StatusCapsule(
+                        text: info.screenSharingReady ? "Screen Sharing ready" : "Screen Sharing off",
+                        systemImage: info.screenSharingReady ? "rectangle.on.rectangle" : "rectangle.slash",
+                        tint: info.screenSharingReady ? .manageSuccess : .manageWarning)
+                }
+                .buttonStyle(.plain)
+                .disabled(!info.screenSharingReady)
+                .help(info.screenSharingReady ? "Open Screen Sharing" : "Screen Sharing is not running")
             }
             .lineLimit(1)
             .help(remoteAccessHelp(info))
@@ -326,6 +380,10 @@ struct MachineRow: View {
             }
         }
         Divider()
+        Button("Open SSH") { manage.openSSH(for: computer) }.disabled(!isOnline)
+        Button("Open Screen Sharing") { manage.openScreenSharing(for: computer) }.disabled(!isOnline)
+        Button("Open Both") { manage.openSSHAndScreenSharing(for: computer) }.disabled(!isOnline)
+        Divider()
         Button("Rescan") { Task { await manage.rescan(computer) } }
     }
 
@@ -360,5 +418,68 @@ struct MachineRow: View {
             "Screen Sharing service: \(info.screenSharingState.isEmpty ? "unknown" : info.screenSharingState)",
             "Screen Sharing port 5900: \(info.screenSharingPortListening ? "listening" : "not listening")",
         ].joined(separator: "\n")
+    }
+}
+
+/// Choose which online machines get a Terminal tab.
+struct SSHTabPickerSheet: View {
+    @ObservedObject var manage: ManageState
+    @Binding var isPresented: Bool
+    @State private var selectedIDs: Set<String> = []
+
+    private var onlineComputers: [RosterComputer] {
+        manage.currentComputers
+            .filter { manage.isOnline($0) }
+            .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Open SSH Tabs").appFont(.headline)
+                Spacer()
+                Text("\(selectedIDs.count) selected").appFont(.caption).foregroundStyle(.secondary)
+            }
+            .padding()
+
+            Divider()
+
+            List(onlineComputers) { computer in
+                Toggle(isOn: Binding(
+                    get: { selectedIDs.contains(computer.id) },
+                    set: { on in if on { selectedIDs.insert(computer.id) } else { selectedIDs.remove(computer.id) } }
+                )) {
+                    HStack {
+                        Text(computer.displayName).appFont(.body, weight: .medium)
+                        Spacer()
+                        if let ip = manage.ipFor(computer) {
+                            Text(ip).appFont(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .frame(minHeight: 220)
+
+            Divider()
+
+            HStack {
+                Button("All") { selectedIDs = Set(onlineComputers.map(\.id)) }
+                Button("None") { selectedIDs = [] }
+                Spacer()
+                Button("Cancel") { isPresented = false }.keyboardShortcut(.cancelAction)
+                Button("Open") {
+                    manage.openSSHTabs(for: onlineComputers.filter { selectedIDs.contains($0.id) })
+                    isPresented = false
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(selectedIDs.isEmpty)
+            }
+            .padding()
+        }
+        .frame(width: 520, height: 420)
+        .onAppear {
+            let preselected = onlineComputers.filter { manage.selectedComputerIDs.contains($0.id) }
+            selectedIDs = Set((preselected.isEmpty ? onlineComputers : preselected).map(\.id))
+        }
     }
 }

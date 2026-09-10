@@ -46,13 +46,21 @@ struct MachineDetailView: View {
                 Text(computer.allocation).appFont(.subheadline).foregroundStyle(.secondary)
             }
             HStack(spacing: 8) {
+                Button { manage.openSSH(for: computer) } label: { Label("SSH", systemImage: "terminal") }
+                    .controlSize(.small)
+                    .disabled(!manage.isOnline(computer))
+                Button { manage.openScreenSharing(for: computer) } label: { Label("Screen Sharing", systemImage: "rectangle.on.rectangle") }
+                    .controlSize(.small)
+                    .disabled(!manage.isOnline(computer))
+            }
+            .padding(.top, 4)
+            HStack(spacing: 8) {
                 Button("Copy inventory line") { ManageClipboard.copy(manage.inventoryLine(for: computer)) }
                     .controlSize(.small)
                 Button("Rescan") { Task { await manage.rescan(computer) } }
                     .controlSize(.small)
                     .disabled(manage.rescanningSerials.contains(computer.id))
             }
-            .padding(.top, 4)
         }
     }
 

@@ -282,10 +282,8 @@ struct CompliancePolicyLightboxView: View {
                     if let value = setting.currentValue, !value.isEmpty {
                         Text("Current value: \(value)").appFont(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
                     }
-                    if let err = setting.errorDescription, !err.isEmpty {
+                    if let err = setting.errorText {
                         Text(err).appFont(.caption2).foregroundStyle(.red).textSelection(.enabled)
-                    } else if let code = setting.errorCode, code != 0 {
-                        Text("Error code \(code)").appFont(.caption2).foregroundStyle(.red)
                     }
                     if let sources = setting.sources, !sources.isEmpty {
                         Text("From " + sources.compactMap { $0.displayName }.joined(separator: ", "))
@@ -387,8 +385,7 @@ struct CompliancePolicyLightboxView: View {
         for setting in sortedSettings {
             var line = "  [\((setting.state ?? "unknown").capitalized)] \(setting.displayName)"
             if let value = setting.currentValue, !value.isEmpty { line += " — current: \(value)" }
-            if let err = setting.errorDescription, !err.isEmpty { line += " — \(err)" }
-            else if let code = setting.errorCode, code != 0 { line += " — error \(code)" }
+            if let err = setting.errorText { line += " — \(err)" }
             lines.append(line)
         }
         if let definition {

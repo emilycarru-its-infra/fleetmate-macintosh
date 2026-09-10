@@ -111,6 +111,14 @@ public struct CompliancePolicySettingState: Codable, Sendable, Identifiable {
         return "Setting"
     }
 
+    /// Graph reports errorDescription "0" with errorCode 0 on healthy rows;
+    /// only a real code or a real description counts as an error.
+    public var errorText: String? {
+        if let desc = errorDescription?.trimmingCharacters(in: .whitespaces), !desc.isEmpty, desc != "0" { return desc }
+        if let code = errorCode, code != 0 { return "Error code \(code)" }
+        return nil
+    }
+
     /// Non-compliant, error and conflict rows sort ahead of the rest.
     public var severityRank: Int {
         switch state?.lowercased() {
@@ -174,7 +182,7 @@ public struct CompliancePolicyDefinition: Sendable {
         lastModifiedDateTime = json["lastModifiedDateTime"] as? String
 
         var reqs: [(String, String)] = []
-        for key in json.keys.sorted() where !Self.skippedKeys.contains(key) {
+        for key in json.keys.sorted() where !Self.skippedKeys.contains(key) && !key.contains("@odata") {
             guard let value = json[key], !(value is NSNull) else { continue }
             let rendered: String
             switch value {

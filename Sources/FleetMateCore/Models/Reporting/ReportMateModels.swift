@@ -403,11 +403,20 @@ public struct DeviceErrorSummary: Codable {
 
 // MARK: - Network Models
 
-/// Network information for a device
+/// Network information for a device, as the v1 API's `network` module
+/// reports it: camelCase, one `ipAddresses` list per interface mixing v4 and
+/// v6, and an `activeConnection` block naming the interface actually in use.
 public struct NetworkInfo: Codable {
     public var interfaces: [NetworkInterface]
-    
+    /// The address of the connection the device reported as active, when any.
+    public var activeIp: String?
+    /// The MAC of the active connection, when any.
+    public var activeMac: String?
+    /// When the module was collected on the device.
+    public var collectedAt: Date?
+
     public var primaryIpv4: String? {
+        if let activeIp, NetworkInfo.isIpv4(activeIp) { return activeIp }
         // Find primary interface (usually en0 on Mac)
         for iface in interfaces {
             if iface.name == "en0" || iface.isPrimary {
@@ -424,19 +433,59 @@ public struct NetworkInfo: Codable {
         }
         return nil
     }
-    
-    public init(interfaces: [NetworkInterface] = []) {
+
+    public init(interfaces: [NetworkInterface] = [], activeIp: String? = nil, activeMac: String? = nil,
+                collectedAt: Date? = nil) {
         self.interfaces = interfaces
+        self.activeIp = activeIp
+        self.activeMac = activeMac
+        self.collectedAt = collectedAt
+    }
+
+    /// Builds the summary from a decoded module document.
+    public static func parse(from data: [String: Any]) -> NetworkInfo {
+        var interfaces: [NetworkInterface] = []
+        let primaryName = data["primaryInterface"] as? String
+        if let ifaceList = data["interfaces"] as? [[String: Any]] {
+            for iface in ifaceList {
+                let name = iface["name"] as? String ?? ""
+                let addresses = iface["ipAddresses"] as? [String] ?? []
+                let ipv4 = addresses.filter(isIpv4)
+                let ipv6 = addresses.filter { !isIpv4($0) }
+                interfaces.append(NetworkInterface(
+                    name: name,
+                    macAddress: iface["macAddress"] as? String ?? "",
+                    ipv4Addresses: ipv4,
+                    ipv6Addresses: ipv6,
+                    isPrimary: (iface["isActive"] as? Bool ?? false) || (primaryName != nil && name == primaryName)
+                ))
+            }
+        }
+        let active = data["activeConnection"] as? [String: Any]
+        let activeIp = (active?["ipAddress"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let activeMac = (active?["macAddress"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let collected = (data["collectedAt"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
+        return NetworkInfo(interfaces: interfaces, activeIp: activeIp, activeMac: activeMac, collectedAt: collected)
+    }
+
+    /// A dotted-quad address that is neither loopback nor link-local.
+    public static func isIpv4(_ address: String) -> Bool {
+        let parts = address.split(separator: ".")
+        guard parts.count == 4, parts.allSatisfy({ Int($0).map { (0...255).contains($0) } ?? false }) else {
+            return false
+        }
+        return !address.hasPrefix("127.") && !address.hasPrefix("169.254.") && address != "0.0.0.0"
     }
 }
 
+/// One interface as summarised from the module document.
 public struct NetworkInterface: Codable {
     public var name: String
     public var macAddress: String
     public var ipv4Addresses: [String]
     public var ipv6Addresses: [String]
     public var isPrimary: Bool
-    
+
     public init(name: String = "", macAddress: String = "", ipv4Addresses: [String] = [],
                 ipv6Addresses: [String] = [], isPrimary: Bool = false) {
         self.name = name
@@ -445,35 +494,58 @@ public struct NetworkInterface: Codable {
         self.ipv6Addresses = ipv6Addresses
         self.isPrimary = isPrimary
     }
-    
-    enum CodingKeys: String, CodingKey {
-        case name
-        case macAddress = "mac_address"
-        case ipv4Addresses = "ipv4_addresses"
-        case ipv6Addresses = "ipv6_addresses"
-        case isPrimary = "is_primary"
-    }
 }
 
-/// Device network info summary for fleet-wide queries
+/// One row of the fleet-wide `/api/v1/network` report: the device identity
+/// plus the address of its active connection, derived from the raw module.
 public struct DeviceNetworkInfo: Codable {
     public var serialNumber: String
     public var deviceName: String
     public var primaryIp: String
     public var macAddress: String
-    
-    public init(serialNumber: String = "", deviceName: String = "", primaryIp: String = "", macAddress: String = "") {
+    public var lastSeen: Date?
+    public var collectedAt: Date?
+
+    public init(serialNumber: String = "", deviceName: String = "", primaryIp: String = "", macAddress: String = "",
+                lastSeen: Date? = nil, collectedAt: Date? = nil) {
         self.serialNumber = serialNumber
         self.deviceName = deviceName
         self.primaryIp = primaryIp
         self.macAddress = macAddress
+        self.lastSeen = lastSeen
+        self.collectedAt = collectedAt
     }
-    
+
     enum CodingKeys: String, CodingKey {
-        case serialNumber = "serial_number"
-        case deviceName = "device_name"
-        case primaryIp = "primary_ip"
-        case macAddress = "mac_address"
+        case serialNumber, deviceName, primaryIp, macAddress, lastSeen, collectedAt, raw
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        serialNumber = (try? c.decode(String.self, forKey: .serialNumber)) ?? ""
+        deviceName = (try? c.decode(String.self, forKey: .deviceName)) ?? ""
+        lastSeen = try? c.decode(Date.self, forKey: .lastSeen)
+        collectedAt = try? c.decode(Date.self, forKey: .collectedAt)
+        var ip = (try? c.decode(String.self, forKey: .primaryIp)) ?? ""
+        var mac = (try? c.decode(String.self, forKey: .macAddress)) ?? ""
+        if let raw = try? c.decode([String: AnyCodable].self, forKey: .raw) {
+            let info = NetworkInfo.parse(from: raw.mapValues { $0.value })
+            if ip.isEmpty, let primary = info.primaryIpv4 { ip = primary }
+            if mac.isEmpty, let activeMac = info.activeMac { mac = activeMac }
+            if collectedAt == nil { collectedAt = info.collectedAt }
+        }
+        primaryIp = ip
+        macAddress = mac
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(serialNumber, forKey: .serialNumber)
+        try c.encode(deviceName, forKey: .deviceName)
+        try c.encode(primaryIp, forKey: .primaryIp)
+        try c.encode(macAddress, forKey: .macAddress)
+        try c.encodeIfPresent(lastSeen, forKey: .lastSeen)
+        try c.encodeIfPresent(collectedAt, forKey: .collectedAt)
     }
 }
 

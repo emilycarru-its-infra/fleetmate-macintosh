@@ -266,8 +266,11 @@ public class ReportMateService {
         let wrapper: ModuleDataWrapper? = try await fetch(
             cli: ["device", serialNumber, "module", "network"],
             http: "\(baseUrl)/api/v1/device/\(serialNumber)/modules/network")
-        guard let data = wrapper?.data else { return nil }
-        return NetworkInfo.parse(from: data)
+        guard let body = wrapper?.data else { return nil }
+        // ModuleDataWrapper decodes the whole response object; the module
+        // document itself is its `data` member.
+        let document = (body["data"] as? [String: Any]) ?? body
+        return NetworkInfo.parse(from: document)
     }
 
     /// Get fleet-wide network data (all devices with network info).

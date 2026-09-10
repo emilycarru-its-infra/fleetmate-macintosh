@@ -144,6 +144,7 @@ public struct RosterLoader: Sendable {
                 RosterRoom(
                     number: key,
                     displayName: dominantArea(members),
+                    location: dominantLocation(members),
                     computers: members.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
                 )
             }
@@ -171,11 +172,21 @@ public struct RosterLoader: Sendable {
     }
 
     static func dominantArea(_ computers: [RosterComputer]) -> String? {
+        dominant(computers, by: \.area)
+    }
+
+    /// The room most of a lab's machines are in. A fleet that spans rooms
+    /// (a laptop cart, a lab split across two rooms) still names one place.
+    static func dominantLocation(_ computers: [RosterComputer]) -> String? {
+        dominant(computers, by: \.location)
+    }
+
+    private static func dominant(_ computers: [RosterComputer], by key: KeyPath<RosterComputer, String>) -> String? {
         var counts: [String: Int] = [:]
         for c in computers {
-            let area = c.area.trimmingCharacters(in: .whitespaces)
-            guard !area.isEmpty else { continue }
-            counts[area, default: 0] += 1
+            let value = c[keyPath: key].trimmingCharacters(in: .whitespaces)
+            guard !value.isEmpty else { continue }
+            counts[value, default: 0] += 1
         }
         return counts.max {
             if $0.value != $1.value { return $0.value < $1.value }

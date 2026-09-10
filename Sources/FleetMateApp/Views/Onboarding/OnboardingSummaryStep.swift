@@ -50,7 +50,7 @@ struct OnboardingSummaryStep: View {
                     }
                     if wizardState.enableManage {
                         summaryCard(
-                            icon: "desktopcomputer.and.macbook",
+                            icon: "wrench.and.screwdriver",
                             title: "Manage",
                             rows: manageSummaryRows
                         )

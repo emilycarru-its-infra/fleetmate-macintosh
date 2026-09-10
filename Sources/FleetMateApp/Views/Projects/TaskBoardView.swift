@@ -213,9 +213,11 @@ struct TaskPriorityBadge: View {
     }
 }
 
+#if DEBUG
 #Preview {
     TaskBoardView(
         tasks: [],
         onSelectTask: { _ in }
     )
 }
+#endif

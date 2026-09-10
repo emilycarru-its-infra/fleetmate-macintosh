@@ -2037,8 +2037,10 @@ class KerberosAuthDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate
 
 // MARK: - Preview
 
+#if DEBUG
 #Preview {
     TdxSsoLoginView(config: FleetMateConfig()) { result in
         print("Auth result: \(result)")
     }
 }
+#endif

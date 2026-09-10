@@ -449,6 +449,7 @@ struct PriorityBadge: View {
     }
 }
 
+#if DEBUG
 #Preview {
     TicketBoardView(
         tickets: [],
@@ -460,3 +461,4 @@ struct PriorityBadge: View {
         collapsedTicketIds: .constant([])
     )
 }
+#endif

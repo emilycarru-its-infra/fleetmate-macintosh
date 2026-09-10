@@ -5,6 +5,7 @@ import FleetMateCore
 enum AppTab: String, CaseIterable, Identifiable, Hashable {
     case dashboard = "Dashboard"
     case devices = "Devices"
+    case manage = "Manage"
     case inventory = "Inventory"
     case tickets = "Tickets"
     case projects = "Projects"
@@ -16,6 +17,7 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .dashboard: "square.grid.2x2"
         case .devices: "laptopcomputer"
+        case .manage: "desktopcomputer.and.macbook"
         case .inventory: "shippingbox"
         case .tickets: "ticket"
         case .projects: "list.clipboard"
@@ -27,6 +29,7 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .dashboard: true
         case .devices:   config.isGraphConfigured
+        case .manage:    config.isManageConfigured
         case .inventory: config.isSnipeConfigured
         case .tickets:   config.isTdxConfigured
         case .projects:  config.isDevOpsConfigured

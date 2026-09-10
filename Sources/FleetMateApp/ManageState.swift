@@ -352,6 +352,41 @@ final class ManageState: ObservableObject {
         }
     }
 
+    // MARK: - Remote access
+
+    private var launcher: RemoteSessionLauncher { RemoteSessionLauncher(config: config) }
+
+    private func session(for computer: RosterComputer) -> RemoteSessionLauncher.Session? {
+        guard let ip = ipFor(computer) else { return nil }
+        return RemoteSessionLauncher.Session(title: computer.displayName, address: ip)
+    }
+
+    /// SSH to one machine in a Terminal tab.
+    func openSSH(for computer: RosterComputer) {
+        guard let session = session(for: computer) else { return }
+        launcher.openTerminal(sessions: [session])
+    }
+
+    /// One Terminal tab per online machine, in hostname order.
+    func openSSHTabs(for computers: [RosterComputer]) {
+        let sessions = computers
+            .filter { isOnline($0) }
+            .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+            .compactMap(session(for:))
+        launcher.openTerminal(sessions: sessions)
+    }
+
+    /// Screen Sharing to one machine, with the stored password when there is one.
+    func openScreenSharing(for computer: RosterComputer) {
+        guard let ip = ipFor(computer) else { return }
+        launcher.openScreenSharing(address: ip, password: ScreenSharingCredentialStore.load())
+    }
+
+    func openSSHAndScreenSharing(for computer: RosterComputer) {
+        openSSH(for: computer)
+        openScreenSharing(for: computer)
+    }
+
     // MARK: - Copy helpers
 
     /// One line for a ticket or hand-off note.

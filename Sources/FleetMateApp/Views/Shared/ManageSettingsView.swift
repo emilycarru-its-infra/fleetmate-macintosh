@@ -7,6 +7,9 @@ struct ManageSettingsView: View {
     @EnvironmentObject var appState: AppState
     @State private var draft = ManageConfig()
     @State private var loaded = false
+    @State private var screenSharingPassword = ""
+    @State private var screenSharingPasswordIsSet = false
+    @State private var credentialError: String?
 
     static let terminalThemes = ["", "Basic", "Grass", "Homebrew", "Man Page", "Novel", "Ocean", "Pro", "Red Sands", "Silver Aerogel"]
 
@@ -94,8 +97,53 @@ struct ManageSettingsView: View {
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 200)
                 }
+                HStack {
+                    Text("Password")
+                    Spacer()
+                    if screenSharingPasswordIsSet {
+                        Text("Stored in Keychain").foregroundStyle(.secondary)
+                        Button("Clear") {
+                            do {
+                                try ScreenSharingCredentialStore.clear()
+                                screenSharingPasswordIsSet = false
+                                credentialError = nil
+                            } catch {
+                                credentialError = error.localizedDescription
+                            }
+                        }
+                        .controlSize(.small)
+                    } else {
+                        Text("Not set").foregroundStyle(.secondary)
+                    }
+                }
+                HStack {
+                    Text(screenSharingPasswordIsSet ? "Replace" : "New password")
+                    Spacer()
+                    SecureField("Screen Sharing password", text: $screenSharingPassword)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 200)
+                    Button("Store") {
+                        do {
+                            try ScreenSharingCredentialStore.save(screenSharingPassword)
+                            screenSharingPassword = ""
+                            screenSharingPasswordIsSet = true
+                            credentialError = nil
+                        } catch {
+                            credentialError = error.localizedDescription
+                        }
+                    }
+                    .controlSize(.small)
+                    .disabled(screenSharingPassword.isEmpty)
+                }
+                if let credentialError {
+                    Text(credentialError).appFont(.caption).foregroundStyle(Color.manageFailure)
+                }
             } header: {
                 Text("Screen Sharing")
+            } footer: {
+                Text("With a stored password Screen Sharing opens straight to the desktop. It lives in the login Keychain under FleetMate, never in a file.")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section {
@@ -112,6 +160,7 @@ struct ManageSettingsView: View {
         .formStyle(.grouped)
         .onAppear {
             if !loaded { draft = saved; loaded = true }
+            screenSharingPasswordIsSet = ScreenSharingCredentialStore.isSet
         }
         .onChange(of: appState.config.manage) { _, _ in
             if !isDirty || !loaded { draft = saved }

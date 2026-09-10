@@ -253,6 +253,34 @@ public class AzureDevOpsService {
         return (data, httpResponse)
     }
 
+    // MARK: - Repository files
+
+    /// The current content of one file on the default branch of a repository
+    /// in any project of the organization, via the Git items API.
+    public func fetchRepositoryFile(project: String, repository: String, path: String) async throws -> String {
+        if !hasValidToken { _ = await ensureValidToken() }
+        let filePath = path.hasPrefix("/") ? path : "/" + path
+        var components = URLComponents()
+        components.queryItems = [
+            URLQueryItem(name: "path", value: filePath),
+            URLQueryItem(name: "includeContent", value: "true"),
+            URLQueryItem(name: "api-version", value: "7.1"),
+        ]
+        let query = components.percentEncodedQuery ?? ""
+        let apiPath = "/_apis/git/repositories/\(repository)/items?\(query)"
+        let (data, response) = try await requestRaw("GET", path: apiPath, forProject: project)
+        guard response.statusCode == 200 else {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            if response.statusCode == 403 { throw AzDevOpsError.forbidden(message: body) }
+            throw AzDevOpsError.httpError(code: response.statusCode, message: body)
+        }
+        struct Item: Decodable { let content: String? }
+        guard let item = try? JSONDecoder().decode(Item.self, from: data), let content = item.content else {
+            throw AzDevOpsError.invalidResponse
+        }
+        return content
+    }
+
     // MARK: - Auth Check
 
     /// Verify the REST API is accessible with the current token.

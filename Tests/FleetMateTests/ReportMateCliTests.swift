@@ -1,7 +1,7 @@
 import XCTest
 @testable import FleetMateCore
 
-/// The CLI-first path: when `reportmate` is installed, every read goes through
+/// The CLI-first path: when `reportmateutil` is installed, every read goes through
 /// it with the same credential the HTTP path would send, and the API's JSON
 /// decodes identically. When the binary cannot launch, HTTP takes over.
 final class ReportMateCliTests: XCTestCase {
@@ -13,7 +13,7 @@ final class ReportMateCliTests: XCTestCase {
             .appendingPathComponent("reportmate-cli-test-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let log = dir.appendingPathComponent("calls.log").path
-        let script = dir.appendingPathComponent("reportmate")
+        let script = dir.appendingPathComponent("reportmateutil")
         let body = """
         #!/bin/sh
         echo "ARGS: $*" >> "\(log)"
@@ -36,7 +36,7 @@ final class ReportMateCliTests: XCTestCase {
     func testLocateHonoursPinnedBinaryAndRejectsNonExecutable() throws {
         let stub = try makeStub(stdout: "{}")
         XCTAssertEqual(ReportMateCli.locate(environment: ["REPORTMATE_CLI": stub.path])?.path, stub.path)
-        XCTAssertNil(ReportMateCli.locate(environment: ["REPORTMATE_CLI": "/nonexistent/reportmate"]))
+        XCTAssertNil(ReportMateCli.locate(environment: ["REPORTMATE_CLI": "/nonexistent/reportmateutil"]))
         XCTAssertNil(ReportMateCli.locate(environment: ["REPORTMATE_CLI": ""]), "empty pin disables the CLI path")
     }
 
@@ -126,7 +126,7 @@ final class ReportMateCliTests: XCTestCase {
             .init(pathContains: "/api/v1/installs", body: "[]"),
         ])
         let service = ReportMateService(baseUrl: "https://reportmate.example.edu", passphrase: "secret",
-                                        cli: ReportMateCli(path: "/nonexistent/reportmate"),
+                                        cli: ReportMateCli(path: "/nonexistent/reportmateutil"),
                                         sessionConfiguration: StubURLProtocol.sessionConfiguration())
 
         let installs = try await service.getInstalls()

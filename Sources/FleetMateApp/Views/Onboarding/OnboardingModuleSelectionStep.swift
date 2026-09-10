@@ -42,7 +42,7 @@ struct OnboardingModuleSelectionStep: View {
                     )
                     moduleToggle(
                         isOn: $wizardState.enableManage,
-                        icon: "desktopcomputer.and.macbook",
+                        icon: "wrench.and.screwdriver",
                         title: "Manage",
                         subtitle: "Lab operations over SSH and Screen Sharing"
                     )

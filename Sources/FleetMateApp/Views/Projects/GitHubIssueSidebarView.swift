@@ -10,6 +10,8 @@ struct GitHubIssueSidebarView: View {
     /// Set when the sidebar is shown outside the Projects tab (the dashboard
     /// lightbox); jumps to the same issue in its home tab.
     var onOpenInProjects: (() -> Void)? = nil
+    /// Sidebar: one column. Wide: body and comments beside the metadata.
+    var layout: TaskDetailLayout = .sidebar
 
     // Loaded detail
     @State private var detail: GitHubIssueDetail? = nil
@@ -74,6 +76,34 @@ struct GitHubIssueSidebarView: View {
                     Spacer()
                 }
                 .padding()
+            } else if layout == .wide {
+                HStack(alignment: .top, spacing: 0) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            issueTitleSection
+                            Divider().padding(.vertical, 8)
+                            issueBodySection
+                            Divider().padding(.vertical, 8)
+                            commentsSection
+                            Divider().padding(.vertical, 8)
+                            addCommentSection
+                        }
+                        .padding()
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    Divider()
+
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            issueMetadataSection
+                            Divider().padding(.vertical, 8)
+                            dangerZoneSection
+                        }
+                        .padding()
+                    }
+                    .frame(width: 360)
+                }
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {

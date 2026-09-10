@@ -20,6 +20,11 @@ struct SettingsView: View {
             AppearanceSettingsView()
                 .tabItem { Label("Appearance", systemImage: "textformat.size") }
                 .tag(2)
+
+            ManageSettingsView()
+                .environmentObject(appState)
+                .tabItem { Label("Manage", systemImage: "desktopcomputer.and.macbook") }
+                .tag(3)
         }
         .frame(minWidth: 600, maxWidth: 700, minHeight: 700, idealHeight: 900, maxHeight: 1100)
     }
@@ -39,6 +44,7 @@ private struct GeneralSettingsTab: View {
     private var enableSnipe: Bool { appState.config.isSnipeConfigured }
     private var enableTdx: Bool { appState.config.isTdxConfigured }
     private var enableDevOps: Bool { appState.config.isDevOpsConfigured }
+    private var enableManage: Bool { appState.config.manage?.enabled ?? false }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -108,6 +114,7 @@ private struct GeneralSettingsTab: View {
                             appState.saveConfig(c)
                         }
                     )
+                    manageRow
                 } header: {
                     Text("Enabled Modules")
                 } footer: {
@@ -115,6 +122,49 @@ private struct GeneralSettingsTab: View {
                 }
             }
             .formStyle(.grouped)
+        }
+    }
+
+    /// Manage has no credentials to collect, only a roster path, so its row
+    /// flips the config flag directly and points at the Manage tab.
+    private var manageRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: Binding(
+                get: { enableManage },
+                set: { newValue in
+                    var c = appState.config
+                    var manage = c.manage ?? ManageConfig()
+                    manage.enabled = newValue
+                    c.manage = manage
+                    appState.saveConfig(c)
+                }
+            )) {
+                HStack(spacing: 12) {
+                    Image(systemName: "desktopcomputer.and.macbook")
+                        .appFont(.title3)
+                        .foregroundStyle(.tint)
+                        .frame(width: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Manage").appFont(.body, weight: .medium)
+                        Text("Lab operations over SSH and Screen Sharing").appFont(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .toggleStyle(.switch)
+
+            if enableManage && !appState.config.isManageConfigured {
+                HStack(spacing: 8) {
+                    Image(systemName: "doc.text")
+                        .foregroundStyle(.secondary)
+                    Text("Needs the enrollment roster before it can show rooms.")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Configure…") { selectedTabIndex = 3 }
+                        .controlSize(.small)
+                }
+                .padding(.leading, 36)
+            }
         }
     }
 

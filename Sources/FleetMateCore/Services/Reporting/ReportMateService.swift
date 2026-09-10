@@ -4,6 +4,10 @@ import Logging
 
 /// Client for ReportMate API - fleet monitoring and device inventory
 /// This is the shared reporting system for both Mac (Munki) and Windows (Cimian) devices
+///
+/// Every read goes through the `reportmate` CLI when it is installed (see
+/// `ReportMateCli`) and through this class's own HTTP client otherwise. Both
+/// paths return the API's JSON unchanged, so the decoding is shared.
 public class ReportMateService {
     private let baseUrl: String
     private let passphrase: String?
@@ -11,27 +15,43 @@ public class ReportMateService {
     /// (SSO / az model) instead of the passphrase. See FleetMateConfig.
     private let oidcAudience: String?
     private let session: Session
+    private let cli: ReportMateCli?
     private let logger = Logger(label: "com.fleetmate.reportmate")
-    
+
     // Caches
     private var deviceCache: [ReportMateDevice]?
     private var deviceCacheExpiry: Date = .distantPast
     private var installCache: [InstallRecord]?
     private var installCacheExpiry: Date = .distantPast
+    private var addressCache: [String: DeviceNetworkInfo]?
+    private var addressCacheExpiry: Date = .distantPast
     private let cacheDuration: TimeInterval
-    
+
     /// Check if service is configured with required credentials
     public var isConfigured: Bool {
         return !baseUrl.isEmpty
     }
-    
-    public init(baseUrl: String?, passphrase: String?, oidcAudience: String? = nil, cacheMinutes: Int = 5) {
+
+    /// True when reads are routed through the installed `reportmate` CLI.
+    public var usesCli: Bool { cli != nil }
+
+    /// Where the CLI lives, for status output.
+    public var cliPath: String? { cli?.path }
+
+    /// - Parameter cli: the CLI to route reads through; defaults to whatever
+    ///   is installed. Pass nil to force HTTP.
+    /// - Parameter sessionConfiguration: overrides the URLSession
+    ///   configuration, so a test can install a stub protocol.
+    public init(baseUrl: String?, passphrase: String?, oidcAudience: String? = nil, cacheMinutes: Int = 5,
+                cli: ReportMateCli? = ReportMateCli.locate(),
+                sessionConfiguration: URLSessionConfiguration? = nil) {
         self.baseUrl = (baseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         self.passphrase = passphrase
         self.oidcAudience = (oidcAudience?.isEmpty == false) ? oidcAudience : nil
         self.cacheDuration = TimeInterval(cacheMinutes * 60)
+        self.cli = cli
 
-        let configuration = URLSessionConfiguration.default
+        let configuration = sessionConfiguration ?? URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 120
 
         self.session = Session(configuration: configuration)
@@ -55,64 +75,82 @@ public class ReportMateService {
         "Content-Type": "application/json",
     ]
 
+    /// The bearer token for the configured audience, or nil when the service
+    /// authenticates with the passphrase.
+    private func bearerToken() async throws -> String? {
+        guard let audience = oidcAudience else { return nil }
+        return try await AzTokenSource.shared.token(forResource: audience)
+    }
+
     /// Resolve the auth headers for a request: an Entra bearer token minted off
     /// the operator's az/login session when an OIDC audience is configured
     /// (prefer-bearer), otherwise the legacy X-Client-Passphrase. Both are
     /// accepted by the API, so unset audience is a safe no-op fallback.
     private func authHeaders() async throws -> HTTPHeaders {
         var hdrs = baseHeaders
-        if let audience = oidcAudience {
-            let token = try await AzTokenSource.shared.token(forResource: audience)
+        if let token = try await bearerToken() {
             hdrs.add(name: "Authorization", value: "Bearer \(token)")
         } else if let passphrase = passphrase, !passphrase.isEmpty {
             hdrs.add(name: "X-Client-Passphrase", value: passphrase)
         }
         return hdrs
     }
-    
+
+    /// The environment the CLI needs: the API URL and the same credential the
+    /// HTTP path would send, expressed the way the CLI reads it.
+    private func cliCredentials() async throws -> [String: String] {
+        var env = ["REPORTMATE_API_URL": baseUrl]
+        if let token = try await bearerToken() {
+            env["REPORTMATE_TOKEN"] = token
+        } else if let passphrase = passphrase, !passphrase.isEmpty {
+            env["REPORTMATE_PASSPHRASE"] = passphrase
+        }
+        return env
+    }
+
     // MARK: - Devices
-    
+
     /// Get all devices from the fleet
     public func getDevices(forceRefresh: Bool = false) async throws -> [ReportMateDevice] {
         if !forceRefresh, let cache = deviceCache, Date() < deviceCacheExpiry {
             return cache
         }
-        
+
         logger.debug("Fetching devices from ReportMate...")
-        
+
         var allDevices: [ReportMateDevice] = []
         var offset = 0
         let limit = 100
-        
+
         while true {
-            let url = "\(baseUrl)/api/v1/devices?offset=\(offset)&limit=\(limit)"
-            
-            let response: DevicesResponse? = try await fetch(url)
+            let response: DevicesResponse? = try await fetch(
+                cli: ["devices", "--limit", "\(limit)", "--offset", "\(offset)"],
+                http: "\(baseUrl)/api/v1/devices?offset=\(offset)&limit=\(limit)")
             guard let wrapper = response, !wrapper.devices.isEmpty else {
                 break
             }
-            
+
             allDevices.append(contentsOf: wrapper.devices)
-            
+
             if wrapper.devices.count < limit {
                 break
             }
-            
+
             offset += limit
         }
-        
+
         deviceCache = allDevices
         deviceCacheExpiry = Date().addingTimeInterval(cacheDuration)
         logger.info("Cached \(allDevices.count) devices from ReportMate")
-        
+
         return allDevices
     }
-    
+
     /// Find a device by serial, hostname, asset tag, or other identifier
     public func findDevice(_ query: String) async throws -> ReportMateDevice? {
         let devices = try await getDevices()
         let normalized = query.trimmingCharacters(in: .whitespaces).uppercased()
-        
+
         return devices.first { device in
             device.serialNumber.uppercased() == normalized ||
             device.deviceName.uppercased() == normalized ||
@@ -124,42 +162,42 @@ public class ReportMateService {
             normalizeMac(device.macAddress) == normalizeMac(query)
         }
     }
-    
+
     // MARK: - Installs
-    
+
     /// Get all install records
     public func getInstalls(forceRefresh: Bool = false) async throws -> [InstallRecord] {
         if !forceRefresh, let cache = installCache, Date() < installCacheExpiry {
             return cache
         }
-        
+
         logger.debug("Fetching install records from ReportMate...")
-        
-        let url = "\(baseUrl)/api/v1/installs"
-        let installs: [InstallRecord]? = try await fetch(url)
-        
+
+        let installs: [InstallRecord]? = try await fetch(
+            cli: ["module", "installs"],
+            http: "\(baseUrl)/api/v1/installs")
         installCache = installs ?? []
         installCacheExpiry = Date().addingTimeInterval(cacheDuration)
         logger.info("Cached \(installCache?.count ?? 0) install records from ReportMate")
-        
+
         return installCache ?? []
     }
-    
+
     /// Get only install records with errors
     public func getErrors(forceRefresh: Bool = false) async throws -> [InstallRecord] {
         let installs = try await getInstalls(forceRefresh: forceRefresh)
         return installs.filter { $0.isError }
     }
-    
+
     /// Get errors grouped by item name
     public func getErrorsByItem(forceRefresh: Bool = false) async throws -> [ErrorSummary] {
         let errors = try await getErrors(forceRefresh: forceRefresh)
-        
+
         var grouped: [String: [InstallRecord]] = [:]
         for error in errors {
             grouped[error.itemName, default: []].append(error)
         }
-        
+
         return grouped.map { (itemName, records) in
             ErrorSummary(
                 itemName: itemName,
@@ -170,16 +208,16 @@ public class ReportMateService {
             )
         }.sorted { $0.deviceCount > $1.deviceCount }
     }
-    
+
     /// Get errors grouped by device
     public func getErrorsByDevice(forceRefresh: Bool = false) async throws -> [DeviceErrorSummary] {
         let errors = try await getErrors(forceRefresh: forceRefresh)
-        
+
         var grouped: [String: [InstallRecord]] = [:]
         for error in errors {
             grouped[error.serialNumber, default: []].append(error)
         }
-        
+
         return grouped.map { (serial, records) in
             DeviceErrorSummary(
                 deviceName: records.first?.deviceName ?? "",
@@ -191,68 +229,87 @@ public class ReportMateService {
             )
         }.sorted { $0.errorCount > $1.errorCount }
     }
-    
+
     /// Get install records for a specific device
     public func getDeviceInstalls(_ serialOrName: String) async throws -> [InstallRecord] {
         let installs = try await getInstalls()
         let normalized = serialOrName.trimmingCharacters(in: .whitespaces).uppercased()
-        
+
         return installs.filter { install in
             install.serialNumber.uppercased() == normalized ||
             install.deviceName.uppercased() == normalized
         }
     }
-    
+
     /// Get install records for a specific item across all devices
     public func getItemInstalls(_ itemName: String) async throws -> [InstallRecord] {
         let installs = try await getInstalls()
         return installs.filter { $0.itemName.lowercased() == itemName.lowercased() }
     }
-    
+
     // MARK: - Device Details
-    
+
     /// Get device installation log (Munki log entries)
     public func getDeviceLog(_ serialNumber: String) async throws -> DeviceLog? {
         logger.debug("Fetching install log for device \(serialNumber)")
-        
-        let url = "\(baseUrl)/api/v1/device/\(serialNumber)/installs/log"
-        return try await fetch(url)
+
+        return try await fetch(
+            cli: ["device", serialNumber, "installs-log"],
+            http: "\(baseUrl)/api/v1/device/\(serialNumber)/installs/log")
     }
-    
+
     /// Get device network information including IP addresses
     public func getDeviceNetwork(_ serialNumber: String) async throws -> NetworkInfo? {
         logger.debug("Fetching network info for device \(serialNumber)")
-        
-        let url = "\(baseUrl)/api/v1/device/\(serialNumber)/modules/network"
-        
+
         // The API returns wrapped data, need to decode appropriately
-        if let wrapper: ModuleDataWrapper = try await fetch(url),
-           let data = wrapper.data {
-            // Parse network info from the data dict
-            return parseNetworkInfo(from: data)
-        }
-        
-        return nil
+        let wrapper: ModuleDataWrapper? = try await fetch(
+            cli: ["device", serialNumber, "module", "network"],
+            http: "\(baseUrl)/api/v1/device/\(serialNumber)/modules/network")
+        guard let body = wrapper?.data else { return nil }
+        // ModuleDataWrapper decodes the whole response object; the module
+        // document itself is its `data` member.
+        let document = (body["data"] as? [String: Any]) ?? body
+        return NetworkInfo.parse(from: document)
     }
-    
-    /// Get fleet-wide network data (all devices with network info)
-    /// NOTE: the ReportMate v1 API has no fleet-wide network endpoint
-    /// (/api/devices/network → 404); per-device network is available via
-    /// getDeviceNetwork(_:). This returns [] until a v1 fleet endpoint exists.
+
+    /// Get fleet-wide network data (all devices with network info).
+    ///
+    /// One request for the whole fleet (`/api/v1/network`), so a scan or a
+    /// group action resolves every address without a per-device round trip.
     public func getFleetNetwork() async throws -> [DeviceNetworkInfo] {
         logger.debug("Fetching fleet network data...")
 
-        let url = "\(baseUrl)/api/v1/devices/network"
-        return try await fetch(url) ?? []
+        let rows: [DeviceNetworkInfo]? = try await fetch(
+            cli: ["module", "network"],
+            http: "\(baseUrl)/api/v1/network")
+        return rows ?? []
     }
-    
+
+    /// Fleet addresses keyed by upper-cased serial number, cached like the
+    /// device list. Devices with no reported address are absent.
+    public func getFleetAddresses(forceRefresh: Bool = false) async throws -> [String: DeviceNetworkInfo] {
+        if !forceRefresh, let cache = addressCache, Date() < addressCacheExpiry {
+            return cache
+        }
+        var map: [String: DeviceNetworkInfo] = [:]
+        for row in try await getFleetNetwork() where !row.primaryIp.isEmpty && !row.serialNumber.isEmpty {
+            map[row.serialNumber.uppercased()] = row
+        }
+        addressCache = map
+        addressCacheExpiry = Date().addingTimeInterval(cacheDuration)
+        logger.info("Cached \(map.count) fleet addresses from ReportMate")
+        return map
+    }
+
     /// Serial to best LAN address for every Mac the fleet network endpoint
     /// knows. One call covers the fleet, including WiFi-only and sleeping
     /// Macs that never answer mDNS.
     public func getNetworkAddressMap(limit: Int = 1000) async throws -> [String: String] {
         logger.debug("Fetching fleet network addresses...")
-        let url = "\(baseUrl)/api/v1/network?limit=\(limit)"
-        let devices: [ReportMateNetworkDevice] = try await fetch(url) ?? []
+        let devices: [ReportMateNetworkDevice] = try await fetch(
+            cli: ["module", "network", "--limit", "\(limit)"],
+            http: "\(baseUrl)/api/v1/network?limit=\(limit)") ?? []
         var map: [String: String] = [:]
         for device in devices where device.isMac {
             if let ip = device.bestIP() { map[device.serialNumber] = ip }
@@ -263,32 +320,33 @@ public class ReportMateService {
     /// Get full device details with all modules
     public func getFullDevice(_ serialNumber: String) async throws -> FullDevice? {
         logger.debug("Fetching full device data for \(serialNumber)")
-        
-        let url = "\(baseUrl)/api/v1/device/\(serialNumber)"
-        return try await fetch(url)
+
+        return try await fetch(
+            cli: ["device", serialNumber],
+            http: "\(baseUrl)/api/v1/device/\(serialNumber)")
     }
-    
+
     // MARK: - Statistics
-    
+
     /// Get fleet statistics
     public func getFleetStats() async throws -> FleetStats {
         let devices = try await getDevices()
         let installs = try await getInstalls()
         let errors = installs.filter { $0.isError }
-        
+
         // Calculate stale devices (not seen in 7 days)
         let sevenDaysAgo = Date().addingTimeInterval(-7 * 24 * 60 * 60)
         let stale = devices.filter { device in
             guard let lastSeen = device.lastSeen else { return true }
             return lastSeen < sevenDaysAgo
         }
-        
+
         // Pending installs (items not yet installed)
         let pending = installs.filter { install in
-            install.currentStatus.lowercased() == "pending" || 
+            install.currentStatus.lowercased() == "pending" ||
             install.installedVersion.isEmpty
         }
-        
+
         return FleetStats(
             totalDevices: devices.count,
             staleDevices: stale.count,
@@ -297,45 +355,70 @@ public class ReportMateService {
             totalErrors: errors.count
         )
     }
-    
+
     // MARK: - Private Helpers
-    
+
+    /// Decodes API JSON; dates arrive in several ISO-ish shapes.
+    static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let dateString = try container.decode(String.self)
+
+            // Try multiple date formats
+            let formats = [
+                "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+                "yyyy-MM-dd'T'HH:mm:ssZ",
+                "yyyy-MM-dd HH:mm:ss",
+                "yyyy-MM-dd"
+            ]
+
+            for format in formats {
+                let formatter = DateFormatter()
+                formatter.dateFormat = format
+                formatter.locale = Locale(identifier: "en_US_POSIX")
+                if let date = formatter.date(from: dateString) {
+                    return date
+                }
+            }
+
+            // Try ISO8601
+            if let date = ISO8601DateFormatter().date(from: dateString) {
+                return date
+            }
+
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Cannot decode date: \(dateString)")
+        }
+        return decoder
+    }
+
+    /// One read, through the CLI when installed and over HTTP otherwise.
+    ///
+    /// - Parameter cli: the `reportmate` arguments that produce the same JSON
+    ///   as `http`.
+    /// - Returns: nil when the API answered 404 on either path.
+    private func fetch<T: Decodable>(cli arguments: [String], http url: String) async throws -> T? {
+        if let cli {
+            switch await cli.run(arguments, credentials: try await cliCredentials()) {
+            case .success(let data):
+                return try ReportMateService.makeDecoder().decode(T.self, from: data)
+            case .failure(let failure) where failure.isNotFound:
+                return nil
+            case .failure(.launchFailed(let reason)):
+                logger.warning("reportmate CLI at \(cli.path) did not launch (\(reason)); using HTTP")
+            case .failure(let failure):
+                throw failure
+            }
+        }
+        return try await fetch(url)
+    }
+
     private func fetch<T: Decodable>(_ url: String) async throws -> T? {
         let hdrs = try await authHeaders()
         return try await withCheckedThrowingContinuation { continuation in
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .custom { decoder in
-                let container = try decoder.singleValueContainer()
-                let dateString = try container.decode(String.self)
-                
-                // Try multiple date formats
-                let formats = [
-                    "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
-                    "yyyy-MM-dd'T'HH:mm:ssZ",
-                    "yyyy-MM-dd HH:mm:ss",
-                    "yyyy-MM-dd"
-                ]
-                
-                for format in formats {
-                    let formatter = DateFormatter()
-                    formatter.dateFormat = format
-                    formatter.locale = Locale(identifier: "en_US_POSIX")
-                    if let date = formatter.date(from: dateString) {
-                        return date
-                    }
-                }
-                
-                // Try ISO8601
-                if let date = ISO8601DateFormatter().date(from: dateString) {
-                    return date
-                }
-                
-                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Cannot decode date: \(dateString)")
-            }
-            
             session.request(url, headers: hdrs)
                 .validate()
-                .responseDecodable(of: T.self, decoder: decoder) { response in
+                .responseDecodable(of: T.self, decoder: ReportMateService.makeDecoder()) { response in
                     switch response.result {
                     case .success(let value):
                         continuation.resume(returning: value)
@@ -349,33 +432,12 @@ public class ReportMateService {
                 }
         }
     }
-    
+
     private func normalizeMac(_ mac: String?) -> String {
         guard let mac = mac else { return "" }
         return mac.replacingOccurrences(of: ":", with: "")
             .replacingOccurrences(of: "-", with: "")
-            .replacingOccurrences(of: ".", with: "")
-            .uppercased()
-    }
-    
-    private func parseNetworkInfo(from data: [String: Any]) -> NetworkInfo {
-        // Parse network data from the module response
-        // Structure depends on ReportMate API format
-        var interfaces: [NetworkInterface] = []
-        
-        if let ifaceList = data["interfaces"] as? [[String: Any]] {
-            for iface in ifaceList {
-                interfaces.append(NetworkInterface(
-                    name: iface["name"] as? String ?? "",
-                    macAddress: iface["mac_address"] as? String ?? "",
-                    ipv4Addresses: iface["ipv4_addresses"] as? [String] ?? [],
-                    ipv6Addresses: iface["ipv6_addresses"] as? [String] ?? [],
-                    isPrimary: iface["is_primary"] as? Bool ?? false
-                ))
-            }
-        }
-        
-        return NetworkInfo(interfaces: interfaces)
+            .lowercased()
     }
 }
 
@@ -387,7 +449,7 @@ public struct FleetStats: Codable {
     public var totalInstalls: Int
     public var pendingInstalls: Int
     public var totalErrors: Int
-    
+
     public init(totalDevices: Int = 0, staleDevices: Int = 0, totalInstalls: Int = 0,
                 pendingInstalls: Int = 0, totalErrors: Int = 0) {
         self.totalDevices = totalDevices

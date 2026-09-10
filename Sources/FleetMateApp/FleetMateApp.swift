@@ -245,7 +245,8 @@ class AppState: ObservableObject {
     lazy var manageState: ManageState = ManageState(
         config: config.manage,
         repoRoot: config.repoRoot,
-        reportMate: config.isReportMateConfigured ? reportMateService : nil
+        reportMate: config.isReportMateConfigured ? reportMateService : nil,
+        devOps: { [weak self] in self?.devOpsService }
     )
 
     init() {

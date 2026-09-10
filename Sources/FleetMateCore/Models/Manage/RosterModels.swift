@@ -98,11 +98,15 @@ public struct RosterComputer: Identifiable, Hashable, Sendable, Codable {
 public struct RosterRoom: Identifiable, Hashable, Sendable {
     public var number: String
     public var displayName: String?
+    /// Where the machines are: the room most of them sit in. Nil when the
+    /// group key already is the room, so nothing repeats itself.
+    public var location: String?
     public var computers: [RosterComputer]
 
-    public init(number: String, displayName: String? = nil, computers: [RosterComputer]) {
+    public init(number: String, displayName: String? = nil, location: String? = nil, computers: [RosterComputer]) {
         self.number = number
         self.displayName = displayName
+        self.location = (location == number) ? nil : location
         self.computers = computers
     }
 

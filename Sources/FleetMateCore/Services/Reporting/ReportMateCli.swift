@@ -13,9 +13,16 @@ import Foundation
 /// 403 for a missing scope, a 5xx) and is surfaced, not retried over HTTP:
 /// the HTTP path would only reproduce the same answer.
 public struct ReportMateCli: Sendable {
-    /// Directories a fleet install may put the binary in, checked before the
-    /// `PATH` search so a GUI app launched from Finder still finds it.
-    static let candidateDirectories = ["/usr/local/bin", "/opt/homebrew/bin", "/opt/reportmate/bin"]
+    /// Where the binary lives on a managed Mac, checked before the `PATH`
+    /// search so a GUI app launched from Finder still finds it. The CLI ships
+    /// inside ReportMate.app and its installer symlinks it into
+    /// /usr/local/bin, so the bundle path is the fallback when the symlink is
+    /// absent (a hand-copied app, a fresh install before the postinstall ran).
+    static let candidateDirectories = [
+        "/usr/local/bin",
+        "/Applications/ReportMate.app/Contents/Helpers",
+        "/opt/homebrew/bin",
+    ]
 
     public let path: String
 

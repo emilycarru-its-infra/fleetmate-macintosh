@@ -19,7 +19,14 @@ struct ManageView: View {
 
             if manage.hasSelection {
                 MachineListView(manage: manage)
-                    .frame(minWidth: 420)
+                    .frame(minWidth: 340, idealWidth: 420)
+
+                VStack(spacing: 0) {
+                    CommandToolbar(manage: manage)
+                    Divider()
+                    ResultsView(manage: manage)
+                }
+                .frame(minWidth: 420)
             } else {
                 emptyState
                     .frame(minWidth: 420, maxWidth: .infinity, maxHeight: .infinity)
@@ -36,7 +43,12 @@ struct ManageView: View {
             switch command {
             case .refresh:
                 manage.loadRoster()
+                manage.loadCommandLibrary()
                 if manage.hasSelection { manage.startScan() }
+            case .scan:
+                manage.startScan()
+            case .selectOnline:
+                manage.selectOnline()
             default:
                 break
             }

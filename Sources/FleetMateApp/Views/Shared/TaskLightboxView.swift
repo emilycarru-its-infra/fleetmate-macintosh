@@ -58,6 +58,17 @@ struct TaskLightboxView: View {
         }
         .id(current.id)
         .frame(width: sheetSize.width, height: sheetSize.height)
+        // Escape closes the lightbox, matching the pull-request lightbox and
+        // the Windows app. The button carries the shortcut without taking
+        // any space, since the header's own close control cannot: it is the
+        // same view that lives in the Projects sidebar.
+        .background {
+            Button(action: { dismiss() }) { EmptyView() }
+                .keyboardShortcut(.cancelAction)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+        }
+        .onExitCommand { dismiss() }
     }
 
     private func openInProjects() {

@@ -237,6 +237,14 @@ class AppState: ObservableObject {
     lazy var snipeService: SnipeService = SnipeService(config: config)
     lazy var reportMateService: ReportMateService = ReportMateService(config: config)
 
+    /// The Manage tab's state. Lives here so it survives tab switches and
+    /// is reconfigured, not rebuilt, when settings change.
+    lazy var manageState: ManageState = ManageState(
+        config: config.manage,
+        repoRoot: config.repoRoot,
+        reportMate: config.isReportMateConfigured ? reportMateService : nil
+    )
+
     init() {
         dbg.info("AppState init starting", category: "startup")
 
@@ -317,6 +325,11 @@ class AppState: ObservableObject {
             tdxService = TdxService(config: config)
             snipeService = SnipeService(config: config)
             reportMateService = ReportMateService(config: config)
+            manageState.reconfigure(
+                config: config.manage,
+                repoRoot: config.repoRoot,
+                reportMate: config.isReportMateConfigured ? reportMateService : nil
+            )
             errorMessage = nil
 
             // Rebuilding devOpsService above threw away its bearer token and

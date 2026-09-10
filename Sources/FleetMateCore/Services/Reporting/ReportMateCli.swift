@@ -1,6 +1,6 @@
 import Foundation
 
-/// The `reportmate` admin CLI, when it is installed on this Mac.
+/// The `reportmateutil` admin CLI, when it is installed on this Mac.
 ///
 /// The CLI is the reference client for the ReportMate API: it tracks every
 /// route the API has and prints the API's JSON unchanged. When it is present
@@ -16,7 +16,7 @@ public struct ReportMateCli: Sendable {
     /// Where the binary lives on a managed Mac, checked before the `PATH`
     /// search so a GUI app launched from Finder still finds it. The CLI ships
     /// inside ReportMate.app and its installer symlinks it into
-    /// /usr/local/bin, so the bundle path is the fallback when the symlink is
+    /// /usr/local/bin as reportmateutil, so the bundle path is the fallback when the symlink is
     /// absent (a hand-copied app, a fresh install before the postinstall ran).
     static let candidateDirectories = [
         "/usr/local/bin",
@@ -30,7 +30,7 @@ public struct ReportMateCli: Sendable {
         self.path = path
     }
 
-    /// The installed CLI, or nil when no executable `reportmate` exists.
+    /// The installed CLI, or nil when no executable `reportmateutil` exists.
     ///
     /// `REPORTMATE_CLI` in the environment pins a specific binary, which is
     /// how a test points the service at a stub and how an operator tries a
@@ -42,10 +42,10 @@ public struct ReportMateCli: Sendable {
             return ReportMateCli(path: trimmed)
         }
         for directory in candidateDirectories {
-            let candidate = "\(directory)/reportmate"
+            let candidate = "\(directory)/reportmateutil"
             if FileManager.default.isExecutableFile(atPath: candidate) { return ReportMateCli(path: candidate) }
         }
-        let resolved = ProcessRunner.resolve("reportmate")
+        let resolved = ProcessRunner.resolve("reportmateutil")
         return resolved.hasPrefix("/") ? ReportMateCli(path: resolved) : nil
     }
 
@@ -62,7 +62,7 @@ public struct ReportMateCli: Sendable {
         }
     }
 
-    /// Runs `reportmate <arguments> --output json` and returns stdout.
+    /// Runs `reportmateutil <arguments> --output json` and returns stdout.
     ///
     /// `credentials` carries the `REPORTMATE_API_URL` and one credential
     /// variable; nothing else from FleetMate's environment is forwarded, so a

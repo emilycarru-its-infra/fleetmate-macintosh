@@ -140,6 +140,9 @@ public struct FleetMateConfig: Codable {
     
     // SecureShell settings
     public var secureShell: SecureShellConfig?
+
+    // Manage tab (lab operations over SSH and Screen Sharing)
+    public var manage: ManageConfig?
     
     // Tasks settings (multi-provider task management)
     public var tasks: TasksConfig?
@@ -210,6 +213,7 @@ public struct FleetMateConfig: Codable {
         case tdxDefaultAccountId = "tdx_default_account_id"
         case tdxResponsibleGroupId = "tdx_responsible_group_id"
         case secureShell = "secure_shell"
+        case manage
         case tasks = "tasks"
         case deploymentPath = "deployment_path"
         case pkgsinfoPath = "pkgsinfo_path"
@@ -385,6 +389,10 @@ public struct FleetMateConfig: Codable {
         }
 
         // Graph
+        if let manage = yaml["manage"] as? [String: Any] {
+            config.manage = ManageConfig.from(yaml: manage)
+        }
+
         if let graph = yaml["graph"] as? [String: Any] {
             if let v = graph["useAzureCliAuth"] as? Bool, v { /* stored elsewhere */ }
         }
@@ -526,6 +534,7 @@ public struct FleetMateConfig: Codable {
             if config.secureShell == nil { config.secureShell = SecureShellConfig() }
             config.secureShell?.keyVaultName = v
         }
+        config.manage = ManageConfig.applying(credentials: creds, to: config.manage)
     }
 
     /// Legacy Keychain loader — used when credentials.json doesn't exist yet
@@ -641,6 +650,12 @@ public struct FleetMateConfig: Codable {
     /// Check if ReportMate is configured (preferred over MunkiReport)
     public var isReportMateConfigured: Bool {
         return reportMateUrl != nil && !reportMateUrl!.isEmpty
+    }
+
+    /// The Manage tab shows when the module is switched on and its roster exists.
+    public var isManageConfigured: Bool {
+        guard let manage, manage.enabled else { return false }
+        return manage.hasRoster(repoRoot: repoRoot)
     }
 
     /// Check if MunkiReport is configured (legacy)
@@ -829,6 +844,9 @@ public struct FleetMateConfig: Codable {
         set("sshKeyPath", config.secureShell?.privateKeyPath)
         set("sshDefaultUsername", config.secureShell?.defaultUsername)
         set("sshKeyVaultName", config.secureShell?.keyVaultName)
+        if let manage = config.manage {
+            for (key, value) in manage.credentialValues() { creds[key] = value }
+        }
 
         let data = try JSONSerialization.data(withJSONObject: creds, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: URL(fileURLWithPath: path), options: .atomic)

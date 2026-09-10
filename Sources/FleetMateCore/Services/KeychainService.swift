@@ -55,6 +55,9 @@ public class KeychainService {
         case sshKeyPath = "SshKeyPath"
         case sshDefaultUsername = "SshDefaultUsername"
         case sshKeyVaultName = "SshKeyVaultName"
+
+        // Manage tab
+        case manageScreenSharingPassword = "ManageScreenSharingPassword"
     }
     
     /// Shared singleton instance

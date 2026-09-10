@@ -48,6 +48,13 @@ struct OnboardingSummaryStep: View {
                             rows: devOpsSummaryRows
                         )
                     }
+                    if wizardState.enableManage {
+                        summaryCard(
+                            icon: "desktopcomputer.and.macbook",
+                            title: "Manage",
+                            rows: manageSummaryRows
+                        )
+                    }
 
                     // Test results
                     if !wizardState.testResults.isEmpty {
@@ -132,6 +139,15 @@ struct OnboardingSummaryStep: View {
         if wizardState.tdxAuthMode == .serviceAccount {
             rows.append(("BEID", maskSecret(wizardState.tdxBeid)))
         }
+        return rows
+    }
+
+    private var manageSummaryRows: [(String, String)] {
+        var roster = ManageConfig()
+        roster.rosterPath = wizardState.manageRosterPath
+        var rows: [(String, String)] = [("Roster", roster.resolvedRosterPath(repoRoot: appState.config.repoRoot))]
+        rows.append(("SSH user", wizardState.manageSshUser.isEmpty ? ManageConfig.defaultSshUser : wizardState.manageSshUser))
+        rows.append(("SSH key", wizardState.manageSshKeyPath.isEmpty ? ManageConfig.defaultSshKeyPath : wizardState.manageSshKeyPath))
         return rows
     }
 

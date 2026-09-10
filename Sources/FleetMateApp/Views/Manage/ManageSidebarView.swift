@@ -128,7 +128,7 @@ struct ManageSidebarView: View {
                 }
 
                 if !manage.roster.labs.isEmpty {
-                    SidebarSectionHeader(title: "Labs", isExpanded: $labsExpanded) {
+                    SidebarSectionHeader(title: "Curriculum", isExpanded: $labsExpanded) {
                         HStack(spacing: 6) {
                             Button { showLabPicker = true } label: {
                                 Image(systemName: "checklist").appFont(fixed: 11)

@@ -40,6 +40,12 @@ struct OnboardingModuleSelectionStep: View {
                         title: "Projects",
                         subtitle: "Azure DevOps boards and GitHub issues"
                     )
+                    moduleToggle(
+                        isOn: $wizardState.enableManage,
+                        icon: "desktopcomputer.and.macbook",
+                        title: "Manage",
+                        subtitle: "Lab operations over SSH and Screen Sharing"
+                    )
                 }
             }
             .formStyle(.grouped)

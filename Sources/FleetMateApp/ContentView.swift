@@ -146,6 +146,7 @@ struct ContentView: View {
             .onChange(of: appState.config.isSnipeConfigured) { _, _ in validateSelectedTab() }
             .onChange(of: appState.config.isTdxConfigured) { _, _ in validateSelectedTab() }
             .onChange(of: appState.config.isDevOpsConfigured) { _, _ in validateSelectedTab() }
+            .onChange(of: appState.config.isManageConfigured) { _, _ in validateSelectedTab() }
             .sheet(isPresented: $appState.showOnboardingWizard) {
                 OnboardingWizardView()
                     .environmentObject(appState)
@@ -175,6 +176,7 @@ struct ContentView: View {
         switch selectedTab {
         case .dashboard: DashboardView()
         case .devices:   DevicesView()
+        case .manage:    ManageView(manage: appState.manageState)
         case .inventory: AssetsView()
         case .tickets:   TicketsView()
         case .projects:  BoardsView()

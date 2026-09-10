@@ -10,6 +10,7 @@ enum OnboardingStep: String, Identifiable {
     case snipe
     case tdx
     case devops
+    case manage
     case summary
 
     var id: String { rawValue }
@@ -22,6 +23,7 @@ enum OnboardingStep: String, Identifiable {
         case .snipe:           "Snipe-IT"
         case .tdx:             "TeamDynamix"
         case .devops:          "Azure DevOps"
+        case .manage:          "Manage"
         case .summary:         "Summary"
         }
     }
@@ -62,6 +64,7 @@ class OnboardingWizardState: ObservableObject {
     @Published var enableSnipe = false
     @Published var enableTdx = false
     @Published var enableDevOps = false
+    @Published var enableManage = false
 
     // Graph fields
     @Published var graphTenantId = ""
@@ -89,6 +92,13 @@ class OnboardingWizardState: ObservableObject {
     @Published var devopsClientId = ""
     @Published var devopsTenantId = ""
 
+    // Manage
+    @Published var manageRosterPath = ""
+    @Published var manageSshKeyPath = ""
+    @Published var manageSshUser = ""
+    /// The Munki repo root, when known, so an empty roster path resolves.
+    var manageRepoRoot: String?
+
     // Navigation
     @Published var currentStepIndex = 0
 
@@ -103,6 +113,7 @@ class OnboardingWizardState: ObservableObject {
         if enableSnipe  { s.append(.snipe) }
         if enableTdx    { s.append(.tdx) }
         if enableDevOps { s.append(.devops) }
+        if enableManage { s.append(.manage) }
         s.append(.summary)
         return s
     }
@@ -116,7 +127,7 @@ class OnboardingWizardState: ObservableObject {
     var canGoNext: Bool {
         switch currentStep {
         case .moduleSelection:
-            return enableGraph || enableSnipe || enableTdx || enableDevOps
+            return enableGraph || enableSnipe || enableTdx || enableDevOps || enableManage
         case .graph:
             if graphTenantId.trimmingCharacters(in: .whitespaces).isEmpty { return false }
             if graphAuthMode == .servicePrincipal {
@@ -141,6 +152,10 @@ class OnboardingWizardState: ObservableObject {
             return true
         case .devops:
             return !devopsOrganization.trimmingCharacters(in: .whitespaces).isEmpty
+        case .manage:
+            var c = ManageConfig()
+            c.rosterPath = manageRosterPath
+            return c.hasRoster(repoRoot: manageRepoRoot)
         default:
             return true
         }
@@ -197,6 +212,14 @@ class OnboardingWizardState: ObservableObject {
         if let p = config.devopsProject { devopsProject = p }
         if let c = config.devopsClientId { devopsClientId = c }
         if let t = config.devopsTenantId { devopsTenantId = t }
+
+        manageRepoRoot = config.repoRoot
+        if let m = config.manage {
+            enableManage = m.enabled
+            manageRosterPath = m.rosterPath
+            manageSshKeyPath = m.sshKeyPath
+            manageSshUser = m.sshUser
+        }
     }
 
     /// Ensure a URL string has an https:// scheme prefix.
@@ -255,6 +278,15 @@ class OnboardingWizardState: ObservableObject {
             c.devopsTenantId = tenant.isEmpty ? nil : tenant
         }
 
+        var manage = c.manage ?? ManageConfig()
+        manage.enabled = enableManage
+        if enableManage {
+            manage.rosterPath = manageRosterPath.trimmingCharacters(in: .whitespaces)
+            manage.sshKeyPath = manageSshKeyPath.trimmingCharacters(in: .whitespaces)
+            manage.sshUser = manageSshUser.trimmingCharacters(in: .whitespaces)
+        }
+        c.manage = manage
+
         return c
     }
 }
@@ -288,6 +320,10 @@ struct OnboardingWizardView: View {
                     OnboardingSnipeStep()
                 case .tdx:
                     OnboardingTdxStep()
+                case .manage:
+                    OnboardingManageStep()
+                        .environmentObject(wizardState)
+                        .environmentObject(appState)
                 case .devops:
                     OnboardingDevOpsStep()
                 case .summary:

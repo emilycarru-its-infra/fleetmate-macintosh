@@ -174,6 +174,27 @@ public class GraphService {
         return response.value
     }
 
+    /// Per-setting evaluation of one compliance policy on one device.
+    public func getCompliancePolicySettingStates(deviceId: String, policyId: String) async throws -> [CompliancePolicySettingState] {
+        guard let headers = await headers() else { return [] }
+        let url = "\(baseUrl)/deviceManagement/managedDevices/\(deviceId)/deviceCompliancePolicyStates/\(policyId)/settingStates"
+        let response: CompliancePolicySettingStatesResponse = try await fetch(url: url, headers: headers)
+        return response.value
+    }
+
+    /// The policy definition with its non-compliance actions and assignments.
+    /// Needs DeviceManagementConfiguration.Read.All.
+    public func getCompliancePolicyDefinition(policyId: String) async throws -> CompliancePolicyDefinition {
+        guard let headers = await headers() else { throw GraphServiceError.notAuthenticated }
+        let expand = "scheduledActionsForRule($expand=scheduledActionConfigurations),assignments"
+        let url = "\(baseUrl)/deviceManagement/deviceCompliancePolicies/\(policyId)?$expand=\(expand)"
+        let data = try await fetchData(url: url, headers: headers)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw GraphServiceError.notFound("compliance policy \(policyId)")
+        }
+        return CompliancePolicyDefinition(json: json)
+    }
+
     public func getNonCompliantDevices(limit: Int = 100) async throws -> [IntuneDevice] {
         let filter = "complianceState eq 'noncompliant'"
         return try await getManagedDevices(filter: filter, limit: limit)
@@ -847,6 +868,22 @@ public class GraphService {
     }
 
     // MARK: - Private Helpers
+
+    func fetchData(url: String, headers: HTTPHeaders) async throws -> Data {
+        if useAze {
+            return try await azeTransport.send(GraphRequest(method: .get, url: url))
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            session.request(url, headers: headers)
+                .validate()
+                .responseData { response in
+                    switch response.result {
+                    case .success(let data): continuation.resume(returning: data)
+                    case .failure(let error): continuation.resume(throwing: error)
+                    }
+                }
+        }
+    }
 
     func fetch<T: Decodable>(url: String, headers: HTTPHeaders) async throws -> T {
         if useAze {

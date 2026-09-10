@@ -79,6 +79,149 @@ public struct CompliancePolicyStatesResponse: Codable {
     public let value: [DeviceCompliancePolicyState]
 }
 
+/// One setting inside a compliance policy, as evaluated for one device.
+/// `managedDevices/{id}/deviceCompliancePolicyStates/{policyId}/settingStates`.
+public struct CompliancePolicySettingState: Codable, Sendable, Identifiable {
+    public let setting: String?
+    public let settingName: String?
+    public let instanceDisplayName: String?
+    public let state: String?
+    public let errorCode: Int64?
+    public let errorDescription: String?
+    public let userId: String?
+    public let userName: String?
+    public let userEmail: String?
+    public let userPrincipalName: String?
+    public let sources: [Source]?
+    public let currentValue: String?
+
+    public struct Source: Codable, Sendable {
+        public let id: String?
+        public let displayName: String?
+        public let sourceType: String?
+    }
+
+    public var id: String { (setting ?? settingName ?? instanceDisplayName ?? "") + (userId ?? "") }
+
+    /// The friendliest name Graph gives for the setting.
+    public var displayName: String {
+        if let n = settingName, !n.isEmpty { return n }
+        if let n = instanceDisplayName, !n.isEmpty { return n }
+        if let s = setting, !s.isEmpty { return s.components(separatedBy: ".").last ?? s }
+        return "Setting"
+    }
+
+    /// Non-compliant, error and conflict rows sort ahead of the rest.
+    public var severityRank: Int {
+        switch state?.lowercased() {
+        case "noncompliant": return 0
+        case "error": return 1
+        case "conflict": return 2
+        case "notapplicable": return 4
+        case "compliant": return 5
+        default: return 3
+        }
+    }
+}
+
+public struct CompliancePolicySettingStatesResponse: Codable {
+    public let value: [CompliancePolicySettingState]
+}
+
+/// A compliance policy definition with its scheduled actions and
+/// assignments. Policies are polymorphic in Graph, so the requirement
+/// values are kept as a flat list of label/value pairs taken from the
+/// raw JSON rather than typed per platform.
+public struct CompliancePolicyDefinition: Sendable {
+    public let id: String
+    public let odataType: String?
+    public let displayName: String?
+    public let description: String?
+    public let version: Int?
+    public let createdDateTime: String?
+    public let lastModifiedDateTime: String?
+    public let requirements: [(label: String, value: String)]
+    public let scheduledActions: [ScheduledAction]
+    public let assignments: [Assignment]
+
+    public struct ScheduledAction: Sendable {
+        public let ruleName: String?
+        public let actionType: String?
+        public let gracePeriodHours: Int?
+        public let notificationTemplateId: String?
+    }
+
+    public struct Assignment: Sendable {
+        public let targetType: String?
+        public let groupId: String?
+    }
+
+    /// Keys that are metadata rather than requirements.
+    private static let skippedKeys: Set<String> = [
+        "@odata.context", "@odata.type", "id", "displayName", "description", "version",
+        "createdDateTime", "lastModifiedDateTime", "roleScopeTagIds",
+        "scheduledActionsForRule", "assignments", "scheduledActionsForRule@odata.context",
+        "assignments@odata.context",
+    ]
+
+    public init(json: [String: Any]) {
+        id = json["id"] as? String ?? ""
+        odataType = json["@odata.type"] as? String
+        displayName = json["displayName"] as? String
+        description = json["description"] as? String
+        version = json["version"] as? Int
+        createdDateTime = json["createdDateTime"] as? String
+        lastModifiedDateTime = json["lastModifiedDateTime"] as? String
+
+        var reqs: [(String, String)] = []
+        for key in json.keys.sorted() where !Self.skippedKeys.contains(key) {
+            guard let value = json[key], !(value is NSNull) else { continue }
+            let rendered: String
+            switch value {
+            case let b as Bool: rendered = b ? "Yes" : "No"
+            case let n as NSNumber: rendered = n.stringValue
+            case let str as String: rendered = str
+            case let arr as [Any]: rendered = arr.map { "\($0)" }.joined(separator: ", ")
+            default: rendered = "\(value)"
+            }
+            if rendered.isEmpty { continue }
+            reqs.append((Self.humanize(key), rendered))
+        }
+        requirements = reqs
+
+        var actions: [ScheduledAction] = []
+        for rule in json["scheduledActionsForRule"] as? [[String: Any]] ?? [] {
+            for cfg in rule["scheduledActionConfigurations"] as? [[String: Any]] ?? [] {
+                actions.append(ScheduledAction(
+                    ruleName: rule["ruleName"] as? String,
+                    actionType: cfg["actionType"] as? String,
+                    gracePeriodHours: cfg["gracePeriodHours"] as? Int,
+                    notificationTemplateId: cfg["notificationTemplateId"] as? String))
+            }
+        }
+        scheduledActions = actions
+
+        var assigns: [Assignment] = []
+        for a in json["assignments"] as? [[String: Any]] ?? [] {
+            let target = a["target"] as? [String: Any] ?? [:]
+            assigns.append(Assignment(
+                targetType: (target["@odata.type"] as? String)?.components(separatedBy: ".").last,
+                groupId: target["groupId"] as? String))
+        }
+        assignments = assigns
+    }
+
+    /// "osMinimumVersion" -> "Os minimum version".
+    static func humanize(_ key: String) -> String {
+        var out = ""
+        for (i, ch) in key.enumerated() {
+            if ch.isUppercase, i > 0 { out.append(" ") }
+            out.append(i == 0 ? Character(ch.uppercased()) : Character(ch.lowercased()))
+        }
+        return out
+    }
+}
+
 // MARK: - Mobile App Models
 
 public struct MobileApp: Codable, Identifiable, Sendable {

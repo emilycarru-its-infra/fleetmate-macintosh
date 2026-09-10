@@ -14,6 +14,13 @@ struct DeviceDetailView: View {
     @State private var isLoadingApps = false
     @State private var isLoadingCompliance = false
     @State private var errorMessage: String?
+    @State private var selectedPolicy: SelectedCompliancePolicy?
+
+    /// Wraps a policy state so the sheet has a stable, non-optional id.
+    private struct SelectedCompliancePolicy: Identifiable {
+        let id: String
+        let policy: DeviceCompliancePolicyState
+    }
     
     var body: some View {
         ScrollView {
@@ -43,6 +50,10 @@ struct DeviceDetailView: View {
         .background(Color(NSColor.controlBackgroundColor))
         .task(id: device.id) {
             await loadDeviceDetails()
+        }
+        .sheet(item: $selectedPolicy) { selected in
+            CompliancePolicyLightboxView(device: device, policy: selected.policy)
+                .environmentObject(appState)
         }
     }
     
@@ -155,17 +166,27 @@ struct DeviceDetailView: View {
                         .foregroundColor(.secondary)
                         .padding(.top, 4)
                     ForEach(compliancePolicies, id: \.id) { policy in
-                        HStack(spacing: 6) {
-                            Image(systemName: policyStateIcon(policy.state))
-                                .foregroundColor(policyStateColor(policy.state))
-                                .appFont(.caption)
-                            Text(policy.displayName ?? "Unknown Policy")
-                                .appFont(.caption)
-                            Spacer()
-                            Text(policy.state ?? "Unknown")
-                                .appFont(.caption2)
-                                .foregroundColor(.secondary)
+                        Button {
+                            selectedPolicy = SelectedCompliancePolicy(id: policy.id ?? policy.displayName ?? UUID().uuidString, policy: policy)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: policyStateIcon(policy.state))
+                                    .foregroundColor(policyStateColor(policy.state))
+                                    .appFont(.caption)
+                                Text(policy.displayName ?? "Unknown Policy")
+                                    .appFont(.caption)
+                                Spacer()
+                                Text(policy.state ?? "Unknown")
+                                    .appFont(.caption2)
+                                    .foregroundColor(.secondary)
+                                Image(systemName: "chevron.right")
+                                    .appFont(.caption2)
+                                    .foregroundColor(Color(NSColor.tertiaryLabelColor))
+                            }
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .help("Open the full policy evaluation for this device")
                     }
                 }
             }

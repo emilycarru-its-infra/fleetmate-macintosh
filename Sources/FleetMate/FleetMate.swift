@@ -19,13 +19,13 @@ struct FleetMate: AsyncParsableCommand {
             DevOpsCommand.self,
             PullRequestsCommand.self,
             TdxCommand.self,
+            ManageCommand.self,
         ],
         defaultSubcommand: StatusCommand.self
     )
 
-    @Flag(name: .shortAndLong, help: "Enable verbose output")
-    var verbose: Bool = false
-
-    @Flag(name: .long, help: "Output in JSON format")
-    var json: Bool = false
+    // No flags at the root. A root --json used to sit here and, because
+    // ArgumentParser hands a name to the first command that declares it,
+    // it swallowed every subcommand's --json: `fleetmate validate --json`
+    // printed text while `-j` worked. Each subcommand owns its own flags.
 }

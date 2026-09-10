@@ -31,6 +31,22 @@ struct ManageSettingsView: View {
             }
 
             Section {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.circle")
+                        .foregroundStyle(.secondary)
+                    Text(draft.fetchesRoster
+                         ? "Roster is fetched from \(draft.rosterSourceLabel)\(draft.rosterRepoPath) at load; the path below is only the fallback."
+                         : "Roster fetch is off; the path below is used as is.")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+                if !appState.manageState.rosterSource.isEmpty {
+                    Text("Current: \(appState.manageState.rosterSource)")
+                        .appFont(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(2)
+                }
                 PathPickerRow(label: "Roster (computers.csv)", value: $draft.rosterPath,
                               placeholder: appState.config.repoRoot.map { "\($0)/\(ManageConfig.defaultRosterRelativePath)" } ?? "Choose computers.csv",
                               buttonLabel: "Choose CSV…")

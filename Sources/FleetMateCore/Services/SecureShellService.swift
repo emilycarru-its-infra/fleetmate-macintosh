@@ -46,7 +46,14 @@ public class SecureShellService {
                     logger.debug("Resolved \(hostOrDevice) to IP \(device.ipAddress) (\(device.displayName))")
                     return (device.ipAddress, device)
                 }
-                
+
+                // The fleet-wide network report is one cached request for
+                // every device, so a batch of resolutions costs one call.
+                if let row = try? await rm.getFleetAddresses()[device.serialNumber.uppercased()] {
+                    logger.debug("Resolved \(hostOrDevice) to IP \(row.primaryIp) (\(device.displayName)) via fleet network")
+                    return (row.primaryIp, device)
+                }
+
                 // Fetch network module to get IP address
                 if let networkInfo = try await rm.getDeviceNetwork(device.serialNumber),
                    let primaryIp = networkInfo.primaryIpv4 {

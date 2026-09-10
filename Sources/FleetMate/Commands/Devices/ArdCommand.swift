@@ -140,7 +140,13 @@ enum ArdRunner {
         let rm = ReportMateService(config: config)
         let all = try await rm.getDevices()
         let matched = all.filter { $0.location.lowercased().contains(groupValue.lowercased()) }
-        return matched.map { d in d.ipAddress.isEmpty ? d.displayName : d.ipAddress }
+        // The device list carries no address; the fleet network report does.
+        let addresses = (try? await rm.getFleetAddresses()) ?? [:]
+        return matched.map { d in
+            if !d.ipAddress.isEmpty { return d.ipAddress }
+            if let row = addresses[d.serialNumber.uppercased()] { return row.primaryIp }
+            return d.displayName
+        }
     }
 
     /// Parse a CSV file — first column is the computer name or IP; lines starting with # are comments.

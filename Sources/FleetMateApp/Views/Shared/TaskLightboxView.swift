@@ -40,7 +40,8 @@ struct TaskLightboxView: View {
                     task: current,
                     config: appState.config.tasks?.providers.github,
                     onClose: { dismiss() },
-                    onOpenInProjects: openInProjects
+                    onOpenInProjects: openInProjects,
+                    layout: .wide
                 )
             } else {
                 AzDoTaskSidebarView(
@@ -50,7 +51,8 @@ struct TaskLightboxView: View {
                     onSelectWorkItem: { id in
                         current = Self.workItemStub(id: id, config: appState.config, project: nil)
                     },
-                    onOpenInProjects: openInProjects
+                    onOpenInProjects: openInProjects,
+                    layout: .wide
                 )
             }
         }

@@ -1,6 +1,13 @@
 import SwiftUI
 import FleetMateCore
 
+/// How a task detail view arranges itself: the Projects sidebar is one
+/// narrow column; the dashboard lightbox is wide enough for two.
+enum TaskDetailLayout {
+    case sidebar
+    case wide
+}
+
 /// Full editable Azure DevOps work item sidebar — mirrors the web UI.
 /// Single Edit mode: one "Edit" button in header toggles all fields editable.
 /// Layout: Header → Title → 2-col metadata → Description → Add Comment → Comment Feed → Effort/Repro/Acceptance/Relations/Dates
@@ -13,6 +20,11 @@ struct AzDoTaskSidebarView: View {
     /// Set when the sidebar is shown outside the Projects tab (the dashboard
     /// lightbox); jumps to the same item in its home tab.
     var onOpenInProjects: (() -> Void)? = nil
+    /// Sidebar: one column, small controls. Wide: the body on the left and
+    /// the metadata beside it, regular controls, for the dashboard lightbox.
+    var layout: TaskDetailLayout = .sidebar
+
+    private var headerControlSize: ControlSize { layout == .wide ? .regular : .small }
     @EnvironmentObject private var appState: AppState
 
     // Full detail loaded from API
@@ -121,6 +133,8 @@ struct AzDoTaskSidebarView: View {
                     Button("Retry") { loadDetail() }.buttonStyle(.bordered)
                     Spacer()
                 }.padding()
+            } else if layout == .wide {
+                wideBody
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
@@ -173,6 +187,59 @@ struct AzDoTaskSidebarView: View {
         }
     }
 
+    /// The reading column (title, description, links, comments) with the
+    /// metadata in a fixed column beside it, so a wide window is not one
+    /// long scroll of short rows.
+    private var wideBody: some View {
+        HStack(alignment: .top, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    parentSection
+                    titleSection
+                    Divider().padding(.vertical, 10)
+                    descriptionSection
+                    Divider().padding(.vertical, 10)
+                    codeLinkSection
+                    if let relations = workItem?.relations, relations.contains(where: { $0.relationType != .artifact }) {
+                        Divider().padding(.vertical, 10)
+                        relationsSection(relations)
+                    }
+                    if fields?.workItemType?.lowercased() == "bug",
+                       let repro = fields?.reproSteps, !repro.isEmpty {
+                        Divider().padding(.vertical, 10)
+                        reproStepsSection
+                    }
+                    if let criteria = fields?.acceptanceCriteria, !criteria.isEmpty {
+                        Divider().padding(.vertical, 10)
+                        acceptanceCriteriaSection
+                    }
+                    Divider().padding(.vertical, 10)
+                    addCommentSection
+                    Divider().padding(.vertical, 10)
+                    commentsFeedSection
+                }
+                .padding()
+            }
+            .frame(maxWidth: .infinity)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    metadataStacked
+                    if isEditing || hasEffortData {
+                        Divider().padding(.vertical, 10)
+                        effortSection
+                    }
+                    Divider().padding(.vertical, 10)
+                    datesSection
+                }
+                .padding()
+            }
+            .frame(width: 360)
+        }
+    }
+
     // MARK: - Header
 
     private var sidebarHeader: some View {
@@ -213,7 +280,7 @@ struct AzDoTaskSidebarView: View {
                     Image(systemName: AppTab.projects.icon)
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(headerControlSize)
                 .help("Open in Projects")
             }
 
@@ -225,32 +292,32 @@ struct AzDoTaskSidebarView: View {
                     Image(systemName: "link")
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(headerControlSize)
                 .help("Copy link")
 
                 Button(action: { NSWorkspace.shared.open(urlObj) }) {
                     Image(systemName: "globe")
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(headerControlSize)
                 .help("Open in Azure DevOps")
             }
 
             if isEditing {
                 Button("Save All") { saveAll() }
                     .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
+                    .controlSize(headerControlSize)
                     .disabled(isUpdating)
                     .keyboardShortcut(.return, modifiers: .command)
                 Button("Cancel") { isEditing = false }
                     .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .controlSize(headerControlSize)
             } else {
                 Button(action: enterEditMode) {
                     Label("Edit", systemImage: "pencil")
                 }
                 .buttonStyle(.bordered)
-                .controlSize(.small)
+                .controlSize(headerControlSize)
             }
 
             stateActionButtons
@@ -291,7 +358,7 @@ struct AzDoTaskSidebarView: View {
                 Image(systemName: "checkmark.circle")
             }
             .buttonStyle(.bordered)
-            .controlSize(.small)
+            .controlSize(headerControlSize)
             .help(done)
         }
 
@@ -302,7 +369,7 @@ struct AzDoTaskSidebarView: View {
                 Image(systemName: "arrow.counterclockwise.circle")
             }
             .buttonStyle(.bordered)
-            .controlSize(.small)
+            .controlSize(headerControlSize)
             .help("Reactivate (\(reopen))")
         }
 
@@ -310,7 +377,7 @@ struct AzDoTaskSidebarView: View {
             Image(systemName: "trash")
         }
         .buttonStyle(.bordered)
-        .controlSize(.small)
+        .controlSize(headerControlSize)
         .help("Delete")
     }
 
@@ -326,7 +393,7 @@ struct AzDoTaskSidebarView: View {
             Image(systemName: "ellipsis.circle")
         }
         .menuStyle(.borderedButton)
-        .controlSize(.small)
+        .controlSize(headerControlSize)
         .fixedSize()
         .help("More actions")
     }
@@ -387,8 +454,24 @@ struct AzDoTaskSidebarView: View {
     @ViewBuilder
     private var metadataColumns: some View {
         HStack(alignment: .top, spacing: 24) {
-            // Left column: State, Type, Priority, Due Date
-            VStack(alignment: .leading, spacing: 12) {
+            metadataPrimaryColumn
+            metadataSecondaryColumn
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Both metadata columns stacked, for the narrow column that sits beside
+    /// the body in the wide layout.
+    private var metadataStacked: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            metadataPrimaryColumn
+            metadataSecondaryColumn
+        }
+    }
+
+    // State, Type, Priority, Due Date
+    private var metadataPrimaryColumn: some View {
+        VStack(alignment: .leading, spacing: 12) {
                 metadataField(title: "State") {
                     if isEditing {
                         Picker("", selection: $editedState) {
@@ -472,10 +555,11 @@ struct AzDoTaskSidebarView: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+    }
 
-            // Right column: Assigned To, Area Path, Iteration, Tags
-            VStack(alignment: .leading, spacing: 12) {
+    // Assigned To, Area Path, Iteration, Tags
+    private var metadataSecondaryColumn: some View {
+        VStack(alignment: .leading, spacing: 12) {
                 metadataField(title: "Assigned To") {
                     if isEditing {
                         if teamMembers.isEmpty {
@@ -558,8 +642,6 @@ struct AzDoTaskSidebarView: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
     }
 
     @ViewBuilder

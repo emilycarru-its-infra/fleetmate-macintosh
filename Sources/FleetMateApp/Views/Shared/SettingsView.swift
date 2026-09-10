@@ -23,7 +23,7 @@ struct SettingsView: View {
 
             ManageSettingsView()
                 .environmentObject(appState)
-                .tabItem { Label("Manage", systemImage: "desktopcomputer.and.macbook") }
+                .tabItem { Label("Manage", systemImage: "wrench.and.screwdriver") }
                 .tag(3)
         }
         .frame(minWidth: 600, maxWidth: 700, minHeight: 700, idealHeight: 900, maxHeight: 1100)
@@ -140,7 +140,7 @@ private struct GeneralSettingsTab: View {
                 }
             )) {
                 HStack(spacing: 12) {
-                    Image(systemName: "desktopcomputer.and.macbook")
+                    Image(systemName: "wrench.and.screwdriver")
                         .appFont(.title3)
                         .foregroundStyle(.tint)
                         .frame(width: 24)

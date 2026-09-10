@@ -1427,7 +1427,9 @@ struct DashboardSplitHandle: View {
     }
 }
 
+#if DEBUG
 #Preview {
     DashboardView()
         .environmentObject(AppState())
 }
+#endif

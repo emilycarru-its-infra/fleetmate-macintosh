@@ -105,6 +105,7 @@ struct SkeletonRow: View {
 
 // MARK: - Previews
 
+#if DEBUG
 #Preview("Skeleton Components") {
     VStack(spacing: 20) {
         HStack(spacing: 12) {
@@ -125,3 +126,4 @@ struct SkeletonRow: View {
     .padding()
     .frame(width: 600)
 }
+#endif

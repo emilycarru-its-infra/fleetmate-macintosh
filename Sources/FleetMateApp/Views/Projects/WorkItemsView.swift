@@ -222,7 +222,9 @@ struct PriorityIndicator: View {
     }
 }
 
+#if DEBUG
 #Preview {
     WorkItemsView()
         .environmentObject(AppState())
 }
+#endif

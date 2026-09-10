@@ -2005,7 +2005,9 @@ struct TaskCard: View {
 
 // MARK: - Preview
 
+#if DEBUG
 #Preview {
     BoardsView()
         .environmentObject(AppState())
 }
+#endif

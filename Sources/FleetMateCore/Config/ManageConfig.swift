@@ -10,7 +10,14 @@ public struct ManageConfig: Codable, Equatable, Sendable {
     /// The operator switched the module on. Off hides the tab even when a roster exists.
     public var enabled: Bool = false
     /// Path to the enrollment roster CSV (computers.csv). Empty means the Munki repo default.
+    /// Only a fallback: the roster is fetched from Azure DevOps first (see rosterRepo).
     public var rosterPath: String = ""
+    /// Azure DevOps project and repository the roster is fetched from at
+    /// load, so a stale local checkout never shows a stale sidebar. Empty
+    /// rosterRepo turns the fetch off and the local file is used alone.
+    public var rosterRepoProject: String = "Devices"
+    public var rosterRepo: String = "Munki"
+    public var rosterRepoPath: String = "/deployment/enroll/computers.csv"
     /// Path to the YAML command library. Empty means the per-user default.
     public var commandsPath: String = ""
     /// Private key for fleet SSH. Empty means `~/.ssh/id_rsa.macadmins`.
@@ -31,12 +38,24 @@ public struct ManageConfig: Codable, Equatable, Sendable {
     public static let defaultSshUser = "macadmins"
     public static let defaultSshKeyPath = "~/.ssh/id_rsa.macadmins"
     public static let defaultRosterRelativePath = "deployment/enroll/computers.csv"
+    /// Where the roster fetched from Azure DevOps is kept between launches.
+    public static let rosterCachePath = "~/.fleetmate/cache/computers.csv"
+
+    /// The fetch is on when a repository is named.
+    public var fetchesRoster: Bool {
+        !rosterRepo.trimmingCharacters(in: .whitespaces).isEmpty && !rosterRepoProject.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    public var rosterSourceLabel: String { "\(rosterRepoProject)/\(rosterRepo)" }
 
     public init() {}
 
     enum CodingKeys: String, CodingKey {
         case enabled
         case rosterPath = "roster_path"
+        case rosterRepoProject = "roster_repo_project"
+        case rosterRepo = "roster_repo"
+        case rosterRepoPath = "roster_repo_path"
         case commandsPath = "commands_path"
         case sshKeyPath = "ssh_key_path"
         case sshUser = "ssh_user"
@@ -115,6 +134,9 @@ public struct ManageConfig: Codable, Equatable, Sendable {
         }
         if let v = bool("enabled", "enabled") { c.enabled = v }
         if let v = str("roster_path", "rosterPath") { c.rosterPath = v }
+        if let v = str("roster_repo_project", "rosterRepoProject") { c.rosterRepoProject = v }
+        if let v = str("roster_repo", "rosterRepo") { c.rosterRepo = v }
+        if let v = str("roster_repo_path", "rosterRepoPath") { c.rosterRepoPath = v }
         if let v = str("commands_path", "commandsPath") { c.commandsPath = v }
         if let v = str("ssh_key_path", "sshKeyPath") { c.sshKeyPath = v }
         if let v = str("ssh_user", "sshUser") { c.sshUser = v }

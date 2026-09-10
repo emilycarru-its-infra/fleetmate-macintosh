@@ -12,6 +12,8 @@ final class ManageState: ObservableObject {
     @Published private(set) var config: ManageConfig
     private var repoRoot: String?
     private var reportMate: ReportMateService?
+    /// Resolved on every use because AppState rebuilds the service when settings change.
+    private let devOps: () -> AzureDevOpsService?
     let store: ManageStateStore
 
     // MARK: - Roster
@@ -20,6 +22,10 @@ final class ManageState: ObservableObject {
     @Published private(set) var rosterError: String?
     @Published private(set) var isLoadingRoster = false
     @Published private(set) var rosterPath = ""
+    /// Where the current roster came from, for the footer and Settings:
+    /// "Devices/Munki · fetched 14:32" or "local file (fetch failed: …)".
+    @Published private(set) var rosterSource = ""
+    private var isRefreshingRoster = false
 
     // MARK: - Selection
 
@@ -57,10 +63,12 @@ final class ManageState: ObservableObject {
     var runStartedAt: Date?
     var runTask: Task<Void, Never>?
 
-    init(config: ManageConfig?, repoRoot: String?, reportMate: ReportMateService?, store: ManageStateStore = ManageStateStore()) {
+    init(config: ManageConfig?, repoRoot: String?, reportMate: ReportMateService?,
+         devOps: @escaping () -> AzureDevOpsService? = { nil }, store: ManageStateStore = ManageStateStore()) {
         self.config = config ?? ManageConfig()
         self.repoRoot = repoRoot
         self.reportMate = reportMate
+        self.devOps = devOps
         self.store = store
         self.customGroups = store.loadCustomGroups()
         loadCommandLibrary()
@@ -91,6 +99,9 @@ final class ManageState: ObservableObject {
         self.repoRoot = repoRoot
         self.reportMate = reportMate
         let rosterChanged = previous.resolvedRosterPath(repoRoot: previousRoot) != self.config.resolvedRosterPath(repoRoot: repoRoot)
+            || previous.rosterRepoProject != self.config.rosterRepoProject
+            || previous.rosterRepo != self.config.rosterRepo
+            || previous.rosterRepoPath != self.config.rosterRepoPath
             || previous.includeRetired != self.config.includeRetired
             || previous.includeProvisioning != self.config.includeProvisioning
         if rosterChanged || roster.isEmpty { loadRoster() }
@@ -99,18 +110,72 @@ final class ManageState: ObservableObject {
 
     // MARK: - Roster loading
 
+    /// Show what is on disk right away (the last fetched copy, else the
+    /// configured file), then fetch the current roster from Azure DevOps and
+    /// swap it in. The local checkout is never the source of truth.
     func loadRoster() {
         isLoadingRoster = true
-        rosterPath = config.resolvedRosterPath(repoRoot: repoRoot)
-        defer { isLoadingRoster = false }
-        guard !rosterPath.isEmpty else {
+        let cachePath = ManageConfig.expandHome(ManageConfig.rosterCachePath)
+        let localPath = config.resolvedRosterPath(repoRoot: repoRoot)
+        if config.fetchesRoster, FileManager.default.fileExists(atPath: cachePath) {
+            rosterPath = cachePath
+            rosterSource = "\(config.rosterSourceLabel) · cached copy"
+        } else {
+            rosterPath = localPath
+            rosterSource = localPath.isEmpty ? "" : "local file"
+        }
+        isLoadingRoster = false
+        if rosterPath.isEmpty && !config.fetchesRoster {
             roster = .empty
             rosterError = "No roster path is set. Choose computers.csv in Settings › Manage."
             return
         }
+        if !rosterPath.isEmpty { applyRoster(from: rosterPath) }
+        Task { await refreshRosterFromSource() }
+    }
+
+    /// Fetch computers.csv from the configured repository, keep it in the
+    /// cache and reload from it. Failures keep whatever is showing and are
+    /// reported in `rosterSource`, never as a blocking error.
+    func refreshRosterFromSource() async {
+        guard config.fetchesRoster, !isRefreshingRoster else { return }
+        guard let service = devOps() else {
+            rosterSource = "local file (Azure DevOps is not configured)"
+            return
+        }
+        isRefreshingRoster = true
+        defer { isRefreshingRoster = false }
+        let cachePath = ManageConfig.expandHome(ManageConfig.rosterCachePath)
+        do {
+            let content = try await service.fetchRepositoryFile(
+                project: config.rosterRepoProject, repository: config.rosterRepo, path: config.rosterRepoPath)
+            guard let header = content.split(separator: "\n", maxSplits: 1).first,
+                  header.lowercased().contains("serial") else {
+                throw RosterLoader.RosterError.missingHeader("serial")
+            }
+            let dir = (cachePath as NSString).deletingLastPathComponent
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try content.write(toFile: cachePath, atomically: true, encoding: .utf8)
+            let stamp = Date().formatted(date: .omitted, time: .shortened)
+            rosterPath = cachePath
+            rosterSource = "\(config.rosterSourceLabel) · fetched \(stamp)"
+            applyRoster(from: cachePath)
+            dbg.info("Roster fetched from \(config.rosterSourceLabel)\(config.rosterRepoPath)", category: "manage")
+        } catch {
+            let reason = error.localizedDescription
+            let fallback = rosterPath.isEmpty ? "no local copy" : (rosterPath == cachePath ? "cached copy" : "local file")
+            rosterSource = "\(fallback) (fetch failed: \(reason))"
+            if roster.isEmpty && rosterPath.isEmpty {
+                rosterError = "Could not fetch the roster from \(config.rosterSourceLabel): \(reason)"
+            }
+            dbg.warn("Roster fetch failed: \(reason)", category: "manage")
+        }
+    }
+
+    private func applyRoster(from path: String) {
         do {
             roster = try RosterLoader(includeRetired: config.includeRetired, includeProvisioning: config.includeProvisioning)
-                .load(path: rosterPath)
+                .load(path: path)
             rosterError = nil
             dbg.info("Roster loaded: \(roster.labs.count) labs, \(roster.kiosks.count) kiosk rooms, \(roster.staff.count) staff areas, \(roster.faculty.count) faculty buckets", category: "manage")
         } catch {

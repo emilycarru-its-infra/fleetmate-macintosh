@@ -5,7 +5,7 @@ import Logging
 /// Client for ReportMate API - fleet monitoring and device inventory
 /// This is the shared reporting system for both Mac (Munki) and Windows (Cimian) devices
 ///
-/// Every read goes through the `reportmate` CLI when it is installed (see
+/// Every read goes through the `reportmateutil` CLI when it is installed (see
 /// `ReportMateCli`) and through this class's own HTTP client otherwise. Both
 /// paths return the API's JSON unchanged, so the decoding is shared.
 public class ReportMateService {
@@ -32,7 +32,7 @@ public class ReportMateService {
         return !baseUrl.isEmpty
     }
 
-    /// True when reads are routed through the installed `reportmate` CLI.
+    /// True when reads are routed through the installed `reportmateutil` CLI.
     public var usesCli: Bool { cli != nil }
 
     /// Where the CLI lives, for status output.
@@ -405,7 +405,7 @@ public class ReportMateService {
             case .failure(let failure) where failure.isNotFound:
                 return nil
             case .failure(.launchFailed(let reason)):
-                logger.warning("reportmate CLI at \(cli.path) did not launch (\(reason)); using HTTP")
+                logger.warning("reportmateutil at \(cli.path) did not launch (\(reason)); using HTTP")
             case .failure(let failure):
                 throw failure
             }

@@ -83,7 +83,7 @@ struct ManageView: View {
                 ProgressView("Loading roster…")
             } else {
                 ContentUnavailableView {
-                    Label("Select a room or group", systemImage: "desktopcomputer.and.macbook")
+                    Label("Select a room or group", systemImage: "wrench.and.screwdriver")
                 } description: {
                     Text("Rooms come from the enrollment roster. Command-click to combine rooms and groups, or search to build a target set.")
                 }

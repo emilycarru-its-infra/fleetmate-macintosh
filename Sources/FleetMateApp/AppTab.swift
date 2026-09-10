@@ -17,7 +17,7 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .dashboard: "square.grid.2x2"
         case .devices: "laptopcomputer"
-        case .manage: "desktopcomputer.and.macbook"
+        case .manage: "wrench.and.screwdriver"
         case .inventory: "shippingbox"
         case .tickets: "ticket"
         case .projects: "list.clipboard"

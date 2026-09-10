@@ -185,7 +185,9 @@ struct ContentView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     ContentView()
         .environmentObject(AppState())
 }
+#endif

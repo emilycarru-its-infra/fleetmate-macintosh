@@ -1114,7 +1114,9 @@ struct ComplianceBadge: View {
     }
 }
 
+#if DEBUG
 #Preview {
     DevicesView()
         .environmentObject(AppState())
 }
+#endif

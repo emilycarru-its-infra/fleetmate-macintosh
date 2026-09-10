@@ -66,6 +66,9 @@ struct DashboardTasksPane: View {
 
     private let rowLimit = 20
 
+    /// The row being read in place. Rows link out through the context menu.
+    @State private var lightboxTask: UnifiedTask?
+
     private var activeWorkItems: [WorkItem] {
         let closed: Set<String> = ["done", "closed", "removed", "completed", "resolved"]
         return appState.cachedWorkItems
@@ -95,6 +98,10 @@ struct DashboardTasksPane: View {
         .task { model.load(appState: appState) }
         .onAppCommand { command in
             if command == .refresh { model.load(appState: appState, force: true) }
+        }
+        .sheet(item: $lightboxTask) { task in
+            TaskLightboxView(task: task)
+                .environmentObject(appState)
         }
     }
 
@@ -175,9 +182,9 @@ struct DashboardTasksPane: View {
 
     private func workItemRow(_ item: WorkItem) -> some View {
         Button {
-            // In-app: hand off to the Projects tab, which opens the sidebar.
-            appState.navigateToWorkItemId = item.id
-            appState.navigateToTab = .projects
+            // Read it here, like a pull request; the Projects tab is one
+            // click further in the lightbox header or the context menu.
+            lightboxTask = TaskLightboxView.workItemStub(item, config: appState.config)
         } label: {
             // Invisible grid: fixed-width columns so pills line up down the
             // list. Area path leads (where the ids used to be), title flexes,
@@ -208,6 +215,10 @@ struct DashboardTasksPane: View {
         .buttonStyle(.plain)
         .help(item.fields?.title ?? "")
         .contextMenu {
+            Button("Open in Projects") {
+                appState.navigateToWorkItemId = item.id
+                appState.navigateToTab = .projects
+            }
             Button("Open in Azure DevOps") {
                 if let url = workItemWebUrl(item) { NSWorkspace.shared.open(url) }
             }
@@ -246,7 +257,7 @@ struct DashboardTasksPane: View {
 
     private func issueRow(_ issue: GitHubIssueSummary) -> some View {
         Button {
-            if let url = URL(string: issue.webUrl) { NSWorkspace.shared.open(url) }
+            lightboxTask = TaskLightboxView.issueStub(issue)
         } label: {
             HStack(spacing: 8) {
                 Text(issue.repository.split(separator: "/").last.map(String.init) ?? issue.repository)
@@ -268,6 +279,15 @@ struct DashboardTasksPane: View {
         }
         .buttonStyle(.plain)
         .help("\(issue.repository) #\(issue.number) — \(issue.title)")
+        .contextMenu {
+            Button("Open in Projects") {
+                appState.navigateToGitHubIssueUrl = issue.webUrl
+                appState.navigateToTab = .projects
+            }
+            Button("Open in GitHub") {
+                if let url = URL(string: issue.webUrl) { NSWorkspace.shared.open(url) }
+            }
+        }
     }
 
     // MARK: Card chrome

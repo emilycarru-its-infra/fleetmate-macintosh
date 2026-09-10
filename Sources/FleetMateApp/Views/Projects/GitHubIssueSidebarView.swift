@@ -7,6 +7,9 @@ struct GitHubIssueSidebarView: View {
     let task: UnifiedTask
     let config: GitHubProviderConfig?
     let onClose: () -> Void
+    /// Set when the sidebar is shown outside the Projects tab (the dashboard
+    /// lightbox); jumps to the same issue in its home tab.
+    var onOpenInProjects: (() -> Void)? = nil
 
     // Loaded detail
     @State private var detail: GitHubIssueDetail? = nil
@@ -141,6 +144,14 @@ struct GitHubIssueSidebarView: View {
                     .appFont(.caption2)
                     .foregroundColor(.red)
                     .lineLimit(1)
+            }
+
+            if let onOpenInProjects {
+                Button(action: onOpenInProjects) {
+                    Image(systemName: AppTab.projects.icon)
+                }
+                .buttonStyle(.plain)
+                .help("Open in Projects")
             }
 
             // Open in browser

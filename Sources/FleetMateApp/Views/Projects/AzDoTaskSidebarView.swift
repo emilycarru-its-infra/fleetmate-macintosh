@@ -10,6 +10,9 @@ struct AzDoTaskSidebarView: View {
     let onClose: () -> Void
     var onDelete: (() -> Void)? = nil
     var onSelectWorkItem: ((Int) -> Void)? = nil
+    /// Set when the sidebar is shown outside the Projects tab (the dashboard
+    /// lightbox); jumps to the same item in its home tab.
+    var onOpenInProjects: (() -> Void)? = nil
     @EnvironmentObject private var appState: AppState
 
     // Full detail loaded from API
@@ -203,6 +206,15 @@ struct AzDoTaskSidebarView: View {
             if isUpdating {
                 ProgressView()
                     .scaleEffect(0.7)
+            }
+
+            if let onOpenInProjects {
+                Button(action: onOpenInProjects) {
+                    Image(systemName: AppTab.projects.icon)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Open in Projects")
             }
 
             if let url = task.externalUrl, let urlObj = URL(string: url) {

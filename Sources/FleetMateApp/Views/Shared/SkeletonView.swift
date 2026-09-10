@@ -7,7 +7,10 @@ struct ShimmerModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .overlay(
+            // Closure form: with the paren form the gradient's `.blendMode`
+            // resolves against both View and ShapeStyle overloads of
+            // `overlay`, which the macOS 26 SDK reports as ambiguous.
+            .overlay {
                 LinearGradient(
                     stops: [
                         .init(color: .clear, location: max(0, phase - 0.15)),
@@ -18,7 +21,7 @@ struct ShimmerModifier: ViewModifier {
                     endPoint: .trailing
                 )
                 .blendMode(.sourceAtop)
-            )
+            }
             .onAppear {
                 withAnimation(
                     .linear(duration: 3)

@@ -5,7 +5,7 @@ import Logging
 /// Uses native macOS ssh command for reliable SSH connectivity
 /// Future: Can be enhanced to use SwiftNIO SSH for pure Swift implementation
 public class SecureShellService {
-    private let config: SecureShellConfig
+    let config: SecureShellConfig
     private let reportMate: ReportMateService?
     private let logger = Logger(label: "com.fleetmate.ssh")
     private let connectionSemaphore: DispatchSemaphore
@@ -260,7 +260,7 @@ public class SecureShellService {
         return (Int(result.exitCode), result.stdout, result.stderr)
     }
     
-    private func getPrivateKeyPath() -> String? {
+    func getPrivateKeyPath() -> String? {
         // Try multiple key sources in order:
         // 1. Environment variable content (write to temp file)
         if let keyContent = config.getPrivateKeyFromEnv(), !keyContent.isEmpty {

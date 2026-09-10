@@ -281,9 +281,19 @@ struct ManageSidebarView: View {
 
     private var footer: some View {
         HStack {
-            Text("\(manage.roster.labs.count) labs · \(manage.roster.allComputers.count) machines")
-                .appFont(.caption2)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(manage.roster.labs.count) labs · \(manage.roster.allComputers.count) machines")
+                    .appFont(.caption2)
+                    .foregroundStyle(.secondary)
+                if !manage.rosterSource.isEmpty {
+                    Text(manage.rosterSource)
+                        .appFont(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(manage.rosterSource)
+                }
+            }
             Spacer()
             Button { manage.loadRoster() } label: {
                 Image(systemName: "arrow.clockwise").appFont(fixed: 11)

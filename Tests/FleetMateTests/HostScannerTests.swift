@@ -122,12 +122,55 @@ final class HostScannerTests: XCTestCase {
 
     func testUnicastLookupIsBoundedAndSkipsLoopback() async {
         let started = Date()
-        let missing = await NetworkReachabilityProbe.unicastLookup("fleetmate-no-such-host-\(UUID().uuidString.prefix(8)).invalid", timeout: 2)
+        let missing = await NetworkReachabilityProbe.unicastLookup("fleetmate-no-such-host-\(UUID().uuidString.prefix(8)).invalid", timeout: 2, searchDomains: [])
         XCTAssertNil(missing)
         XCTAssertLessThan(Date().timeIntervalSince(started), 6)
-        let loopback = await NetworkReachabilityProbe.unicastLookup("localhost", timeout: 2)
+        let loopback = await NetworkReachabilityProbe.unicastLookup("localhost", timeout: 2, searchDomains: [])
         XCTAssertNil(loopback, "a loopback answer is not a fleet address")
         XCTAssertNil(NetworkReachabilityProbe.getaddrinfoIPv4(""))
+    }
+
+    func testTimeBoxStopsWaitingOnASlowAnswer() async throws {
+        let started = Date()
+        let slow: Int? = await TimeBox.run(seconds: 0.2) { () -> Int? in
+            Thread.sleep(forTimeInterval: 3)
+            return 1
+        }
+        XCTAssertNil(slow, "the caller gives up at the deadline")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
+
+        let fast: Int? = await TimeBox.run(seconds: 2) { () -> Int? in 7 }
+        XCTAssertEqual(fast, 7)
+
+        let thrown: Int? = try await TimeBox.run(seconds: 2) { () async throws -> Int in 9 }
+        XCTAssertEqual(thrown, 9)
+        do {
+            let _: Int? = try await TimeBox.run(seconds: 2) { () async throws -> Int in throw URLError(.cannotConnectToHost) }
+            XCTFail("the body's error is rethrown")
+        } catch {}
+        let late: Int? = try await TimeBox.run(seconds: 0.2) { () async throws -> Int in
+            try await Task.sleep(nanoseconds: 2_000_000_000); return 3
+        }
+        XCTAssertNil(late)
+    }
+
+    func testSlowInventoryDoesNotStallTheScan() async {
+        struct SlowDirectory: DeviceDirectory {
+            func addressMap() async throws -> [String: String] {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                return ["S1": "10.15.1.1"]
+            }
+        }
+        let probe = FakeProbe(mdns: ["LAB-01": "10.15.1.9"], open: ["10.15.1.9:22"])
+        var scanner = HostScanner(directory: SlowDirectory(), probe: probe)
+        scanner.inventoryTimeoutOverride = 0.3
+        let started = Date()
+        let (results, summary) = await scanner.scan([lab[0]])
+        XCTAssertLessThan(Date().timeIntervalSince(started), 3)
+        XCTAssertEqual(results["S1"]?.source, .mdns, "resolution carries on without the inventory")
+        XCTAssertTrue(results["S1"]!.isOnline)
+        XCTAssertFalse(summary.reportMateAvailable)
+        XCTAssertEqual(summary.mode, .mdnsOnly)
     }
 
     func testAdhocDevicesKeepStoredAddressEvenWhenUnreachable() async {

@@ -1,4 +1,5 @@
 import Foundation
+import SystemConfiguration
 
 /// Where a scan looks up inventory addresses. `ReportMateDeviceDirectory`
 /// is the real one; tests substitute a fake.
@@ -53,21 +54,29 @@ public struct NetworkReachabilityProbe: ReachabilityProbe {
         return await Self.unicastLookup(bare, timeout: connectTimeout)
     }
 
-    /// IPv4 for `name` through the system resolver, bounded by `timeout`
-    /// (getaddrinfo cannot be cancelled, so the lookup is raced against a
-    /// sleep and a late answer is dropped).
-    static func unicastLookup(_ name: String, timeout: TimeInterval) async -> String? {
+    /// IPv4 for `name` through the system resolver, bounded by `timeout`.
+    /// The bare name is tried first, then the name under each of the
+    /// resolver's search domains, because a single-label lookup does not
+    /// always apply them. getaddrinfo cannot be cancelled, so the whole
+    /// lookup runs on its own thread and the caller stops waiting at the
+    /// deadline whether or not that thread has answered.
+    static func unicastLookup(_ name: String, timeout: TimeInterval, searchDomains: [String]? = nil) async -> String? {
         guard !name.isEmpty, !name.contains(" ") else { return nil }
-        return await withTaskGroup(of: String?.self) { group in
-            group.addTask { await Task.detached(priority: .userInitiated) { Self.getaddrinfoIPv4(name) }.value }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(max(0.1, timeout) * 1_000_000_000))
-                return nil
+        let domains = searchDomains ?? systemSearchDomains()
+        return await TimeBox.run(seconds: timeout) {
+            if let ip = getaddrinfoIPv4(name) { return ip }
+            for domain in domains where !domain.isEmpty && !name.lowercased().hasSuffix("." + domain.lowercased()) {
+                if let ip = getaddrinfoIPv4("\(name).\(domain)") { return ip }
             }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
+            return nil
         }
+    }
+
+    /// The search domains the system resolver is configured with.
+    static func systemSearchDomains() -> [String] {
+        guard let store = SCDynamicStoreCreate(nil, "FleetMate" as CFString, nil, nil),
+              let dns = SCDynamicStoreCopyValue(store, "State:/Network/Global/DNS" as CFString) as? [String: Any] else { return [] }
+        return (dns["SearchDomains"] as? [String]) ?? []
     }
 
     static func getaddrinfoIPv4(_ name: String) -> String? {
@@ -175,6 +184,12 @@ enum TcpProbe {
 public struct HostScanner: Sendable {
     public static let sshPort = 22
     public static let screenSharingPort = 5900
+    /// The inventory lookup is one process or HTTP call for the whole
+    /// fleet; past this the scan carries on with name resolution alone
+    /// rather than sitting at "Checking ReportMate…" for good.
+    public static let inventoryTimeout: TimeInterval = 45
+    /// Tests shorten the inventory wait.
+    var inventoryTimeoutOverride: TimeInterval?
 
     private let directory: DeviceDirectory?
     private let probe: ReachabilityProbe
@@ -209,7 +224,10 @@ public struct HostScanner: Sendable {
         onProgress?(Progress(status: "Checking ReportMate…", fraction: 0.05))
         if let directory, !regular.isEmpty {
             do {
-                let map = try await directory.addressMap()
+                let wait = inventoryTimeoutOverride ?? Self.inventoryTimeout
+                guard let map = try await TimeBox.run(seconds: wait, { try await directory.addressMap() }) else {
+                    throw HostScanError.inventoryTimedOut(wait)
+                }
                 reportMateAvailable = !map.isEmpty
                 for c in regular {
                     if let ip = map[c.serial], !ip.isEmpty { addresses[c.serial] = (ip, .reportMate) }
@@ -329,6 +347,79 @@ public struct HostScanner: Sendable {
                 }
             }
             return results
+        }
+    }
+}
+
+public enum HostScanError: Error, LocalizedError {
+    case inventoryTimedOut(TimeInterval)
+
+    public var errorDescription: String? {
+        switch self {
+        case .inventoryTimedOut(let seconds): "no answer within \(Int(seconds))s"
+        }
+    }
+}
+
+/// Runs `body` and gives up waiting after `seconds`, returning nil. The
+/// body keeps running to completion on its own; only the wait is bounded.
+/// For work that cannot be cancelled (getaddrinfo, a child process) this is
+/// the only way to keep a scan from stalling on one slow answer. Anything
+/// that blocks a thread inside an async body must itself go through
+/// Dispatch (ProcessRunner.run does), for the reason given below.
+public enum TimeBox {
+    public static func run<T: Sendable>(seconds: TimeInterval, _ body: @escaping @Sendable () async throws -> T) async throws -> T? {
+        let gate = OneShot<Result<T?, Error>>()
+        Task.detached(priority: .userInitiated) {
+            do { gate.resume(.success(try await body())) } catch { gate.resume(.failure(error)) }
+        }
+        Task.detached {
+            try? await Task.sleep(nanoseconds: UInt64(max(0.05, seconds) * 1_000_000_000))
+            gate.resume(.success(nil))
+        }
+        return try await gate.value().get()
+    }
+
+    /// The synchronous form runs `body` on a Dispatch thread, never on the
+    /// cooperative pool: a dozen blocked getaddrinfo calls there would starve
+    /// every other task in the app, which reads as the whole tab hanging.
+    public static func run<T: Sendable>(seconds: TimeInterval, _ body: @escaping @Sendable () -> T?) async -> T? {
+        let gate = OneShot<T?>()
+        DispatchQueue.global(qos: .userInitiated).async { gate.resume(body()) }
+        Task.detached {
+            try? await Task.sleep(nanoseconds: UInt64(max(0.05, seconds) * 1_000_000_000))
+            gate.resume(nil)
+        }
+        return await gate.value()
+    }
+
+    /// A continuation that accepts exactly one resume; later ones are dropped.
+    final class OneShot<T: Sendable>: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<T, Never>?
+        private var stored: T?
+        private var delivered = false
+
+        func resume(_ value: T) {
+            let pending: CheckedContinuation<T, Never>? = lock.withLock {
+                guard !delivered else { return nil }
+                delivered = true
+                if let c = continuation { continuation = nil; return c }
+                stored = value
+                return nil
+            }
+            pending?.resume(returning: value)
+        }
+
+        func value() async -> T {
+            await withCheckedContinuation { c in
+                let ready: T? = lock.withLock {
+                    if delivered, let v = stored { return v }
+                    continuation = c
+                    return nil
+                }
+                if let ready { c.resume(returning: ready) }
+            }
         }
     }
 }

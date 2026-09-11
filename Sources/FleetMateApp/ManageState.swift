@@ -43,6 +43,11 @@ final class ManageState: ObservableObject {
     @Published private(set) var scanProgress: Double = 0
     @Published private(set) var rescanningSerials: Set<String> = []
     private var scanTask: Task<Void, Never>?
+    /// Which scan is current. Progress and results carry the generation they
+    /// belong to and are dropped when a newer scan (or a view change) has
+    /// superseded them, so a cancelled or replaced scan can never leave the
+    /// tab stuck in the scanning state or overwrite a newer result set.
+    private var scanGeneration = 0
 
     // MARK: - Probe
 
@@ -245,8 +250,7 @@ final class ManageState: ObservableObject {
     }
 
     func clearView() {
-        scanTask?.cancel()
-        scanTask = nil
+        invalidateScan()
         killCommand()
         selection.clear()
         selectedComputerIDs = []
@@ -283,8 +287,7 @@ final class ManageState: ObservableObject {
     }
 
     private func viewChanged(selectAll: Bool = false) {
-        scanTask?.cancel()
-        scanTask = nil
+        invalidateScan()
         killCommand()
         results = [:]
         isScanning = false
@@ -301,9 +304,13 @@ final class ManageState: ObservableObject {
 
     // MARK: - Scanning
 
+    /// Scan the current view. A scan already running is replaced, never
+    /// waited on: the operator asked for fresh answers.
     func startScan() {
         let computers = currentComputers
-        guard !computers.isEmpty, !isScanning else { return }
+        guard !computers.isEmpty else { return }
+        invalidateScan()
+        let generation = scanGeneration
         let known = selection.knownAddresses(groups: customGroups)
         let scanner = makeScanner()
         isScanning = true
@@ -312,23 +319,31 @@ final class ManageState: ObservableObject {
         scanTask = Task { [weak self] in
             let (results, summary) = await scanner.scan(computers, knownAddresses: known) { progress in
                 Task { @MainActor [weak self] in
-                    guard let self, self.isScanning else { return }
+                    guard let self, self.scanGeneration == generation, self.isScanning else { return }
                     self.scanStatus = progress.status
                     self.scanProgress = progress.fraction
                 }
             }
-            guard !Task.isCancelled, let self else { return }
+            guard let self, self.scanGeneration == generation, !Task.isCancelled else { return }
             self.scanResults = results
             self.scanSummary = summary
             self.isScanning = false
             self.scanStatus = ""
             self.scanProgress = 1
+            self.scanTask = nil
             self.rememberGroupAddresses(results)
-            await self.fetchAllMachineInfo()
+            dbg.info("Scan: \(summary.online) online of \(summary.total), \(summary.resolved) resolved (\(summary.fromReportMate) inventory, \(summary.fromMdns) by name) in \(String(format: "%.1f", summary.duration))s", category: "manage")
+            await self.fetchAllMachineInfo(generation: generation)
         }
     }
 
     func cancelScan() {
+        invalidateScan()
+    }
+
+    /// Stop whatever scan is running and make its late answers stale.
+    private func invalidateScan() {
+        scanGeneration += 1
         scanTask?.cancel()
         scanTask = nil
         isScanning = false
@@ -378,11 +393,14 @@ final class ManageState: ObservableObject {
         SecureShellService(config: config.toSecureShellConfig(), reportMate: nil)
     }
 
-    func fetchAllMachineInfo() async {
-        await fetchMachineInfo(for: currentComputers.filter { isOnline($0) })
+    func fetchAllMachineInfo(generation: Int? = nil) async {
+        await fetchMachineInfo(for: currentComputers.filter { isOnline($0) }, generation: generation)
     }
 
-    func fetchMachineInfo(for computers: [RosterComputer]) async {
+    /// Probe the given machines over SSH. `generation` ties the probe to the
+    /// scan that found them: answers arriving after the view moved on are
+    /// dropped instead of landing on the wrong machines.
+    func fetchMachineInfo(for computers: [RosterComputer], generation: Int? = nil) async {
         guard !isFetchingInfo else { return }
         let targets = computers.compactMap { c -> CommandRunner.Target? in
             guard let ip = ipFor(c) else { return nil }
@@ -390,10 +408,12 @@ final class ManageState: ObservableObject {
         }
         guard !targets.isEmpty else { return }
         isFetchingInfo = true
+        defer { isFetchingInfo = false }
         let service = MachineProbeService(executor: makeExecutor(), concurrency: max(1, config.probeConcurrency), username: config.resolvedSshUser)
         await service.probeAll(targets) { serial, outcome in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                if let generation, generation != self.scanGeneration { return }
                 switch outcome {
                 case .info(let info):
                     self.machineInfos[serial] = info
@@ -406,7 +426,6 @@ final class ManageState: ObservableObject {
                 }
             }
         }
-        isFetchingInfo = false
     }
 
     // MARK: - Custom groups

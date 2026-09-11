@@ -201,6 +201,14 @@ extension ManageState {
 
     private func finishRun(label: String) {
         guard isRunning else { return }
+        // The runner reported every target before returning; a row still
+        // open here never got its event, and must not sit as queued forever.
+        for key in results.keys where !(results[key]?.status.isTerminal ?? true) {
+            results[key]?.status = .failed(-1)
+            results[key]?.errorOutput = "No result was reported for this machine"
+            results[key]?.endTime = Date()
+            dbg.warn("Run \(label): no result event for \(key)", category: "manage")
+        }
         isRunning = false
         runLabel = ""
         runTask = nil

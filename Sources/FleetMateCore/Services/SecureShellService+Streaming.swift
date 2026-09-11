@@ -145,7 +145,12 @@ extension SecureShellService: RemoteScriptExecutor {
         )
     }
 
-    /// scp a local file to the remote address.
+    /// How long one package copy may take before it is abandoned. A stalled
+    /// transfer used to hold its slot forever and keep the whole run open.
+    public static let copyTimeout: TimeInterval = 900
+
+    /// scp a local file to the remote address. Keep-alives catch a host
+    /// that vanishes mid-transfer; the timeout catches everything else.
     public func copyFile(localPath: String, address: String, remotePath: String, username: String? = nil) async -> (exitCode: Int32, stderr: String) {
         var args = [
             "-o", "ConnectTimeout=\(max(1, min(config.connectionTimeoutSeconds, 10)))",
@@ -153,6 +158,8 @@ extension SecureShellService: RemoteScriptExecutor {
             "-o", "UserKnownHostsFile=/dev/null",
             "-o", "BatchMode=yes",
             "-o", "LogLevel=ERROR",
+            "-o", "ServerAliveInterval=5",
+            "-o", "ServerAliveCountMax=3",
             "-P", "\(config.port)",
         ]
         if let keyPath = getPrivateKeyPath(), FileManager.default.fileExists(atPath: keyPath) {
@@ -160,8 +167,16 @@ extension SecureShellService: RemoteScriptExecutor {
         }
         args.append(localPath)
         args.append("\(username ?? config.defaultUsername)@\(address):\(remotePath)")
-        let result = await ProcessRunner.run("/usr/bin/scp", args)
-        return (result.exitCode, result.stderr)
+        let result = await StreamingProcess.run(
+            executable: "/usr/bin/scp", arguments: args, stdin: nil, timeout: Self.copyTimeout) { _ in }
+        switch result.outcome {
+        case .timeout:
+            return (result.exitCode == 0 ? 1 : result.exitCode, "scp: transfer to \(address) timed out after \(Int(Self.copyTimeout))s")
+        case .cancelled:
+            return (result.exitCode == 0 ? 1 : result.exitCode, result.stderr.isEmpty ? "scp: cancelled" : result.stderr)
+        default:
+            return (result.exitCode, result.stderr)
+        }
     }
 }
 

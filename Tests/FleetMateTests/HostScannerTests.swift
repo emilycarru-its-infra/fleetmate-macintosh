@@ -58,7 +58,7 @@ final class HostScannerTests: XCTestCase {
         XCTAssertEqual(results["S3"]?.source, .mdns)
         XCTAssertTrue(results["S3"]!.isOnline, "Screen Sharing alone counts as online")
         XCTAssertEqual(results["S4"]?.state, .unresolved)
-        XCTAssertEqual(probe.resolved, ["LAB-03"], "inventory hits are not re-resolved; rows without a hostname are skipped")
+        XCTAssertEqual(probe.resolved, ["LAB-03", "LAB-02"], "the silent inventory address is resolved again after the probe; online hits and rows without a hostname are not")
         XCTAssertEqual(summary.mode, .reportMate)
         XCTAssertEqual(summary.total, 4)
         XCTAssertEqual(summary.resolved, 3)
@@ -82,6 +82,52 @@ final class HostScannerTests: XCTestCase {
         let (results, summary) = await scanner.scan(lab)
         XCTAssertEqual(summary.mode, .limited)
         XCTAssertTrue(results.values.allSatisfy { $0.state == .unresolved })
+    }
+
+    func testSilentInventoryAddressIsResolvedByNameAgain() async {
+        // The inventory remembers S1 at .1 from an old lease; the machine now
+        // answers at .9. S2's inventory address is silent and the name gives
+        // the same address back, so nothing changes. S3 is online at its
+        // inventory address and is never re-resolved.
+        let directory = FakeDirectory(map: ["S1": "10.15.1.1", "S2": "10.15.1.2", "S3": "10.15.1.3"])
+        let probe = FakeProbe(mdns: ["LAB-01": "10.15.1.9", "LAB-02": "10.15.1.2", "LAB-03": "10.15.1.99"],
+                              open: ["10.15.1.9:22", "10.15.1.3:22"])
+        let scanner = HostScanner(directory: directory, probe: probe, concurrency: 2)
+
+        let (results, summary) = await scanner.scan(Array(lab.prefix(3)))
+
+        XCTAssertEqual(results["S1"]?.ip, "10.15.1.9", "the fresh address replaces the stale inventory one")
+        XCTAssertEqual(results["S1"]?.source, .mdns)
+        XCTAssertTrue(results["S1"]!.isOnline)
+        XCTAssertEqual(results["S2"]?.ip, "10.15.1.2")
+        XCTAssertEqual(results["S2"]?.source, .reportMate, "same address back from the name keeps the inventory result")
+        XCTAssertEqual(results["S2"]?.state, .unreachable)
+        XCTAssertEqual(results["S3"]?.source, .reportMate)
+        XCTAssertEqual(Set(probe.resolved), ["LAB-01", "LAB-02"], "only silent inventory addresses are resolved again")
+        XCTAssertEqual(summary.online, 2)
+        XCTAssertEqual(summary.fromReportMate, 2)
+        XCTAssertEqual(summary.fromMdns, 1)
+        XCTAssertEqual(summary.mode, .reportMate)
+    }
+
+    func testSilentInventoryAddressWithoutHostnameStaysPut() async {
+        let noName = RosterComputer(serial: "S9", allocation: "Unnamed")
+        let probe = FakeProbe(mdns: [:], open: [])
+        let scanner = HostScanner(directory: FakeDirectory(map: ["S9": "10.15.1.5"]), probe: probe)
+        let (results, _) = await scanner.scan([noName])
+        XCTAssertEqual(results["S9"]?.ip, "10.15.1.5")
+        XCTAssertEqual(results["S9"]?.state, .unreachable)
+        XCTAssertTrue(probe.resolved.isEmpty)
+    }
+
+    func testUnicastLookupIsBoundedAndSkipsLoopback() async {
+        let started = Date()
+        let missing = await NetworkReachabilityProbe.unicastLookup("fleetmate-no-such-host-\(UUID().uuidString.prefix(8)).invalid", timeout: 2)
+        XCTAssertNil(missing)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 6)
+        let loopback = await NetworkReachabilityProbe.unicastLookup("localhost", timeout: 2)
+        XCTAssertNil(loopback, "a loopback answer is not a fleet address")
+        XCTAssertNil(NetworkReachabilityProbe.getaddrinfoIPv4(""))
     }
 
     func testAdhocDevicesKeepStoredAddressEvenWhenUnreachable() async {

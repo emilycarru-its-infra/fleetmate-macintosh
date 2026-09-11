@@ -324,7 +324,7 @@ struct MachineRow: View {
                         Image(systemName: result.status.icon)
                             .foregroundStyle(result.status.tint)
                             .appFont(fixed: 11)
-                            .help(result.status.label)
+                            .help("\(result.status.label): \(result.status.explanation)")
                     }
                 }
             }

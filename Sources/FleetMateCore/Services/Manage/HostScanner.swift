@@ -42,10 +42,55 @@ public struct NetworkReachabilityProbe: ReachabilityProbe {
         self.pingTimeoutMilliseconds = pingTimeoutMilliseconds
     }
 
+    /// Bonjour first (`name.local`, answered by the machine itself), then the
+    /// unicast resolver for the bare name (campus DNS registers DHCP leases),
+    /// which is what reaches a machine on another subnet.
     public func resolve(hostname: String) async -> String? {
-        let name = hostname.hasSuffix(".local") ? hostname : "\(hostname).local"
+        let bare = hostname.hasSuffix(".local") ? String(hostname.dropLast(".local".count)) : hostname
+        let name = "\(bare).local"
         let result = await ProcessRunner.run("/sbin/ping", ["-c1", "-W\(pingTimeoutMilliseconds)", name])
-        return Self.extractIP(from: result.stdout)
+        if let ip = Self.extractIP(from: result.stdout) { return ip }
+        return await Self.unicastLookup(bare, timeout: connectTimeout)
+    }
+
+    /// IPv4 for `name` through the system resolver, bounded by `timeout`
+    /// (getaddrinfo cannot be cancelled, so the lookup is raced against a
+    /// sleep and a late answer is dropped).
+    static func unicastLookup(_ name: String, timeout: TimeInterval) async -> String? {
+        guard !name.isEmpty, !name.contains(" ") else { return nil }
+        return await withTaskGroup(of: String?.self) { group in
+            group.addTask { await Task.detached(priority: .userInitiated) { Self.getaddrinfoIPv4(name) }.value }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(max(0.1, timeout) * 1_000_000_000))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+
+    static func getaddrinfoIPv4(_ name: String) -> String? {
+        var hints = addrinfo()
+        hints.ai_family = AF_INET
+        hints.ai_socktype = SOCK_STREAM
+        var info: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(name, nil, &hints, &info) == 0, let first = info else { return nil }
+        defer { freeaddrinfo(info) }
+        var cursor: UnsafeMutablePointer<addrinfo>? = first
+        while let entry = cursor {
+            if entry.pointee.ai_family == AF_INET, let addr = entry.pointee.ai_addr {
+                var sin = sockaddr_in()
+                memcpy(&sin, addr, Int(MemoryLayout<sockaddr_in>.size))
+                var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                if inet_ntop(AF_INET, &sin.sin_addr, &buffer, socklen_t(INET_ADDRSTRLEN)) != nil {
+                    let ip = String(cString: buffer)
+                    if !ip.hasPrefix("127.") { return ip }
+                }
+            }
+            cursor = entry.pointee.ai_next
+        }
+        return nil
     }
 
     /// Pattern: `PING name.local (10.15.2.50): 56 data bytes`.
@@ -121,10 +166,12 @@ enum TcpProbe {
 /// Resolves a room's machines to addresses and decides who is online.
 ///
 /// Order: inventory addresses first (one call covers the fleet, including
-/// WiFi-only and sleeping Macs that never answer mDNS), then mDNS for the
-/// rest, then a TCP probe of 22 and 5900 for every address. Ad-hoc devices
-/// with a stored address are probed at that address and keep it even when
-/// nothing answers, so SSH and Screen Sharing stay one click away.
+/// WiFi-only and sleeping Macs that never answer mDNS), then name
+/// resolution for the rest, then a TCP probe of 22 and 5900 for every
+/// address. Inventory addresses that answer nothing are resolved by name
+/// again, because the inventory can be days behind a DHCP lease. Ad-hoc
+/// devices with a stored address are probed at that address and keep it
+/// even when nothing answers, so SSH and Screen Sharing stay one click away.
 public struct HostScanner: Sendable {
     public static let sshPort = 22
     public static let screenSharingPort = 5900
@@ -196,12 +243,29 @@ public struct HostScanner: Sendable {
         onProgress?(Progress(status: "Probing \(addresses.count) addresses…", fraction: 0.6))
         let snapshot = addresses
         let withAddress = computers.filter { snapshot[$0.serial] != nil }
-        let probed = await throttled(withAddress) { c -> HostScanResult in
+        var probed = await throttled(withAddress) { c -> HostScanResult in
             let entry = snapshot[c.serial]!
-            async let ssh = probe.isTcpOpen(ip: entry.ip, port: Self.sshPort)
-            async let vnc = probe.isTcpOpen(ip: entry.ip, port: Self.screenSharingPort)
-            return HostScanResult(serial: c.serial, ip: entry.ip, source: entry.source,
-                                  sshOpen: await ssh, screenSharingOpen: await vnc)
+            return await probePorts(serial: c.serial, ip: entry.ip, source: entry.source)
+        }
+        if Task.isCancelled { return ([:], ScanSummary(mode: .unknown, total: computers.count)) }
+
+        // 4. An inventory address that answered nothing may simply be an old
+        // lease: the machine reported it days ago and has moved since. Ask
+        // the network for the name and, when that gives a different address,
+        // probe that one instead.
+        let silentBySerial = Dictionary(uniqueKeysWithValues: probed
+            .filter { $0.source == .reportMate && !$0.isOnline }
+            .map { ($0.serial, $0) })
+        let stale = regular.filter { silentBySerial[$0.serial] != nil && $0.hasHostname }
+        if !stale.isEmpty {
+            onProgress?(Progress(status: "\(stale.count) inventory addresses silent, resolving by name…", fraction: 0.8))
+            let moved = await throttled(stale) { c -> HostScanResult? in
+                guard let ip = await probe.resolve(hostname: c.hostname), !ip.isEmpty,
+                      ip != silentBySerial[c.serial]?.ip else { return nil }
+                return await probePorts(serial: c.serial, ip: ip, source: .mdns)
+            }
+            let movedBySerial = Dictionary(uniqueKeysWithValues: moved.compactMap { $0 }.map { ($0.serial, $0) })
+            probed = probed.map { movedBySerial[$0.serial] ?? $0 }
         }
 
         var results: [String: HostScanResult] = [:]
@@ -224,7 +288,10 @@ public struct HostScanner: Sendable {
             duration: Date().timeIntervalSince(started)))
     }
 
-    /// Re-check one machine: mDNS (or the known address for ad-hoc) then a TCP probe.
+    /// Re-check one machine: the name first (or the known address for
+    /// ad-hoc), then a TCP probe. When the name does not resolve but an
+    /// address is known from before, that address is probed so a machine
+    /// that answers only on its old lease is not reported as gone.
     public func rescan(_ computer: RosterComputer, knownIp: String?) async -> HostScanResult {
         var ip: String? = nil
         var source: AddressSource = .none
@@ -234,9 +301,13 @@ public struct HostScanner: Sendable {
             ip = knownIp; source = .stored
         }
         guard let ip else { return .unresolved(computer.serial) }
+        return await probePorts(serial: computer.serial, ip: ip, source: source)
+    }
+
+    private func probePorts(serial: String, ip: String, source: AddressSource) async -> HostScanResult {
         async let ssh = probe.isTcpOpen(ip: ip, port: Self.sshPort)
         async let vnc = probe.isTcpOpen(ip: ip, port: Self.screenSharingPort)
-        return HostScanResult(serial: computer.serial, ip: ip, source: source,
+        return HostScanResult(serial: serial, ip: ip, source: source,
                               sshOpen: await ssh, screenSharingOpen: await vnc)
     }
 

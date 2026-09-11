@@ -17,9 +17,24 @@ public enum CommandRunStatus: Hashable, Sendable {
         }
     }
 
+    /// Why the row is in this state, for a tooltip. Queued rows are the
+    /// ones waiting for one of the concurrent SSH slots to free up.
+    public var explanation: String {
+        switch self {
+        case .pending: "Waiting for a free SSH slot; machines run a few at a time"
+        case .running: "SSH session open, output streaming"
+        case .success: "Exited 0"
+        case .failed(let code): "The command exited \(code)"
+        case .offline: "Nothing answered on port 22 when the command was sent"
+        case .timeout: "The command was stopped after the per-host time limit"
+        case .authFailed: "The host answered but rejected the configured key or user"
+        case .cancelled: "Stopped before it finished"
+        }
+    }
+
     public var label: String {
         switch self {
-        case .pending: "Pending"
+        case .pending: "Queued"
         case .running: "Running"
         case .success: "Success"
         case .failed(let code): "Exit \(code)"

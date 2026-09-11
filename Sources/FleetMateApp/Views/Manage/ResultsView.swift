@@ -87,8 +87,13 @@ struct ResultsView: View {
                 if failed > 0 { StatusCapsule(text: "\(failed)", systemImage: "xmark.circle.fill", tint: .manageFailure) }
                 if offline > 0 { StatusCapsule(text: "\(offline)", systemImage: "wifi.slash", tint: .secondary) }
                 if manage.isRunning {
-                    let pending = manage.sortedResults.filter { !$0.status.isTerminal }.count
-                    StatusCapsule(text: "\(pending) running", systemImage: "arrow.clockwise", tint: .manageInfo)
+                    let running = manage.sortedResults.filter { $0.status == .running }.count
+                    let queued = manage.sortedResults.filter { $0.status == .pending }.count
+                    if running > 0 { StatusCapsule(text: "\(running) running", systemImage: "arrow.clockwise", tint: .manageInfo) }
+                    if queued > 0 {
+                        StatusCapsule(text: "\(queued) queued", systemImage: "clock", tint: .secondary)
+                            .help(CommandRunStatus.pending.explanation)
+                    }
                 }
             }
 
@@ -162,6 +167,7 @@ struct ResultRowView: View {
                 Text(result.computer.displayName).appFont(.subheadline, weight: .semibold)
                 Text(result.ip).appFont(.footnote).foregroundStyle(.secondary)
                 StatusCapsule(text: result.status.label, systemImage: result.status.icon, tint: result.status.tint)
+                    .help(result.status.explanation)
 
                 Spacer()
 

@@ -181,9 +181,24 @@ extension SecureShellService: RemoteScriptExecutor {
 }
 
 /// A child process whose stdout is delivered as it arrives, with a timeout
-/// and task cancellation that both terminate it. Closes every pipe end on
-/// every path, for the same reason `ProcessRunner` does.
+/// and task cancellation that both terminate it.
+///
+/// Nothing in here blocks a thread. The pipes are drained by `DispatchIO`
+/// on a private queue, the script is written the same way, and the caller
+/// only ever suspends on a continuation. The previous version parked a
+/// detached task in `readDataToEndOfFile()` for every running session, which
+/// pins one cooperative-pool thread per child. On an 8-core laptop ten
+/// sessions took every pool thread; the kernel then refused threads to the
+/// global queues that carried the stdin write and the timeout, so the remote
+/// shell waited forever for a script that never arrived and the timer never
+/// fired. Private queues target the overcommit root and are not subject to
+/// that limit, and DispatchIO never holds a thread while it waits.
 enum StreamingProcess {
+
+    /// How long a terminated child may take to actually die before it is
+    /// killed, and how long its pipes may stay open after it exits before
+    /// the drain gives up on them.
+    static let gracePeriod: TimeInterval = 5
 
     static func run(
         executable: String,
@@ -202,22 +217,26 @@ enum StreamingProcess {
         process.standardError = errPipe
         process.standardInput = stdin == nil ? FileHandle.nullDevice : inPipe
 
+        let queue = DispatchQueue(label: "fleetmate.streaming-process", qos: .userInitiated, attributes: .concurrent)
         let state = TerminationState()
-        let exited = ExitSignal()
-        process.terminationHandler = { _ in exited.signal() }
+        let stderrBuffer = ByteBuffer()
+        let drains = DrainSet()
 
-        outPipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            if let chunk = String(data: data, encoding: .utf8) {
-                onChunk(chunk)
-            }
+        // Exit, stdout EOF and stderr EOF each hold the group once; the run
+        // is over when all three have let go.
+        let finished = DispatchGroup()
+        finished.enter()
+        process.terminationHandler = { _ in
+            finished.leave()
+            // A grandchild that inherited the pipes could keep them open
+            // after ssh itself is gone; do not wait on it forever.
+            queue.asyncAfter(deadline: .now() + gracePeriod) { drains.stopAll() }
         }
 
         do {
             try process.run()
         } catch {
-            outPipe.fileHandleForReading.readabilityHandler = nil
+            finished.leave()
             try? outPipe.fileHandleForReading.close(); try? outPipe.fileHandleForWriting.close()
             try? errPipe.fileHandleForReading.close(); try? errPipe.fileHandleForWriting.close()
             try? inPipe.fileHandleForReading.close(); try? inPipe.fileHandleForWriting.close()
@@ -226,53 +245,41 @@ enum StreamingProcess {
                 stderr: "could not launch \(executable): \(error.localizedDescription)",
                 duration: Date().timeIntervalSince(started))
         }
+        // From here on the child-side ends belong to Foundation, which closed
+        // its copies when the child was spawned; only our ends are touched.
 
+        drains.add(drain(outPipe.fileHandleForReading, queue: queue, group: finished) { data in
+            onChunk(String(decoding: data, as: UTF8.self))
+        })
+        drains.add(drain(errPipe.fileHandleForReading, queue: queue, group: finished) { data in
+            stderrBuffer.append(data)
+        })
         if let stdin, let data = stdin.data(using: .utf8) {
-            // Written on a background queue: a script larger than the pipe
-            // buffer would otherwise block here before the child reads.
-            DispatchQueue.global(qos: .userInitiated).async {
-                try? inPipe.fileHandleForWriting.write(contentsOf: data)
-                try? inPipe.fileHandleForWriting.close()
-            }
+            feed(inPipe.fileHandleForWriting, data: data, queue: queue)
         }
 
         let timer = DispatchWorkItem {
             state.markTimedOut()
-            if process.isRunning { process.terminate() }
+            stop(process, queue: queue)
         }
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: timer)
-
-        // Collect stderr concurrently so a chatty stderr can never fill its
-        // pipe and stall the child.
-        let stderrTask = Task.detached(priority: .userInitiated) { () -> String in
-            let data = errPipe.fileHandleForReading.readDataToEndOfFile()
-            return String(decoding: data, as: UTF8.self)
-        }
+        queue.asyncAfter(deadline: .now() + timeout, execute: timer)
 
         await withTaskCancellationHandler {
-            await exited.wait()
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                finished.notify(queue: queue) { continuation.resume() }
+            }
         } onCancel: {
             state.markCancelled()
-            if process.isRunning { process.terminate() }
+            stop(process, queue: queue)
         }
-
         timer.cancel()
-
-        // Flush whatever stdout is left, then stop delivering.
-        outPipe.fileHandleForReading.readabilityHandler = nil
-        let remaining = outPipe.fileHandleForReading.readDataToEndOfFile()
-        if !remaining.isEmpty, let chunk = String(data: remaining, encoding: .utf8) {
-            onChunk(chunk)
-        }
-        let stderr = await stderrTask.value
-
+        drains.closeAll()
         try? outPipe.fileHandleForReading.close()
         try? errPipe.fileHandleForReading.close()
-        try? inPipe.fileHandleForReading.close()
 
         let exitCode = process.terminationStatus
         let duration = Date().timeIntervalSince(started)
-        let trimmedErr = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedErr = stderrBuffer.string.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if state.cancelled {
             return SecureShellStreamResult(outcome: .cancelled, exitCode: exitCode, stderr: trimmedErr, duration: duration)
@@ -284,33 +291,77 @@ enum StreamingProcess {
         return SecureShellStreamResult(outcome: outcome, exitCode: exitCode, stderr: trimmedErr, duration: duration)
     }
 
-    /// Bridges `Process.terminationHandler` to an awaitable, whichever fires
-    /// first: the handler may run before anyone waits, so the signal is latched.
-    private final class ExitSignal: @unchecked Sendable {
+    /// Ask the child to stop, and make sure it does.
+    private static func stop(_ process: Process, queue: DispatchQueue) {
+        guard process.isRunning else { return }
+        process.terminate()
+        let pid = process.processIdentifier
+        queue.asyncAfter(deadline: .now() + gracePeriod) {
+            if process.isRunning { kill(pid, SIGKILL) }
+        }
+    }
+
+    /// Read `handle` to EOF through DispatchIO, handing every chunk to
+    /// `onData` on `queue`, and leave `group` once when the stream ends.
+    private static func drain(
+        _ handle: FileHandle,
+        queue: DispatchQueue,
+        group: DispatchGroup,
+        onData: @escaping @Sendable (Data) -> Void
+    ) -> DispatchIO {
+        group.enter()
+        let channel = DispatchIO(type: .stream, fileDescriptor: handle.fileDescriptor, queue: queue) { _ in }
+        channel.setLimit(lowWater: 1)
+        let ended = OnceFlag()
+        channel.read(offset: 0, length: Int.max, queue: queue) { done, data, _ in
+            if let data, !data.isEmpty {
+                onData(data.withUnsafeBytes { Data(bytes: $0, count: data.count) })
+            }
+            if done, ended.first() { group.leave() }
+        }
+        return channel
+    }
+
+    /// Write `data` to `handle` through DispatchIO and close it so the
+    /// child sees EOF. A child that exits early makes the write fail with
+    /// EPIPE, which must not raise SIGPIPE in this process.
+    private static func feed(_ handle: FileHandle, data: Data, queue: DispatchQueue) {
+        let fd = handle.fileDescriptor
+        _ = fcntl(fd, F_SETNOSIGPIPE, 1)
+        let channel = DispatchIO(type: .stream, fileDescriptor: fd, queue: queue) { _ in
+            try? handle.close()
+        }
+        let bytes = data.withUnsafeBytes { DispatchData(bytes: $0) }
+        channel.write(offset: 0, data: bytes, queue: queue) { done, _, _ in
+            if done { channel.close() }
+        }
+    }
+
+    /// The DispatchIO channels draining a child's pipes, so an exit that
+    /// leaves them open can still end the run.
+    private final class DrainSet: @unchecked Sendable {
         private let lock = NSLock()
-        private var fired = false
-        private var continuation: CheckedContinuation<Void, Never>?
+        private var channels: [DispatchIO] = []
 
-        func signal() {
-            let pending: CheckedContinuation<Void, Never>? = lock.withLock {
-                fired = true
-                let c = continuation
-                continuation = nil
-                return c
-            }
-            pending?.resume()
-        }
+        func add(_ channel: DispatchIO) { lock.withLock { channels.append(channel) } }
+        /// Abort outstanding reads: their handlers run once more with `done`.
+        func stopAll() { lock.withLock { channels }.forEach { $0.close(flags: .stop) } }
+        func closeAll() { lock.withLock { channels }.forEach { $0.close() } }
+    }
 
-        func wait() async {
-            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-                let resumeNow: Bool = lock.withLock {
-                    if fired { return true }
-                    continuation = c
-                    return false
-                }
-                if resumeNow { c.resume() }
-            }
-        }
+    /// Bytes collected from arbitrary queues.
+    private final class ByteBuffer: @unchecked Sendable {
+        private let lock = NSLock()
+        private var data = Data()
+        func append(_ more: Data) { lock.withLock { data.append(more) } }
+        var string: String { lock.withLock { String(decoding: data, as: UTF8.self) } }
+    }
+
+    /// True exactly once.
+    private final class OnceFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var used = false
+        func first() -> Bool { lock.withLock { defer { used = true }; return !used } }
     }
 
     /// Why the process was terminated, if we did it.

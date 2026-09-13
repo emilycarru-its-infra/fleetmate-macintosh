@@ -38,6 +38,26 @@ public actor AzTokenSource {
         return token
     }
 
+    /// A delegated access token for a single *named* Graph permission, e.g.
+    /// `https://graph.microsoft.com/RoleManagement.Read.Directory`.
+    ///
+    /// `--resource` asks for every permission already consented on that resource;
+    /// some are not in the default set and simply come back missing, which Graph
+    /// then refuses with PermissionScopeNotGranted rather than anything naming the
+    /// scope. `--scope` asks for exactly one, which both works and is the
+    /// least-privilege request.
+    public func token(forScope scope: String) async throws -> String {
+        if let c = cache[scope], Date() < c.expiry { return c.token }
+        let r = run(["account", "get-access-token", "--scope", scope, "--query", "accessToken", "-o", "tsv"])
+        guard r.code == 0 else {
+            throw AzTokenError.acquisitionFailed(scope, (r.err.isEmpty ? r.out : r.err).trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        let token = r.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { throw AzTokenError.acquisitionFailed(scope, "az returned an empty token") }
+        cache[scope] = (token, Date().addingTimeInterval(50 * 60))
+        return token
+    }
+
     static func locateAz() -> String {
         for c in ["/opt/homebrew/bin/az", "/usr/local/bin/az"] where FileManager.default.isExecutableFile(atPath: c) { return c }
         return "az"

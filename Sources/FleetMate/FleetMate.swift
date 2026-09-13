@@ -16,6 +16,7 @@ struct FleetMate: AsyncParsableCommand {
             IntuneCommand.self,
             AutopilotCommand.self,
             EntraCommand.self,
+            PimCommand.self,
             DevOpsCommand.self,
             PullRequestsCommand.self,
             TdxCommand.self,

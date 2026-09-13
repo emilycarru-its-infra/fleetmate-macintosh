@@ -52,6 +52,9 @@ public actor ElevationSession {
         case .identity: return "DevOps-Identity"
         case .systems: return "DevOps-Systems"
         case .cloud: return "DevOps-Cloud"
+        // Named for completeness only: PimService calls Graph as the operator and
+        // never starts a security-domain container.
+        case .security: return "DevOps-Security"
         }
     }
 

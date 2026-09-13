@@ -128,6 +128,25 @@ struct IntuneWipeSubcommand: AsyncParsableCommand {
             // Unknown platform — send only the keys every platform accepts.
             results = try await service.wipeDevices([identifier], options: options)
         }
+        // Cleanup is not optional: stale Entra twins left behind fail the next
+        // OOBE and wedge the Enrollment Status Page. Only run it when the wipe was
+        // actually accepted, and use the name captured before the wipe renamed the
+        // bound object.
+        if results.contains(where: { $0.success }) {
+            let serial = device?.serialNumber ?? identifier
+            let cleanup = await service.cleanStaleEntraTwins(
+                serial: serial,
+                knownNames: [device?.deviceName].compactMap { $0 },
+                liveAzureADDeviceId: device?.azureADDeviceId)
+            for line in cleanup.deleted { print("  deleted \(line)".green) }
+            for line in cleanup.failed { print("  cleanup failed: \(line)".red) }
+            for name in cleanup.resyncRisk {
+                print("  \(name) came from on-prem AD — remove its computer object or Entra Connect re-creates the twin".yellow)
+            }
+            if let reason = cleanup.skippedReason { print("  twin cleanup skipped: \(reason)".dim) }
+            else if cleanup.deleted.isEmpty && cleanup.failed.isEmpty { print("  no stale Entra twins".dim) }
+            if !cleanup.failed.isEmpty { throw ExitCode.failure }
+        }
         try reportBulk(results, action: "wipe")
     }
 }

@@ -52,8 +52,6 @@ public actor ElevationSession {
         case .identity: return "DevOps-Identity"
         case .systems: return "DevOps-Systems"
         case .cloud: return "DevOps-Cloud"
-        // Named for completeness only: PimService calls Graph as the operator and
-        // never starts a security-domain container.
         case .security: return "DevOps-Security"
         }
     }
@@ -61,6 +59,33 @@ public actor ElevationSession {
     static func sessionName(for domain: GraphDomain) -> String {
         let user = String(NSUserName().lowercased().filter { $0.isLetter || $0.isNumber }.prefix(20))
         return "aze-\(domain.rawValue)-\(user)"
+    }
+
+    /// The managed identity a domain's session runs as, e.g. DevOps-Security.
+    public nonisolated func identity(for domain: GraphDomain) -> String {
+        ElevationSession.identityName(for: domain)
+    }
+
+    /// The session container's state ("Running", "Terminated", …), or nil when no
+    /// session exists. Read-only.
+    public func sessionState(_ domain: GraphDomain) async throws -> String? {
+        let name = ElevationSession.sessionName(for: domain)
+        let show = try await runAz(["container", "show", "--resource-group", ElevationSession.sessionsResourceGroup, "--name", name, "--query", "instanceView.state", "-o", "tsv"])
+        let state = show.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        return show.code == 0 && !state.isEmpty ? state : nil
+    }
+
+    /// Delete a domain's session before its TTL so the identity's access ends when
+    /// the operator is done. Returns false when there was no session.
+    @discardableResult
+    public func stopSession(_ domain: GraphDomain) async throws -> Bool {
+        guard try await sessionState(domain) != nil else { return false }
+        let name = ElevationSession.sessionName(for: domain)
+        let r = try await runAz(["container", "delete", "--resource-group", ElevationSession.sessionsResourceGroup, "--name", name, "--yes", "-o", "none"])
+        guard r.code == 0 else {
+            throw ElevationError.commandRejected("failed to stop session: \(r.err.isEmpty ? r.out : r.err)")
+        }
+        return true
     }
 
     // MARK: - Container lifecycle (via az)

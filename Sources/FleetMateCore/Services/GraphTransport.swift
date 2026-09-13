@@ -10,9 +10,8 @@ public enum GraphDomain: String, Sendable {
     case systems
     case terraform
     case cloud
-    /// PIM. Unlike the other five this does not run as a managed identity — a role
-    /// activation is a statement about a user, so it calls Graph as the operator.
-    /// See `PimService`.
+    /// Runs as the DevOps-Security managed identity, like every other domain.
+    /// (`PimService` is a separate operator-scoped helper and does not use it.)
     case security
 }
 
@@ -151,6 +150,25 @@ public struct AzeGraphTransport: GraphTransport {
 
     static func shellSingleQuote(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    /// Send a request as an explicitly chosen domain's managed identity, bypassing
+    /// URL routing — what `fleetmate elevate rest` uses. Same login/re-attach retry
+    /// as `send(_:)`.
+    public func send(_ request: GraphRequest, as domain: GraphDomain) async throws -> Data {
+        let command = AzeGraphTransport.buildAzRestCommand(request)
+        do {
+            return try await execute(domain: domain, command: command)
+        } catch let error as AzeError {
+            if error.exitCode == 125 {
+                return try await execute(domain: domain, command: command)
+            }
+            if error.needsLogin {
+                _ = try? await execute(domain: domain, command: AzeGraphTransport.loginCommand)
+                return try await execute(domain: domain, command: command)
+            }
+            throw error
+        }
     }
 
     private func execute(domain: GraphDomain, command: String) async throws -> Data {

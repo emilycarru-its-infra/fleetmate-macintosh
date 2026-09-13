@@ -10,6 +10,10 @@ public enum GraphDomain: String, Sendable {
     case systems
     case terraform
     case cloud
+    /// PIM. Unlike the other five this does not run as a managed identity — a role
+    /// activation is a statement about a user, so it calls Graph as the operator.
+    /// See `PimService`.
+    case security
 }
 
 /// A single Microsoft Graph (or ARM) request, transport-agnostic.

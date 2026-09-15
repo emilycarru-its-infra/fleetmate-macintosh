@@ -67,6 +67,65 @@ public struct IntuneDeviceListResponse: Codable {
     }
 }
 
+// MARK: - macOS Local Administrator Password
+
+public struct MacOSLocalAdminCredential: Codable, Sendable {
+    public let adminAccountPassword: String
+    public let passwordLastRotatedDateTime: String?
+
+    public init(adminAccountPassword: String, passwordLastRotatedDateTime: String?) {
+        self.adminAccountPassword = adminAccountPassword
+        self.passwordLastRotatedDateTime = passwordLastRotatedDateTime
+    }
+}
+
+public struct MacOSLocalAdminCredentialResponse: Codable, Sendable {
+    public struct Value: Codable, Sendable {
+        public let adminAccountPassword: String?
+        public let passwordLastRotatedDateTime: String?
+    }
+
+    public let value: Value
+}
+
+public enum MacOSLAPSLookupError: Error, CustomStringConvertible, Equatable {
+    case deviceNotFound(String)
+    case ambiguousSerial(String)
+    case unsupportedPlatform(String)
+    case passwordUnavailable
+
+    public var description: String {
+        switch self {
+        case .deviceNotFound(let serialNumber):
+            return "No Intune managed device has serial number \(serialNumber)"
+        case .ambiguousSerial(let serialNumber):
+            return "More than one Intune managed device has serial number \(serialNumber)"
+        case .unsupportedPlatform(let platform):
+            return "macOS LAPS is unavailable for platform \(platform)"
+        case .passwordUnavailable:
+            return "Intune did not return a local administrator password for this Mac"
+        }
+    }
+}
+
+public enum MacOSLAPSLookup {
+    public static func resolveDevice(
+        from devices: [IntuneDevice],
+        serialNumber: String
+    ) throws -> IntuneDevice {
+        guard let device = devices.first else {
+            throw MacOSLAPSLookupError.deviceNotFound(serialNumber)
+        }
+        guard devices.count == 1 else {
+            throw MacOSLAPSLookupError.ambiguousSerial(serialNumber)
+        }
+        guard device.operatingSystem?.lowercased() == "macos" else {
+            throw MacOSLAPSLookupError.unsupportedPlatform(device.operatingSystem ?? "unknown")
+        }
+        return device
+    }
+}
+
 public struct DeviceCompliancePolicyState: Codable, Sendable {
     public let id: String?
     public let displayName: String?

@@ -10,6 +10,7 @@ struct IntuneCommand: AsyncParsableCommand {
         subcommands: [
             IntuneDevicesSubcommand.self,
             IntuneDeviceSubcommand.self,
+            IntuneLAPSSubcommand.self,
             ComplianceSubcommand.self,
             NonCompliantSubcommand.self,
             IntuneWipeSubcommand.self,
@@ -22,6 +23,53 @@ struct IntuneCommand: AsyncParsableCommand {
         ],
         defaultSubcommand: IntuneDevicesSubcommand.self
     )
+}
+
+// MARK: - macOS Local Administrator Password
+
+struct IntuneLAPSSubcommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "laps",
+        abstract: "Retrieve the Intune-managed local administrator password for a Mac"
+    )
+
+    @Argument(help: "Mac serial number")
+    var serialNumber: String
+
+    @Flag(name: .shortAndLong, help: "Output as JSON")
+    var json = false
+
+    func run() async throws {
+        let config = try FleetMateConfig.load()
+        let service = GraphService(config: config)
+
+        guard service.isConfigured else {
+            print("Microsoft Graph not configured.".red)
+            throw ExitCode.failure
+        }
+
+        do {
+            let credential = try await service.getMacOSLocalAdminCredential(
+                serialNumber: serialNumber
+            )
+            if json {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                let data = try encoder.encode(credential)
+                print(String(data: data, encoding: .utf8) ?? "{}")
+                return
+            }
+
+            print("\n" + "macOS local administrator credential".bold + "\n")
+            print("  Serial:".lightBlue + "        \(serialNumber)")
+            print("  Password:".lightBlue + "      \(credential.adminAccountPassword)")
+            print("  Last rotated:".lightBlue + "  \(credential.passwordLastRotatedDateTime ?? "-")")
+            print("")
+        } catch {
+            print("Unable to retrieve the macOS local administrator password: \(error)".red)
+            throw ExitCode.failure
+        }
+    }
 }
 
 // MARK: - Settings Catalog

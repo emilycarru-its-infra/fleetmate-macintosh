@@ -244,6 +244,7 @@ Query Intune devices and Entra users:
 # Intune devices
 fleetmate intune devices
 fleetmate intune device EXAMPLE1  # by serial
+fleetmate intune laps EXAMPLE1    # macOS local administrator password
 fleetmate intune compliance <device-id>
 
 # Entra users

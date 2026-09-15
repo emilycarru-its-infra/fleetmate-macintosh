@@ -27,6 +27,7 @@ public class GraphService {
     private let cacheDuration: TimeInterval
 
     let baseUrl = "https://graph.microsoft.com/v1.0"
+    private let betaBaseURL = "https://graph.microsoft.com/beta"
     private let graphResourceId = "https://graph.microsoft.com"
 
     // Transport: by default every Graph call runs inside an `aze` session (the
@@ -159,6 +160,36 @@ public class GraphService {
         let filter = "deviceName eq '\(deviceName)'"
         let devices = try await getManagedDevices(filter: filter, limit: 1)
         return devices.first
+    }
+
+    public func getMacOSLocalAdminCredential(
+        serialNumber: String
+    ) async throws -> MacOSLocalAdminCredential {
+        let escapedSerialNumber = serialNumber.replacingOccurrences(of: "'", with: "''")
+        let devices = try await getManagedDevices(
+            filter: "serialNumber eq '\(escapedSerialNumber)'",
+            limit: 2
+        )
+        let device = try MacOSLAPSLookup.resolveDevice(
+            from: devices,
+            serialNumber: serialNumber
+        )
+
+        guard let headers = await headers() else {
+            throw GraphServiceError.notAuthenticated
+        }
+        let url = "\(betaBaseURL)/deviceManagement/managedDevices/\(device.id)/retrieveMacOSManagedDeviceLocalAdminAccountDetail"
+        let response: MacOSLocalAdminCredentialResponse = try await fetch(
+            url: url,
+            headers: headers
+        )
+        guard let password = response.value.adminAccountPassword, !password.isEmpty else {
+            throw MacOSLAPSLookupError.passwordUnavailable
+        }
+        return MacOSLocalAdminCredential(
+            adminAccountPassword: password,
+            passwordLastRotatedDateTime: response.value.passwordLastRotatedDateTime
+        )
     }
 
     public func searchDevices(_ query: String, limit: Int = 50) async throws -> [IntuneDevice] {

@@ -722,7 +722,7 @@ struct CodePullRequestRow: View {
                             .lineLimit(1)
                             .foregroundStyle(.primary)
                         if pullRequest.state == .draft { pill("Draft", color: .secondary) }
-                        if pullRequest.hasConflicts { pill("Conflicts", color: .red) }
+                        if pullRequest.hasConflicts { pill("Conflicts", color: .orange) }
                     }
                     HStack(spacing: 6) {
                         Text(pullRequest.authorName)

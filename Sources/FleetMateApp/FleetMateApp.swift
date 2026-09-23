@@ -209,6 +209,9 @@ class AppState: ObservableObject {
     /// The dashboard's task tables (DevOps work items + GitHub issues) —
     /// AppState-owned for the same tab-switch-survival reason as the PR queue.
     let dashboardTasks = DashboardTasksModel()
+    /// Development tab: the wide PR queue, GitHub inbox and activity feed,
+    /// kept across tab switches.
+    let development = DevelopmentModel()
 
     /// Everything the Projects tab loads from Azure DevOps and GitHub.
     ///

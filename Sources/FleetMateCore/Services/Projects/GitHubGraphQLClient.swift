@@ -178,9 +178,12 @@ public actor GitHubGraphQLClient {
         }
 
         return try await withCheckedThrowingContinuation { continuation in
+            // Write endpoints (mark-read, merge, review) answer 200/202/204/205
+            // with no body; Alamofire only tolerates an empty body on 204/205
+            // by default, so widen it rather than fail on a successful call.
             session.request(request)
                 .validate(statusCode: 200..<300)
-                .responseData { response in
+                .responseData(emptyResponseCodes: [200, 201, 202, 204, 205]) { response in
                     switch response.result {
                     case .success(let data):
                         continuation.resume(returning: data)

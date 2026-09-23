@@ -564,6 +564,8 @@ public struct GitPullRequestComment: Codable {
     public let isDeleted: Bool?
     public let publishedDate: String?
     public let lastUpdatedDate: String?
+    public let content: String?
+    public let author: IdentityRef?
 }
 
 public struct GitPullRequestThreadsResponse: Codable {

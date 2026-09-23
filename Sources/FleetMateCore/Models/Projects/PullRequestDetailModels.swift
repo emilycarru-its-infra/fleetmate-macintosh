@@ -56,12 +56,15 @@ public struct PullRequestComment: Sendable, Identifiable, Hashable {
     /// Vote/status noise like "X approved the pull request" — rendered
     /// smaller and gray rather than as a conversation entry.
     public let isSystem: Bool
+    /// Deep link to the comment, when the provider hands one back.
+    public let url: String?
 
-    public init(id: String, authorName: String, body: String, date: Date?, isSystem: Bool) {
+    public init(id: String, authorName: String, body: String, date: Date?, isSystem: Bool, url: String? = nil) {
         self.id = id
         self.authorName = authorName
         self.body = body
         self.date = date
         self.isSystem = isSystem
+        self.url = url
     }
 }

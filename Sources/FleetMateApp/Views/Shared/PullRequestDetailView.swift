@@ -643,7 +643,7 @@ struct DiffLineRow: View {
     }
 }
 
-private extension String {
+extension String {
     /// Quick tag strip for one-line system messages (DevOps sends HTML).
     var strippedOfHtml: String {
         replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)

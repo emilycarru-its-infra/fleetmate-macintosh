@@ -309,6 +309,130 @@ public actor GitHubPullRequestService {
         )
     }
 
+    // MARK: - Commits
+
+    /// Repositories under each owner pushed to since `since`, with their
+    /// latest default-branch commits. One GraphQL request for all owners.
+    public func getRecentCommits(owners: [String], since: Date, perRepo: Int = 10, reposPerOwner: Int = 30) async throws -> [RepositoryCommits] {
+        var seen: Set<String> = []
+        let ownerList = owners
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+        guard !ownerList.isEmpty else { return [] }
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let sinceString = formatter.string(from: since)
+        let sinceDay = String(sinceString.prefix(10))
+
+        var aliases: [String] = []
+        var declarations: [String] = ["$since: GitTimestamp!", "$perRepo: Int!", "$repos: Int!"]
+        var variables: [String: Any] = ["since": sinceString, "perRepo": perRepo, "repos": reposPerOwner]
+        for (index, owner) in ownerList.enumerated() {
+            declarations.append("$owner\(index): String!")
+            variables["owner\(index)"] = "user:\(owner) pushed:>=\(sinceDay) sort:updated-desc"
+            aliases.append("""
+            owner\(index): search(query: $owner\(index), type: REPOSITORY, first: $repos) {
+              nodes {
+                ... on Repository {
+                  name url owner { login }
+                  defaultBranchRef {
+                    name
+                    target {
+                      ... on Commit {
+                        history(first: $perRepo, since: $since) {
+                          nodes { oid message messageHeadline committedDate url author { name user { login } } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """)
+        }
+        let query = "query(\(declarations.joined(separator: ", "))) {\n\(aliases.joined(separator: "\n"))\n}"
+        let data = try await client.executeRaw(query: query, variables: variables)
+
+        var out: [RepositoryCommits] = []
+        for index in ownerList.indices {
+            let nodes = (data["owner\(index)"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+            for node in nodes {
+                guard let name = node["name"] as? String,
+                      let url = node["url"] as? String,
+                      let owner = (node["owner"] as? [String: Any])?["login"] as? String
+                else { continue }
+                let branchRef = node["defaultBranchRef"] as? [String: Any]
+                let history = ((branchRef?["target"] as? [String: Any])?["history"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+                let commits: [PullRequestCommit] = history.compactMap { commit in
+                    guard let oid = commit["oid"] as? String else { return nil }
+                    let author = commit["author"] as? [String: Any]
+                    let login = (author?["user"] as? [String: Any])?["login"] as? String
+                    return PullRequestCommit(
+                        id: oid,
+                        message: commit["message"] as? String ?? commit["messageHeadline"] as? String ?? "",
+                        authorName: login ?? author?["name"] as? String,
+                        date: PullRequestDateParser.parse(commit["committedDate"] as? String),
+                        url: commit["url"] as? String
+                    )
+                }
+                guard !commits.isEmpty else { continue }
+                out.append(RepositoryCommits(
+                    source: .gitHub,
+                    container: owner,
+                    repository: name,
+                    webUrl: url,
+                    defaultBranch: branchRef?["name"] as? String,
+                    commits: commits
+                ))
+            }
+        }
+        // The same repo can surface under two owners (a fork the user owns
+        // and the org original); keep the first, newest activity first.
+        var unique: [String: RepositoryCommits] = [:]
+        for repo in out where unique[repo.id] == nil { unique[repo.id] = repo }
+        let result = unique.values.sorted { $0.latestDate > $1.latestDate }
+        dbg.info("GitHub getRecentCommits(owners: \(ownerList.count)) → \(result.count) repos", category: "github")
+        return result
+    }
+
+    /// Full message and per-file diff for one commit.
+    public func getCommitDetail(owner: String, repo: String, sha: String) async throws -> CommitDetail {
+        let data = try await client.executeREST(path: "/repos/\(owner)/\(repo)/commits/\(sha)")
+        let commit = try JSONDecoder().decode(RestCommitDetail.self, from: data)
+        let files = commit.files ?? []
+        let diffFiles: [DiffFile] = files.map { file in
+            if let patch = file.patch {
+                return DiffParser.parseBareHunks(patch, fileName: file.filename)
+            }
+            return DiffFile(headerLines: [], oldPath: file.filename, newPath: file.filename)
+        }
+        return CommitDetail(
+            message: commit.commit.message,
+            files: diffFiles,
+            changes: files.map { CommitChange(path: $0.filename, changeType: $0.status ?? "edit") },
+            additions: commit.stats?.additions ?? 0,
+            deletions: commit.stats?.deletions ?? 0,
+            truncated: files.count >= 300
+        )
+    }
+
+    private struct RestCommitDetail: Decodable {
+        let commit: Inner
+        let files: [File]?
+        let stats: Stats?
+        struct Inner: Decodable { let message: String }
+        struct File: Decodable {
+            let filename: String
+            let status: String?
+            let patch: String?
+        }
+        struct Stats: Decodable {
+            let additions: Int?
+            let deletions: Int?
+        }
+    }
+
     // MARK: - PR actions (REST + GraphQL)
 
     private enum ReviewEvent: String, Sendable {

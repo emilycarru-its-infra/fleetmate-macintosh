@@ -123,7 +123,7 @@ struct ContentView: View {
                    shouldRetrySso(.tdx) {
                     appState.attemptSilentTdxSso()
                 }
-                if newTab == .projects,
+                if newTab == .projects || newTab == .development,
                    !appState.devOpsSsoAuthenticated,
                    appState.isDevOpsSsoConfigured,
                    shouldRetrySso(.devops) {
@@ -180,6 +180,7 @@ struct ContentView: View {
         case .inventory: AssetsView()
         case .tickets:   TicketsView()
         case .projects:  BoardsView()
+        case .development: DevelopmentView()
         case .identity:  IdentityView()
         }
     }

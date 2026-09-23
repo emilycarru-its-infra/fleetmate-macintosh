@@ -704,7 +704,7 @@ struct PullRequestRow: View {
     @ViewBuilder
     private var statusPills: some View {
         if pullRequest.state == .draft { pill("Draft", color: .secondary) }
-        if pullRequest.hasConflicts { pill("Conflicts", color: .red) }
+        if pullRequest.hasConflicts { pill("Conflicts", color: .orange) }
     }
 
     private func pill(_ text: String, color: Color) -> some View {

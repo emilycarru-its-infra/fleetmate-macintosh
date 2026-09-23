@@ -3,14 +3,16 @@ import FleetMateCore
 
 /// Top-level tab identity shared between ContentView and AppState for type-safe programmatic navigation.
 enum AppTab: String, CaseIterable, Identifiable, Hashable {
+    // Declaration order is display order and the ⌘1…⌘8 order. Development
+    // sits in the centre; Tickets goes last.
     case dashboard = "Dashboard"
     case devices = "Devices"
     case manage = "Manage"
     case inventory = "Inventory"
-    case tickets = "Tickets"
-    case projects = "Projects"
     case development = "Development"
+    case projects = "Projects"
     case identity = "Identity"
+    case tickets = "Tickets"
 
     var id: String { rawValue }
 

@@ -6,8 +6,6 @@ import FleetMateCore
 enum BoardsViewMode: String, CaseIterable {
     case board = "Board"
     case list = "List"
-    /// Pull requests and the GitHub inbox — see CodeSectionView.
-    case code = "Code"
 }
 
 enum GroupByOption: String, CaseIterable {
@@ -250,7 +248,7 @@ struct BoardsView: View {
                 break
             }
         }
-        .searchable(text: $searchText, prompt: viewMode == .code ? "Search pull requests..." : "Search tasks or AB# id...")
+        .searchable(text: $searchText, prompt: "Search tasks or AB# id...")
         .findFocusesSearchField()
         .task(id: searchText) { await resolveDirectWorkItemHit() }
         .toolbar { projectsToolbar }
@@ -341,8 +339,8 @@ struct BoardsView: View {
         ToolbarItemGroup(placement: .navigation) {
             SegmentedPill(
                 selection: $viewMode,
-                options: [.list, .board, .code],
-                label: { $0.rawValue }
+                options: [.list, .board],
+                label: { $0 == .list ? "List" : "Board" }
             )
             .onChange(of: appState.devOpsProjectReady) { _, ready in
                 if ready { loadTasks(); loadBoards(); loadQueries() }
@@ -352,14 +350,6 @@ struct BoardsView: View {
             // is the stored-queries view and has no use for them. PillMenu,
             // not Menu/Picker — the macOS 26 glass toolbar renders those
             // icon-only, leaving an empty pill.
-            if viewMode == .code {
-                Button(action: { appState.codeSection.loadAll(appState: appState, force: true) }) {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .disabled(appState.codeSection.isLoadingPullRequests)
-                .help("Refresh pull requests and inbox")
-            }
-
             if viewMode == .board {
                 PillMenu(
                     selection: $groupBy,
@@ -390,7 +380,6 @@ struct BoardsView: View {
 
             // Filters, create and refresh sit with the other controls on the
             // leading side rather than split across the window.
-            if viewMode != .code {
             Button(action: { showFilters.toggle() }) {
                 Label("Filters", systemImage: hasAnyActiveFilter
                     ? "line.3.horizontal.decrease.circle.fill"
@@ -445,7 +434,6 @@ struct BoardsView: View {
             }
             .disabled(isLoading || isLoadingGhInfo || isLoadingQueries)
             .help("Refresh")
-            }
         }
     }
 
@@ -481,7 +469,6 @@ struct BoardsView: View {
         switch viewMode {
         case .board: boardWithSidebar
         case .list:  listWithSidebar
-        case .code:  CodeSectionView(searchText: searchText, model: appState.codeSection)
         }
     }
 

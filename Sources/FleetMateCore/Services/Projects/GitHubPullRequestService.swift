@@ -38,8 +38,19 @@ public actor GitHubPullRequestService {
       headRefName
       author { login }
       repository { name owner { login } }
-      comments { totalCount }
-      reviewThreads { totalCount }
+      comments(last: 5) {
+        totalCount
+        nodes { databaseId author { login } body createdAt url }
+      }
+      reviews(last: 5) {
+        nodes { databaseId author { login } body state submittedAt url }
+      }
+      reviewThreads(last: 5) {
+        totalCount
+        nodes {
+          comments(last: 2) { nodes { databaseId author { login } body createdAt url path } }
+        }
+      }
       reviewRequests(first: 10) {
         nodes {
           requestedReviewer {
@@ -390,6 +401,7 @@ public actor GitHubPullRequestService {
 
         let commentCount = ((node["comments"] as? [String: Any])?["totalCount"] as? Int ?? 0)
             + ((node["reviewThreads"] as? [String: Any])?["totalCount"] as? Int ?? 0)
+        let recentComments = Self.recentComments(node)
 
         return UnifiedPullRequest(
             source: .gitHub,
@@ -407,7 +419,47 @@ public actor GitHubPullRequestService {
             commentCount: commentCount,
             reviewers: Array(reviewersByName.values).sorted { $0.displayName < $1.displayName },
             webUrl: url,
-            relations: [relation]
+            relations: [relation],
+            recentComments: recentComments
         )
+    }
+
+    /// Conversation comments, review summaries and inline review comments,
+    /// merged newest-first. Reviews with no body (a bare approve) are dropped:
+    /// the vote pips already carry them.
+    private static func recentComments(_ node: [String: Any]) -> [PullRequestComment] {
+        var out: [PullRequestComment] = []
+
+        func comment(_ entry: [String: Any], dateKey: String, prefix: String? = nil) -> PullRequestComment? {
+            let body = (entry["body"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !body.isEmpty, let id = entry["databaseId"] as? Int else { return nil }
+            let path = entry["path"] as? String
+            let text = path.map { "`\($0)` — \(body)" } ?? body
+            return PullRequestComment(
+                id: "\(prefix ?? "c")\(id)",
+                authorName: (entry["author"] as? [String: Any])?["login"] as? String ?? "unknown",
+                body: text,
+                date: PullRequestDateParser.parse(entry[dateKey] as? String),
+                isSystem: false,
+                url: entry["url"] as? String
+            )
+        }
+
+        let comments = (node["comments"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+        out += comments.compactMap { comment($0, dateKey: "createdAt") }
+
+        let reviews = (node["reviews"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+        out += reviews.compactMap { comment($0, dateKey: "submittedAt", prefix: "r") }
+
+        let threads = (node["reviewThreads"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+        for thread in threads {
+            let inline = (thread["comments"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+            out += inline.compactMap { comment($0, dateKey: "createdAt", prefix: "t") }
+        }
+
+        return out
+            .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+            .prefix(8)
+            .map { $0 }
     }
 }

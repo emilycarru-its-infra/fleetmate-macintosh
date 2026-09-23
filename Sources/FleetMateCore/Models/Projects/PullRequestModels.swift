@@ -148,6 +148,9 @@ public struct UnifiedPullRequest: Identifiable, Sendable, Hashable {
     /// A PR can be both created by and assigned to the same user; the queue shows
     /// it under every section it belongs to.
     public var relations: Set<PullRequestRelation>
+    /// The latest human comments and reviews, newest first — what the
+    /// Development tab's activity sidebar is built from. Capped per PR.
+    public var recentComments: [PullRequestComment]
 
     public var id: String { "\(source.rawValue):\(container)/\(repository)#\(number)" }
 
@@ -167,7 +170,8 @@ public struct UnifiedPullRequest: Identifiable, Sendable, Hashable {
         commentCount: Int = 0,
         reviewers: [PullRequestReviewer] = [],
         webUrl: String,
-        relations: Set<PullRequestRelation> = []
+        relations: Set<PullRequestRelation> = [],
+        recentComments: [PullRequestComment] = []
     ) {
         self.source = source
         self.number = number
@@ -185,6 +189,7 @@ public struct UnifiedPullRequest: Identifiable, Sendable, Hashable {
         self.reviewers = reviewers
         self.webUrl = webUrl
         self.relations = relations
+        self.recentComments = recentComments
     }
 
     /// The `!10716` / `#42` reference shown next to the author.

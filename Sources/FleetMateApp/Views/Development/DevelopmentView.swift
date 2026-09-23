@@ -12,6 +12,7 @@ final class DevelopmentModel: ObservableObject {
     enum Segment: String, CaseIterable, Hashable {
         case pullRequests = "Pulls"
         case inbox = "Inbox"
+        case commits = "Commits"
     }
 
     @Published var segment: Segment = .pullRequests
@@ -34,6 +35,110 @@ final class DevelopmentModel: ObservableObject {
     @Published var showReadNotifications = false
     @Published private(set) var busyThreadIds: Set<String> = []
     @Published var actionError: String?
+
+    // Commits
+    @Published private(set) var repositoryCommits: [RepositoryCommits] = []
+    @Published private(set) var isLoadingCommits = false
+    @Published private(set) var commitsLoadedAt: Date?
+    @Published private(set) var commitsError: String?
+    @Published var selectedCommit: SelectedCommit?
+    /// Repositories expanded past their first few commits.
+    @Published var expandedCommitRepos: Set<String> = []
+    /// How far back the Commits segment looks.
+    static let commitsWindow: TimeInterval = 14 * 24 * 3600
+
+    struct SelectedCommit: Identifiable, Equatable {
+        let repository: RepositoryCommits
+        let commit: PullRequestCommit
+        var id: String { "\(repository.id)@\(commit.id)" }
+        static func == (lhs: SelectedCommit, rhs: SelectedCommit) -> Bool { lhs.id == rhs.id }
+    }
+
+    private var commitsTask: Task<Void, Never>?
+
+    /// Repositories with activity, source- and search-filtered, most
+    /// recent activity first.
+    func visibleRepositoryCommits(matching search: String) -> [RepositoryCommits] {
+        var rows = repositoryCommits
+        if let selectedSource { rows = rows.filter { $0.source == selectedSource } }
+        let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
+        if !needle.isEmpty {
+            rows = rows.compactMap { repo in
+                if repo.displayName.lowercased().contains(needle) { return repo }
+                let hits = repo.commits.filter {
+                    $0.subject.lowercased().contains(needle)
+                        || ($0.authorName ?? "").lowercased().contains(needle)
+                        || $0.id.hasPrefix(needle)
+                }
+                guard !hits.isEmpty else { return nil }
+                return RepositoryCommits(
+                    source: repo.source, container: repo.container, repository: repo.repository,
+                    repositoryId: repo.repositoryId, webUrl: repo.webUrl,
+                    defaultBranch: repo.defaultBranch, commits: hits
+                )
+            }
+        }
+        return rows.sorted { $0.latestDate > $1.latestDate }
+    }
+
+    func commitCount(for source: PullRequestSource) -> Int {
+        repositoryCommits.filter { $0.source == source }.reduce(0) { $0 + $1.commits.count }
+    }
+
+    func loadCommits(appState: AppState, force: Bool = false) {
+        if !force {
+            if isLoadingCommits { return }
+            if let at = commitsLoadedAt, Date().timeIntervalSince(at) < Self.freshness { return }
+        }
+        commitsTask?.cancel()
+        commitsTask = Task { await performCommitsLoad(appState: appState) }
+    }
+
+    private func performCommitsLoad(appState: AppState) async {
+        isLoadingCommits = true
+        defer { isLoadingCommits = false }
+        let since = Date().addingTimeInterval(-Self.commitsWindow)
+        let config = gitHubConfig(appState)
+        let configuredOwners = [config.owner, config.organization].compactMap { $0 }
+        let cachedOwners = viewerOwners
+
+        let gitHubTask = Task.detached(priority: .userInitiated) { () -> (Result<[RepositoryCommits], Error>, [String]?) in
+            let service = GitHubPullRequestService(config: config)
+            var owners = cachedOwners
+            if owners == nil { owners = (try? await service.getViewerOwners()) ?? [] }
+            do {
+                let repos = try await service.getRecentCommits(owners: configuredOwners + (owners ?? []), since: since)
+                return (.success(repos), owners)
+            } catch {
+                return (.failure(error), owners)
+            }
+        }
+
+        var merged: [RepositoryCommits] = []
+        var errors: [String] = []
+        if appState.config.isDevOpsConfigured, await appState.devOpsService.ensureValidToken() {
+            do {
+                merged += try await appState.devOpsService.getRecentCommits(since: since)
+            } catch {
+                errors.append("Azure DevOps: \(error.localizedDescription)")
+            }
+        }
+
+        let (gitHub, owners) = await gitHubTask.value
+        if let owners, viewerOwners == nil { viewerOwners = owners }
+        switch gitHub {
+        case .success(let repos): merged += repos
+        case .failure(let error):
+            if !error.localizedDescription.contains("No GitHub authentication token") {
+                errors.append("GitHub: \(error.localizedDescription)")
+            }
+        }
+
+        guard !Task.isCancelled else { return }
+        repositoryCommits = merged.sorted { $0.latestDate > $1.latestDate }
+        commitsError = errors.isEmpty ? nil : errors.joined(separator: "\n")
+        commitsLoadedAt = Date()
+    }
 
     // Activity sidebar
     @Published var showActivity = true
@@ -152,6 +257,7 @@ final class DevelopmentModel: ObservableObject {
     func loadAll(appState: AppState, force: Bool = false) {
         loadPullRequests(appState: appState, force: force)
         loadInbox(appState: appState, force: force)
+        loadCommits(appState: appState, force: force)
     }
 
     func loadPullRequests(appState: AppState, force: Bool = false) {
@@ -397,7 +503,7 @@ private struct DevelopmentContent: View {
                     .frame(width: activityWidth)
             }
         }
-        .searchable(text: $model.searchText, prompt: "Search pull requests...")
+        .searchable(text: $model.searchText, prompt: model.segment == .commits ? "Search commits..." : "Search pull requests...")
         .toolbar { developmentToolbar }
         .task {
             model.loadAll(appState: appState)
@@ -413,7 +519,10 @@ private struct DevelopmentContent: View {
                 guard !Task.isCancelled else { break }
                 tick += 1
                 model.loadInbox(appState: appState, force: true)
-                if tick % 3 == 0 { model.loadPullRequests(appState: appState, force: true) }
+                if tick % 3 == 0 {
+                    model.loadPullRequests(appState: appState, force: true)
+                    model.loadCommits(appState: appState, force: true)
+                }
             }
         }
         .onChange(of: appState.devOpsSsoAuthenticated) { _, ready in
@@ -472,6 +581,7 @@ private struct DevelopmentContent: View {
             switch model.segment {
             case .pullRequests: pullRequestList
             case .inbox: inboxList
+            case .commits: commitsList
             }
         }
     }
@@ -678,11 +788,142 @@ private struct DevelopmentContent: View {
         }
     }
 
+    // MARK: Commits
+
+    private var commitsList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if model.isLoadingCommits { ProgressView().progressViewStyle(.linear).controlSize(.mini) }
+            HStack(spacing: 6) {
+                if model.availableSources.count > 1 {
+                    ForEach(PullRequestSource.allCases, id: \.self) { source in
+                        if model.availableSources.contains(source) {
+                            chip(
+                                title: source.shortName,
+                                count: model.commitCount(for: source),
+                                tint: source.tint,
+                                isSelected: model.selectedSource == source
+                            ) { model.toggleSource(source) }
+                        }
+                    }
+                }
+                Spacer()
+                if let at = model.commitsLoadedAt {
+                    Text("Checked \(DevelopmentView.relative(at))")
+                        .appFont(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            Divider()
+
+            let repos = model.visibleRepositoryCommits(matching: searchText)
+            if repos.isEmpty {
+                VStack(spacing: 8) {
+                    if model.isLoadingCommits {
+                        ProgressView()
+                        Text("Loading commits…").appFont(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Image(systemName: "circle.dotted.and.circle").appFont(.title2).foregroundStyle(.secondary)
+                        Text(model.repositoryCommits.isEmpty ? "No commits in the last 14 days." : "Nothing matches.")
+                            .appFont(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                        ForEach(repos) { repo in
+                            let expanded = model.expandedCommitRepos.contains(repo.id)
+                            let shown = expanded ? repo.commits : Array(repo.commits.prefix(3))
+                            Section {
+                                ForEach(shown) { commit in
+                                    CommitRow(
+                                        repository: repo,
+                                        commit: commit,
+                                        isSelected: model.selectedCommit?.commit.id == commit.id
+                                            && model.selectedCommit?.repository.id == repo.id
+                                    ) {
+                                        model.selectedCommit = .init(repository: repo, commit: commit)
+                                    }
+                                    Divider().padding(.leading, 12)
+                                }
+                                if repo.commits.count > 3 {
+                                    Button {
+                                        if expanded { model.expandedCommitRepos.remove(repo.id) }
+                                        else { model.expandedCommitRepos.insert(repo.id) }
+                                    } label: {
+                                        Text(expanded ? "Show fewer" : "Show all \(repo.commits.count)")
+                                            .appFont(.caption2)
+                                            .foregroundStyle(.secondary)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 5)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            } header: {
+                                commitRepoHeader(repo)
+                            }
+                        }
+                    }
+                }
+            }
+            if let error = model.commitsError {
+                Divider()
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .appFont(.caption2)
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+            }
+        }
+    }
+
+    private func commitRepoHeader(_ repo: RepositoryCommits) -> some View {
+        HStack(spacing: 6) {
+            Rectangle()
+                .fill(repo.source.tint)
+                .frame(width: 3, height: 12)
+                .clipShape(RoundedRectangle(cornerRadius: 1.5))
+            Text(repo.displayName).appFont(.caption, weight: .semibold, design: .monospaced)
+            if let branch = repo.defaultBranch {
+                Text(branch).appFont(.caption2, design: .monospaced).foregroundStyle(.tertiary)
+            }
+            Text("\(repo.commits.count)")
+                .appFont(.caption2).monospacedDigit()
+                .padding(.horizontal, 5).padding(.vertical, 1)
+                .background(Color.secondary.opacity(0.15))
+                .clipShape(Capsule())
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(DevelopmentView.relative(repo.latestDate))
+                .appFont(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .background(.bar)
+    }
+
     // MARK: Detail pane
 
     @ViewBuilder
     private var detailPane: some View {
-        if let pr = model.selectedPullRequest {
+        if model.segment == .commits {
+            if let selected = model.selectedCommit {
+                CommitDetailView(selection: selected)
+                    .id(selected.id)
+                    .environmentObject(appState)
+            } else {
+                ContentUnavailableView(
+                    "Select a commit",
+                    systemImage: "circle.dotted.and.circle",
+                    description: Text("Recent commits on every default branch, last 14 days.")
+                )
+            }
+        } else if let pr = model.selectedPullRequest {
             PullRequestDetailView(pullRequest: pr, isInline: true) {
                 model.noteActionCompleted(pr, appState: appState)
             }
@@ -1041,5 +1282,250 @@ struct ActivityRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+    }
+}
+
+
+// MARK: - Commits
+
+struct CommitRow: View {
+    let repository: RepositoryCommits
+    let commit: PullRequestCommit
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(alignment: .center, spacing: 8) {
+                Text(commit.shortSha)
+                    .appFont(fixed: 10, design: .monospaced)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 58, alignment: .leading)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(commit.subject)
+                        .appFont(fixed: 12, weight: .medium)
+                        .lineLimit(1)
+                        .foregroundStyle(.primary)
+                    Text(commit.authorName ?? "unknown")
+                        .appFont(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if let date = commit.date {
+                    Text(DevelopmentView.relative(date))
+                        .appFont(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 44, alignment: .trailing)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(isSelected ? Color.accentColor.opacity(0.14) : (isHovering ? Color.secondary.opacity(0.07) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .contextMenu {
+            Button("Open in Browser") {
+                if let url = commit.url.flatMap(URL.init) { NSWorkspace.shared.open(url) }
+            }
+            Button("Copy SHA") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(commit.id, forType: .string)
+            }
+        }
+    }
+}
+
+/// One commit in the centre pane: message, then the diff (GitHub) or the
+/// change list (Azure DevOps).
+struct CommitDetailView: View {
+    let selection: DevelopmentModel.SelectedCommit
+
+    @EnvironmentObject private var appState: AppState
+    @State private var detail: CommitDetail?
+    @State private var loadError: String?
+    @State private var copied = false
+
+    private var commit: PullRequestCommit { selection.commit }
+    private var repository: RepositoryCommits { selection.repository }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider()
+            content
+        }
+        .task { await load() }
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            BrandIcon(mark: repository.source.brandMark, size: 16)
+                .foregroundStyle(repository.source.tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(commit.subject)
+                    .appFont(.title3, weight: .semibold)
+                    .lineLimit(2)
+                HStack(spacing: 6) {
+                    Text(repository.displayName)
+                        .appFont(.caption, design: .monospaced)
+                        .foregroundStyle(.secondary)
+                    if let branch = repository.defaultBranch {
+                        Image(systemName: "arrow.triangle.branch").appFont(.caption2).foregroundStyle(.secondary)
+                        Text(branch).appFont(.caption, design: .monospaced).foregroundStyle(.secondary)
+                    }
+                    Text("·").foregroundStyle(.tertiary)
+                    Text(commit.authorName ?? "unknown").appFont(.caption).foregroundStyle(.secondary)
+                    if let date = commit.date {
+                        Text(date.formatted(date: .abbreviated, time: .shortened))
+                            .appFont(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+            Spacer()
+            if let detail {
+                HStack(spacing: 6) {
+                    Text("+\(detail.additions)").appFont(.caption, weight: .semibold).foregroundStyle(.green)
+                    Text("-\(detail.deletions)").appFont(.caption, weight: .semibold).foregroundStyle(.orange)
+                }
+            }
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(commit.id, forType: .string)
+                copied = true
+                Task { try? await Task.sleep(for: .seconds(1.5)); copied = false }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(commit.shortSha).appFont(.caption, design: .monospaced)
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc").appFont(fixed: 9)
+                }
+            }
+            .help("Copy the full SHA")
+            Button {
+                if let url = commit.url.flatMap(URL.init) { NSWorkspace.shared.open(url) }
+            } label: {
+                Image(systemName: "globe")
+            }
+            .disabled(commit.url == nil)
+            .help("Open in browser")
+        }
+        .padding(14)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let loadError {
+            ContentUnavailableView("Couldn't load commit", systemImage: "exclamationmark.triangle", description: Text(loadError))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let detail {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    let body = detail.message
+                        .split(separator: "\n", omittingEmptySubsequences: false)
+                        .dropFirst()
+                        .joined(separator: "\n")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !body.isEmpty {
+                        GroupBox {
+                            Text(body)
+                                .appFont(.callout)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(6)
+                        }
+                    }
+                    if !detail.files.isEmpty {
+                        HStack(spacing: 8) {
+                            Text("Changes").appFont(.headline)
+                            Text("\(detail.files.count)")
+                                .appFont(.caption2).monospacedDigit()
+                                .padding(.horizontal, 6).padding(.vertical, 1)
+                                .background(Color.secondary.opacity(0.15))
+                                .clipShape(Capsule())
+                                .foregroundStyle(.secondary)
+                            if detail.truncated {
+                                Text("Large commit — showing a capped set of files")
+                                    .appFont(.caption2)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        ForEach(detail.files) { file in
+                            DiffFileCard(file: file)
+                        }
+                    } else if !detail.changes.isEmpty {
+                        Text("Changed files").appFont(.headline)
+                        GroupBox {
+                            VStack(alignment: .leading, spacing: 0) {
+                                ForEach(Array(detail.changes.enumerated()), id: \.element.id) { index, change in
+                                    HStack(spacing: 8) {
+                                        Text(change.changeType.prefix(1).uppercased())
+                                            .appFont(fixed: 9, weight: .bold)
+                                            .frame(width: 16, height: 16)
+                                            .background(changeTint(change.changeType).opacity(0.18))
+                                            .foregroundStyle(changeTint(change.changeType))
+                                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                                        Text(change.path)
+                                            .appFont(.caption, design: .monospaced)
+                                            .lineLimit(1)
+                                            .truncationMode(.middle)
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 4)
+                                    if index < detail.changes.count - 1 { Divider() }
+                                }
+                            }
+                        }
+                        if repository.source == .azureDevOps {
+                            Text("Azure DevOps returns file paths for a commit but no patch; open in the browser for the diff.")
+                                .appFont(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    } else {
+                        Text("No file changes recorded.")
+                            .appFont(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(14)
+            }
+        } else {
+            VStack(spacing: 10) {
+                ProgressView()
+                Text("Loading commit…").appFont(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func changeTint(_ type: String) -> Color {
+        switch type {
+        case "add", "added": return .green
+        case "delete", "removed": return .orange
+        case "rename", "renamed": return .accentColor
+        default: return .secondary
+        }
+    }
+
+    private func load() async {
+        do {
+            switch repository.source {
+            case .gitHub:
+                let config = appState.config.tasks?.providers.github ?? GitHubProviderConfig()
+                detail = try await GitHubPullRequestService(config: config)
+                    .getCommitDetail(owner: repository.container, repo: repository.repository, sha: commit.id)
+            case .azureDevOps:
+                guard let repoId = repository.repositoryId else {
+                    throw AzDevOpsError.invalidUrl(repository.displayName)
+                }
+                detail = try await appState.devOpsService
+                    .getCommitDetail(repositoryId: repoId, sha: commit.id, project: repository.container)
+            }
+        } catch {
+            loadError = error.localizedDescription
+        }
     }
 }

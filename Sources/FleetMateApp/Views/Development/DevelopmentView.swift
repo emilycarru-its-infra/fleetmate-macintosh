@@ -404,11 +404,16 @@ private struct DevelopmentContent: View {
             // Inbox freshness matters more than anywhere else in the app:
             // missing a review request for an hour is the failure mode this
             // tab exists to fix.
+            // The inbox is one cheap REST call, so it polls every five
+            // minutes; the pull-request searches cost GraphQL points per row
+            // and refresh every fifteen, or on demand from the toolbar.
+            var tick = 0
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(300))
                 guard !Task.isCancelled else { break }
+                tick += 1
                 model.loadInbox(appState: appState, force: true)
-                model.loadPullRequests(appState: appState, force: true)
+                if tick % 3 == 0 { model.loadPullRequests(appState: appState, force: true) }
             }
         }
         .onChange(of: appState.devOpsSsoAuthenticated) { _, ready in

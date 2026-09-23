@@ -1228,6 +1228,145 @@ public class AzureDevOpsService {
     /// merge strategy and delete-source-branch settings chosen when it was
     /// opened, and sending our own would silently override branch policy.
     @discardableResult
+    // MARK: - PR review actions (Code section)
+
+    /// Casts the signed-in user's vote on a pull request. Azure DevOps adds
+    /// the caller as a reviewer if they were not one already.
+    public func votePullRequest(
+        repository: String,
+        pullRequestId: Int,
+        project: String? = nil,
+        vote: PullRequestReviewVote
+    ) async throws {
+        let identity = await currentIdentity()
+        guard let reviewerId = identity.id, !reviewerId.isEmpty else {
+            throw AzDevOpsError.httpError(code: 401, message: "Could not resolve your Azure DevOps identity to vote.")
+        }
+        dbg.info("AzDO votePullRequest(\(repository)#\(pullRequestId), vote=\(vote.rawValue))", category: "azdo")
+        let encodedRepo = repository.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repository
+        let body = try JSONSerialization.data(withJSONObject: ["vote": vote.rawValue])
+        let _: GitPullRequestReviewer = try await request(
+            "PUT",
+            path: "/_apis/git/repositories/\(encodedRepo)/pullRequests/\(pullRequestId)/reviewers/\(reviewerId)?api-version=7.0",
+            body: body,
+            forProject: project
+        )
+    }
+
+    public func approve(repository: String, pullRequestId: Int, project: String? = nil) async throws {
+        try await votePullRequest(repository: repository, pullRequestId: pullRequestId, project: project, vote: .approved)
+    }
+
+    /// "Waiting for author" is the Azure DevOps vote closest to GitHub's
+    /// request-changes review.
+    public func requestChanges(repository: String, pullRequestId: Int, project: String? = nil) async throws {
+        try await votePullRequest(repository: repository, pullRequestId: pullRequestId, project: project, vote: .waitingForAuthor)
+    }
+
+    /// Starts a new top-level comment thread on the pull request.
+    public func comment(
+        repository: String,
+        pullRequestId: Int,
+        project: String? = nil,
+        text: String
+    ) async throws {
+        dbg.info("AzDO commentOnPullRequest(\(repository)#\(pullRequestId))", category: "azdo")
+        let encodedRepo = repository.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repository
+        let body = try JSONSerialization.data(withJSONObject: [
+            "comments": [["parentCommentId": 0, "content": text, "commentType": 1]],
+            "status": 1
+        ])
+        let _: AzdoThreadEcho = try await request(
+            "POST",
+            path: "/_apis/git/repositories/\(encodedRepo)/pullRequests/\(pullRequestId)/threads?api-version=7.0",
+            body: body,
+            forProject: project
+        )
+    }
+
+    private struct AzdoThreadEcho: Decodable {
+        let id: Int?
+    }
+
+    /// Flips a pull request between draft and ready for review.
+    public func setReady(
+        repository: String,
+        pullRequestId: Int,
+        project: String? = nil,
+        ready: Bool
+    ) async throws -> GitPullRequest {
+        let isDraft = !ready
+        dbg.info("AzDO setReady(\(repository)#\(pullRequestId), ready=\(ready))", category: "azdo")
+        let encodedRepo = repository.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repository
+        let body = try JSONSerialization.data(withJSONObject: ["isDraft": isDraft])
+        return try await request(
+            "PATCH",
+            path: "/_apis/git/repositories/\(encodedRepo)/pullrequests/\(pullRequestId)?api-version=7.0",
+            body: body,
+            forProject: project
+        )
+    }
+
+    /// Branch-policy evaluations for the pull request (build, reviewers,
+    /// work-item link, comment resolution), normalized to `PullRequestCheck`.
+    public func getChecks(
+        repository: String,
+        pullRequestId: Int,
+        project: String? = nil
+    ) async throws -> [PullRequestCheck] {
+        let encodedRepo = repository.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repository
+        let pr: GitPullRequest = try await request(
+            "GET",
+            path: "/_apis/git/repositories/\(encodedRepo)/pullrequests/\(pullRequestId)?api-version=7.0",
+            forProject: project
+        )
+        guard let projectId = pr.repository?.project?.id else { return [] }
+        let artifact = "vstfs:///CodeReview/CodeReviewId/\(projectId)/\(pullRequestId)"
+        let encodedArtifact = artifact.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)?
+            .replacingOccurrences(of: "/", with: "%2F") ?? artifact
+        let response: AzdoPolicyEvaluations = try await request(
+            "GET",
+            path: "/_apis/policy/evaluations?artifactId=\(encodedArtifact)&api-version=7.0-preview.1",
+            forProject: project
+        )
+        return (response.value ?? []).compactMap { evaluation in
+            let configuration = evaluation.configuration
+            let name = configuration?.settings?.displayName
+                ?? configuration?.type?.displayName
+                ?? "Policy"
+            let state: PullRequestCheckState
+            switch (evaluation.status ?? "").lowercased() {
+            case "approved": state = .success
+            case "rejected", "broken": state = .failure
+            case "queued", "running": state = .pending
+            case "notapplicable": state = .skipped
+            default: state = .neutral
+            }
+            return PullRequestCheck(
+                name: name,
+                state: state,
+                detailsUrl: nil,
+                isRequired: configuration?.isBlocking ?? false
+            )
+        }
+    }
+
+    private struct AzdoPolicyEvaluations: Decodable {
+        let value: [AzdoPolicyEvaluation]?
+    }
+
+    private struct AzdoPolicyEvaluation: Decodable {
+        let status: String?
+        let configuration: Configuration?
+        struct Configuration: Decodable {
+            let isBlocking: Bool?
+            let type: TypeRef?
+            let settings: Settings?
+            struct TypeRef: Decodable { let displayName: String? }
+            struct Settings: Decodable { let displayName: String? }
+        }
+    }
+
     public func completePullRequest(
         repository: String,
         pullRequestId: Int,

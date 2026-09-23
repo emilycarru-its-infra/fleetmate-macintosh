@@ -13,6 +13,7 @@ final class DevelopmentModel: ObservableObject {
         case pullRequests = "Pulls"
         case inbox = "Inbox"
         case commits = "Commits"
+        case pipelines = "Pipelines"
     }
 
     @Published var segment: Segment = .pullRequests
@@ -140,6 +141,106 @@ final class DevelopmentModel: ObservableObject {
         commitsLoadedAt = Date()
     }
 
+    // Pipelines
+    @Published private(set) var pipelineRuns: [PipelineRun] = []
+    @Published private(set) var isLoadingPipelines = false
+    @Published private(set) var pipelinesLoadedAt: Date?
+    @Published private(set) var pipelinesError: String?
+    @Published var selectedRun: PipelineRun?
+    @Published var pipelineStatusFilter: PipelineRunStatus?
+    /// How far back the Pipelines segment looks.
+    static let pipelinesWindow: TimeInterval = 7 * 24 * 3600
+
+    private var pipelinesTask: Task<Void, Never>?
+
+    func visiblePipelineRuns(matching search: String) -> [PipelineRun] {
+        var rows = pipelineRuns
+        if let selectedSource { rows = rows.filter { $0.source == selectedSource } }
+        if let pipelineStatusFilter {
+            rows = rows.filter {
+                pipelineStatusFilter == .running ? $0.status.isActive : $0.status == pipelineStatusFilter
+            }
+        }
+        let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
+        if !needle.isEmpty {
+            rows = rows.filter {
+                $0.pipelineName.lowercased().contains(needle)
+                    || ($0.repository ?? "").lowercased().contains(needle)
+                    || $0.container.lowercased().contains(needle)
+                    || ($0.branch ?? "").lowercased().contains(needle)
+                    || ($0.triggeredBy ?? "").lowercased().contains(needle)
+                    || $0.runNumber.lowercased().contains(needle)
+            }
+        }
+        return rows.sorted { $0.sortDate > $1.sortDate }
+    }
+
+    func pipelineCount(for source: PullRequestSource) -> Int {
+        pipelineRuns.filter { $0.source == source }.count
+    }
+
+    func pipelineCount(for status: PipelineRunStatus) -> Int {
+        pipelineRuns.filter { status == .running ? $0.status.isActive : $0.status == status }.count
+    }
+
+    func togglePipelineStatus(_ status: PipelineRunStatus) {
+        pipelineStatusFilter = (pipelineStatusFilter == status) ? nil : status
+    }
+
+    func loadPipelines(appState: AppState, force: Bool = false) {
+        if !force {
+            if isLoadingPipelines { return }
+            if let at = pipelinesLoadedAt, Date().timeIntervalSince(at) < Self.freshness { return }
+        }
+        pipelinesTask?.cancel()
+        pipelinesTask = Task { await performPipelinesLoad(appState: appState) }
+    }
+
+    private func performPipelinesLoad(appState: AppState) async {
+        isLoadingPipelines = true
+        defer { isLoadingPipelines = false }
+        let since = Date().addingTimeInterval(-Self.pipelinesWindow)
+        let config = gitHubConfig(appState)
+
+        // GitHub Actions runs come per repository; the repositories with
+        // recent commits are the ones with runs worth showing, so the
+        // Commits segment's list is the scope. Load it first if needed.
+        if repositoryCommits.isEmpty, commitsLoadedAt == nil {
+            await performCommitsLoad(appState: appState)
+        }
+        let gitHubRepos = repositoryCommits
+            .filter { $0.source == .gitHub }
+            .map { (owner: $0.container, name: $0.repository) }
+
+        let gitHubTask = Task.detached(priority: .userInitiated) {
+            await GitHubActionsService(config: config).getRecentRuns(repositories: gitHubRepos, since: since)
+        }
+
+        var merged: [PipelineRun] = []
+        var errors: [String] = []
+        if appState.config.isDevOpsConfigured, await appState.devOpsService.ensureValidToken() {
+            do {
+                merged += try await appState.devOpsService.getRecentPipelineRuns(since: since)
+            } catch {
+                errors.append("Azure DevOps: \(error.localizedDescription)")
+            }
+        }
+
+        let gitHub = await gitHubTask.value
+        merged += gitHub.runs
+        if let error = gitHub.error, !error.contains("No GitHub authentication token") {
+            errors.append("GitHub: \(error)")
+        }
+
+        guard !Task.isCancelled else { return }
+        pipelineRuns = merged.sorted { $0.sortDate > $1.sortDate }
+        pipelinesError = errors.isEmpty ? nil : errors.joined(separator: "\n")
+        pipelinesLoadedAt = Date()
+        if let selected = selectedRun {
+            selectedRun = merged.first { $0.id == selected.id } ?? selected
+        }
+    }
+
     // Activity sidebar
     @Published var showActivity = true
     @Published var hideMyComments = false
@@ -258,6 +359,7 @@ final class DevelopmentModel: ObservableObject {
         loadPullRequests(appState: appState, force: force)
         loadInbox(appState: appState, force: force)
         loadCommits(appState: appState, force: force)
+        loadPipelines(appState: appState, force: force)
     }
 
     func loadPullRequests(appState: AppState, force: Bool = false) {
@@ -503,7 +605,7 @@ private struct DevelopmentContent: View {
                     .frame(width: activityWidth)
             }
         }
-        .searchable(text: $model.searchText, prompt: model.segment == .commits ? "Search commits..." : "Search pull requests...")
+        .searchable(text: $model.searchText, prompt: searchPrompt)
         .toolbar { developmentToolbar }
         .task {
             model.loadAll(appState: appState)
@@ -522,6 +624,10 @@ private struct DevelopmentContent: View {
                 if tick % 3 == 0 {
                     model.loadPullRequests(appState: appState, force: true)
                     model.loadCommits(appState: appState, force: true)
+                    model.loadPipelines(appState: appState, force: true)
+                } else if model.segment == .pipelines, model.pipelineRuns.contains(where: { $0.status.isActive }) {
+                    // Something is running: keep the list honest while it is watched.
+                    model.loadPipelines(appState: appState, force: true)
                 }
             }
         }
@@ -539,6 +645,14 @@ private struct DevelopmentContent: View {
     }
 
     private var searchText: String { model.searchText }
+
+    private var searchPrompt: String {
+        switch model.segment {
+        case .pullRequests, .inbox: return "Search pull requests..."
+        case .commits: return "Search commits..."
+        case .pipelines: return "Search runs..."
+        }
+    }
 
     @ToolbarContentBuilder
     private var developmentToolbar: some ToolbarContent {
@@ -582,6 +696,7 @@ private struct DevelopmentContent: View {
             case .pullRequests: pullRequestList
             case .inbox: inboxList
             case .commits: commitsList
+            case .pipelines: PipelinesListView(model: model, searchText: searchText)
             }
         }
     }
@@ -911,7 +1026,21 @@ private struct DevelopmentContent: View {
 
     @ViewBuilder
     private var detailPane: some View {
-        if model.segment == .commits {
+        if model.segment == .pipelines {
+            if let run = model.selectedRun {
+                PipelineRunDetailView(run: run) {
+                    model.loadPipelines(appState: appState, force: true)
+                }
+                .id(run.id)
+                .environmentObject(appState)
+            } else {
+                ContentUnavailableView(
+                    "Select a run",
+                    systemImage: "play.circle",
+                    description: Text("Every pipeline run across all projects, last 7 days.")
+                )
+            }
+        } else if model.segment == .commits {
             if let selected = model.selectedCommit {
                 CommitDetailView(selection: selected)
                     .id(selected.id)

@@ -198,6 +198,52 @@ public actor GitHubGraphQLClient {
         }
     }
 
+    /// GET a REST path whose response is plain text, following one redirect
+    /// without the API token. GitHub serves job logs this way: the API
+    /// answers 302 to a signed blob URL that rejects an Authorization header.
+    public func executeRESTText(path: String) async throws -> String {
+        try GitHubRateLimitGate.check()
+        let token = try await ensureToken()
+        guard let url = URL(string: "https://api.github.com\(path)") else {
+            throw GitHubGraphQLError.invalidResponse
+        }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+        request.setValue("FleetMate", forHTTPHeaderField: "User-Agent")
+
+        let first: (Data, HTTPURLResponse) = try await withCheckedThrowingContinuation { continuation in
+            session.request(request)
+                .redirect(using: Redirector(behavior: .doNotFollow))
+                .validate(statusCode: 200..<400)
+                .responseData(emptyResponseCodes: [200, 204, 301, 302, 307]) { response in
+                    switch response.result {
+                    case .success(let data):
+                        guard let http = response.response else {
+                            continuation.resume(throwing: GitHubGraphQLError.invalidResponse)
+                            return
+                        }
+                        continuation.resume(returning: (data, http))
+                    case .failure(let error):
+                        if let status = response.response?.statusCode, status == 403 || status == 429 {
+                            GitHubRateLimitGate.trip()
+                        }
+                        continuation.resume(throwing: GitHubGraphQLError.networkError(error))
+                    }
+                }
+        }
+
+        if (300..<400).contains(first.1.statusCode) {
+            guard let location = first.1.value(forHTTPHeaderField: "Location"), let target = URL(string: location) else {
+                throw GitHubGraphQLError.invalidResponse
+            }
+            let (data, _) = try await URLSession.shared.data(from: target)
+            return String(decoding: data, as: UTF8.self)
+        }
+        return String(decoding: first.0, as: UTF8.self)
+    }
+
     // MARK: - Token Management
 
     private func ensureToken() async throws -> String {

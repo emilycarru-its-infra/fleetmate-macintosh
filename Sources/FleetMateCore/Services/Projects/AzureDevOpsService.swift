@@ -1228,6 +1228,175 @@ public class AzureDevOpsService {
     /// merge strategy and delete-source-branch settings chosen when it was
     /// opened, and sending our own would silently override branch policy.
     @discardableResult
+    // MARK: - Pipelines (Development tab)
+
+    /// Builds queued since `since` in every project the user can read. Azure
+    /// DevOps has no cross-project build list, so this fans out per project.
+    public func getRecentPipelineRuns(since: Date, topPerProject: Int = 50) async throws -> [PipelineRun] {
+        let projects = try await listProjects()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let minTime = formatter.string(from: since).addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+
+        let runs: [PipelineRun] = await withTaskGroup(of: [PipelineRun].self) { group in
+            for project in projects {
+                let name = project.name
+                group.addTask {
+                    let encodedProject = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
+                    let path = "/_apis/build/builds?minTime=\(minTime)&$top=\(topPerProject)&queryOrder=queueTimeDescending&api-version=7.0"
+                    guard let response: AzdoBuilds = try? await self.request("GET", path: path, forProject: encodedProject) else { return [] }
+                    return (response.value ?? []).map { Self.mapBuild($0, project: name) }
+                }
+            }
+            var all: [PipelineRun] = []
+            for await batch in group { all.append(contentsOf: batch) }
+            return all
+        }
+        dbg.info("AzDO getRecentPipelineRuns → \(runs.count) runs across \(projects.count) projects", category: "azdo")
+        return runs.sorted { $0.sortDate > $1.sortDate }
+    }
+
+    /// The build's timeline (stages, jobs, tasks) with each record's log
+    /// text, so the viewer reads like the web UI's log pane.
+    public func getPipelineRunLog(project: String, buildId: Int, maxBytesPerRecord: Int = 400_000) async throws -> PipelineRunLog {
+        let encodedProject = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        let timeline: AzdoTimeline = try await request(
+            "GET",
+            path: "/_apis/build/builds/\(buildId)/timeline?api-version=7.0",
+            forProject: encodedProject
+        )
+        // Tasks carry the useful text; jobs and stages are containers. Keep
+        // the timeline's own order so steps read top to bottom.
+        let records = (timeline.records ?? [])
+            .filter { $0.log?.id != nil && ($0.type ?? "").lowercased() == "task" }
+            .sorted { ($0.order ?? 0) < ($1.order ?? 0) }
+
+        var truncated = false
+        var sections: [PipelineRunLog.Section] = []
+        for record in records {
+            guard let logId = record.log?.id else { continue }
+            var text: String
+            do {
+                let lines: AzdoLogLines = try await request(
+                    "GET",
+                    path: "/_apis/build/builds/\(buildId)/logs/\(logId)?api-version=7.0",
+                    forProject: encodedProject
+                )
+                text = (lines.value ?? []).joined(separator: "\n")
+            } catch {
+                text = "(log unavailable: \(error.localizedDescription))"
+            }
+            if text.utf8.count > maxBytesPerRecord {
+                text = String(decoding: text.utf8.suffix(maxBytesPerRecord), as: UTF8.self)
+                truncated = true
+            }
+            sections.append(PipelineRunLog.Section(
+                id: record.id ?? String(logId),
+                name: record.name ?? "step",
+                status: Self.mapBuildStatus(state: record.state, result: record.result),
+                text: text
+            ))
+        }
+        return PipelineRunLog(runId: buildId, sections: sections, truncated: truncated)
+    }
+
+    /// Queues a fresh build of the same definition on the same branch.
+    public func rerunPipeline(project: String, definitionId: Int, branch: String?) async throws -> PipelineRun {
+        let encodedProject = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        var body: [String: Any] = ["definition": ["id": definitionId]]
+        if let branch { body["sourceBranch"] = branch.hasPrefix("refs/") ? branch : "refs/heads/\(branch)" }
+        let data = try JSONSerialization.data(withJSONObject: body)
+        let build: AzdoBuild = try await request("POST", path: "/_apis/build/builds?api-version=7.0", body: data, forProject: encodedProject)
+        return Self.mapBuild(build, project: project)
+    }
+
+    public func cancelPipelineRun(project: String, buildId: Int) async throws {
+        let encodedProject = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        let data = try JSONSerialization.data(withJSONObject: ["status": "cancelling"])
+        let _: AzdoBuild = try await request("PATCH", path: "/_apis/build/builds/\(buildId)?api-version=7.0", body: data, forProject: encodedProject)
+    }
+
+    private static func mapBuildStatus(state: String?, result: String?) -> PipelineRunStatus {
+        switch (state ?? "").lowercased() {
+        case "notstarted", "postponed", "pending": return .queued
+        case "inprogress", "cancelling": return .running
+        case "completed":
+            switch (result ?? "").lowercased() {
+            case "succeeded": return .succeeded
+            case "partiallysucceeded": return .partial
+            case "failed": return .failed
+            case "canceled", "cancelled": return .cancelled
+            case "skipped": return .skipped
+            default: return .unknown
+            }
+        default: return .unknown
+        }
+    }
+
+    private static func mapBuild(_ build: AzdoBuild, project: String) -> PipelineRun {
+        let status = mapBuildStatus(state: build.status, result: build.result)
+        return PipelineRun(
+            source: .azureDevOps,
+            container: project,
+            repository: build.repository?.name,
+            pipelineName: build.definition?.name ?? "pipeline",
+            pipelineId: build.definition?.id,
+            runId: build.id,
+            runNumber: build.buildNumber ?? String(build.id),
+            status: status,
+            branch: build.sourceBranch?.replacingOccurrences(of: "refs/heads/", with: ""),
+            commitSha: build.sourceVersion,
+            triggeredBy: build.requestedFor?.displayName,
+            startedAt: PullRequestDateParser.parse(build.startTime ?? build.queueTime),
+            finishedAt: PullRequestDateParser.parse(build.finishTime),
+            webUrl: build.links?.web?.href ?? ""
+        )
+    }
+
+    private struct AzdoBuilds: Decodable { let value: [AzdoBuild]? }
+
+    private struct AzdoBuild: Decodable {
+        let id: Int
+        let buildNumber: String?
+        let status: String?
+        let result: String?
+        let queueTime: String?
+        let startTime: String?
+        let finishTime: String?
+        let sourceBranch: String?
+        let sourceVersion: String?
+        let definition: Definition?
+        let repository: Repo?
+        let requestedFor: IdentityRef?
+        let links: Links?
+        struct Definition: Decodable { let id: Int?; let name: String? }
+        struct Repo: Decodable { let name: String? }
+        struct Links: Decodable {
+            let web: Link?
+            struct Link: Decodable { let href: String? }
+        }
+        enum CodingKeys: String, CodingKey {
+            case id, buildNumber, status, result, queueTime, startTime, finishTime
+            case sourceBranch, sourceVersion, definition, repository, requestedFor
+            case links = "_links"
+        }
+    }
+
+    private struct AzdoTimeline: Decodable { let records: [Record]?
+        struct Record: Decodable {
+            let id: String?
+            let name: String?
+            let type: String?
+            let state: String?
+            let result: String?
+            let order: Int?
+            let log: LogRef?
+            struct LogRef: Decodable { let id: Int? }
+        }
+    }
+
+    private struct AzdoLogLines: Decodable { let value: [String]? }
+
     // MARK: - Commits (Development tab)
 
     /// Default-branch commits since `since` in every repository of every

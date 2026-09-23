@@ -309,6 +309,147 @@ public actor GitHubPullRequestService {
         )
     }
 
+    // MARK: - PR actions (REST + GraphQL)
+
+    private enum ReviewEvent: String, Sendable {
+        case approve = "APPROVE"
+        case requestChanges = "REQUEST_CHANGES"
+        case comment = "COMMENT"
+    }
+
+    /// Submits a review. GitHub requires a body for request-changes and
+    /// comment reviews; approvals may be empty.
+    private func submitReview(owner: String, repo: String, number: Int, event: ReviewEvent, body: String?) async throws {
+        var payload: [String: Any] = ["event": event.rawValue]
+        if let body, !body.isEmpty { payload["body"] = body }
+        _ = try await client.executeREST(
+            method: "POST",
+            path: "/repos/\(owner)/\(repo)/pulls/\(number)/reviews",
+            body: payload
+        )
+        dbg.info("GitHub submitReview \(owner)/\(repo)#\(number) \(event.rawValue)", category: "github")
+    }
+
+    public func approve(owner: String, repo: String, number: Int) async throws {
+        try await submitReview(owner: owner, repo: repo, number: number, event: .approve, body: nil)
+    }
+
+    public func requestChanges(owner: String, repo: String, number: Int, body: String) async throws {
+        try await submitReview(owner: owner, repo: repo, number: number, event: .requestChanges, body: body)
+    }
+
+    /// A plain conversation comment (not a review).
+    public func comment(owner: String, repo: String, number: Int, body: String) async throws {
+        _ = try await client.executeREST(
+            method: "POST",
+            path: "/repos/\(owner)/\(repo)/issues/\(number)/comments",
+            body: ["body": body]
+        )
+    }
+
+    public func merge(owner: String, repo: String, number: Int, method: PullRequestMergeMethod) async throws {
+        _ = try await client.executeREST(
+            method: "PUT",
+            path: "/repos/\(owner)/\(repo)/pulls/\(number)/merge",
+            body: ["merge_method": method.rawValue]
+        )
+        dbg.info("GitHub merged \(owner)/\(repo)#\(number) via \(method.rawValue)", category: "github")
+    }
+
+    public func close(owner: String, repo: String, number: Int) async throws {
+        _ = try await client.executeREST(
+            method: "PATCH",
+            path: "/repos/\(owner)/\(repo)/pulls/\(number)",
+            body: ["state": "closed"]
+        )
+    }
+
+    /// Converts between draft and ready for review. Both mutations need the
+    /// PR's node id, so this is one lookup plus one mutation.
+    public func setReady(owner: String, repo: String, number: Int, ready: Bool) async throws {
+        let lookup = try await client.executeRaw(query: """
+        query($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id } }
+        }
+        """, variables: ["owner": owner, "repo": repo, "number": number])
+        guard let nodeId = ((lookup["repository"] as? [String: Any])?["pullRequest"] as? [String: Any])?["id"] as? String else {
+            throw GitHubGraphQLError.noData
+        }
+        let mutation = ready
+            ? "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }"
+            : "mutation($id: ID!) { convertPullRequestToDraft(input: {pullRequestId: $id}) { pullRequest { isDraft } } }"
+        _ = try await client.executeRaw(query: mutation, variables: ["id": nodeId])
+    }
+
+    /// CI checks and commit statuses on the head commit, normalized.
+    public func getChecks(owner: String, repo: String, number: Int) async throws -> [PullRequestCheck] {
+        let query = """
+        query($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              commits(last: 1) {
+                nodes {
+                  commit {
+                    statusCheckRollup {
+                      contexts(first: 100) {
+                        nodes {
+                          __typename
+                          ... on CheckRun {
+                            name status conclusion detailsUrl
+                            isRequired(pullRequestNumber: $number)
+                          }
+                          ... on StatusContext {
+                            context state targetUrl
+                            isRequired(pullRequestNumber: $number)
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        let data = try await client.executeRaw(query: query, variables: ["owner": owner, "repo": repo, "number": number])
+        let commits = (((data["repository"] as? [String: Any])?["pullRequest"] as? [String: Any])?["commits"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+        let rollup = ((commits.first?["commit"] as? [String: Any])?["statusCheckRollup"] as? [String: Any])
+        let contexts = (rollup?["contexts"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+
+        return contexts.compactMap { node in
+            let required = node["isRequired"] as? Bool ?? false
+            switch node["__typename"] as? String {
+            case "CheckRun":
+                let name = node["name"] as? String ?? "check"
+                let state: PullRequestCheckState
+                if (node["status"] as? String)?.uppercased() != "COMPLETED" {
+                    state = .pending
+                } else {
+                    switch (node["conclusion"] as? String)?.uppercased() {
+                    case "SUCCESS": state = .success
+                    case "FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE": state = .failure
+                    case "SKIPPED": state = .skipped
+                    default: state = .neutral
+                    }
+                }
+                return PullRequestCheck(name: name, state: state, detailsUrl: node["detailsUrl"] as? String, isRequired: required)
+            case "StatusContext":
+                let name = node["context"] as? String ?? "status"
+                let state: PullRequestCheckState
+                switch (node["state"] as? String)?.uppercased() {
+                case "SUCCESS": state = .success
+                case "FAILURE", "ERROR": state = .failure
+                case "PENDING", "EXPECTED": state = .pending
+                default: state = .neutral
+                }
+                return PullRequestCheck(name: name, state: state, detailsUrl: node["targetUrl"] as? String, isRequired: required)
+            default:
+                return nil
+            }
+        }
+    }
+
     private struct RestPullRequest: Decodable {
         let body: String?
     }

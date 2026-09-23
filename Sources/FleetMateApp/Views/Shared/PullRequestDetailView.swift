@@ -9,6 +9,9 @@ import FleetMateCore
 /// renderer is ported from MunkiStudio's DiffView with dark-mode-aware colors.
 struct PullRequestDetailView: View {
     let pullRequest: UnifiedPullRequest
+    /// Presented inside the Code section's right pane rather than as a sheet:
+    /// no fixed frame, no close button, and actions don't dismiss anything.
+    var isInline: Bool = false
     /// Called after Complete/Abandon so the queue behind the sheet refreshes.
     var onActionCompleted: (() -> Void)?
 
@@ -37,7 +40,10 @@ struct PullRequestDetailView: View {
             Divider()
             content
         }
-        .frame(width: sheetSize.width, height: sheetSize.height)
+        .frame(
+            width: isInline ? nil : sheetSize.width,
+            height: isInline ? nil : sheetSize.height
+        )
         .task { await load() }
     }
 
@@ -89,15 +95,17 @@ struct PullRequestDetailView: View {
                 Image(systemName: "globe")
             }
             .help("Open in browser")
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.secondary)
-                    .appFont(.title3)
+            if !isInline {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                        .appFont(.title3)
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
             }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
         }
         .padding(14)
         .confirmationDialog(
@@ -206,7 +214,7 @@ struct PullRequestDetailView: View {
                     )
                 }
                 onActionCompleted?()
-                dismiss()
+                if !isInline { dismiss() }
             } catch {
                 actionError = "Could not \(action.title.lowercased()) !\(pullRequest.number): "
                     + error.localizedDescription

@@ -103,6 +103,85 @@ public actor GitHubPullRequestService {
         }
     }
 
+    /// The wider queue the Code section shows: everything `getMyPullRequests`
+    /// returns, plus PRs the user is merely involved in and every open PR in
+    /// the given owners' repositories (`user:<owner>` matches orgs and users).
+    ///
+    /// Owners are deduplicated case-insensitively. Each extra owner costs one
+    /// search point, so a handful is fine and dozens is not.
+    public func getOpenPullRequests(owners: [String], limit: Int = 100) async -> PullRequestQueue {
+        var queue = await getMyPullRequests(limit: limit)
+
+        var seen: Set<String> = []
+        let ownerList = owners
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+
+        var aliases: [String] = ["involved: search(query: $involved, type: ISSUE, first: $first) { nodes { ...PullRequestFields } }"]
+        var declarations: [String] = ["$involved: String!", "$first: Int!"]
+        var variables: [String: Any] = [
+            "involved": "is:pr is:open archived:false involves:@me sort:updated-desc",
+            "first": limit
+        ]
+        for (index, owner) in ownerList.enumerated() {
+            aliases.append("owner\(index): search(query: $owner\(index), type: ISSUE, first: $first) { nodes { ...PullRequestFields } }")
+            declarations.append("$owner\(index): String!")
+            variables["owner\(index)"] = "is:pr is:open archived:false user:\(owner) sort:updated-desc"
+        }
+
+        let query = """
+        \(Self.pullRequestFragment)
+        query(\(declarations.joined(separator: ", "))) {
+          \(aliases.joined(separator: "\n  "))
+        }
+        """
+
+        do {
+            let data = try await client.executeRaw(query: query, variables: variables)
+            absorb(data, key: "involved", relation: .involved, into: &queue)
+            for index in ownerList.indices {
+                absorb(data, key: "owner\(index)", relation: .organization, into: &queue)
+            }
+            dbg.info("GitHub getOpenPullRequests(owners: \(ownerList.count)) → \(queue.pullRequests.count) PRs", category: "github")
+        } catch {
+            dbg.error("GitHub getOpenPullRequests failed: \(error)", category: "github")
+            queue.errors.append(PullRequestQueueError(source: .gitHub, message: error.localizedDescription))
+        }
+        return queue
+    }
+
+    /// Owners the signed-in user belongs to: their own login plus every
+    /// organization membership the token can see. Feeds `getOpenPullRequests`.
+    public func getViewerOwners() async throws -> [String] {
+        let data = try await client.executeRaw(query: """
+        query { viewer { login organizations(first: 50) { nodes { login } } } }
+        """)
+        guard let viewer = data["viewer"] as? [String: Any] else { return [] }
+        var owners: [String] = []
+        if let login = viewer["login"] as? String { owners.append(login) }
+        let orgs = (viewer["organizations"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+        owners.append(contentsOf: orgs.compactMap { $0["login"] as? String })
+        return owners
+    }
+
+    /// One pull request by coordinates, in the queue's unified shape — used to
+    /// open a PR the inbox points at that the queue has not loaded.
+    public func getPullRequest(owner: String, repo: String, number: Int) async throws -> UnifiedPullRequest? {
+        let query = """
+        \(Self.pullRequestFragment)
+        query($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) { ...PullRequestFields }
+          }
+        }
+        """
+        let data = try await client.executeRaw(query: query, variables: [
+            "owner": owner, "repo": repo, "number": number
+        ])
+        guard let node = (data["repository"] as? [String: Any])?["pullRequest"] as? [String: Any] else { return nil }
+        return Self.map(node, relation: .involved)
+    }
+
     /// Whether a usable GitHub token is reachable, without surfacing a login UI.
     public func isAuthenticated() async -> Bool {
         (try? await client.authenticate()) ?? false

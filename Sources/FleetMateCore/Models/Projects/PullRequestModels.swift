@@ -39,11 +39,19 @@ public enum PullRequestRelation: String, Codable, Sendable, CaseIterable {
     /// The user is a reviewer (AzDO) or a review is requested of them / they are
     /// an assignee (GitHub).
     case assignedToMe
+    /// The user commented on, was mentioned in, or otherwise took part in
+    /// the PR (GitHub `involves:@me`). Only the Code section asks for these.
+    case involved
+    /// Open in one of the configured owner/organization repositories with no
+    /// direct link to the user. Only the Code section asks for these.
+    case organization
 
     public var sectionTitle: String {
         switch self {
         case .createdByMe:  return "Created by me"
         case .assignedToMe: return "Assigned to me"
+        case .involved:     return "Involving me"
+        case .organization: return "In my repositories"
         }
     }
 }
@@ -201,6 +209,45 @@ public struct UnifiedPullRequest: Identifiable, Sendable, Hashable {
 
     public static func == (lhs: UnifiedPullRequest, rhs: UnifiedPullRequest) -> Bool { lhs.id == rhs.id }
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
+}
+
+// MARK: - Checks
+
+/// Outcome of one CI check or branch policy on a pull request, normalized
+/// across GitHub (statusCheckRollup contexts) and Azure DevOps (policy
+/// evaluations).
+public enum PullRequestCheckState: String, Codable, Sendable {
+    case pending, success, failure, neutral, skipped
+}
+
+public struct PullRequestCheck: Identifiable, Sendable, Hashable {
+    public let name: String
+    public let state: PullRequestCheckState
+    public let detailsUrl: String?
+    public let isRequired: Bool
+
+    public var id: String { "\(name):\(detailsUrl ?? "")" }
+
+    public init(name: String, state: PullRequestCheckState, detailsUrl: String? = nil, isRequired: Bool = false) {
+        self.name = name
+        self.state = state
+        self.detailsUrl = detailsUrl
+        self.isRequired = isRequired
+    }
+}
+
+/// How a pull request is merged. GitHub honours it; Azure DevOps completes
+/// with the merge strategy already set on the PR and ignores it.
+public enum PullRequestMergeMethod: String, CaseIterable, Sendable {
+    case merge, squash, rebase
+
+    public var displayName: String {
+        switch self {
+        case .merge:  return "Merge commit"
+        case .squash: return "Squash and merge"
+        case .rebase: return "Rebase and merge"
+        }
+    }
 }
 
 // MARK: - Queue

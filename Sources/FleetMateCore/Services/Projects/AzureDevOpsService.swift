@@ -1228,6 +1228,108 @@ public class AzureDevOpsService {
     /// merge strategy and delete-source-branch settings chosen when it was
     /// opened, and sending our own would silently override branch policy.
     @discardableResult
+    // MARK: - Commits (Development tab)
+
+    /// Default-branch commits since `since` in every repository of every
+    /// project the user can read. One repositories call per project, then
+    /// one commits call per repository, fanned out.
+    public func getRecentCommits(since: Date, perRepo: Int = 10) async throws -> [RepositoryCommits] {
+        let projects = try await listProjects()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let fromDate = formatter.string(from: since)
+            .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+
+        let repos: [(project: String, repo: GitRepository)] = await withTaskGroup(of: [(String, GitRepository)].self) { group in
+            for project in projects {
+                let name = project.name
+                group.addTask {
+                    let list = (try? await self.getRepositories(project: name)) ?? []
+                    return list.map { (name, $0) }
+                }
+            }
+            var all: [(String, GitRepository)] = []
+            for await batch in group { all.append(contentsOf: batch) }
+            return all
+        }
+
+        let results: [RepositoryCommits] = await withTaskGroup(of: RepositoryCommits?.self) { group in
+            for entry in repos {
+                group.addTask {
+                    let encodedProject = entry.project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? entry.project
+                    let path = "/_apis/git/repositories/\(entry.repo.id)/commits?searchCriteria.fromDate=\(fromDate)&$top=\(perRepo)&api-version=7.0"
+                    guard let response: GitCommitsResponse = try? await self.request("GET", path: path, forProject: encodedProject),
+                          let commits = response.value, !commits.isEmpty
+                    else { return nil }
+                    return RepositoryCommits(
+                        source: .azureDevOps,
+                        container: entry.project,
+                        repository: entry.repo.name,
+                        repositoryId: entry.repo.id,
+                        webUrl: entry.repo.webUrl ?? "",
+                        defaultBranch: entry.repo.defaultBranch.map { $0.replacingOccurrences(of: "refs/heads/", with: "") },
+                        commits: commits.map {
+                            PullRequestCommit(
+                                id: $0.commitId,
+                                message: $0.comment ?? "",
+                                authorName: $0.author?.name,
+                                date: PullRequestDateParser.parse($0.author?.date ?? $0.committer?.date),
+                                url: $0.remoteUrl
+                            )
+                        }
+                    )
+                }
+            }
+            var all: [RepositoryCommits] = []
+            for await result in group { if let result { all.append(result) } }
+            return all
+        }
+        dbg.info("AzDO getRecentCommits → \(results.count) repos with activity", category: "azdo")
+        return results.sorted { $0.latestDate > $1.latestDate }
+    }
+
+    /// Paths touched by one commit. Azure DevOps returns change types but no
+    /// patch here, so the viewer shows a change list rather than a diff.
+    public func getCommitDetail(repositoryId: String, sha: String, project: String? = nil) async throws -> CommitDetail {
+        let encodedProject = project?.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+        async let commitTask: GitCommitRef = request(
+            "GET",
+            path: "/_apis/git/repositories/\(repositoryId)/commits/\(sha)?api-version=7.0",
+            forProject: encodedProject
+        )
+        async let changesTask: AzdoCommitChanges = request(
+            "GET",
+            path: "/_apis/git/repositories/\(repositoryId)/commits/\(sha)/changes?$top=500&api-version=7.0",
+            forProject: encodedProject
+        )
+        let commit = try await commitTask
+        let changes = try await changesTask
+        let list = (changes.changes ?? []).compactMap { change -> CommitChange? in
+            guard let path = change.item?.path, change.item?.isFolder != true else { return nil }
+            return CommitChange(path: path, changeType: (change.changeType ?? "edit").lowercased())
+        }
+        return CommitDetail(
+            message: commit.comment ?? "",
+            changes: list,
+            additions: changes.changeCounts?["Add"] ?? 0,
+            deletions: changes.changeCounts?["Delete"] ?? 0,
+            truncated: list.count >= 500
+        )
+    }
+
+    private struct AzdoCommitChanges: Decodable {
+        let changeCounts: [String: Int]?
+        let changes: [Change]?
+        struct Change: Decodable {
+            let changeType: String?
+            let item: Item?
+            struct Item: Decodable {
+                let path: String?
+                let isFolder: Bool?
+            }
+        }
+    }
+
     // MARK: - PR review actions (Code section)
 
     /// Casts the signed-in user's vote on a pull request. Azure DevOps adds

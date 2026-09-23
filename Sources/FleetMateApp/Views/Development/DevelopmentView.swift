@@ -157,9 +157,7 @@ final class DevelopmentModel: ObservableObject {
         var rows = pipelineRuns
         if let selectedSource { rows = rows.filter { $0.source == selectedSource } }
         if let pipelineStatusFilter {
-            rows = rows.filter {
-                pipelineStatusFilter == .running ? $0.status.isActive : $0.status == pipelineStatusFilter
-            }
+            rows = rows.filter { matches($0, status: pipelineStatusFilter) }
         }
         let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
         if !needle.isEmpty {
@@ -180,7 +178,30 @@ final class DevelopmentModel: ObservableObject {
     }
 
     func pipelineCount(for status: PipelineRunStatus) -> Int {
-        pipelineRuns.filter { status == .running ? $0.status.isActive : $0.status == status }.count
+        pipelineRuns.filter { matches($0, status: status) }.count
+    }
+
+    /// Running matches any active run. Failed matches only a pipeline whose
+    /// latest run failed or partially succeeded: an old red run under a green
+    /// one is history, not a failure to act on. Succeeded matches every green
+    /// run. The Windows app applies the same rule.
+    private func matches(_ run: PipelineRun, status: PipelineRunStatus) -> Bool {
+        switch status {
+        case .running: return run.status.isActive
+        case .failed: return (run.status == .failed || run.status == .partial) && latestRunIDs.contains(run.id)
+        default: return run.status == status
+        }
+    }
+
+    /// The most recent run of every pipeline, by start date.
+    private var latestRunIDs: Set<String> {
+        var latest: [String: PipelineRun] = [:]
+        for run in pipelineRuns {
+            let key = "\(run.source.rawValue):\(run.container)/\(run.pipelineId.map(String.init) ?? run.pipelineName)"
+            if let current = latest[key], current.sortDate >= run.sortDate { continue }
+            latest[key] = run
+        }
+        return Set(latest.values.map(\.id))
     }
 
     func togglePipelineStatus(_ status: PipelineRunStatus) {
@@ -660,7 +681,8 @@ private struct DevelopmentContent: View {
             SegmentedPill(
                 selection: $model.segment,
                 options: DevelopmentModel.Segment.allCases,
-                label: { $0 == .inbox && model.unreadCount > 0 ? "Inbox \(model.unreadCount)" : $0.rawValue }
+                label: { $0 == .inbox && model.unreadCount > 0 ? "Inbox \(model.unreadCount)" : $0.rawValue },
+                segmentWidth: nil
             )
 
             if model.segment == .inbox {

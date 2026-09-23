@@ -1355,6 +1355,39 @@ public class AzureDevOpsService {
 
     /// Fetch one project's slice of the queue. Never throws — a project the user
     /// cannot read should not sink the whole queue.
+    /// Every active pull request in every project the user can read — the
+    /// Code section's "In my repositories" rows. PRs the user created or
+    /// reviews keep those relations; the rest carry `.organization`.
+    public func getAllActivePullRequests(topPerProject: Int = 100) async throws -> PullRequestQueue {
+        var queue = try await getMyPullRequests(status: "active", topPerQuery: topPerProject)
+        let projects = try await listProjects()
+
+        let perProject = await withTaskGroup(of: [UnifiedPullRequest].self) { group in
+            for project in projects {
+                let name = project.name
+                group.addTask {
+                    let all = await self.fetchProjectPullRequests(name, criteria: "", status: "active", top: topPerProject)
+                    return all.compactMap { self.mapPullRequest($0, project: name, relation: .organization) }
+                }
+            }
+            var collected: [UnifiedPullRequest] = []
+            for await batch in group { collected.append(contentsOf: batch) }
+            return collected
+        }
+
+        // Only PRs the personal queue did not already place get the broad
+        // relation; `insert` unions relations, so re-inserting a known PR
+        // would wrongly tag it as both mine and merely organizational.
+        let known = Set(queue.pullRequests.map(\.id))
+        var additions = perProject.filter { !known.contains($0.id) }
+        if !additions.isEmpty {
+            additions = await withThreadActivity(additions)
+            for pr in additions { queue.insert(pr) }
+        }
+        dbg.info("AzDO getAllActivePullRequests → \(queue.pullRequests.count) PRs", category: "azdo")
+        return queue
+    }
+
     private func pullRequestsForProject(
         _ projectName: String,
         identity: DevOpsIdentitySummary,

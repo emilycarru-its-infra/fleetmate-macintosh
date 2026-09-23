@@ -1537,6 +1537,7 @@ public class AzureDevOpsService {
             var enriched = pr
             enriched.commentCount = activity.commentThreadCount
             enriched.updatedAt = activity.lastActivity
+            enriched.recentComments = activity.recentComments
             return enriched
         }
     }
@@ -1544,6 +1545,7 @@ public class AzureDevOpsService {
     private struct ThreadActivity {
         let commentThreadCount: Int
         let lastActivity: Date?
+        let recentComments: [PullRequestComment]
     }
 
     /// Human comment threads on a PR and when they were last touched. System
@@ -1572,7 +1574,31 @@ public class AzureDevOpsService {
                 .compactMap { PullRequestDateParser.parse($0.lastUpdatedDate ?? $0.publishedDate) }
                 .max()
 
-            return ThreadActivity(commentThreadCount: commentThreads.count, lastActivity: lastActivity)
+            var recent: [PullRequestComment] = []
+            for thread in commentThreads {
+                for comment in thread.comments ?? [] where comment.isDeleted != true {
+                    guard (comment.commentType ?? "text").lowercased() != "system" else { continue }
+                    let body = (comment.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !body.isEmpty else { continue }
+                    var link = pr.webUrl
+                    if let threadId = thread.id { link += "?discussionId=\(threadId)" }
+                    recent.append(PullRequestComment(
+                        id: "\(thread.id ?? 0):\(comment.id ?? 0)",
+                        authorName: comment.author?.displayName ?? "unknown",
+                        body: body,
+                        date: PullRequestDateParser.parse(comment.publishedDate),
+                        isSystem: false,
+                        url: link
+                    ))
+                }
+            }
+            recent.sort { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+
+            return ThreadActivity(
+                commentThreadCount: commentThreads.count,
+                lastActivity: lastActivity,
+                recentComments: Array(recent.prefix(8))
+            )
         } catch {
             return nil
         }

@@ -4,13 +4,13 @@ import FleetMateCore
 
 // MARK: - Model
 
-/// The Projects tab's Code mode: every open pull request the user can act on,
-/// and the GitHub notification inbox. Owned by AppState so switching tabs
-/// keeps the loaded rows and the selection.
+/// The Development tab: every open pull request the user can act on, the
+/// GitHub notification inbox, and the comment activity across all of them.
+/// Owned by AppState so switching tabs keeps the loaded rows and selection.
 @MainActor
-final class CodeSectionModel: ObservableObject {
+final class DevelopmentModel: ObservableObject {
     enum Segment: String, CaseIterable, Hashable {
-        case pullRequests = "Pull requests"
+        case pullRequests = "Pulls"
         case inbox = "Inbox"
     }
 
@@ -34,6 +34,33 @@ final class CodeSectionModel: ObservableObject {
     @Published var showReadNotifications = false
     @Published private(set) var busyThreadIds: Set<String> = []
     @Published var actionError: String?
+
+    // Activity sidebar
+    @Published var showActivity = true
+    @Published var hideMyComments = false
+    @Published var searchText = ""
+
+    /// One comment in the activity feed, with the PR it belongs to.
+    struct ActivityEntry: Identifiable {
+        let comment: PullRequestComment
+        let pullRequest: UnifiedPullRequest
+        var id: String { "\(pullRequest.id):\(comment.id)" }
+    }
+
+    /// Every recent comment across the loaded queue, newest first. Follows
+    /// the source filter so the feed and the list agree on scope.
+    func activity(appState: AppState) -> [ActivityEntry] {
+        var mine: Set<String> = []
+        if let login = viewerOwners?.first { mine.insert(login.lowercased()) }
+        if let name = appState.devOpsSsoUserName { mine.insert(name.lowercased()) }
+
+        var rows = queue.pullRequests
+        if let selectedSource { rows = rows.filter { $0.source == selectedSource } }
+        return rows
+            .flatMap { pr in pr.recentComments.map { ActivityEntry(comment: $0, pullRequest: pr) } }
+            .filter { !hideMyComments || !mine.contains($0.comment.authorName.lowercased()) }
+            .sorted { ($0.comment.date ?? .distantPast) > ($1.comment.date ?? .distantPast) }
+    }
 
     private var pullRequestTask: Task<Void, Never>?
     private var inboxTask: Task<Void, Never>?
@@ -334,18 +361,28 @@ final class CodeSectionModel: ObservableObject {
 
 /// Two panes: the queue or inbox on the left, the selected pull request
 /// inline on the right — no sheet, so reading and acting is one flow.
-struct CodeSectionView: View {
-    let searchText: String
-
+struct DevelopmentView: View {
     @EnvironmentObject private var appState: AppState
-    @ObservedObject private var model: CodeSectionModel
 
-    init(searchText: String, model: CodeSectionModel) {
-        self.searchText = searchText
-        self.model = model
+    var body: some View {
+        DevelopmentContent(model: appState.development)
     }
 
+    static func relative(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+/// Split out so the model can come from AppState (environment) rather than
+/// the view's init.
+private struct DevelopmentContent: View {
+    @EnvironmentObject private var appState: AppState
+    @ObservedObject var model: DevelopmentModel
+
     private let listWidth: CGFloat = 470
+    private let activityWidth: CGFloat = 330
 
     var body: some View {
         HStack(spacing: 0) {
@@ -354,12 +391,19 @@ struct CodeSectionView: View {
             Divider()
             detailPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if model.showActivity {
+                Divider()
+                ActivityPane(model: model)
+                    .frame(width: activityWidth)
+            }
         }
+        .searchable(text: $model.searchText, prompt: "Search pull requests...")
+        .toolbar { developmentToolbar }
         .task {
             model.loadAll(appState: appState)
             // Inbox freshness matters more than anywhere else in the app:
             // missing a review request for an hour is the failure mode this
-            // section exists to fix.
+            // tab exists to fix.
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(300))
                 guard !Task.isCancelled else { break }
@@ -380,12 +424,46 @@ struct CodeSectionView: View {
         }
     }
 
+    private var searchText: String { model.searchText }
+
+    @ToolbarContentBuilder
+    private var developmentToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .navigation) {
+            SegmentedPill(
+                selection: $model.segment,
+                options: DevelopmentModel.Segment.allCases,
+                label: { $0 == .inbox && model.unreadCount > 0 ? "Inbox \(model.unreadCount)" : $0.rawValue }
+            )
+
+            if model.segment == .inbox {
+                Button {
+                    model.markAllRead(appState: appState)
+                } label: {
+                    Label("Mark all read", systemImage: "envelope.open")
+                }
+                .disabled(model.unreadCount == 0)
+                .help("Mark every notification as read")
+            }
+
+            Button {
+                model.showActivity.toggle()
+            } label: {
+                Label("Activity", systemImage: model.showActivity ? "sidebar.trailing" : "sidebar.trailing")
+            }
+            .help(model.showActivity ? "Hide the comment activity sidebar" : "Show comments across all pull requests")
+
+            Button(action: { model.loadAll(appState: appState, force: true) }) {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .disabled(model.isLoadingPullRequests && model.isLoadingInbox)
+            .help("Refresh pull requests and inbox")
+        }
+    }
+
     // MARK: Left pane
 
     private var leftPane: some View {
         VStack(alignment: .leading, spacing: 0) {
-            paneHeader
-            Divider()
             switch model.segment {
             case .pullRequests: pullRequestList
             case .inbox: inboxList
@@ -393,38 +471,11 @@ struct CodeSectionView: View {
         }
     }
 
-    private var paneHeader: some View {
-        HStack(spacing: 8) {
-            SegmentedPill(
-                selection: $model.segment,
-                options: CodeSectionModel.Segment.allCases,
-                label: { $0 == .inbox && model.unreadCount > 0 ? "Inbox \(model.unreadCount)" : $0.rawValue }
-            )
-            if model.segment == .pullRequests ? model.isLoadingPullRequests : model.isLoadingInbox {
-                ProgressView().controlSize(.mini)
-            }
-            Spacer()
-            if model.segment == .inbox {
-                Button {
-                    model.markAllRead(appState: appState)
-                } label: {
-                    Label("Mark all read", systemImage: "envelope.open")
-                        .appFont(.caption)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .disabled(model.unreadCount == 0)
-                .help("Mark every notification as read")
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-    }
-
     // MARK: Pull requests
 
     private var pullRequestList: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if model.isLoadingPullRequests { ProgressView().progressViewStyle(.linear).controlSize(.mini) }
             filterRows
             Divider()
             let groups = model.groupedPullRequests(matching: searchText)
@@ -576,7 +627,7 @@ struct CodeSectionView: View {
                 }
                 Spacer()
                 if let at = model.inboxLoadedAt {
-                    Text("Checked \(Self.relative(at))")
+                    Text("Checked \(DevelopmentView.relative(at))")
                         .appFont(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -641,11 +692,6 @@ struct CodeSectionView: View {
         }
     }
 
-    static func relative(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
 }
 
 // MARK: - Rows
@@ -702,7 +748,7 @@ struct CodePullRequestRow: View {
                 }
                 .foregroundStyle(pullRequest.commentCount > 0 ? .secondary : .tertiary)
 
-                Text(CodeSectionView.relative(pullRequest.lastActivity))
+                Text(DevelopmentView.relative(pullRequest.lastActivity))
                     .appFont(.caption2)
                     .foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .trailing)
@@ -818,7 +864,7 @@ struct InboxRow: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 3))
                             Spacer(minLength: 0)
                             if let at = notification.updatedAt {
-                                Text(CodeSectionView.relative(at))
+                                Text(DevelopmentView.relative(at))
                                     .appFont(.caption2)
                                     .foregroundStyle(.tertiary)
                             }
@@ -874,5 +920,121 @@ struct InboxRow: View {
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
         .help(help)
+    }
+}
+
+
+// MARK: - Activity sidebar
+
+/// Comments and reviews across every loaded pull request, newest first.
+/// Click a row to select its pull request; the link icon opens the comment.
+struct ActivityPane: View {
+    @ObservedObject var model: DevelopmentModel
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text("Activity").appFont(.headline)
+                Spacer()
+                Toggle("Hide mine", isOn: $model.hideMyComments)
+                    .toggleStyle(.checkbox)
+                    .appFont(.caption)
+                    .help("Hide comments you wrote")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            Divider()
+
+            let entries = model.activity(appState: appState)
+            if entries.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "bubble.left.and.bubble.right").appFont(.title2).foregroundStyle(.secondary)
+                    Text(model.isLoadingPullRequests ? "Loading…" : "No recent comments.")
+                        .appFont(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(entries) { entry in
+                            ActivityRow(
+                                entry: entry,
+                                isSelected: model.selectedPullRequest?.id == entry.pullRequest.id
+                            ) {
+                                model.selectedPullRequest = entry.pullRequest
+                            }
+                            Divider().padding(.leading, 12)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct ActivityRow: View {
+    let entry: DevelopmentModel.ActivityEntry
+    let isSelected: Bool
+    let onSelect: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: onSelect) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Rectangle()
+                        .fill(entry.pullRequest.source.tint)
+                        .frame(width: 3, height: 12)
+                        .clipShape(RoundedRectangle(cornerRadius: 1.5))
+                    Text(entry.comment.authorName)
+                        .appFont(fixed: 11, weight: .semibold)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    if let date = entry.comment.date {
+                        Text(DevelopmentView.relative(date))
+                            .appFont(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    if isHovering, let url = entry.comment.url.flatMap(URL.init) {
+                        Button {
+                            NSWorkspace.shared.open(url)
+                        } label: {
+                            Image(systemName: "arrow.up.right.square").appFont(fixed: 10)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Open this comment in the browser")
+                    }
+                }
+                Text(entry.comment.body.strippedOfHtml)
+                    .appFont(fixed: 11)
+                    .lineLimit(3)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 4) {
+                    Text(entry.pullRequest.reference)
+                        .appFont(.caption2, weight: .medium)
+                        .monospacedDigit()
+                    Text(entry.pullRequest.title)
+                        .appFont(.caption2)
+                        .lineLimit(1)
+                    Text("·").foregroundStyle(.tertiary)
+                    Text(entry.pullRequest.repository)
+                        .appFont(.caption2, design: .monospaced)
+                        .lineLimit(1)
+                }
+                .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(isSelected ? Color.accentColor.opacity(0.14) : (isHovering ? Color.secondary.opacity(0.07) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
     }
 }

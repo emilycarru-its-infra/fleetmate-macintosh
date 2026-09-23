@@ -9,6 +9,7 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
     case inventory = "Inventory"
     case tickets = "Tickets"
     case projects = "Projects"
+    case development = "Development"
     case identity = "Identity"
 
     var id: String { rawValue }
@@ -21,6 +22,7 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         case .inventory: "shippingbox"
         case .tickets: "ticket"
         case .projects: "list.clipboard"
+        case .development: "chevron.left.forwardslash.chevron.right"
         case .identity: "person.2"
         }
     }
@@ -33,6 +35,8 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         case .inventory: config.isSnipeConfigured
         case .tickets:   config.isTdxConfigured
         case .projects:  config.isDevOpsConfigured
+        // GitHub needs no config beyond a gh login, so the tab is always on.
+        case .development: true
         case .identity:  config.isGraphConfigured
         }
     }

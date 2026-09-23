@@ -32,6 +32,8 @@ public struct PullRequestCommit: Sendable, Identifiable, Hashable {
     public let message: String
     public let authorName: String?
     public let date: Date?
+    /// Browser link to the commit, when the provider hands one back.
+    public let url: String?
 
     public var shortSha: String { String(id.prefix(8)) }
     /// First line of the message.
@@ -39,11 +41,12 @@ public struct PullRequestCommit: Sendable, Identifiable, Hashable {
         message.split(separator: "\n").first.map(String.init) ?? message
     }
 
-    public init(id: String, message: String, authorName: String?, date: Date?) {
+    public init(id: String, message: String, authorName: String?, date: Date?, url: String? = nil) {
         self.id = id
         self.message = message
         self.authorName = authorName
         self.date = date
+        self.url = url
     }
 }
 

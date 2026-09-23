@@ -38,20 +38,20 @@ public actor GitHubPullRequestService {
       headRefName
       author { login }
       repository { name owner { login } }
-      comments(last: 5) {
+      comments(last: 3) {
         totalCount
         nodes { databaseId author { login } body createdAt url }
       }
-      reviews(last: 5) {
+      reviews(last: 3) {
         nodes { databaseId author { login } body state submittedAt url }
       }
-      reviewThreads(last: 5) {
+      reviewThreads(last: 3) {
         totalCount
         nodes {
-          comments(last: 2) { nodes { databaseId author { login } body createdAt url path } }
+          comments(last: 1) { nodes { databaseId author { login } body createdAt url path } }
         }
       }
-      reviewRequests(first: 10) {
+      reviewRequests(first: 5) {
         nodes {
           requestedReviewer {
             ... on User { login name }
@@ -59,7 +59,7 @@ public actor GitHubPullRequestService {
           }
         }
       }
-      latestReviews(first: 10) {
+      latestReviews(first: 5) {
         nodes { state author { login } }
       }
     }
@@ -128,37 +128,97 @@ public actor GitHubPullRequestService {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
 
-        var aliases: [String] = ["involved: search(query: $involved, type: ISSUE, first: $first) { nodes { ...PullRequestFields } }"]
-        var declarations: [String] = ["$involved: String!", "$first: Int!"]
-        var variables: [String: Any] = [
-            "involved": "is:pr is:open archived:false involves:@me sort:updated-desc",
-            "first": limit
+        var searches: [Search] = [
+            Search(query: "is:pr is:open archived:false involves:@me sort:updated-desc", relation: .involved)
         ]
-        for (index, owner) in ownerList.enumerated() {
-            aliases.append("owner\(index): search(query: $owner\(index), type: ISSUE, first: $first) { nodes { ...PullRequestFields } }")
-            declarations.append("$owner\(index): String!")
-            variables["owner\(index)"] = "is:pr is:open archived:false user:\(owner) sort:updated-desc"
+        searches += ownerList.map {
+            Search(query: "is:pr is:open archived:false user:\($0) sort:updated-desc", relation: .organization)
         }
 
+        let outcome = await runSearches(searches, limit: limit)
+        for pr in outcome.pullRequests { queue.insert(pr) }
+        if let message = outcome.error {
+            queue.errors.append(PullRequestQueueError(source: .gitHub, message: message))
+        }
+        dbg.info("GitHub getOpenPullRequests(owners: \(ownerList.count)) → \(queue.pullRequests.count) PRs", category: "github")
+        return queue
+    }
+
+    private struct Search {
+        let query: String
+        let relation: PullRequestRelation
+    }
+
+    private struct SearchOutcome {
+        var pullRequests: [UnifiedPullRequest] = []
+        var error: String?
+    }
+
+    /// GitHub caps a single GraphQL request by the nodes it *could* return,
+    /// and a dozen aliased searches at 100 rows each with nested comments
+    /// blows past it ("Resource limits for this query exceeded"). Searches
+    /// therefore run in small batches; when a batch trips the limit it is
+    /// split in half and retried, down to one search at half the rows, so
+    /// the queue degrades instead of failing.
+    private func runSearches(_ searches: [Search], limit: Int, batchSize: Int = 3) async -> SearchOutcome {
+        var outcome = SearchOutcome()
+        var index = 0
+        while index < searches.count {
+            let batch = Array(searches[index..<min(index + batchSize, searches.count)])
+            do {
+                outcome.pullRequests += try await execute(batch: batch, limit: limit)
+                index += batch.count
+            } catch {
+                let message = error.localizedDescription
+                let overLimit = message.localizedCaseInsensitiveContains("resource limits")
+                if overLimit, batch.count > 1 {
+                    // Re-run this window with a smaller batch.
+                    let smaller = await runSearches(batch, limit: limit, batchSize: max(1, batch.count / 2))
+                    outcome.pullRequests += smaller.pullRequests
+                    if let inner = smaller.error { outcome.error = inner }
+                    index += batch.count
+                } else if overLimit, limit > 25 {
+                    let smaller = await runSearches(batch, limit: limit / 2, batchSize: 1)
+                    outcome.pullRequests += smaller.pullRequests
+                    if let inner = smaller.error { outcome.error = inner }
+                    index += batch.count
+                } else {
+                    dbg.error("GitHub search batch failed: \(message)", category: "github")
+                    outcome.error = message
+                    // A rate limit or auth failure will hit every batch; stop.
+                    if message.localizedCaseInsensitiveContains("rate limit")
+                        || message.contains("No GitHub authentication token") {
+                        break
+                    }
+                    index += batch.count
+                }
+            }
+        }
+        return outcome
+    }
+
+    private func execute(batch: [Search], limit: Int) async throws -> [UnifiedPullRequest] {
+        var aliases: [String] = []
+        var declarations: [String] = ["$first: Int!"]
+        var variables: [String: Any] = ["first": limit]
+        for (index, search) in batch.enumerated() {
+            aliases.append("s\(index): search(query: $q\(index), type: ISSUE, first: $first) { nodes { ...PullRequestFields } }")
+            declarations.append("$q\(index): String!")
+            variables["q\(index)"] = search.query
+        }
         let query = """
         \(Self.pullRequestFragment)
         query(\(declarations.joined(separator: ", "))) {
           \(aliases.joined(separator: "\n  "))
         }
         """
-
-        do {
-            let data = try await client.executeRaw(query: query, variables: variables)
-            absorb(data, key: "involved", relation: .involved, into: &queue)
-            for index in ownerList.indices {
-                absorb(data, key: "owner\(index)", relation: .organization, into: &queue)
-            }
-            dbg.info("GitHub getOpenPullRequests(owners: \(ownerList.count)) → \(queue.pullRequests.count) PRs", category: "github")
-        } catch {
-            dbg.error("GitHub getOpenPullRequests failed: \(error)", category: "github")
-            queue.errors.append(PullRequestQueueError(source: .gitHub, message: error.localizedDescription))
+        let data = try await client.executeRaw(query: query, variables: variables)
+        var out: [UnifiedPullRequest] = []
+        for (index, search) in batch.enumerated() {
+            let nodes = (data["s\(index)"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+            out += nodes.compactMap { Self.map($0, relation: search.relation) }
         }
-        return queue
+        return out
     }
 
     /// Owners the signed-in user belongs to: their own login plus every

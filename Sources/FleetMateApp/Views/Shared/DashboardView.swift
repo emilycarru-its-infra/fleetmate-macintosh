@@ -174,11 +174,15 @@ struct DashboardView: View {
                 } catch {
                     return
                 }
-                pullRequestModel.load(appState: appState, force: true)
+                pullRequestModel.load(appState: appState, force: true,
+                                      gitHubMaxAge: PullRequestQueueModel.gitHubBackgroundMaxAge)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            pullRequestModel.load(appState: appState, force: true)
+            // Every app switch used to refetch GitHub; with many switches an
+            // hour that alone could drain the search budget.
+            pullRequestModel.load(appState: appState, force: true,
+                                  gitHubMaxAge: PullRequestQueueModel.gitHubBackgroundMaxAge)
         }
         .onChange(of: appState.cachedDevices.count) { _, _ in refreshSection(.devices) }
         .onChange(of: appState.cachedAssets.count) { _, _ in refreshSection(.assets) }

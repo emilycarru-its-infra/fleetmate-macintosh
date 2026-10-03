@@ -71,9 +71,8 @@ struct ContentView: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: { showAuthPopover.toggle() }) {
-                        Label("Authentication", systemImage: "lock.shield")
+                        ElevationShieldLabel()
                     }
-                    .help("Authentication status for every connected system")
                     .popover(isPresented: $showAuthPopover, arrowEdge: .bottom) {
                         AuthSettingsView()
                             .environmentObject(appState)

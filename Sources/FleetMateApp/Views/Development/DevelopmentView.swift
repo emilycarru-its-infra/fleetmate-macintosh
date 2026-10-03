@@ -10,8 +10,8 @@ import FleetMateCore
 @MainActor
 final class DevelopmentModel: ObservableObject {
     enum Segment: String, CaseIterable, Hashable {
-        case pullRequests = "Pulls"
         case inbox = "Inbox"
+        case pullRequests = "Pulls"
         case commits = "Commits"
         case pipelines = "Pipelines"
     }
@@ -675,12 +675,22 @@ private struct DevelopmentContent: View {
         }
     }
 
+    /// Inbox leads the row and only appears while it has unread
+    /// notifications — an empty inbox is not worth a segment. It stays while
+    /// it is the open segment, so marking everything read does not yank the
+    /// page out from under the reader.
+    private var visibleSegments: [DevelopmentModel.Segment] {
+        DevelopmentModel.Segment.allCases.filter {
+            $0 != .inbox || model.unreadCount > 0 || model.segment == .inbox
+        }
+    }
+
     @ToolbarContentBuilder
     private var developmentToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .navigation) {
             SegmentedPill(
                 selection: $model.segment,
-                options: DevelopmentModel.Segment.allCases,
+                options: visibleSegments,
                 label: { $0 == .inbox && model.unreadCount > 0 ? "Inbox \(model.unreadCount)" : $0.rawValue },
                 segmentWidth: nil
             )

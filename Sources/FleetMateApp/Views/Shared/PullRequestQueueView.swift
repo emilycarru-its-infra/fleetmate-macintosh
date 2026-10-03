@@ -94,6 +94,7 @@ final class PullRequestQueueModel: ObservableObject {
     /// spent by every CLI and agent on the machine), so background refreshes
     /// reuse recent GitHub rows and only Azure DevOps refetches every minute.
     private var gitHubLoadedAt: Date?
+    private var gitHubInFlight: Task<PullRequestQueue, Never>?
 
     /// The longest a background refresh lets GitHub rows age before refetching.
     static let gitHubBackgroundMaxAge: TimeInterval = 5 * 60
@@ -148,10 +149,21 @@ final class PullRequestQueueModel: ObservableObject {
         let gitHubInBackoff = (gitHubBackoffUntil ?? .distantPast) > Date()
         let gitHubRecent = cachedGitHub != nil && gitHubMaxAge > 0
             && Date().timeIntervalSince(gitHubLoadedAt ?? .distantPast) < gitHubMaxAge
-        let gitHubTask: Task<PullRequestQueue, Never>? = (gitHubInBackoff || gitHubRecent) ? nil
-            : Task.detached(priority: .userInitiated) {
-                await GitHubPullRequestService(config: gitHubConfig).getMyPullRequests()
+        // A forced reload cancels the previous load, but not its detached
+        // GitHub fetch, so launch used to run the same search three times.
+        // Join a fetch that is still running instead of starting another.
+        var gitHubTask: Task<PullRequestQueue, Never>?
+        if !(gitHubInBackoff || gitHubRecent) {
+            if let running = gitHubInFlight {
+                gitHubTask = running
+            } else {
+                let task = Task.detached(priority: .userInitiated) {
+                    await GitHubPullRequestService(config: gitHubConfig).getMyPullRequests()
+                }
+                gitHubInFlight = task
+                gitHubTask = task
             }
+        }
 
         if devOpsReady {
             do {
@@ -165,6 +177,7 @@ final class PullRequestQueueModel: ObservableObject {
 
         if let gitHubTask {
             let gitHub = await gitHubTask.value
+            if gitHubInFlight == gitHubTask { gitHubInFlight = nil }
             if let rateLimit = gitHub.errors.first(where: {
                 $0.source == .gitHub && $0.message.localizedCaseInsensitiveContains("rate limit")
             }) {

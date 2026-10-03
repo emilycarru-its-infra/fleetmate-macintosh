@@ -210,11 +210,7 @@ struct PipelineRunDetailView: View {
             content
         }
         .task { await load() }
-        .alert("Action failed", isPresented: Binding(get: { actionError != nil }, set: { if !$0 { actionError = nil } })) {
-            Button("OK", role: .cancel) { actionError = nil }
-        } message: {
-            Text(actionError ?? "")
-        }
+        .actionErrorBanner($actionError)
         .confirmationDialog("Cancel \(run.pipelineName) \(run.runNumber)?", isPresented: $pendingCancel) {
             Button("Cancel run", role: .destructive) { perform("Cancel") }
             Button("Keep running", role: .cancel) {}

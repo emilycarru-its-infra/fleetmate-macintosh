@@ -302,14 +302,17 @@ public class AzureDevOpsService {
 
     /// Query work items via WIQL (2-step: query → batch get)
     /// Set orgLevel=true to query across all projects in the organization.
-    public func queryWorkItems(_ wiql: String, orgLevel: Bool = false) async throws -> [WorkItem] {
-        dbg.debug("AzDO queryWorkItems (orgLevel=\(orgLevel)): \(wiql.prefix(120))...", category: "azdo")
+    /// `top` caps the result server-side, so a capped query never batch-fetches
+    /// every matching id only to throw most of them away.
+    public func queryWorkItems(_ wiql: String, orgLevel: Bool = false, top: Int? = nil) async throws -> [WorkItem] {
+        dbg.debug("AzDO queryWorkItems (orgLevel=\(orgLevel), top=\(top.map(String.init) ?? "all")): \(wiql.prefix(120))...", category: "azdo")
 
         // Step 1: WIQL query returns work item references (IDs only)
         let wiqlBody = try JSONEncoder().encode(["query": wiql])
+        let topParam = top.map { "&$top=\($0)" } ?? ""
         let queryResult: WorkItemQueryResult = try await request(
             "POST",
-            path: "/_apis/wit/wiql?api-version=7.0",
+            path: "/_apis/wit/wiql?api-version=7.0\(topParam)",
             body: wiqlBody,
             orgLevel: orgLevel
         )
@@ -363,8 +366,28 @@ public class AzureDevOpsService {
         if let assignedTo = assignedTo { conditions.append("[System.AssignedTo] = '\(escapeWiql(assignedTo))'") }
         let whereClause = conditions.isEmpty ? "" : " WHERE \(conditions.joined(separator: " AND "))"
         let wiql = "SELECT [System.Id] FROM WorkItems\(whereClause) ORDER BY [System.ChangedDate] DESC"
-        let items = try await queryWorkItems(wiql, orgLevel: true)
+        let items = try await queryWorkItems(wiql, orgLevel: true, top: limit)
         return Array(items.prefix(limit))
+    }
+
+    /// States that mean a work item is finished, across the Agile, Scrum,
+    /// Basic and CMMI processes.
+    public static let finishedWorkItemStates = ["Closed", "Removed", "Done", "Completed"]
+
+    /// Every open work item assigned to the signed-in user, in every project of
+    /// the organization, most recently changed first. `@Me` resolves to the
+    /// identity behind the bearer token, so no user name is needed.
+    public func getMyOpenWorkItems(limit: Int = 1000) async throws -> [WorkItem] {
+        let finished = Self.finishedWorkItemStates.map { "'\($0)'" }.joined(separator: ", ")
+        let wiql = """
+        SELECT [System.Id] FROM WorkItems \
+        WHERE [System.AssignedTo] = @Me \
+        AND [System.State] NOT IN (\(finished)) \
+        ORDER BY [System.ChangedDate] DESC
+        """
+        let items = try await queryWorkItems(wiql, orgLevel: true, top: limit)
+        // The batch fetch does not promise the query's order.
+        return items.sorted { ($0.fields?.changedDate ?? "") > ($1.fields?.changedDate ?? "") }
     }
 
     public func createWorkItem(_ request: CreateWorkItemRequest) async throws -> WorkItem? {

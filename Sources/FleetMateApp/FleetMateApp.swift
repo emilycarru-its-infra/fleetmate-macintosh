@@ -485,8 +485,58 @@ class AppState: ObservableObject {
     func warmElevationSessions() async {
         guard config.graphUsesAze else { azeSessionState = .direct; return }
         azeSessionState = .warming
+        elevationCreating = Set(Self.elevationDomains)
         let warmed = await graphService.warmElevationSessions()
+        elevationCreating = []
         azeSessionState = warmed ? .warm : .failed
+        await refreshElevationInfo()
+        startElevationPolling()
+    }
+
+    // MARK: - Elevation session status (window chrome)
+
+    /// The domains Graph rides on, and so the ones the indicator reports.
+    static let elevationDomains: [GraphDomain] = [.devices, .identity]
+
+    /// Last `az container show` snapshot per domain.
+    @Published var elevationInfo: [GraphDomain: ElevationSessionInfo] = [:]
+    /// Domains whose session is being created right now, before a container
+    /// exists to read.
+    @Published var elevationCreating: Set<GraphDomain> = []
+    private var elevationPollTask: Task<Void, Never>?
+
+    /// Per-domain status at `now`. The expiry tag lets the label flip on time
+    /// without polling; views re-derive it on a timeline.
+    func elevationStatus(_ domain: GraphDomain, at now: Date = Date()) -> ElevationStatus {
+        if elevationCreating.contains(domain) { return .starting }
+        guard let info = elevationInfo[domain] else { return .unknown }
+        return info.status(at: now)
+    }
+
+    /// The worst status across the domains, for the single indicator.
+    func elevationAggregate(at now: Date = Date()) -> ElevationStatus {
+        Self.elevationDomains.map { elevationStatus($0, at: now) }.max { $0.rank < $1.rank } ?? .unknown
+    }
+
+    func refreshElevationInfo() async {
+        guard config.graphUsesAze else { return }
+        let session = ElevationSession()
+        for domain in Self.elevationDomains {
+            elevationInfo[domain] = await session.sessionInfo(domain)
+        }
+    }
+
+    /// Re-read the containers every five minutes; az calls are cheap but not
+    /// free, and the expiry tag covers the time in between.
+    private func startElevationPolling() {
+        guard elevationPollTask == nil else { return }
+        elevationPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(300))
+                guard !Task.isCancelled else { return }
+                await self?.refreshElevationInfo()
+            }
+        }
     }
 
     /// Fill `cachedGroupDevices` for every cached group that doesn't have its

@@ -655,14 +655,7 @@ private struct DevelopmentContent: View {
         .onChange(of: appState.devOpsSsoAuthenticated) { _, ready in
             if ready { model.loadPullRequests(appState: appState, force: true) }
         }
-        .alert(
-            "Action failed",
-            isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })
-        ) {
-            Button("OK", role: .cancel) { model.actionError = nil }
-        } message: {
-            Text(model.actionError ?? "")
-        }
+        .actionErrorBanner($model.actionError)
     }
 
     private var searchText: String { model.searchText }
@@ -1640,11 +1633,9 @@ struct CommitDetailView: View {
                                 }
                             }
                         }
-                        if repository.source == .azureDevOps {
-                            Text("Azure DevOps returns file paths for a commit but no patch; open in the browser for the diff.")
-                                .appFont(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
+                        Text("These files are binary or too large to show as a diff.")
+                            .appFont(.caption2)
+                            .foregroundStyle(.tertiary)
                     } else {
                         Text("No file changes recorded.")
                             .appFont(.callout)

@@ -1426,10 +1426,16 @@ public class AzureDevOpsService {
             for entry in repos {
                 group.addTask {
                     let encodedProject = entry.project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? entry.project
-                    let path = "/_apis/git/repositories/\(entry.repo.id)/commits?searchCriteria.fromDate=\(fromDate)&$top=\(perRepo)&api-version=7.0"
+                    // Over-fetch, then drop pull-request merge commits so a
+                    // repository still shows `perRepo` commits that did work.
+                    let path = "/_apis/git/repositories/\(entry.repo.id)/commits?searchCriteria.fromDate=\(fromDate)&$top=\(perRepo * 2)&api-version=7.0"
                     guard let response: GitCommitsResponse = try? await self.request("GET", path: path, forProject: encodedProject),
-                          let commits = response.value, !commits.isEmpty
+                          let fetched = response.value
                     else { return nil }
+                    let commits = Array(fetched.filter {
+                        !MergeCommitFilter.isMerge(message: $0.comment ?? "", parentCount: $0.parents?.count)
+                    }.prefix(perRepo))
+                    guard !commits.isEmpty else { return nil }
                     return RepositoryCommits(
                         source: .azureDevOps,
                         container: entry.project,
@@ -1457,8 +1463,10 @@ public class AzureDevOpsService {
         return results.sorted { $0.latestDate > $1.latestDate }
     }
 
-    /// Paths touched by one commit. Azure DevOps returns change types but no
-    /// patch here, so the viewer shows a change list rather than a diff.
+    /// One commit's message and per-file diffs. Azure DevOps returns paths
+    /// and change types but no patch, so each file's text is read at the
+    /// commit and at its first parent and diffed locally, the same way the
+    /// pull-request viewer does. The bare change list stays as a fallback.
     public func getCommitDetail(repositoryId: String, sha: String, project: String? = nil) async throws -> CommitDetail {
         let encodedProject = project?.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
         async let commitTask: GitCommitRef = request(
@@ -1477,12 +1485,38 @@ public class AzureDevOpsService {
             guard let path = change.item?.path, change.item?.isFolder != true else { return nil }
             return CommitChange(path: path, changeType: (change.changeType ?? "edit").lowercased())
         }
+
+        let fileCap = 40
+        let parent = commit.parents?.first
+        let diffed: [(Int, DiffFile)] = await withTaskGroup(of: (Int, DiffFile)?.self) { group in
+            for (index, change) in list.prefix(fileCap).enumerated() {
+                group.addTask {
+                    let type = change.changeType
+                    let old: String? = (type.contains("add") || parent == nil) ? nil
+                        : await self.itemContent(repo: repositoryId, path: change.path, commit: parent!, project: encodedProject)
+                    let new: String? = type.contains("delete") ? nil
+                        : await self.itemContent(repo: repositoryId, path: change.path, commit: sha, project: encodedProject)
+                    // Nothing readable on either side (binary, too large): leave it to the change list.
+                    guard old != nil || new != nil else { return nil }
+                    let name = change.path.hasPrefix("/") ? String(change.path.dropFirst()) : change.path
+                    var file = DiffBuilder.build(fileName: name, old: old ?? "", new: new ?? "")
+                    if type.contains("delete") { file.newPath = "/dev/null" }
+                    return (index, file)
+                }
+            }
+            var out: [(Int, DiffFile)] = []
+            for await result in group { if let result { out.append(result) } }
+            return out
+        }
+        let files = diffed.sorted { $0.0 < $1.0 }.map(\.1)
+
         return CommitDetail(
             message: commit.comment ?? "",
+            files: files,
             changes: list,
             additions: changes.changeCounts?["Add"] ?? 0,
             deletions: changes.changeCounts?["Delete"] ?? 0,
-            truncated: list.count >= 500
+            truncated: list.count > fileCap
         )
     }
 

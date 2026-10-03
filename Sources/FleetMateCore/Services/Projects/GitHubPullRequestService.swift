@@ -341,7 +341,7 @@ public actor GitHubPullRequestService {
                     target {
                       ... on Commit {
                         history(first: $perRepo, since: $since) {
-                          nodes { oid message messageHeadline committedDate url author { name user { login } } }
+                          nodes { oid message messageHeadline committedDate url parents { totalCount } author { name user { login } } }
                         }
                       }
                     }
@@ -366,6 +366,10 @@ public actor GitHubPullRequestService {
                 let history = ((branchRef?["target"] as? [String: Any])?["history"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
                 let commits: [PullRequestCommit] = history.compactMap { commit in
                     guard let oid = commit["oid"] as? String else { return nil }
+                    let parentCount = (commit["parents"] as? [String: Any])?["totalCount"] as? Int
+                    let message = commit["message"] as? String ?? commit["messageHeadline"] as? String ?? ""
+                    // Pull-request merge commits carry no change of their own.
+                    if MergeCommitFilter.isMerge(message: message, parentCount: parentCount) { return nil }
                     let author = commit["author"] as? [String: Any]
                     let login = (author?["user"] as? [String: Any])?["login"] as? String
                     return PullRequestCommit(

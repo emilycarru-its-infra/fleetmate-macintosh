@@ -43,9 +43,29 @@ public struct RepositoryCommits: Identifiable, Sendable, Hashable {
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
-/// One commit opened in the viewer: full message, and either per-file
-/// diffs (GitHub) or a bare change list (Azure DevOps, whose commit API
-/// returns paths and change types but no patch).
+/// Merge commits a pull request leaves on the default branch. They carry no
+/// change of their own (the commits they bring in are listed beside them),
+/// so the Commits list hides them and shows only the work.
+public enum MergeCommitFilter {
+    private static let prefixes = [
+        "Merge pull request ",
+        "Merge branch ",
+        "Merge remote-tracking branch ",
+    ]
+
+    /// True for a merge commit: more than one parent when the provider says
+    /// so, otherwise a headline in git's or the host's merge-commit wording.
+    /// A squash merge ("Merged PR 12: …") has one parent and carries the
+    /// change, so it stays.
+    public static func isMerge(message: String, parentCount: Int? = nil) -> Bool {
+        if let parentCount, parentCount > 1 { return true }
+        let headline = message.prefix { $0 != "\n" }
+        return prefixes.contains { headline.hasPrefix($0) }
+    }
+}
+
+/// One commit opened in the viewer: full message, per-file diffs, and the
+/// bare change list as a fallback when no file content could be read.
 public struct CommitDetail: Sendable {
     public var message: String
     public var files: [DiffFile]

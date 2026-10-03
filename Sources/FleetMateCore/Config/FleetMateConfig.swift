@@ -104,7 +104,8 @@ public struct FleetMateConfig: Codable {
     // NO PAT — Azure DevOps uses SSO only (browser OAuth2 or Azure CLI with Platform SSO).
     public var devopsOrganization: String?
     /// Azure DevOps host. The public build ships a neutral placeholder; the real
-    /// host lives in config.yaml (devops_base_url) or AZDEVOPS_URL, never in code.
+    /// host lives in config.yaml (devops_base_url), a configuration profile
+    /// (devopsBaseUrl) or AZDEVOPS_URL, never in code.
     public var devopsBaseUrl: String?
     public static let defaultDevopsBaseUrl = "https://azure-devops.example.com"
     /// Configured host without a trailing slash, else the placeholder default.
@@ -258,7 +259,10 @@ public struct FleetMateConfig: Codable {
         // 3. Credentials from Keychain (overrides any credentials that happened to be in the file)
         loadFromKeychain(into: &config)
 
-        // 3. Environment variables override everything (CI/CD)
+        // 4. Configuration-profile settings override the user's own.
+        loadManagedPreferences(into: &config)
+
+        // 5. Environment variables override everything (CI/CD)
         loadEnvironmentVariables(into: &config)
 
         // Modern-by-default: unless explicitly overridden, ReportMate and Snipe-IT
@@ -493,7 +497,42 @@ public struct FleetMateConfig: Codable {
             loadFromKeychainLegacy(into: &config)
             return
         }
+        apply(credentials: creds, into: &config)
+    }
 
+    /// Preference domain a configuration profile sets FleetMate up through.
+    public static let managedPreferencesDomain = "ca.ecuad.macadmin.fleetmate"
+
+    /// Settings pushed by a configuration profile, keyed exactly like
+    /// credentials.json (`devopsBaseUrl`, `tdxBaseUrl`, `manageEnabled`, …).
+    /// The device-wide payload applies first, then a per-user payload. Managed
+    /// values win over the user's own file so every admin runs the same setup;
+    /// environment variables still override for CI.
+    static func loadManagedPreferences(into config: inout FleetMateConfig) {
+        let base = "/Library/Managed Preferences"
+        let paths = [
+            "\(base)/\(managedPreferencesDomain).plist",
+            "\(base)/\(NSUserName())/\(managedPreferencesDomain).plist",
+        ]
+        var managed: [String: String] = [:]
+        for path in paths {
+            guard let dict = NSDictionary(contentsOfFile: path) as? [String: Any] else { continue }
+            for (key, value) in dict {
+                switch value {
+                case let v as String: managed[key] = v
+                case let v as NSNumber:
+                    // Booleans arrive as NSNumber; keep them as the words the
+                    // credentials file uses.
+                    managed[key] = CFGetTypeID(v) == CFBooleanGetTypeID() ? (v.boolValue ? "true" : "false") : v.stringValue
+                default: continue
+                }
+            }
+        }
+        guard !managed.isEmpty else { return }
+        apply(credentials: managed, into: &config)
+    }
+
+    private static func apply(credentials creds: [String: String], into config: inout FleetMateConfig) {
         func get(_ key: String) -> String? { creds[key] }
         func getInt(_ key: String) -> Int? { creds[key].flatMap(Int.init) }
 

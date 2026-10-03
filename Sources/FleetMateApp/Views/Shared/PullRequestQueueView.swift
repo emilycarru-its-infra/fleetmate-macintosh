@@ -89,18 +89,29 @@ final class PullRequestQueueModel: ObservableObject {
         return Date().timeIntervalSince(lastLoaded) < Self.freshness
     }
 
-    func load(appState: AppState, force: Bool = false) {
+    /// When GitHub rows were last fetched. GitHub's search API is the
+    /// expensive, shared budget (the token is the user's own `gh` token, also
+    /// spent by every CLI and agent on the machine), so background refreshes
+    /// reuse recent GitHub rows and only Azure DevOps refetches every minute.
+    private var gitHubLoadedAt: Date?
+
+    /// The longest a background refresh lets GitHub rows age before refetching.
+    static let gitHubBackgroundMaxAge: TimeInterval = 5 * 60
+
+    /// - Parameter gitHubMaxAge: reuse GitHub rows fetched within this many
+    ///   seconds. Zero (the default) always refetches — user actions use it.
+    func load(appState: AppState, force: Bool = false, gitHubMaxAge: TimeInterval = 0) {
         if force {
             loadTask?.cancel()
-            loadTask = Task { await self.performLoad(appState: appState) }
+            loadTask = Task { await self.performLoad(appState: appState, gitHubMaxAge: gitHubMaxAge) }
             return
         }
         // Already loading, or loaded recently — leave the existing rows alone.
         guard !isLoading, !isFresh else { return }
-        loadTask = Task { await self.performLoad(appState: appState) }
+        loadTask = Task { await self.performLoad(appState: appState, gitHubMaxAge: gitHubMaxAge) }
     }
 
-    private func performLoad(appState: AppState) async {
+    private func performLoad(appState: AppState, gitHubMaxAge: TimeInterval = 0) async {
         isLoading = true
         defer { isLoading = false }
 
@@ -135,7 +146,9 @@ final class PullRequestQueueModel: ObservableObject {
         // bound); GitHub is an actor and can run concurrently with it — unless
         // it rate-limited us recently, in which case its cached rows stand in.
         let gitHubInBackoff = (gitHubBackoffUntil ?? .distantPast) > Date()
-        let gitHubTask: Task<PullRequestQueue, Never>? = gitHubInBackoff ? nil
+        let gitHubRecent = cachedGitHub != nil && gitHubMaxAge > 0
+            && Date().timeIntervalSince(gitHubLoadedAt ?? .distantPast) < gitHubMaxAge
+        let gitHubTask: Task<PullRequestQueue, Never>? = (gitHubInBackoff || gitHubRecent) ? nil
             : Task.detached(priority: .userInitiated) {
                 await GitHubPullRequestService(config: gitHubConfig).getMyPullRequests()
             }
@@ -162,8 +175,11 @@ final class PullRequestQueueModel: ObservableObject {
                 cachedGitHub = PullRequestQueue(
                     pullRequests: gitHub.pullRequests.filter { $0.source == .gitHub }
                 )
+                gitHubLoadedAt = Date()
                 merged.merge(gitHub)
             }
+        } else if gitHubRecent, !gitHubInBackoff, let cachedGitHub {
+            merged.merge(cachedGitHub)
         } else {
             mergeGitHubFallback(into: &merged)
         }

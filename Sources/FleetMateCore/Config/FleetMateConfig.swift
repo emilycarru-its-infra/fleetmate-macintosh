@@ -761,6 +761,18 @@ public struct FleetMateConfig: Codable {
         return raw
     }
 
+    /// The ticket's page in the TDX web client. The web client lives on the
+    /// same host as the API, so it is the configured base with any API
+    /// suffix removed — never a separately hardcoded host.
+    public func tdxTicketWebUrl(_ ticketId: Int) -> String {
+        var web = (tdxBaseUrl ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        for suffix in ["/api", "/TDWebApi"] where web.lowercased().hasSuffix(suffix.lowercased()) {
+            web = String(web.dropLast(suffix.count))
+        }
+        let appId = tdxTicketingAppId ?? tdxAppId ?? 0
+        return "\(web)/TDNext/Apps/\(appId)/Tickets/TicketDet?TicketID=\(ticketId)"
+    }
+
     public func tdxTicketsUrl(_ suffix: String = "") -> String {
         let appId = tdxTicketingAppId ?? tdxAppId ?? 0
         if suffix.isEmpty {

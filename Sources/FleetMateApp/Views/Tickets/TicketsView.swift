@@ -1178,9 +1178,7 @@ struct TicketsView: View {
                 
                 // Copy link button
                 Button(action: {
-                    let baseUrl = (appState.config.tdxBaseUrl ?? "").replacingOccurrences(of: "/TDWebApi", with: "")
-                    let appId = appState.config.tdxTicketingAppId ?? appState.config.tdxAppId ?? 0
-                    let url = "\(baseUrl)/TDNext/Apps/\(appId)/Tickets/TicketDet?TicketID=\(ticket.id ?? 0)"
+                    let url = appState.config.tdxTicketWebUrl(ticket.id ?? 0)
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(url, forType: .string)
                 }) {
@@ -1192,9 +1190,7 @@ struct TicketsView: View {
                 
                 // Open in web button
                 Button(action: {
-                    let baseUrl = (appState.config.tdxBaseUrl ?? "").replacingOccurrences(of: "/TDWebApi", with: "")
-                    let appId = appState.config.tdxTicketingAppId ?? appState.config.tdxAppId ?? 0
-                    let urlStr = "\(baseUrl)/TDNext/Apps/\(appId)/Tickets/TicketDet?TicketID=\(ticket.id ?? 0)"
+                    let urlStr = appState.config.tdxTicketWebUrl(ticket.id ?? 0)
                     if let url = URL(string: urlStr) {
                         NSWorkspace.shared.open(url)
                     }
@@ -2020,15 +2016,43 @@ struct TicketsView: View {
                 let range = activeDateRange
                 let formatter = ISO8601DateFormatter()
                 formatter.formatOptions = [.withInternetDateTime]
-                var searchRequest = TicketSearchRequest(
+                let groupIds = appState.config.tdxResponsibleGroupId.map { [$0] }
+                let service = appState.tdxService
+
+                // Tickets created in the selected range.
+                let ranged = TicketSearchRequest(
+                    responsibleGroupIds: groupIds,
                     createdDateFrom: formatter.string(from: range.from),
                     createdDateTo: formatter.string(from: range.to),
                     maxResults: 5000
                 )
-                if let groupId = appState.config.tdxResponsibleGroupId {
-                    searchRequest.responsibleGroupIds = [groupId]
+                // Every open ticket, whenever it was created: a work board
+                // that only shows this term's tickets hides the backlog, and
+                // people look as if they have no work.
+                let open = TicketSearchRequest(
+                    statusClassIds: TicketSearchRequest.openStatusClassIds,
+                    responsibleGroupIds: groupIds,
+                    maxResults: 5000
+                )
+                async let rangedTickets = service.searchTickets(search: ranged, maxResults: 5000)
+                async let openTickets = service.searchTickets(search: open, maxResults: 5000)
+
+                // A configured group filter drops tickets assigned straight to
+                // a person with no group. Fetch the signed-in user's open
+                // tickets separately so their own work never vanishes.
+                var mine: [TdxTicket] = []
+                if groupIds != nil, let myUid = appState.tdxMe?.uid {
+                    let request = TicketSearchRequest(
+                        statusClassIds: TicketSearchRequest.openStatusClassIds,
+                        responsibleUids: [myUid],
+                        maxResults: 1000
+                    )
+                    mine = (try? await service.searchTickets(search: request, maxResults: 1000)) ?? []
                 }
-                let fetchedTickets = try await appState.tdxService.searchTickets(search: searchRequest, maxResults: 5000)
+
+                var seen: Set<Int> = []
+                let fetchedTickets = (try await rangedTickets + (try await openTickets) + mine)
+                    .filter { $0.id.map { seen.insert($0).inserted } ?? true }
                 appState.updateTicketsCache(fetchedTickets)
             } catch {
                 print("Failed to load tickets: \(error)")

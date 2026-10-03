@@ -285,15 +285,19 @@ struct PullRequestQueueSection: View {
                         emptyState
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
                 DashboardTasksPane(
                     model: tasksModel,
                     source: model.selectedSource,
                     repoFilter: model.selectedRepo
                 )
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
+            // Equal-height columns: measure both at their ideal height, then
+            // lay them out at the taller one, so the work-items card fills
+            // down to the bottom of the pull requests beside it.
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 

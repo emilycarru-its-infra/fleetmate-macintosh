@@ -41,7 +41,7 @@ final class KnowledgeStore: ObservableObject {
 
     /// Show what is already on disk at once, then keep it current.
     func start(token: @escaping () async -> String?) {
-        guard loop == nil, handbookMirror != nil || hubMirror != nil else { return }
+        guard loop == nil else { return }
         loop = Task {
             await loadFromDisk()
             while !Task.isCancelled {
@@ -73,13 +73,14 @@ final class KnowledgeStore: ObservableObject {
                 errors.append("Skills: \(error.localizedDescription)")
             }
         }
+        if hubMirror == nil { await loadSkills(nil) }
         syncError = errors.isEmpty ? nil : errors.joined(separator: "\n")
         if let syncError { dbg.warn("Knowledge sync: \(syncError)", category: "knowledge") }
     }
 
     private func loadFromDisk() async {
         if let mirror = handbookMirror, await mirror.isCloned { await loadHandbook(mirror) }
-        if let mirror = hubMirror, await mirror.isCloned { await loadSkills(mirror) }
+        if let mirror = hubMirror, await mirror.isCloned { await loadSkills(mirror) } else { await loadSkills(nil) }
     }
 
     private func loadHandbook(_ mirror: RepoMirror) async {
@@ -88,10 +89,17 @@ final class KnowledgeStore: ObservableObject {
         dbg.info("Handbook index: \(handbook.pages.count) pages", category: "knowledge")
     }
 
-    private func loadSkills(_ mirror: RepoMirror) async {
-        let root = mirror.localURL
-        skills = await Task.detached(priority: .utility) { SkillCatalog.load(hubRoot: root) }.value
+    private func loadSkills(_ mirror: RepoMirror?) async {
+        let root = mirror?.localURL
+        let home = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
+        skills = await Task.detached(priority: .utility) {
+            let shared = root.map { SkillCatalog.load(hubRoot: $0).entries } ?? []
+            return SkillCatalog(entries: shared + SkillCatalog.loadLocal(claudeHome: home))
+        }.value
     }
+
+    /// This Mac's own skills change when the person edits them; reread on demand.
+    func reloadLocalSkills() async { await loadSkills(hubMirror) }
 
     /// The published page, when the site address is configured.
     func siteURL(for page: HandbookPage) -> URL? {

@@ -15,6 +15,10 @@ class FilterState<Category: FilterCategoryProtocol> {
     var availableValues: [Category: [String]] = [:]
     var selectedValues: [Category: Set<String>] = [:]
     var selectedCategory: Category = Category.allCases.first! as! Category
+    /// How many items carry each value, shown beside it when present.
+    var valueCounts: [Category: [String: Int]] = [:]
+    /// Categories that cannot apply right now and are left out of the panel.
+    var hiddenCategories: Set<Category> = []
 
     /// True if any filter is active
     var hasActiveFilters: Bool {
@@ -84,7 +88,7 @@ struct FilterPanelView<Category: FilterCategoryProtocol>: View {
                 // Left: category tabs
                 ScrollView {
                     VStack(spacing: 2) {
-                        ForEach(Array(Category.allCases), id: \.self) { category in
+                        ForEach(Array(Category.allCases).filter { !filters.hiddenCategories.contains($0) }, id: \.self) { category in
                             categoryRow(category)
                         }
                     }
@@ -181,6 +185,12 @@ struct FilterPanelView<Category: FilterCategoryProtocol>: View {
                     .appFont(fixed: 12)
                     .lineLimit(1)
                 Spacer()
+                if let count = filters.valueCounts[filters.selectedCategory]?[value] {
+                    Text("\(count)")
+                        .appFont(fixed: 11)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 4)

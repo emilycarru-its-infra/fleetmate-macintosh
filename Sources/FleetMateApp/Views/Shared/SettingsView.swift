@@ -25,6 +25,11 @@ struct SettingsView: View {
                 .environmentObject(appState)
                 .tabItem { Label("Manage", systemImage: "wrench.and.screwdriver") }
                 .tag(3)
+
+            AgentSettingsView()
+                .environmentObject(appState)
+                .tabItem { Label("Agent", systemImage: "terminal") }
+                .tag(4)
         }
         .frame(minWidth: 600, maxWidth: 700, minHeight: 700, idealHeight: 900, maxHeight: 1100)
     }

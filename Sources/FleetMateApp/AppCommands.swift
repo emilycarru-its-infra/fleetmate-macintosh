@@ -181,6 +181,15 @@ struct FleetMateCommands: Commands {
 
             Divider()
 
+            Button("Toggle Terminal") {
+                appState.terminals.toggle(defaultLaunch: appState.agentDefaultLaunch)
+            }
+            .keyboardShortcut("`", modifiers: .control)
+            Button("New Terminal Session") { appState.terminals.open(appState.agentDefaultLaunch) }
+                .keyboardShortcut("`", modifiers: [.control, .shift])
+
+            Divider()
+
             Button("Zoom In") { setScale(fontScale + zoomStep) }
                 .keyboardShortcut("+", modifiers: .command)
                 .disabled(fontScale >= AppFontScale.range.upperBound)

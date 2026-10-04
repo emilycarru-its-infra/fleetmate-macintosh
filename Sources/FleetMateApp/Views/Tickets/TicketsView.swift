@@ -590,6 +590,7 @@ struct TicketsView: View {
             contentSection
         }
         .onChange(of: selectedTicketIds) { _, newIds in
+            appState.agentSelection = selectedTicket.map(AgentSelection.init(ticket:))
             // A draft belongs to the ticket it was written on — carrying it to
             // the next ticket risks posting it to the wrong conversation.
             newComment = ""

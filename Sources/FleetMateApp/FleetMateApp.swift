@@ -21,7 +21,7 @@ struct FleetMateApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(terminals: appState.terminals)
                 .environmentObject(appState)
                 .appFontScale(fontScale)
                 .task {
@@ -62,6 +62,31 @@ class AppState: ObservableObject {
     
     // MARK: - Onboarding
     @Published var showOnboardingWizard = false
+
+    // MARK: - Agent terminal
+
+    /// The bottom terminal panel's sessions, shared by every tab.
+    let terminals = AgentTerminalStore()
+    /// What the visible tab has selected, written to `FLEETMATE_CONTEXT`.
+    @Published var agentSelection: AgentSelection?
+
+    /// What a new session runs: the person's choice, else the managed default,
+    /// else a login shell.
+    var agentDefaultLaunch: AgentLaunch {
+        AgentLaunch(command: UserDefaults.standard.string(forKey: AgentSettingsKey.command)
+                    ?? config.agentCommand ?? "")
+    }
+
+    /// The person's repositories, seeded from the managed default list until
+    /// they edit their own.
+    var agentRepos: [String] {
+        UserDefaults.standard.stringArray(forKey: AgentSettingsKey.repos) ?? config.repoDefaults
+    }
+
+    var agentAutoStart: Bool {
+        UserDefaults.standard.object(forKey: AgentSettingsKey.autoStart) as? Bool
+            ?? config.agentAutoStart ?? true
+    }
 
     // MARK: - Tab Navigation (set by Dashboard to switch tabs)
 

@@ -20,6 +20,13 @@ struct ContentView: View {
     private static let ssoRetryInterval: TimeInterval = 60
     @State private var windowWidth: CGFloat = 1000
     @State private var showAuthPopover = false
+    @ObservedObject private var terminals: AgentTerminalStore
+    @AppStorage(AgentSettingsKey.panelHeight) private var panelHeight: Double = 280
+    @State private var panelDragStart: Double?
+
+    init(terminals: AgentTerminalStore) {
+        self.terminals = terminals
+    }
 
     private var availableTabs: [AppTab] {
         AppTab.enabledTabs(config: appState.config)
@@ -28,7 +35,13 @@ struct ContentView: View {
     private var selectedTab: AppTab { appState.selectedTab }
 
     var body: some View {
-        tabContent
+        VStack(spacing: 0) {
+            tabContent
+                .frame(maxHeight: .infinity)
+            if terminals.isVisible && !terminals.sessions.isEmpty {
+                terminalPanel
+            }
+        }
             .frame(minWidth: 500, minHeight: 400)
             .background(
                 GeometryReader { geo in
@@ -70,6 +83,12 @@ struct ContentView: View {
                     DefaultToolbarItem(kind: .search, placement: .automatic)
                 }
                 ToolbarItem(placement: .primaryAction) {
+                    Button(action: { terminals.toggle(defaultLaunch: appState.agentDefaultLaunch) }) {
+                        Label("Terminal", systemImage: "terminal")
+                    }
+                    .help("Show or hide the terminal (⌃`)")
+                }
+                ToolbarItem(placement: .primaryAction) {
                     Button(action: { showAuthPopover.toggle() }) {
                         ElevationShieldLabel()
                     }
@@ -96,6 +115,20 @@ struct ContentView: View {
                         .help("One or more systems are logged in as a Service Principal")
                     }
                 }
+            }
+            .onAppear {
+                if appState.agentAutoStart && terminals.sessions.isEmpty {
+                    terminals.open(appState.agentDefaultLaunch, focus: false)
+                }
+                writeAgentContext()
+            }
+            .onChange(of: appState.selectedTab) { _, _ in
+                appState.agentSelection = nil
+                writeAgentContext()
+            }
+            .onChange(of: appState.agentSelection) { _, _ in writeAgentContext() }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                terminals.terminateAll()
             }
             .onAppear {
                 // Phase 1: Attempt silent SSO in the background (no UI).
@@ -170,6 +203,39 @@ struct ContentView: View {
         }
     }
 
+    private func writeAgentContext() {
+        AgentContextWriter.write(tab: appState.selectedTab.rawValue,
+                                 selection: appState.agentSelection,
+                                 to: terminals.contextPath)
+    }
+
+    /// The shared bottom terminal, with a drag handle to resize it.
+    private var terminalPanel: some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.secondary.opacity(0.25))
+                .frame(height: 1)
+                .padding(.vertical, 2)
+                .contentShape(Rectangle().inset(by: -3))
+                .onHover { inside in
+                    if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 1)
+                        .onChanged { value in
+                            let start = panelDragStart ?? panelHeight
+                            panelDragStart = start
+                            panelHeight = min(max(start - value.translation.height, 120), 900)
+                        }
+                        .onEnded { _ in panelDragStart = nil }
+                )
+            AgentTerminalPanel(store: terminals,
+                               repos: appState.agentRepos,
+                               defaultLaunch: appState.agentDefaultLaunch)
+                .frame(height: panelHeight)
+        }
+    }
+
     @ViewBuilder
     private var tabContent: some View {
         switch selectedTab {
@@ -187,7 +253,7 @@ struct ContentView: View {
 
 #if DEBUG
 #Preview {
-    ContentView()
+    ContentView(terminals: AgentTerminalStore())
         .environmentObject(AppState())
 }
 #endif

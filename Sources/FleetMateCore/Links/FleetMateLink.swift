@@ -15,8 +15,8 @@ import Foundation
 ///     fleetmate://workitem/<id>
 ///     fleetmate://issue/github/<owner>/<repo>/<number>
 ///     fleetmate://open?url=<web URL of any of the above>
-public enum FleetMateLink: Equatable, Sendable {
-    public enum Host: Equatable, Sendable {
+public enum FleetMateLink: Hashable, Sendable {
+    public enum Host: Hashable, Sendable {
         /// Azure DevOps project and repository.
         case azureDevOps(project: String, repo: String)
         /// GitHub owner and repository.

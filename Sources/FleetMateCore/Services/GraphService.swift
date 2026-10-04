@@ -873,15 +873,18 @@ public class GraphService {
         if useAze {
             return try await azeTransport.send(GraphRequest(method: .get, url: url))
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, headers: headers)
-                .validate()
-                .responseData { response in
-                    switch response.result {
-                    case .success(let data): continuation.resume(returning: data)
-                    case .failure(let error): continuation.resume(throwing: error)
+        return try await GraphThrottle.withRetry("GET \(url)") {
+            try await withCheckedThrowingContinuation { continuation in
+                session.request(url, headers: headers)
+                    .validate()
+                    .responseData { response in
+                        switch response.result {
+                        case .success(let data): continuation.resume(returning: data)
+                        case .failure(let error):
+                            continuation.resume(throwing: GraphThrottle.classify(response.response, error: error))
+                        }
                     }
-                }
+            }
         }
     }
 
@@ -890,17 +893,19 @@ public class GraphService {
             let data = try await azeTransport.send(GraphRequest(method: .get, url: url))
             return try GraphService.graphDecoder.decode(T.self, from: data)
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, headers: headers)
-                .validate()
-                .responseDecodable(of: T.self) { response in
-                    switch response.result {
-                    case .success(let value):
-                        continuation.resume(returning: value)
-                    case .failure(let error):
-                        continuation.resume(throwing: error)
+        return try await GraphThrottle.withRetry("GET \(url)") {
+            try await withCheckedThrowingContinuation { continuation in
+                session.request(url, headers: headers)
+                    .validate()
+                    .responseDecodable(of: T.self) { response in
+                        switch response.result {
+                        case .success(let value):
+                            continuation.resume(returning: value)
+                        case .failure(let error):
+                            continuation.resume(throwing: GraphThrottle.classify(response.response, error: error))
+                        }
                     }
-                }
+            }
         }
     }
 
@@ -910,19 +915,21 @@ public class GraphService {
             _ = try await azeTransport.send(GraphRequest(method: .post, url: url, body: bodyData))
             return
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            let request: DataRequest
-            if let body = body {
-                request = session.request(url, method: .post, parameters: body, encoding: JSONEncoding.default, headers: headers)
-            } else {
-                request = session.request(url, method: .post, headers: headers)
-            }
-            request.validate().response { response in
-                switch response.result {
-                case .success:
-                    continuation.resume()
-                case .failure(let error):
-                    continuation.resume(throwing: error)
+        try await GraphThrottle.withRetry("POST \(url)") {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let request: DataRequest
+                if let body = body {
+                    request = session.request(url, method: .post, parameters: body, encoding: JSONEncoding.default, headers: headers)
+                } else {
+                    request = session.request(url, method: .post, headers: headers)
+                }
+                request.validate().response { response in
+                    switch response.result {
+                    case .success:
+                        continuation.resume()
+                    case .failure(let error):
+                        continuation.resume(throwing: GraphThrottle.classify(response.response, error: error))
+                    }
                 }
             }
         }
@@ -934,17 +941,19 @@ public class GraphService {
             _ = try await azeTransport.send(GraphRequest(method: .patch, url: url, body: bodyData))
             return
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, method: .patch, parameters: body, encoding: JSONEncoding.default, headers: headers)
-                .validate()
-                .response { response in
-                    switch response.result {
-                    case .success:
-                        continuation.resume()
-                    case .failure(let error):
-                        continuation.resume(throwing: error)
+        try await GraphThrottle.withRetry("PATCH \(url)") {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                session.request(url, method: .patch, parameters: body, encoding: JSONEncoding.default, headers: headers)
+                    .validate()
+                    .response { response in
+                        switch response.result {
+                        case .success:
+                            continuation.resume()
+                        case .failure(let error):
+                            continuation.resume(throwing: GraphThrottle.classify(response.response, error: error))
+                        }
                     }
-                }
+            }
         }
     }
 
@@ -953,17 +962,19 @@ public class GraphService {
             _ = try await azeTransport.send(GraphRequest(method: .delete, url: url))
             return
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, method: .delete, headers: headers)
-                .validate()
-                .response { response in
-                    switch response.result {
-                    case .success:
-                        continuation.resume()
-                    case .failure(let error):
-                        continuation.resume(throwing: error)
+        try await GraphThrottle.withRetry("DELETE \(url)") {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                session.request(url, method: .delete, headers: headers)
+                    .validate()
+                    .response { response in
+                        switch response.result {
+                        case .success:
+                            continuation.resume()
+                        case .failure(let error):
+                            continuation.resume(throwing: GraphThrottle.classify(response.response, error: error))
+                        }
                     }
-                }
+            }
         }
     }
 
@@ -973,17 +984,19 @@ public class GraphService {
             let data = try await azeTransport.send(GraphRequest(method: .post, url: url, body: bodyData))
             return try GraphService.graphDecoder.decode(T.self, from: data)
         }
-        return try await withCheckedThrowingContinuation { continuation in
-            session.request(url, method: .post, parameters: body, encoding: JSONEncoding.default, headers: headers)
-                .validate()
-                .responseDecodable(of: T.self) { response in
-                    switch response.result {
-                    case .success(let value):
-                        continuation.resume(returning: value)
-                    case .failure(let error):
-                        continuation.resume(throwing: error)
+        return try await GraphThrottle.withRetry("POST \(url)") {
+            try await withCheckedThrowingContinuation { continuation in
+                session.request(url, method: .post, parameters: body, encoding: JSONEncoding.default, headers: headers)
+                    .validate()
+                    .responseDecodable(of: T.self) { response in
+                        switch response.result {
+                        case .success(let value):
+                            continuation.resume(returning: value)
+                        case .failure(let error):
+                            continuation.resume(throwing: GraphThrottle.classify(response.response, error: error))
+                        }
                     }
-                }
+            }
         }
     }
 }

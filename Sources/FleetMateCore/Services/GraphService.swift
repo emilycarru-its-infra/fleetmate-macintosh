@@ -27,7 +27,7 @@ public class GraphService {
     private let cacheDuration: TimeInterval
 
     let baseUrl = "https://graph.microsoft.com/v1.0"
-    private let betaBaseURL = "https://graph.microsoft.com/beta"
+    let betaBaseURL = "https://graph.microsoft.com/beta"
     private let graphResourceId = "https://graph.microsoft.com"
 
     // Transport: by default every Graph call runs inside an `aze` session (the
@@ -900,10 +900,12 @@ public class GraphService {
 
     // MARK: - Private Helpers
 
-    func fetchData(url: String, headers: HTTPHeaders) async throws -> Data {
+    func fetchData(url: String, headers: HTTPHeaders, extraHeaders: [String: String] = [:]) async throws -> Data {
         if useAze {
-            return try await azeTransport.send(GraphRequest(method: .get, url: url))
+            return try await azeTransport.send(GraphRequest(method: .get, url: url, headers: extraHeaders))
         }
+        var headers = headers
+        for (name, value) in extraHeaders { headers.add(name: name, value: value) }
         return try await withCheckedThrowingContinuation { continuation in
             session.request(url, headers: headers)
                 .validate()
@@ -916,11 +918,13 @@ public class GraphService {
         }
     }
 
-    func fetch<T: Decodable>(url: String, headers: HTTPHeaders) async throws -> T {
+    func fetch<T: Decodable>(url: String, headers: HTTPHeaders, extraHeaders: [String: String] = [:]) async throws -> T {
         if useAze {
-            let data = try await azeTransport.send(GraphRequest(method: .get, url: url))
+            let data = try await azeTransport.send(GraphRequest(method: .get, url: url, headers: extraHeaders))
             return try GraphService.graphDecoder.decode(T.self, from: data)
         }
+        var headers = headers
+        for (name, value) in extraHeaders { headers.add(name: name, value: value) }
         return try await withCheckedThrowingContinuation { continuation in
             session.request(url, headers: headers)
                 .validate()

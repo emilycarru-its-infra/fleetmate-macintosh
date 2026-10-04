@@ -268,7 +268,10 @@ struct DashboardView: View {
     @ToolbarContentBuilder
     private var dashboardToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .automatic) {
-            Button(action: { Task { await refreshAll() } }) {
+            Button(action: {
+                GitHubLocalCache.shared.invalidateSearches()
+                Task { await refreshAll() }
+            }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .disabled(isAnyLoading)

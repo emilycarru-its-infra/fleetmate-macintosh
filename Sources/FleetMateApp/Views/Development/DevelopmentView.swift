@@ -705,7 +705,12 @@ private struct DevelopmentContent: View {
             }
             .help(model.showActivity ? "Hide the comment activity sidebar" : "Show comments across all pull requests")
 
-            Button(action: { model.loadAll(appState: appState, force: true) }) {
+            Button(action: {
+                // A manual refresh is the on-demand full resync: GitHub
+                // searches refetch everything instead of only what changed.
+                GitHubLocalCache.shared.invalidateSearches()
+                model.loadAll(appState: appState, force: true)
+            }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .disabled(model.isLoadingPullRequests && model.isLoadingInbox)

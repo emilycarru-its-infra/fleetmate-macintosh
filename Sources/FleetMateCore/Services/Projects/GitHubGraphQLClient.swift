@@ -36,7 +36,7 @@ public actor GitHubGraphQLClient {
     
     /// Executes a GraphQL query/mutation and returns the deserialized "data" portion.
     public func execute<T: Decodable>(query: String, variables: [String: Any]? = nil) async throws -> T {
-        try GitHubRateLimitGate.check()
+        try GitHubRateLimitGate.check(.graphql)
         let token = try await ensureToken()
         
         var body: [String: Any] = ["query": query]
@@ -57,6 +57,7 @@ public actor GitHubGraphQLClient {
             session.request(request)
                 .validate()
                 .responseData { response in
+                    if let http = response.response { GitHubRateLimitGate.record(http, bucket: .graphql) }
                     switch response.result {
                     case .success(let data):
                         do {
@@ -68,7 +69,7 @@ public actor GitHubGraphQLClient {
                             // Check for GraphQL errors
                             if let errors = json["errors"] as? [[String: Any]], let first = errors.first {
                                 let message = first["message"] as? String ?? "Unknown GraphQL error"
-                                GitHubRateLimitGate.tripIfRateLimit(message)
+                                GitHubRateLimitGate.tripIfRateLimit(message, bucket: .graphql, response: response.response)
                                 continuation.resume(throwing: GitHubGraphQLError.graphQLError(message))
                                 return
                             }
@@ -95,7 +96,7 @@ public actor GitHubGraphQLClient {
     
     /// Executes a GraphQL query and returns raw dictionary data.
     public func executeRaw(query: String, variables: [String: Any]? = nil) async throws -> [String: Any] {
-        try GitHubRateLimitGate.check()
+        try GitHubRateLimitGate.check(.graphql)
         let token = try await ensureToken()
         
         var body: [String: Any] = ["query": query]
@@ -116,6 +117,7 @@ public actor GitHubGraphQLClient {
             session.request(request)
                 .validate()
                 .responseData { response in
+                    if let http = response.response { GitHubRateLimitGate.record(http, bucket: .graphql) }
                     switch response.result {
                     case .success(let data):
                         do {
@@ -126,7 +128,7 @@ public actor GitHubGraphQLClient {
                             
                             if let errors = json["errors"] as? [[String: Any]], let first = errors.first {
                                 let message = first["message"] as? String ?? "Unknown GraphQL error"
-                                GitHubRateLimitGate.tripIfRateLimit(message)
+                                GitHubRateLimitGate.tripIfRateLimit(message, bucket: .graphql, response: response.response)
                                 continuation.resume(throwing: GitHubGraphQLError.graphQLError(message))
                                 return
                             }
@@ -159,7 +161,7 @@ public actor GitHubGraphQLClient {
         path: String,
         body: [String: Any]? = nil
     ) async throws -> Data {
-        try GitHubRateLimitGate.check()
+        try GitHubRateLimitGate.check(.core)
         let token = try await ensureToken()
         guard let url = URL(string: "https://api.github.com\(path)") else {
             throw GitHubGraphQLError.invalidResponse
@@ -167,6 +169,12 @@ public actor GitHubGraphQLClient {
 
         var request = URLRequest(url: url)
         request.httpMethod = method
+        // A conditional GET answered 304 does not count against the hourly
+        // budget, so every poll of an unchanged list is free.
+        let cached = method == "GET" ? GitHubETagCache.shared.entry(for: path) : nil
+        if let cached { request.setValue(cached.etag, forHTTPHeaderField: "If-None-Match") }
+        // URLSession's own cache would answer the 304 itself and hide it.
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
@@ -182,16 +190,20 @@ public actor GitHubGraphQLClient {
             // with no body; Alamofire only tolerates an empty body on 204/205
             // by default, so widen it rather than fail on a successful call.
             session.request(request)
-                .validate(statusCode: 200..<300)
-                .responseData(emptyResponseCodes: [200, 201, 202, 204, 205]) { response in
+                .validate(statusCode: Array(200..<300) + [304])
+                .responseData(emptyResponseCodes: [200, 201, 202, 204, 205, 304]) { response in
+                    if let http = response.response { GitHubRateLimitGate.record(http, bucket: .core) }
                     switch response.result {
                     case .success(let data):
+                        if response.response?.statusCode == 304, let cached {
+                            continuation.resume(returning: cached.data)
+                            return
+                        }
+                        if method == "GET", let etag = response.response?.value(forHTTPHeaderField: "ETag") {
+                            GitHubETagCache.shared.store(etag: etag, data: data, for: path)
+                        }
                         continuation.resume(returning: data)
                     case .failure(let error):
-                        // 403/429 from REST is the rate limiter — latch it.
-                        if let status = response.response?.statusCode, status == 403 || status == 429 {
-                            GitHubRateLimitGate.trip()
-                        }
                         continuation.resume(throwing: GitHubGraphQLError.networkError(error))
                     }
                 }
@@ -202,7 +214,7 @@ public actor GitHubGraphQLClient {
     /// without the API token. GitHub serves job logs this way: the API
     /// answers 302 to a signed blob URL that rejects an Authorization header.
     public func executeRESTText(path: String) async throws -> String {
-        try GitHubRateLimitGate.check()
+        try GitHubRateLimitGate.check(.core)
         let token = try await ensureToken()
         guard let url = URL(string: "https://api.github.com\(path)") else {
             throw GitHubGraphQLError.invalidResponse
@@ -218,6 +230,7 @@ public actor GitHubGraphQLClient {
                 .redirect(using: Redirector(behavior: .doNotFollow))
                 .validate(statusCode: 200..<400)
                 .responseData(emptyResponseCodes: [200, 204, 301, 302, 307]) { response in
+                    if let http = response.response { GitHubRateLimitGate.record(http, bucket: .core) }
                     switch response.result {
                     case .success(let data):
                         guard let http = response.response else {
@@ -226,9 +239,6 @@ public actor GitHubGraphQLClient {
                         }
                         continuation.resume(returning: (data, http))
                     case .failure(let error):
-                        if let status = response.response?.statusCode, status == 403 || status == 429 {
-                            GitHubRateLimitGate.trip()
-                        }
                         continuation.resume(throwing: GitHubGraphQLError.networkError(error))
                     }
                 }
@@ -280,31 +290,112 @@ public enum GitHubGraphQLError: Error, LocalizedError {
 
 /// Process-wide latch shared by every client instance — the dashboard queue,
 /// the issues table, the Projects provider and the PR viewer all construct
-/// their own clients but drain ONE hourly quota. Once GitHub says rate
-/// limited, every call from every instance fails fast until the window ends
-/// instead of burning more budget (each rejected call still costs points).
-enum GitHubRateLimitGate {
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var until: Date?
+/// their own clients but drain the same hourly quotas.
+///
+/// GitHub keeps separate budgets for REST ("core") and GraphQL, so each has
+/// its own gate: running GraphQL dry must not stop REST calls that still have
+/// budget. The gate closes only when GitHub says so — remaining hits zero,
+/// a Retry-After arrives, or a message names the rate limit — and opens at
+/// the reset time GitHub gives, not a fixed fifteen minutes. A plain 403 (no
+/// permission) no longer closes it at all.
+public enum GitHubRateLimitGate {
+    public enum Bucket: String, Sendable { case core, graphql }
 
-    static func check() throws {
+    public struct Status: Sendable {
+        public let remaining: Int?
+        public let limit: Int?
+        public let resetsAt: Date?
+        public let blockedUntil: Date?
+    }
+
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var blocked: [Bucket: Date] = [:]
+    nonisolated(unsafe) private static var latest: [Bucket: (remaining: Int, limit: Int, reset: Date)] = [:]
+
+    static func check(_ bucket: Bucket) throws {
         lock.lock(); defer { lock.unlock() }
-        if let until, until > Date() {
+        if let until = blocked[bucket], until > Date() {
             let time = until.formatted(date: .omitted, time: .shortened)
             throw GitHubGraphQLError.graphQLError("API rate limit exceeded — backing off until \(time)")
         }
-        until = nil
+        blocked[bucket] = nil
     }
 
-    static func trip(for seconds: TimeInterval = 15 * 60) {
+    /// The last budget GitHub reported for a bucket, for display.
+    public static func status(_ bucket: Bucket) -> Status {
         lock.lock(); defer { lock.unlock() }
-        let candidate = Date().addingTimeInterval(seconds)
-        if until == nil || candidate > until! { until = candidate }
-        dbg.warn("GitHub rate limit tripped — gating all clients for \(Int(seconds))s", category: "github")
+        let l = latest[bucket]
+        return Status(remaining: l?.remaining, limit: l?.limit, resetsAt: l?.reset,
+                      blockedUntil: blocked[bucket].flatMap { $0 > Date() ? $0 : nil })
     }
 
-    /// Trip the gate when an upstream message looks like a rate limit.
-    static func tripIfRateLimit(_ message: String) {
-        if message.localizedCaseInsensitiveContains("rate limit") { trip() }
+    /// Read GitHub's rate-limit headers from any response, and close the gate
+    /// when they say the budget is spent or a wait is required.
+    static func record(_ response: HTTPURLResponse, bucket: Bucket) {
+        let header = { (name: String) in response.value(forHTTPHeaderField: name) }
+        let remaining = header("X-RateLimit-Remaining").flatMap(Int.init)
+        let limit = header("X-RateLimit-Limit").flatMap(Int.init)
+        let reset = header("X-RateLimit-Reset").flatMap(TimeInterval.init).map(Date.init(timeIntervalSince1970:))
+        let retryAfter = header("Retry-After").flatMap(TimeInterval.init)
+
+        lock.lock()
+        if let remaining, let limit, let reset { latest[bucket] = (remaining, limit, reset) }
+        lock.unlock()
+
+        let limited = response.statusCode == 403 || response.statusCode == 429
+        if let retryAfter, limited {
+            // Secondary (burst) limit: GitHub names the wait.
+            close(bucket, until: Date().addingTimeInterval(retryAfter))
+        } else if remaining == 0, let reset {
+            close(bucket, until: reset)
+        } else if response.statusCode == 429 {
+            close(bucket, until: Date().addingTimeInterval(60))
+        }
+    }
+
+    /// A GraphQL error body that names the rate limit. Prefer the reset
+    /// GitHub sent; a secondary limit without one waits a minute.
+    static func tripIfRateLimit(_ message: String, bucket: Bucket, response: HTTPURLResponse?) {
+        guard message.localizedCaseInsensitiveContains("rate limit") else { return }
+        let reset = response?.value(forHTTPHeaderField: "X-RateLimit-Reset")
+            .flatMap(TimeInterval.init).map(Date.init(timeIntervalSince1970:))
+        let remaining = response?.value(forHTTPHeaderField: "X-RateLimit-Remaining").flatMap(Int.init)
+        if remaining == 0, let reset, reset > Date() {
+            close(bucket, until: reset)
+        } else {
+            close(bucket, until: Date().addingTimeInterval(60))
+        }
+    }
+
+    private static func close(_ bucket: Bucket, until: Date) {
+        lock.lock(); defer { lock.unlock() }
+        if let current = blocked[bucket], current >= until { return }
+        blocked[bucket] = until
+        dbg.warn("GitHub \(bucket.rawValue) rate limit — gated until \(until.formatted(date: .omitted, time: .standard))", category: "github")
+    }
+}
+
+/// ETags and bodies of recent REST GETs, shared by every client, so a repeat
+/// poll can ask "changed since?" and get a free 304. Bounded and in memory:
+/// a relaunch starts cold, which costs one full round.
+final class GitHubETagCache: @unchecked Sendable {
+    static let shared = GitHubETagCache()
+    private let lock = NSLock()
+    private var entries: [String: (etag: String, data: Data, used: Date)] = [:]
+    private let capacity = 600
+
+    func entry(for path: String) -> (etag: String, data: Data)? {
+        lock.lock(); defer { lock.unlock() }
+        guard let e = entries[path] else { return nil }
+        entries[path]?.used = Date()
+        return (e.etag, e.data)
+    }
+
+    func store(etag: String, data: Data, for path: String) {
+        lock.lock(); defer { lock.unlock() }
+        entries[path] = (etag, data, Date())
+        if entries.count > capacity, let oldest = entries.min(by: { $0.value.used < $1.value.used })?.key {
+            entries[oldest] = nil
+        }
     }
 }

@@ -251,6 +251,15 @@ class AppState: ObservableObject {
     /// Development tab: the wide PR queue, GitHub inbox and activity feed,
     /// kept across tab switches.
     let development = DevelopmentModel()
+    /// The Handbook and the shared agent skills, from FleetMate's own copies.
+    let knowledge = KnowledgeStore()
+
+    /// Begin keeping the Handbook and skills copies current. Uses the Azure
+    /// DevOps sign-in when it is ready; before that, git's own credentials.
+    func startKnowledge() {
+        knowledge.configure(config)
+        knowledge.start { [weak self] in await self?.devOpsService.currentToken() }
+    }
 
     /// Everything the Projects tab loads from Azure DevOps and GitHub.
     ///
@@ -667,6 +676,7 @@ class AppState: ObservableObject {
 
     /// Preload all data sources concurrently in the background
     func preloadAllData() async {
+        startKnowledge()
         guard !isPreloadingAllData else {
             preloadAllDataRequested = true
             dbg.info("preloadAllData already running; queued one reconciliation", category: "preload")

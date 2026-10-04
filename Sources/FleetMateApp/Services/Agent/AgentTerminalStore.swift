@@ -31,7 +31,7 @@ struct AgentLaunch: Hashable {
 /// Keys a terminal handles itself while it has focus, the way Terminal and
 /// iTerm do, ahead of the app's menus.
 enum TerminalShortcut {
-    case newSession, closeSession, split, clear, next, previous, select(Int)
+    case newSession, closeSession, split, clear, next, previous, select(Int), maximize
 
     init?(_ event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -41,6 +41,7 @@ enum TerminalShortcut {
         case (.command, "w"): self = .closeSession
         case (.command, "d"): self = .split
         case (.command, "k"): self = .clear
+        case ([.command, .shift], "\r"): self = .maximize
         case ([.command, .shift], "]"), ([.command, .shift], "}"), (.control, "\t"): self = .next
         case ([.command, .shift], "["), ([.command, .shift], "{"), ([.control, .shift], "\t"): self = .previous
         case (.command, _) where Int(key).map({ (1...9).contains($0) }) == true:
@@ -245,7 +246,9 @@ final class AgentTerminalStore: ObservableObject {
     @Published var selectedId: AgentTerminalSession.ID? { didSet { updateShown() } }
     /// The session shown in the right-hand pane when split.
     @Published var splitId: AgentTerminalSession.ID? { didSet { updateShown() } }
-    @Published var isVisible = false { didSet { updateShown() } }
+    @Published var isVisible = false { didSet { updateShown(); if !isVisible { isMaximized = false } } }
+    /// The terminal takes the whole window, the tab hidden behind it.
+    @Published var isMaximized = false
     /// What ⌘T opens. Kept current by the window from the person's settings.
     var defaultLaunch: AgentLaunch = .shell
 
@@ -337,6 +340,7 @@ final class AgentTerminalStore: ObservableObject {
         case .next: cycle(by: 1)
         case .previous: cycle(by: -1)
         case .select(let n): if sessions.indices.contains(n) { select(sessions[n].id) }
+        case .maximize: isMaximized.toggle()
         }
     }
 

@@ -36,8 +36,10 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            tabContent
-                .frame(maxHeight: .infinity)
+            if !(terminals.isMaximized && terminals.isVisible && !terminals.sessions.isEmpty) {
+                tabContent
+                    .frame(maxHeight: .infinity)
+            }
             if terminals.isVisible && !terminals.sessions.isEmpty {
                 terminalPanel
             }
@@ -222,18 +224,31 @@ struct ContentView: View {
                     if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
                 }
                 .gesture(
-                    DragGesture(minimumDistance: 1)
+                    // Measured in window coordinates: the handle moves with
+                    // the panel, so local coordinates made the drag jitter.
+                    DragGesture(minimumDistance: 1, coordinateSpace: .global)
                         .onChanged { value in
                             let start = panelDragStart ?? panelHeight
                             panelDragStart = start
-                            panelHeight = min(max(start - value.translation.height, 120), 900)
+                            if terminals.isMaximized { terminals.isMaximized = false }
+                            panelHeight = min(max(start - value.translation.height, 120), 1600)
                         }
-                        .onEnded { _ in panelDragStart = nil }
+                        .onEnded { _ in
+                            // Dragged nearly to the top: fill the window, and
+                            // restore to the height it had before.
+                            let available = NSApp.keyWindow?.contentLayoutRect.height ?? 900
+                            if panelHeight > available * 0.85 {
+                                panelHeight = panelDragStart ?? 280
+                                terminals.isMaximized = true
+                            }
+                            panelDragStart = nil
+                        }
                 )
             AgentTerminalPanel(store: terminals,
                                repos: appState.agentRepos,
                                defaultLaunch: appState.agentDefaultLaunch)
-                .frame(height: panelHeight)
+                .frame(height: terminals.isMaximized ? nil : panelHeight)
+                .frame(maxHeight: terminals.isMaximized ? .infinity : nil)
         }
     }
 

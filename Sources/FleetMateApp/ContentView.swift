@@ -70,6 +70,9 @@ struct ContentView: View {
                     DefaultToolbarItem(kind: .search, placement: .automatic)
                 }
                 ToolbarItem(placement: .primaryAction) {
+                    GlobalSearchToolbarField()
+                }
+                ToolbarItem(placement: .primaryAction) {
                     RecentActivityToolbarButton()
                 }
                 ToolbarItem(placement: .primaryAction) {

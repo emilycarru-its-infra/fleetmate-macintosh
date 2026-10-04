@@ -763,7 +763,6 @@ private struct DevelopmentContent: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .searchable(text: $model.searchText, prompt: searchPrompt)
         .toolbar { developmentToolbar }
         .task {
             model.loadAll(appState: appState)
@@ -807,9 +806,10 @@ private struct DevelopmentContent: View {
 
     private var searchPrompt: String {
         switch model.segment {
-        case .pullRequests, .inbox: return "Search pull requests..."
-        case .commits: return "Search commits..."
-        case .pipelines: return "Search runs..."
+        case .pullRequests: return "Filter pull requests"
+        case .inbox: return "Filter inbox"
+        case .commits: return "Filter commits"
+        case .pipelines: return "Filter runs"
         }
     }
 
@@ -855,6 +855,8 @@ private struct DevelopmentContent: View {
 
     private var leftPane: some View {
         VStack(alignment: .leading, spacing: 0) {
+            listFilter
+            Divider()
             switch model.segment {
             case .pullRequests: pullRequestList
             case .inbox: inboxList
@@ -862,6 +864,27 @@ private struct DevelopmentContent: View {
             case .pipelines: PipelinesListView(model: model, searchText: searchText)
             }
         }
+    }
+
+    /// Filters the list in view — pull requests, inbox, commits or runs — by
+    /// title, repository, author, branch or number. It sits on the list it
+    /// filters; the toolbar's field searches everything.
+    private var listFilter: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "line.3.horizontal.decrease").foregroundStyle(.secondary)
+            TextField(searchPrompt, text: $model.searchText)
+                .textFieldStyle(.plain)
+                .onExitCommand { model.searchText = "" }
+            if !model.searchText.isEmpty {
+                Button { model.searchText = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .appFont(.callout)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
     }
 
     // MARK: Pull requests

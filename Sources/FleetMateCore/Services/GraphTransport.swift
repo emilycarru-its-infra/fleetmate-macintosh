@@ -25,11 +25,15 @@ public struct GraphRequest: Sendable {
     public let url: String
     /// Raw JSON request body, if any.
     public let body: Data?
+    /// Extra request headers, such as the `ocp-client-*` pair Graph asks for
+    /// on BitLocker and LAPS reads. Never carries a token.
+    public let headers: [String: String]
 
-    public init(method: Method, url: String, body: Data? = nil) {
+    public init(method: Method, url: String, body: Data? = nil, headers: [String: String] = [:]) {
         self.method = method
         self.url = url
         self.body = body
+        self.headers = headers
     }
 }
 
@@ -141,8 +145,14 @@ public struct AzeGraphTransport: GraphTransport {
     /// `$ref`, etc.
     static func buildAzRestCommand(_ request: GraphRequest) -> String {
         var parts = ["az", "rest", "--method", request.method.rawValue, "--uri", shellSingleQuote(request.url)]
-        if let body = request.body, let json = String(data: body, encoding: .utf8) {
-            parts += ["--headers", "Content-Type=application/json", "--body", shellSingleQuote(json)]
+        var headers = request.headers.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+        let json = request.body.flatMap { String(data: $0, encoding: .utf8) }
+        if json != nil { headers.insert("Content-Type=application/json", at: 0) }
+        if !headers.isEmpty {
+            parts += ["--headers"] + headers.map(shellSingleQuote)
+        }
+        if let json {
+            parts += ["--body", shellSingleQuote(json)]
         }
         parts += ["-o", "json"]
         return parts.joined(separator: " ")

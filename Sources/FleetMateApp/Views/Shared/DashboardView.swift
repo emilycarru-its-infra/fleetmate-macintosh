@@ -1532,7 +1532,7 @@ struct DashboardSplitHandle: View {
             else { NSCursor.pop() }
         }
         .gesture(
-            DragGesture(minimumDistance: 2)
+            DragGesture(minimumDistance: 2, coordinateSpace: .global)
                 .onChanged { value in
                     var t = Transaction()
                     t.disablesAnimations = true

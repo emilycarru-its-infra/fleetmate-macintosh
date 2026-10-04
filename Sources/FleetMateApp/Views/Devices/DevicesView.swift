@@ -8,14 +8,16 @@ struct DevicesView: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
-        DevicesContentView(appleOrg: appState.appleOrg)
+        DevicesContentView(appleOrg: appState.appleOrg, autopilot: appState.autopilot)
     }
 }
 
 private struct DevicesContentView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var appleOrg: AppleOrgStore
+    @ObservedObject var autopilot: AutopilotStore
     @State private var isLoading = false
+    @State private var showHashImport = false
     @State private var searchText = ""
     @State private var selectedDeviceIds: Set<String> = []
     @State private var rows: [DeviceListRow] = []
@@ -56,6 +58,8 @@ private struct DevicesContentView: View {
                 ($0.serialNumber?.localizedCaseInsensitiveContains(q) ?? false) ||
                 ($0.intune?.userPrincipalName?.localizedCaseInsensitiveContains(q) ?? false) ||
                 ($0.apple?.orderNumber?.localizedCaseInsensitiveContains(q) ?? false) ||
+                ($0.autopilot?.groupTag?.localizedCaseInsensitiveContains(q) ?? false) ||
+                ($0.autopilot?.purchaseOrderIdentifier?.localizedCaseInsensitiveContains(q) ?? false) ||
                 ($0.serverName?.localizedCaseInsensitiveContains(q) ?? false) ||
                 $0.modelText.localizedCaseInsensitiveContains(q)
             }
@@ -74,14 +78,15 @@ private struct DevicesContentView: View {
     }
 
     private func rebuildRows() {
-        rows = AppleOrgJoin.merge(
+        let merged = AppleOrgJoin.merge(
             intune: appState.cachedDevices,
             apple: appleOrg.devices,
             servers: appleOrg.servers,
             orgLabels: appleOrg.orgLabels
         )
-        filters.buildFromRows(rows, hasAppleOrg: appleOrg.hasProfile)
-        dbg.debug("Device rows: \(rows.count) from \(appState.cachedDevices.count) Intune and \(appleOrg.devices.count) Apple organization records", category: "devices")
+        rows = AutopilotJoin.enrich(merged, autopilot: autopilot.identities)
+        filters.buildFromRows(rows, hasAppleOrg: appleOrg.hasProfile, hasAutopilot: !autopilot.identities.isEmpty)
+        dbg.debug("Device rows: \(rows.count) from \(appState.cachedDevices.count) Intune, \(appleOrg.devices.count) Apple organization and \(autopilot.identities.count) Autopilot records", category: "devices")
     }
 
     /// Fresh Start is a Windows-only Intune action, so it runs against the
@@ -126,6 +131,11 @@ private struct DevicesContentView: View {
                     if appleOrg.isLoading {
                         ProgressView().controlSize(.small)
                         Text("Reading Apple organizations…")
+                            .appFont(.caption)
+                            .foregroundColor(.secondary)
+                    } else if autopilot.isLoading {
+                        ProgressView().controlSize(.small)
+                        Text("Reading Autopilot…")
                             .appFont(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -173,6 +183,7 @@ private struct DevicesContentView: View {
                 DeviceActionsPanel(
                     selectedRows: selectedRows,
                     appleOrg: appleOrg,
+                    autopilot: autopilot,
                     isPerformingAction: $isPerformingAction,
                     actionMessage: $actionMessage,
                     lockPin: $lockPin,
@@ -203,6 +214,7 @@ private struct DevicesContentView: View {
                 loadDevices()
             }
             appleOrg.load()
+            if appState.config.isGraphConfigured { autopilot.load(using: appState.graphService) }
             rebuildRows()
             if let id = appState.navigateToDeviceId {
                 selectedDeviceIds = [id]
@@ -213,6 +225,7 @@ private struct DevicesContentView: View {
         .onChange(of: appleOrg.devices) { _, _ in rebuildRows() }
         .onChange(of: appleOrg.servers) { _, _ in rebuildRows() }
         .onChange(of: appleOrg.profiles) { _, _ in rebuildRows() }
+        .onReceive(autopilot.$identities) { _ in DispatchQueue.main.async { rebuildRows() } }
         // Hiding a device also deselects it, so an action never reaches a
         // device that is no longer on screen.
         .onChange(of: filteredRows.map(\.id)) { _, ids in
@@ -305,7 +318,17 @@ private struct DevicesContentView: View {
                 Button(action: refreshAll) {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
-                .disabled(isLoading || appleOrg.isLoading)
+                .disabled(isLoading || appleOrg.isLoading || autopilot.isLoading)
+
+                if appState.config.isGraphConfigured {
+                    Button(action: { showHashImport = true }) {
+                        Label("Import Hardware Hashes", systemImage: "square.and.arrow.down")
+                    }
+                    .help("Register Windows devices with Autopilot from a hardware hash CSV")
+                    .sheet(isPresented: $showHashImport) {
+                        AutopilotImportSheet(store: autopilot)
+                    }
+                }
             }
         }
     }
@@ -451,6 +474,7 @@ private struct DevicesContentView: View {
     private func refreshAll() {
         loadDevices()
         appleOrg.load(force: true)
+        if appState.config.isGraphConfigured { autopilot.load(using: appState.graphService, force: true) }
     }
 
     private func loadDevices() {
@@ -692,6 +716,7 @@ private struct DevicesContentView: View {
 struct DeviceActionsPanel: View {
     let selectedRows: [DeviceListRow]
     @ObservedObject var appleOrg: AppleOrgStore
+    @ObservedObject var autopilot: AutopilotStore
 
     private var selectedDevices: [IntuneDevice] { selectedRows.compactMap(\.intune) }
     /// Every selected device has an Intune record.
@@ -792,12 +817,16 @@ struct DeviceActionsPanel: View {
                 VStack(spacing: 0) {
                     // Only actions valid for every selected device are
                     // offered: Intune's for devices enrolled in it, the Apple
-                    // organization's for devices one organization holds.
+                    // organization's for devices one organization holds,
+                    // Autopilot's for devices it has an identity for.
                     if allEnrolled {
                         intuneActions
                     }
                     if !appleRows.isEmpty {
                         AppleOrgActionsGroup(store: appleOrg, rows: appleRows)
+                    }
+                    if AutopilotActionsGroup.applies(to: selectedRows) {
+                        AutopilotActionsGroup(store: autopilot, rows: selectedRows)
                     }
                 }
             }

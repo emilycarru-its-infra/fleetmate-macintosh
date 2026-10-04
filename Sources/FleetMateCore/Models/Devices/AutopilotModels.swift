@@ -115,25 +115,21 @@ public enum AutopilotJoin {
         }
         return AutopilotIndex(byManagedDeviceId: matched, unenrolled: unenrolled)
     }
-}
 
-/// Filters categories Autopilot adds to the device list.
-public enum AutopilotFacet: String, CaseIterable, Identifiable, Sendable {
-    case registration = "Autopilot Registration"
-    case groupTag = "Group Tag"
-    case profile = "Deployment Profile"
-    case enrollment = "Autopilot Enrollment"
-    public var id: String { rawValue }
-
-    /// The value this facet reads for a row. Nil where the facet does not
-    /// apply (a non-Windows device), so the facet never claims such a row.
-    public func value(autopilot: WindowsAutopilotDevice?, registration: AutopilotRegistration?) -> String? {
-        switch self {
-        case .registration: return registration?.rawValue
-        case .groupTag: return autopilot?.groupTagLabel ?? (registration == nil ? nil : "Not Registered")
-        case .profile: return autopilot?.profileStatusLabel ?? (registration == nil ? nil : "Not Registered")
-        case .enrollment: return autopilot?.enrollmentStateLabel ?? (registration == nil ? nil : "Not Registered")
+    /// Layer Autopilot onto the Devices list: each Intune row carries its
+    /// identity and registration, and identities no Intune record matches
+    /// follow as their own rows — registered, not enrolled.
+    public static func enrich(_ rows: [DeviceListRow], autopilot: [WindowsAutopilotDevice]) -> [DeviceListRow] {
+        guard !autopilot.isEmpty else { return rows }
+        let index = Self.index(autopilot: autopilot, intune: rows.compactMap(\.intune))
+        var out = rows.map { row -> DeviceListRow in
+            guard let record = row.intune else { return row }
+            return row.with(autopilot: index.autopilot(for: record), registration: index.registration(for: record))
         }
+        out += index.unenrolled.map {
+            DeviceListRow(intune: nil, apple: nil, serverName: nil, autopilot: $0, registration: .registeredNotEnrolled)
+        }
+        return out
     }
 }
 

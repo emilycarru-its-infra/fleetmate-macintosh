@@ -181,35 +181,56 @@ public struct AppleOrgActivityResult: Sendable {
 // MARK: - One row per device, Intune first
 
 /// A row of the Devices list: an Intune record enriched with the Apple
-/// organization's record of the same serial, or an Apple organization device
-/// Intune does not know yet, so it can still be assigned.
+/// organization's or Windows Autopilot's record of the same device, or a
+/// device one of those knows and Intune does not yet, so it can still be
+/// assigned.
 public struct DeviceListRow: Identifiable, Sendable {
     public let intune: IntuneDevice?
     public let apple: AppleOrgDevice?
     public let serverName: String?
     /// The organization holding the device, as `AppleOrgProfile.labels` names it.
     public let orgName: String?
+    /// The device's Windows Autopilot identity.
+    public let autopilot: WindowsAutopilotDevice?
+    /// Where a Windows device stands between Autopilot and Intune; nil for
+    /// every other platform.
+    public let registration: AutopilotRegistration?
 
     /// Intune rows keep the Intune ID — every MDM action is keyed on it.
     /// Organization-only rows are prefixed so they can never be mistaken
     /// for one.
-    public var id: String { intune?.id ?? Self.orgOnlyPrefix + (apple?.serialNumber ?? "") }
+    public var id: String {
+        if let intune { return intune.id }
+        if let apple { return Self.orgOnlyPrefix + apple.serialNumber }
+        return Self.autopilotOnlyPrefix + (autopilot?.id ?? autopilot?.serialNumber ?? "")
+    }
     public static let orgOnlyPrefix = "apple-org:"
+    public static let autopilotOnlyPrefix = "autopilot:"
 
     public var isEnrolled: Bool { intune != nil }
-    public var serialNumber: String? { intune?.serialNumber ?? apple?.serialNumber }
+    public var serialNumber: String? { intune?.serialNumber ?? apple?.serialNumber ?? autopilot?.serialNumber }
 
-    public init(intune: IntuneDevice?, apple: AppleOrgDevice?, serverName: String?, orgName: String? = nil) {
+    public init(intune: IntuneDevice?, apple: AppleOrgDevice?, serverName: String?, orgName: String? = nil,
+                autopilot: WindowsAutopilotDevice? = nil, registration: AutopilotRegistration? = nil) {
         self.intune = intune
         self.apple = apple
         self.serverName = serverName
         self.orgName = orgName
+        self.autopilot = autopilot
+        self.registration = registration
+    }
+
+    /// The same row carrying its Autopilot identity and registration.
+    public func with(autopilot: WindowsAutopilotDevice?, registration: AutopilotRegistration?) -> DeviceListRow {
+        DeviceListRow(intune: intune, apple: apple, serverName: serverName, orgName: orgName,
+                      autopilot: autopilot, registration: registration)
     }
 
     /// Intune's operating system, or for an organization-only row the one its
     /// product family implies, so a Platform filter keeps it.
     public var platformLabel: String? {
         if let os = intune?.operatingSystem, !os.isEmpty { return os }
+        if autopilot != nil { return "Windows" }
         switch apple?.productFamily?.lowercased() {
         case "mac": return "macOS"
         case "ipad": return "iPadOS"
@@ -228,8 +249,10 @@ public struct DeviceListRow: Identifiable, Sendable {
         return p.contains("mac") || p.contains("ios") || p.contains("ipad") || p.contains("tvos") || p.contains("visionos")
     }
 
+    /// The Apple organization's status for the device, or for a Windows
+    /// device its Autopilot registration.
     public var orgStatusLabel: String {
-        guard let device = apple else { return "Not in Organization" }
+        guard let device = apple else { return registration?.rawValue ?? "Not in Organization" }
         if device.releasedFromOrg != nil { return "Released" }
         switch device.status?.uppercased() {
         case "ASSIGNED": return "Assigned"
@@ -239,8 +262,10 @@ public struct DeviceListRow: Identifiable, Sendable {
         }
     }
 
+    public static let autopilotService = "Windows Autopilot"
+
     public var serviceLabel: String {
-        guard apple != nil else { return "Not in Organization" }
+        guard apple != nil else { return autopilot != nil ? Self.autopilotService : "Not in Organization" }
         return serverName ?? "No Service"
     }
 
@@ -280,20 +305,40 @@ public struct DeviceListRow: Identifiable, Sendable {
         return parts.isEmpty ? Self.missing : parts.joined(separator: " ")
     }
     public var userText: String { intune?.userDisplayName ?? intune?.userPrincipalName ?? Self.missing }
-    public var modelText: String { intune?.model ?? apple?.model ?? Self.missing }
-    public var manufacturerText: String { intune?.manufacturer ?? (apple != nil ? "Apple" : Self.missing) }
+    public var modelText: String { intune?.model ?? apple?.model ?? autopilot?.model ?? Self.missing }
+    public var manufacturerText: String {
+        intune?.manufacturer ?? (apple != nil ? "Apple" : nil) ?? autopilot?.manufacturer ?? Self.missing
+    }
     public var ownershipText: String { intune?.managedDeviceOwnerType?.capitalized ?? Self.missing }
     public var complianceText: String {
         guard let intune else { return "Not Enrolled" }
         return intune.complianceState?.capitalized ?? "Unknown"
     }
-    public var serviceText: String { serverName ?? Self.missing }
-    public var orgStatusText: String { apple == nil ? Self.missing : orgStatusLabel }
+    public var serviceText: String { serverName ?? (autopilot != nil ? Self.autopilotService : Self.missing) }
+    public var orgStatusText: String { apple == nil && registration == nil ? Self.missing : orgStatusLabel }
     /// The device's grouping in its provisioning system: the Apple order
-    /// number for an Apple organization device.
-    public var groupOrOrderText: String { apple?.orderNumber ?? Self.missing }
+    /// number for an Apple organization device, the group tag for an
+    /// Autopilot one.
+    public var groupOrOrderText: String { apple?.orderNumber ?? Self.nonEmpty(autopilot?.groupTag) ?? Self.missing }
     public var migrationText: String { apple == nil ? Self.missing : migrationLabel }
-    public var purchaseSourceText: String { apple == nil ? Self.missing : purchaseSourceLabel }
+    /// Where the device was bought from: Apple's purchase source, or the
+    /// purchase order an Autopilot registration carries.
+    public var purchaseSourceText: String {
+        if apple != nil { return purchaseSourceLabel }
+        return Self.nonEmpty(autopilot?.purchaseOrderIdentifier) ?? Self.missing
+    }
+
+    private static func nonEmpty(_ s: String?) -> String? {
+        guard let t = s?.trimmingCharacters(in: .whitespaces), !t.isEmpty else { return nil }
+        return t
+    }
+
+    /// Autopilot facet values: the identity's own, "Not Registered" for a
+    /// Windows device with none, and "Not in Autopilot" for other platforms.
+    private func autopilotValue(_ read: (WindowsAutopilotDevice) -> String) -> String {
+        if let autopilot { return read(autopilot) }
+        return registration == nil ? "Not in Autopilot" : "Not Registered"
+    }
 
     /// The value a Devices filter reads for this row. Every facet answers
     /// for every row, so a filter never drops a row just because one of its
@@ -303,6 +348,9 @@ public struct DeviceListRow: Identifiable, Sendable {
         case .managementService: serviceLabel
         case .orgStatus: orgStatusLabel
         case .appleOrganization: apple == nil ? "Not in Organization" : (orgName ?? "Apple Organization")
+        case .groupTag: autopilotValue(\.groupTagLabel)
+        case .deploymentProfile: autopilotValue(\.profileStatusLabel)
+        case .autopilotEnrollment: autopilotValue(\.enrollmentStateLabel)
         case .platform: platformLabel ?? "Unknown"
         case .compliance: complianceText
         case .manufacturer: intune?.manufacturer ?? (apple != nil ? "Apple" : "Unknown")
@@ -324,6 +372,9 @@ public enum DeviceFacet: String, CaseIterable, Identifiable, Sendable {
     case managementService = "Device Management Service"
     case orgStatus = "Organization Status"
     case appleOrganization = "Apple Organization"
+    case groupTag = "Group Tag"
+    case deploymentProfile = "Deployment Profile"
+    case autopilotEnrollment = "Autopilot Enrollment"
     case platform = "Platform"
     case compliance = "Compliance"
     case manufacturer = "Manufacturer"
@@ -335,7 +386,20 @@ public enum DeviceFacet: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
 
     /// Facets with nothing to say when no Apple organization is configured.
-    public static let appleOrgOnly: Set<DeviceFacet> = [.managementService, .orgStatus, .appleOrganization, .migration]
+    public static let appleOrgOnly: Set<DeviceFacet> = [.appleOrganization, .migration]
+    /// Facets with nothing to say when no Autopilot identity was read.
+    public static let autopilotOnly: Set<DeviceFacet> = [.groupTag, .deploymentProfile, .autopilotEnrollment]
+    /// Facets either source fills: hidden only when neither is present.
+    public static let provisioning: Set<DeviceFacet> = [.managementService, .orgStatus]
+
+    /// The categories to hide for the sources that are present.
+    public static func hidden(hasAppleOrg: Bool, hasAutopilot: Bool) -> Set<DeviceFacet> {
+        var out: Set<DeviceFacet> = []
+        if !hasAppleOrg { out.formUnion(appleOrgOnly) }
+        if !hasAutopilot { out.formUnion(autopilotOnly) }
+        if !hasAppleOrg && !hasAutopilot { out.formUnion(provisioning) }
+        return out
+    }
 }
 
 public enum AppleOrgJoin {

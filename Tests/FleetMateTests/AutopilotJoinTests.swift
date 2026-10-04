@@ -68,13 +68,54 @@ final class AutopilotJoinTests: XCTestCase {
         XCTAssertEqual(index.unenrolled.map(\.id), ["ap2"])
     }
 
-    func testFacetsLeaveNonWindowsDevicesOut() throws {
-        let tagged = try identity("ap1", serial: "S1", tag: "Lab", profile: "assignedInSync")
-        XCTAssertEqual(AutopilotFacet.groupTag.value(autopilot: tagged, registration: .registeredAndEnrolled), "Lab")
-        XCTAssertEqual(AutopilotFacet.profile.value(autopilot: tagged, registration: .registeredAndEnrolled), "Assigned")
-        XCTAssertEqual(AutopilotFacet.groupTag.value(autopilot: nil, registration: .enrolledNotRegistered), "Not Registered")
-        XCTAssertNil(AutopilotFacet.groupTag.value(autopilot: nil, registration: nil))
-        XCTAssertEqual(try identity("ap2", serial: "S2").groupTagLabel, "No Group Tag")
+    func testEnrichFillsSharedColumnsAndAddsUnenrolledRows() throws {
+        let windows = try intune("W", serial: "S1")
+        let unregistered = try intune("U", serial: "S2")
+        let mac = try intune("M", serial: "S3", os: "macOS")
+        let tagged: WindowsAutopilotDevice = try decode([
+            "id": "ap1", "serialNumber": "S1", "groupTag": "Lab", "purchaseOrderIdentifier": "PO-1",
+            "deploymentProfileAssignmentStatus": "assignedInSync", "enrollmentState": "enrolled",
+        ])
+        let orphan: WindowsAutopilotDevice = try decode(["id": "ap9", "serialNumber": "S9", "model": "Laptop", "manufacturer": "Maker"])
+        let base = AppleOrgJoin.merge(intune: [windows, unregistered, mac], apple: [], servers: [])
+        let rows = AutopilotJoin.enrich(base, autopilot: [tagged, orphan])
+
+        XCTAssertEqual(rows.count, 4)
+        let w = try XCTUnwrap(rows.first { $0.intune?.id == "W" })
+        XCTAssertEqual(w.groupOrOrderText, "Lab")
+        XCTAssertEqual(w.orgStatusText, "Registered and Enrolled")
+        XCTAssertEqual(w.serviceText, "Windows Autopilot")
+        XCTAssertEqual(w.purchaseSourceText, "PO-1")
+        XCTAssertEqual(w.value(for: .deploymentProfile), "Assigned")
+        XCTAssertEqual(w.value(for: .autopilotEnrollment), "Enrolled")
+
+        let u = try XCTUnwrap(rows.first { $0.intune?.id == "U" })
+        XCTAssertEqual(u.orgStatusText, "Enrolled, Not Registered")
+        XCTAssertEqual(u.groupOrOrderText, "—")
+        XCTAssertEqual(u.value(for: .groupTag), "Not Registered")
+
+        let m = try XCTUnwrap(rows.first { $0.intune?.id == "M" })
+        XCTAssertEqual(m.orgStatusText, "—")
+        XCTAssertEqual(m.value(for: .groupTag), "Not in Autopilot")
+
+        let o = try XCTUnwrap(rows.first { $0.intune == nil })
+        XCTAssertEqual(o.id, "autopilot:ap9")
+        XCTAssertEqual(o.serialText, "S9")
+        XCTAssertEqual(o.platformText, "Windows")
+        XCTAssertEqual(o.orgStatusText, "Registered, Not Enrolled")
+        XCTAssertEqual(o.modelText, "Laptop")
+        XCTAssertEqual(o.manufacturerText, "Maker")
+        XCTAssertEqual(o.value(for: .groupTag), "No Group Tag")
+        XCTAssertEqual(o.complianceText, "Not Enrolled")
+    }
+
+    func testHiddenFacetsFollowTheSourcesPresent() {
+        XCTAssertTrue(DeviceFacet.hidden(hasAppleOrg: true, hasAutopilot: true).isEmpty)
+        let windowsOnly = DeviceFacet.hidden(hasAppleOrg: false, hasAutopilot: true)
+        XCTAssertFalse(windowsOnly.contains(.orgStatus))
+        XCTAssertTrue(windowsOnly.contains(.appleOrganization))
+        let neither = DeviceFacet.hidden(hasAppleOrg: false, hasAutopilot: false)
+        XCTAssertTrue(neither.isSuperset(of: [.orgStatus, .managementService, .groupTag]))
     }
 
     func testActionsOfferedOnlyWhenValidForWholeSelection() throws {

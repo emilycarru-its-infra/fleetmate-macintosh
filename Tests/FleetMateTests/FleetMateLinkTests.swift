@@ -61,4 +61,12 @@ final class FleetMateLinkTests: XCTestCase {
         XCTAssertThrowsError(try parse("fleetmate://commit/Devices/Cimian/not-a-sha"))
         XCTAssertThrowsError(try parse("fleetmate://open?url=https://example.com/x"))
     }
+
+    /// Names reach API paths, so a link can't smuggle in path segments.
+    func testRejectsPathTricks() {
+        XCTAssertThrowsError(try parse("fleetmate://pipeline/github/..%2F..%2Fuser/x/1"))
+        XCTAssertThrowsError(try parse("fleetmate://pull/github/../tool/7"))
+        XCTAssertThrowsError(try parse("fleetmate://pull/Devices/Munki%3Fx%3D1/15048"))
+        XCTAssertNoThrow(try parse("fleetmate://pull/Devices%20Team/Munki.Tools/1"))
+    }
 }

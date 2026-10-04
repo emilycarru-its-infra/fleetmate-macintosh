@@ -74,7 +74,8 @@ public actor GitHubActionsService {
 
     /// One Actions run by id, in the Pipelines list's shape.
     public func getRun(owner: String, repo: String, runId: Int) async throws -> PipelineRun {
-        let data = try await client.executeREST(path: "/repos/\(owner)/\(repo)/actions/runs/\(runId)")
+        func enc(_ s: String) -> String { s.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_."))) ?? s }
+        let data = try await client.executeREST(path: "/repos/\(enc(owner))/\(enc(repo))/actions/runs/\(runId)")
         return Self.map(try JSONDecoder().decode(RestRun.self, from: data), owner: owner, repo: repo)
     }
 

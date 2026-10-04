@@ -41,7 +41,8 @@ struct HandbookReaderView: View {
                         Text("Updated \(modified)\(page.lastModifiedBy.map { " by \($0)" } ?? "")")
                             .appFont(.caption).foregroundStyle(.secondary)
                     }
-                    MarkdownTextView(content: page.body)
+                    MarkdownTextView(content: page.body, document: true)
+                        .frame(maxWidth: 900, alignment: .leading)
                 }
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)

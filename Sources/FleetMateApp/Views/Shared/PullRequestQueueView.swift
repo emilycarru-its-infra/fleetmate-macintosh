@@ -89,18 +89,30 @@ final class PullRequestQueueModel: ObservableObject {
         return Date().timeIntervalSince(lastLoaded) < Self.freshness
     }
 
-    func load(appState: AppState, force: Bool = false) {
+    /// When GitHub rows were last fetched. GitHub's search API is the
+    /// expensive, shared budget (the token is the user's own `gh` token, also
+    /// spent by every CLI and agent on the machine), so background refreshes
+    /// reuse recent GitHub rows and only Azure DevOps refetches every minute.
+    private var gitHubLoadedAt: Date?
+    private var gitHubInFlight: Task<PullRequestQueue, Never>?
+
+    /// The longest a background refresh lets GitHub rows age before refetching.
+    static let gitHubBackgroundMaxAge: TimeInterval = 5 * 60
+
+    /// - Parameter gitHubMaxAge: reuse GitHub rows fetched within this many
+    ///   seconds. Zero (the default) always refetches — user actions use it.
+    func load(appState: AppState, force: Bool = false, gitHubMaxAge: TimeInterval = 0) {
         if force {
             loadTask?.cancel()
-            loadTask = Task { await self.performLoad(appState: appState) }
+            loadTask = Task { await self.performLoad(appState: appState, gitHubMaxAge: gitHubMaxAge) }
             return
         }
         // Already loading, or loaded recently — leave the existing rows alone.
         guard !isLoading, !isFresh else { return }
-        loadTask = Task { await self.performLoad(appState: appState) }
+        loadTask = Task { await self.performLoad(appState: appState, gitHubMaxAge: gitHubMaxAge) }
     }
 
-    private func performLoad(appState: AppState) async {
+    private func performLoad(appState: AppState, gitHubMaxAge: TimeInterval = 0) async {
         isLoading = true
         defer { isLoading = false }
 
@@ -135,10 +147,23 @@ final class PullRequestQueueModel: ObservableObject {
         // bound); GitHub is an actor and can run concurrently with it — unless
         // it rate-limited us recently, in which case its cached rows stand in.
         let gitHubInBackoff = (gitHubBackoffUntil ?? .distantPast) > Date()
-        let gitHubTask: Task<PullRequestQueue, Never>? = gitHubInBackoff ? nil
-            : Task.detached(priority: .userInitiated) {
-                await GitHubPullRequestService(config: gitHubConfig).getMyPullRequests()
+        let gitHubRecent = cachedGitHub != nil && gitHubMaxAge > 0
+            && Date().timeIntervalSince(gitHubLoadedAt ?? .distantPast) < gitHubMaxAge
+        // A forced reload cancels the previous load, but not its detached
+        // GitHub fetch, so launch used to run the same search three times.
+        // Join a fetch that is still running instead of starting another.
+        var gitHubTask: Task<PullRequestQueue, Never>?
+        if !(gitHubInBackoff || gitHubRecent) {
+            if let running = gitHubInFlight {
+                gitHubTask = running
+            } else {
+                let task = Task.detached(priority: .userInitiated) {
+                    await GitHubPullRequestService(config: gitHubConfig).getMyPullRequests()
+                }
+                gitHubInFlight = task
+                gitHubTask = task
             }
+        }
 
         if devOpsReady {
             do {
@@ -152,6 +177,7 @@ final class PullRequestQueueModel: ObservableObject {
 
         if let gitHubTask {
             let gitHub = await gitHubTask.value
+            if gitHubInFlight == gitHubTask { gitHubInFlight = nil }
             if let rateLimit = gitHub.errors.first(where: {
                 $0.source == .gitHub && $0.message.localizedCaseInsensitiveContains("rate limit")
             }) {
@@ -162,8 +188,11 @@ final class PullRequestQueueModel: ObservableObject {
                 cachedGitHub = PullRequestQueue(
                     pullRequests: gitHub.pullRequests.filter { $0.source == .gitHub }
                 )
+                gitHubLoadedAt = Date()
                 merged.merge(gitHub)
             }
+        } else if gitHubRecent, !gitHubInBackoff, let cachedGitHub {
+            merged.merge(cachedGitHub)
         } else {
             mergeGitHubFallback(into: &merged)
         }
@@ -704,7 +733,7 @@ struct PullRequestRow: View {
     @ViewBuilder
     private var statusPills: some View {
         if pullRequest.state == .draft { pill("Draft", color: .secondary) }
-        if pullRequest.hasConflicts { pill("Conflicts", color: .red) }
+        if pullRequest.hasConflicts { pill("Conflicts", color: .orange) }
     }
 
     private func pill(_ text: String, color: Color) -> some View {

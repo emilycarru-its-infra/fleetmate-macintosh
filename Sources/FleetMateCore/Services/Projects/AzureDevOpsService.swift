@@ -302,14 +302,17 @@ public class AzureDevOpsService {
 
     /// Query work items via WIQL (2-step: query → batch get)
     /// Set orgLevel=true to query across all projects in the organization.
-    public func queryWorkItems(_ wiql: String, orgLevel: Bool = false) async throws -> [WorkItem] {
-        dbg.debug("AzDO queryWorkItems (orgLevel=\(orgLevel)): \(wiql.prefix(120))...", category: "azdo")
+    /// `top` caps the result server-side, so a capped query never batch-fetches
+    /// every matching id only to throw most of them away.
+    public func queryWorkItems(_ wiql: String, orgLevel: Bool = false, top: Int? = nil) async throws -> [WorkItem] {
+        dbg.debug("AzDO queryWorkItems (orgLevel=\(orgLevel), top=\(top.map(String.init) ?? "all")): \(wiql.prefix(120))...", category: "azdo")
 
         // Step 1: WIQL query returns work item references (IDs only)
         let wiqlBody = try JSONEncoder().encode(["query": wiql])
+        let topParam = top.map { "&$top=\($0)" } ?? ""
         let queryResult: WorkItemQueryResult = try await request(
             "POST",
-            path: "/_apis/wit/wiql?api-version=7.0",
+            path: "/_apis/wit/wiql?api-version=7.0\(topParam)",
             body: wiqlBody,
             orgLevel: orgLevel
         )
@@ -363,8 +366,28 @@ public class AzureDevOpsService {
         if let assignedTo = assignedTo { conditions.append("[System.AssignedTo] = '\(escapeWiql(assignedTo))'") }
         let whereClause = conditions.isEmpty ? "" : " WHERE \(conditions.joined(separator: " AND "))"
         let wiql = "SELECT [System.Id] FROM WorkItems\(whereClause) ORDER BY [System.ChangedDate] DESC"
-        let items = try await queryWorkItems(wiql, orgLevel: true)
+        let items = try await queryWorkItems(wiql, orgLevel: true, top: limit)
         return Array(items.prefix(limit))
+    }
+
+    /// States that mean a work item is finished, across the Agile, Scrum,
+    /// Basic and CMMI processes.
+    public static let finishedWorkItemStates = ["Closed", "Removed", "Done", "Completed"]
+
+    /// Every open work item assigned to the signed-in user, in every project of
+    /// the organization, most recently changed first. `@Me` resolves to the
+    /// identity behind the bearer token, so no user name is needed.
+    public func getMyOpenWorkItems(limit: Int = 1000) async throws -> [WorkItem] {
+        let finished = Self.finishedWorkItemStates.map { "'\($0)'" }.joined(separator: ", ")
+        let wiql = """
+        SELECT [System.Id] FROM WorkItems \
+        WHERE [System.AssignedTo] = @Me \
+        AND [System.State] NOT IN (\(finished)) \
+        ORDER BY [System.ChangedDate] DESC
+        """
+        let items = try await queryWorkItems(wiql, orgLevel: true, top: limit)
+        // The batch fetch does not promise the query's order.
+        return items.sorted { ($0.fields?.changedDate ?? "") > ($1.fields?.changedDate ?? "") }
     }
 
     public func createWorkItem(_ request: CreateWorkItemRequest) async throws -> WorkItem? {
@@ -1228,6 +1251,450 @@ public class AzureDevOpsService {
     /// merge strategy and delete-source-branch settings chosen when it was
     /// opened, and sending our own would silently override branch policy.
     @discardableResult
+    // MARK: - Pipelines (Development tab)
+
+    /// Builds queued since `since` in every project the user can read. Azure
+    /// DevOps has no cross-project build list, so this fans out per project.
+    public func getRecentPipelineRuns(since: Date, topPerProject: Int = 50) async throws -> [PipelineRun] {
+        let projects = try await listProjects()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let minTime = formatter.string(from: since).addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+
+        let runs: [PipelineRun] = await withTaskGroup(of: [PipelineRun].self) { group in
+            for project in projects {
+                let name = project.name
+                group.addTask {
+                    let encodedProject = name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name
+                    let path = "/_apis/build/builds?minTime=\(minTime)&$top=\(topPerProject)&queryOrder=queueTimeDescending&api-version=7.0"
+                    guard let response: AzdoBuilds = try? await self.request("GET", path: path, forProject: encodedProject) else { return [] }
+                    return (response.value ?? []).map { Self.mapBuild($0, project: name) }
+                }
+            }
+            var all: [PipelineRun] = []
+            for await batch in group { all.append(contentsOf: batch) }
+            return all
+        }
+        dbg.info("AzDO getRecentPipelineRuns → \(runs.count) runs across \(projects.count) projects", category: "azdo")
+        return runs.sorted { $0.sortDate > $1.sortDate }
+    }
+
+    /// The build's timeline (stages, jobs, tasks) with each record's log
+    /// text, so the viewer reads like the web UI's log pane.
+    public func getPipelineRunLog(project: String, buildId: Int, maxBytesPerRecord: Int = 400_000) async throws -> PipelineRunLog {
+        let encodedProject = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        let timeline: AzdoTimeline = try await request(
+            "GET",
+            path: "/_apis/build/builds/\(buildId)/timeline?api-version=7.0",
+            forProject: encodedProject
+        )
+        // Tasks carry the useful text; jobs and stages are containers. Keep
+        // the timeline's own order so steps read top to bottom.
+        let records = (timeline.records ?? [])
+            .filter { $0.log?.id != nil && ($0.type ?? "").lowercased() == "task" }
+            .sorted { ($0.order ?? 0) < ($1.order ?? 0) }
+
+        var truncated = false
+        var sections: [PipelineRunLog.Section] = []
+        for record in records {
+            guard let logId = record.log?.id else { continue }
+            var text: String
+            do {
+                let lines: AzdoLogLines = try await request(
+                    "GET",
+                    path: "/_apis/build/builds/\(buildId)/logs/\(logId)?api-version=7.0",
+                    forProject: encodedProject
+                )
+                text = (lines.value ?? []).joined(separator: "\n")
+            } catch {
+                text = "(log unavailable: \(error.localizedDescription))"
+            }
+            if text.utf8.count > maxBytesPerRecord {
+                text = String(decoding: text.utf8.suffix(maxBytesPerRecord), as: UTF8.self)
+                truncated = true
+            }
+            sections.append(PipelineRunLog.Section(
+                id: record.id ?? String(logId),
+                name: record.name ?? "step",
+                status: Self.mapBuildStatus(state: record.state, result: record.result),
+                text: text
+            ))
+        }
+        return PipelineRunLog(runId: buildId, sections: sections, truncated: truncated)
+    }
+
+    /// Queues a fresh build of the same definition on the same branch.
+    public func rerunPipeline(project: String, definitionId: Int, branch: String?) async throws -> PipelineRun {
+        let encodedProject = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        var body: [String: Any] = ["definition": ["id": definitionId]]
+        if let branch { body["sourceBranch"] = branch.hasPrefix("refs/") ? branch : "refs/heads/\(branch)" }
+        let data = try JSONSerialization.data(withJSONObject: body)
+        let build: AzdoBuild = try await request("POST", path: "/_apis/build/builds?api-version=7.0", body: data, forProject: encodedProject)
+        return Self.mapBuild(build, project: project)
+    }
+
+    public func cancelPipelineRun(project: String, buildId: Int) async throws {
+        let encodedProject = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        let data = try JSONSerialization.data(withJSONObject: ["status": "cancelling"])
+        let _: AzdoBuild = try await request("PATCH", path: "/_apis/build/builds/\(buildId)?api-version=7.0", body: data, forProject: encodedProject)
+    }
+
+    private static func mapBuildStatus(state: String?, result: String?) -> PipelineRunStatus {
+        switch (state ?? "").lowercased() {
+        case "notstarted", "postponed", "pending": return .queued
+        case "inprogress", "cancelling": return .running
+        case "completed":
+            switch (result ?? "").lowercased() {
+            case "succeeded": return .succeeded
+            case "partiallysucceeded": return .partial
+            case "failed": return .failed
+            case "canceled", "cancelled": return .cancelled
+            case "skipped": return .skipped
+            default: return .unknown
+            }
+        default: return .unknown
+        }
+    }
+
+    private static func mapBuild(_ build: AzdoBuild, project: String) -> PipelineRun {
+        let status = mapBuildStatus(state: build.status, result: build.result)
+        return PipelineRun(
+            source: .azureDevOps,
+            container: project,
+            repository: build.repository?.name,
+            pipelineName: build.definition?.name ?? "pipeline",
+            pipelineId: build.definition?.id,
+            runId: build.id,
+            runNumber: build.buildNumber ?? String(build.id),
+            status: status,
+            branch: build.sourceBranch?.replacingOccurrences(of: "refs/heads/", with: ""),
+            commitSha: build.sourceVersion,
+            triggeredBy: build.requestedFor?.displayName,
+            startedAt: PullRequestDateParser.parse(build.startTime ?? build.queueTime),
+            finishedAt: PullRequestDateParser.parse(build.finishTime),
+            webUrl: build.links?.web?.href ?? ""
+        )
+    }
+
+    private struct AzdoBuilds: Decodable { let value: [AzdoBuild]? }
+
+    private struct AzdoBuild: Decodable {
+        let id: Int
+        let buildNumber: String?
+        let status: String?
+        let result: String?
+        let queueTime: String?
+        let startTime: String?
+        let finishTime: String?
+        let sourceBranch: String?
+        let sourceVersion: String?
+        let definition: Definition?
+        let repository: Repo?
+        let requestedFor: IdentityRef?
+        let links: Links?
+        struct Definition: Decodable { let id: Int?; let name: String? }
+        struct Repo: Decodable { let name: String? }
+        struct Links: Decodable {
+            let web: Link?
+            struct Link: Decodable { let href: String? }
+        }
+        enum CodingKeys: String, CodingKey {
+            case id, buildNumber, status, result, queueTime, startTime, finishTime
+            case sourceBranch, sourceVersion, definition, repository, requestedFor
+            case links = "_links"
+        }
+    }
+
+    private struct AzdoTimeline: Decodable { let records: [Record]?
+        struct Record: Decodable {
+            let id: String?
+            let name: String?
+            let type: String?
+            let state: String?
+            let result: String?
+            let order: Int?
+            let log: LogRef?
+            struct LogRef: Decodable { let id: Int? }
+        }
+    }
+
+    private struct AzdoLogLines: Decodable { let value: [String]? }
+
+    // MARK: - Commits (Development tab)
+
+    /// Default-branch commits since `since` in every repository of every
+    /// project the user can read. One repositories call per project, then
+    /// one commits call per repository, fanned out.
+    public func getRecentCommits(since: Date, perRepo: Int = 10) async throws -> [RepositoryCommits] {
+        let projects = try await listProjects()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let fromDate = formatter.string(from: since)
+            .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+
+        let repos: [(project: String, repo: GitRepository)] = await withTaskGroup(of: [(String, GitRepository)].self) { group in
+            for project in projects {
+                let name = project.name
+                group.addTask {
+                    let list = (try? await self.getRepositories(project: name)) ?? []
+                    return list.map { (name, $0) }
+                }
+            }
+            var all: [(String, GitRepository)] = []
+            for await batch in group { all.append(contentsOf: batch) }
+            return all
+        }
+
+        let results: [RepositoryCommits] = await withTaskGroup(of: RepositoryCommits?.self) { group in
+            for entry in repos {
+                group.addTask {
+                    let encodedProject = entry.project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? entry.project
+                    // Over-fetch, then drop pull-request merge commits so a
+                    // repository still shows `perRepo` commits that did work.
+                    let path = "/_apis/git/repositories/\(entry.repo.id)/commits?searchCriteria.fromDate=\(fromDate)&$top=\(perRepo * 2)&api-version=7.0"
+                    guard let response: GitCommitsResponse = try? await self.request("GET", path: path, forProject: encodedProject),
+                          let fetched = response.value
+                    else { return nil }
+                    let commits = Array(fetched.filter {
+                        !MergeCommitFilter.isMerge(message: $0.comment ?? "", parentCount: $0.parents?.count)
+                    }.prefix(perRepo))
+                    guard !commits.isEmpty else { return nil }
+                    return RepositoryCommits(
+                        source: .azureDevOps,
+                        container: entry.project,
+                        repository: entry.repo.name,
+                        repositoryId: entry.repo.id,
+                        webUrl: entry.repo.webUrl ?? "",
+                        defaultBranch: entry.repo.defaultBranch.map { $0.replacingOccurrences(of: "refs/heads/", with: "") },
+                        commits: commits.map {
+                            PullRequestCommit(
+                                id: $0.commitId,
+                                message: $0.comment ?? "",
+                                authorName: $0.author?.name,
+                                date: PullRequestDateParser.parse($0.author?.date ?? $0.committer?.date),
+                                url: $0.remoteUrl
+                            )
+                        }
+                    )
+                }
+            }
+            var all: [RepositoryCommits] = []
+            for await result in group { if let result { all.append(result) } }
+            return all
+        }
+        dbg.info("AzDO getRecentCommits → \(results.count) repos with activity", category: "azdo")
+        return results.sorted { $0.latestDate > $1.latestDate }
+    }
+
+    /// One commit's message and per-file diffs. Azure DevOps returns paths
+    /// and change types but no patch, so each file's text is read at the
+    /// commit and at its first parent and diffed locally, the same way the
+    /// pull-request viewer does. The bare change list stays as a fallback.
+    public func getCommitDetail(repositoryId: String, sha: String, project: String? = nil) async throws -> CommitDetail {
+        let encodedProject = project?.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+        async let commitTask: GitCommitRef = request(
+            "GET",
+            path: "/_apis/git/repositories/\(repositoryId)/commits/\(sha)?api-version=7.0",
+            forProject: encodedProject
+        )
+        async let changesTask: AzdoCommitChanges = request(
+            "GET",
+            path: "/_apis/git/repositories/\(repositoryId)/commits/\(sha)/changes?$top=500&api-version=7.0",
+            forProject: encodedProject
+        )
+        let commit = try await commitTask
+        let changes = try await changesTask
+        let list = (changes.changes ?? []).compactMap { change -> CommitChange? in
+            guard let path = change.item?.path, change.item?.isFolder != true else { return nil }
+            return CommitChange(path: path, changeType: (change.changeType ?? "edit").lowercased())
+        }
+
+        let fileCap = 40
+        let parent = commit.parents?.first
+        let diffed: [(Int, DiffFile)] = await withTaskGroup(of: (Int, DiffFile)?.self) { group in
+            for (index, change) in list.prefix(fileCap).enumerated() {
+                group.addTask {
+                    let type = change.changeType
+                    let old: String? = (type.contains("add") || parent == nil) ? nil
+                        : await self.itemContent(repo: repositoryId, path: change.path, commit: parent!, project: encodedProject)
+                    let new: String? = type.contains("delete") ? nil
+                        : await self.itemContent(repo: repositoryId, path: change.path, commit: sha, project: encodedProject)
+                    // Nothing readable on either side (binary, too large): leave it to the change list.
+                    guard old != nil || new != nil else { return nil }
+                    let name = change.path.hasPrefix("/") ? String(change.path.dropFirst()) : change.path
+                    var file = DiffBuilder.build(fileName: name, old: old ?? "", new: new ?? "")
+                    if type.contains("delete") { file.newPath = "/dev/null" }
+                    return (index, file)
+                }
+            }
+            var out: [(Int, DiffFile)] = []
+            for await result in group { if let result { out.append(result) } }
+            return out
+        }
+        let files = diffed.sorted { $0.0 < $1.0 }.map(\.1)
+
+        return CommitDetail(
+            message: commit.comment ?? "",
+            files: files,
+            changes: list,
+            additions: changes.changeCounts?["Add"] ?? 0,
+            deletions: changes.changeCounts?["Delete"] ?? 0,
+            truncated: list.count > fileCap
+        )
+    }
+
+    private struct AzdoCommitChanges: Decodable {
+        let changeCounts: [String: Int]?
+        let changes: [Change]?
+        struct Change: Decodable {
+            let changeType: String?
+            let item: Item?
+            struct Item: Decodable {
+                let path: String?
+                let isFolder: Bool?
+            }
+        }
+    }
+
+    // MARK: - PR review actions (Code section)
+
+    /// Casts the signed-in user's vote on a pull request. Azure DevOps adds
+    /// the caller as a reviewer if they were not one already.
+    public func votePullRequest(
+        repository: String,
+        pullRequestId: Int,
+        project: String? = nil,
+        vote: PullRequestReviewVote
+    ) async throws {
+        let identity = await currentIdentity()
+        guard let reviewerId = identity.id, !reviewerId.isEmpty else {
+            throw AzDevOpsError.httpError(code: 401, message: "Could not resolve your Azure DevOps identity to vote.")
+        }
+        dbg.info("AzDO votePullRequest(\(repository)#\(pullRequestId), vote=\(vote.rawValue))", category: "azdo")
+        let encodedRepo = repository.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repository
+        let body = try JSONSerialization.data(withJSONObject: ["vote": vote.rawValue])
+        let _: GitPullRequestReviewer = try await request(
+            "PUT",
+            path: "/_apis/git/repositories/\(encodedRepo)/pullRequests/\(pullRequestId)/reviewers/\(reviewerId)?api-version=7.0",
+            body: body,
+            forProject: project
+        )
+    }
+
+    public func approve(repository: String, pullRequestId: Int, project: String? = nil) async throws {
+        try await votePullRequest(repository: repository, pullRequestId: pullRequestId, project: project, vote: .approved)
+    }
+
+    /// "Waiting for author" is the Azure DevOps vote closest to GitHub's
+    /// request-changes review.
+    public func requestChanges(repository: String, pullRequestId: Int, project: String? = nil) async throws {
+        try await votePullRequest(repository: repository, pullRequestId: pullRequestId, project: project, vote: .waitingForAuthor)
+    }
+
+    /// Starts a new top-level comment thread on the pull request.
+    public func comment(
+        repository: String,
+        pullRequestId: Int,
+        project: String? = nil,
+        text: String
+    ) async throws {
+        dbg.info("AzDO commentOnPullRequest(\(repository)#\(pullRequestId))", category: "azdo")
+        let encodedRepo = repository.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repository
+        let body = try JSONSerialization.data(withJSONObject: [
+            "comments": [["parentCommentId": 0, "content": text, "commentType": 1]],
+            "status": 1
+        ])
+        let _: AzdoThreadEcho = try await request(
+            "POST",
+            path: "/_apis/git/repositories/\(encodedRepo)/pullRequests/\(pullRequestId)/threads?api-version=7.0",
+            body: body,
+            forProject: project
+        )
+    }
+
+    private struct AzdoThreadEcho: Decodable {
+        let id: Int?
+    }
+
+    /// Flips a pull request between draft and ready for review.
+    public func setReady(
+        repository: String,
+        pullRequestId: Int,
+        project: String? = nil,
+        ready: Bool
+    ) async throws -> GitPullRequest {
+        let isDraft = !ready
+        dbg.info("AzDO setReady(\(repository)#\(pullRequestId), ready=\(ready))", category: "azdo")
+        let encodedRepo = repository.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repository
+        let body = try JSONSerialization.data(withJSONObject: ["isDraft": isDraft])
+        return try await request(
+            "PATCH",
+            path: "/_apis/git/repositories/\(encodedRepo)/pullrequests/\(pullRequestId)?api-version=7.0",
+            body: body,
+            forProject: project
+        )
+    }
+
+    /// Branch-policy evaluations for the pull request (build, reviewers,
+    /// work-item link, comment resolution), normalized to `PullRequestCheck`.
+    public func getChecks(
+        repository: String,
+        pullRequestId: Int,
+        project: String? = nil
+    ) async throws -> [PullRequestCheck] {
+        let encodedRepo = repository.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repository
+        let pr: GitPullRequest = try await request(
+            "GET",
+            path: "/_apis/git/repositories/\(encodedRepo)/pullrequests/\(pullRequestId)?api-version=7.0",
+            forProject: project
+        )
+        guard let projectId = pr.repository?.project?.id else { return [] }
+        let artifact = "vstfs:///CodeReview/CodeReviewId/\(projectId)/\(pullRequestId)"
+        let encodedArtifact = artifact.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)?
+            .replacingOccurrences(of: "/", with: "%2F") ?? artifact
+        let response: AzdoPolicyEvaluations = try await request(
+            "GET",
+            path: "/_apis/policy/evaluations?artifactId=\(encodedArtifact)&api-version=7.0-preview.1",
+            forProject: project
+        )
+        return (response.value ?? []).compactMap { evaluation in
+            let configuration = evaluation.configuration
+            let name = configuration?.settings?.displayName
+                ?? configuration?.type?.displayName
+                ?? "Policy"
+            let state: PullRequestCheckState
+            switch (evaluation.status ?? "").lowercased() {
+            case "approved": state = .success
+            case "rejected", "broken": state = .failure
+            case "queued", "running": state = .pending
+            case "notapplicable": state = .skipped
+            default: state = .neutral
+            }
+            return PullRequestCheck(
+                name: name,
+                state: state,
+                detailsUrl: nil,
+                isRequired: configuration?.isBlocking ?? false
+            )
+        }
+    }
+
+    private struct AzdoPolicyEvaluations: Decodable {
+        let value: [AzdoPolicyEvaluation]?
+    }
+
+    private struct AzdoPolicyEvaluation: Decodable {
+        let status: String?
+        let configuration: Configuration?
+        struct Configuration: Decodable {
+            let isBlocking: Bool?
+            let type: TypeRef?
+            let settings: Settings?
+            struct TypeRef: Decodable { let displayName: String? }
+            struct Settings: Decodable { let displayName: String? }
+        }
+    }
+
     public func completePullRequest(
         repository: String,
         pullRequestId: Int,
@@ -1355,6 +1822,39 @@ public class AzureDevOpsService {
 
     /// Fetch one project's slice of the queue. Never throws — a project the user
     /// cannot read should not sink the whole queue.
+    /// Every active pull request in every project the user can read — the
+    /// Code section's "In my repositories" rows. PRs the user created or
+    /// reviews keep those relations; the rest carry `.organization`.
+    public func getAllActivePullRequests(topPerProject: Int = 100) async throws -> PullRequestQueue {
+        var queue = try await getMyPullRequests(status: "active", topPerQuery: topPerProject)
+        let projects = try await listProjects()
+
+        let perProject = await withTaskGroup(of: [UnifiedPullRequest].self) { group in
+            for project in projects {
+                let name = project.name
+                group.addTask {
+                    let all = await self.fetchProjectPullRequests(name, criteria: "", status: "active", top: topPerProject)
+                    return all.compactMap { self.mapPullRequest($0, project: name, relation: .organization) }
+                }
+            }
+            var collected: [UnifiedPullRequest] = []
+            for await batch in group { collected.append(contentsOf: batch) }
+            return collected
+        }
+
+        // Only PRs the personal queue did not already place get the broad
+        // relation; `insert` unions relations, so re-inserting a known PR
+        // would wrongly tag it as both mine and merely organizational.
+        let known = Set(queue.pullRequests.map(\.id))
+        var additions = perProject.filter { !known.contains($0.id) }
+        if !additions.isEmpty {
+            additions = await withThreadActivity(additions)
+            for pr in additions { queue.insert(pr) }
+        }
+        dbg.info("AzDO getAllActivePullRequests → \(queue.pullRequests.count) PRs", category: "azdo")
+        return queue
+    }
+
     private func pullRequestsForProject(
         _ projectName: String,
         identity: DevOpsIdentitySummary,
@@ -1504,6 +2004,7 @@ public class AzureDevOpsService {
             var enriched = pr
             enriched.commentCount = activity.commentThreadCount
             enriched.updatedAt = activity.lastActivity
+            enriched.recentComments = activity.recentComments
             return enriched
         }
     }
@@ -1511,6 +2012,7 @@ public class AzureDevOpsService {
     private struct ThreadActivity {
         let commentThreadCount: Int
         let lastActivity: Date?
+        let recentComments: [PullRequestComment]
     }
 
     /// Human comment threads on a PR and when they were last touched. System
@@ -1539,7 +2041,31 @@ public class AzureDevOpsService {
                 .compactMap { PullRequestDateParser.parse($0.lastUpdatedDate ?? $0.publishedDate) }
                 .max()
 
-            return ThreadActivity(commentThreadCount: commentThreads.count, lastActivity: lastActivity)
+            var recent: [PullRequestComment] = []
+            for thread in commentThreads {
+                for comment in thread.comments ?? [] where comment.isDeleted != true {
+                    guard (comment.commentType ?? "text").lowercased() != "system" else { continue }
+                    let body = (comment.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !body.isEmpty else { continue }
+                    var link = pr.webUrl
+                    if let threadId = thread.id { link += "?discussionId=\(threadId)" }
+                    recent.append(PullRequestComment(
+                        id: "\(thread.id ?? 0):\(comment.id ?? 0)",
+                        authorName: comment.author?.displayName ?? "unknown",
+                        body: body,
+                        date: PullRequestDateParser.parse(comment.publishedDate),
+                        isSystem: false,
+                        url: link
+                    ))
+                }
+            }
+            recent.sort { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+
+            return ThreadActivity(
+                commentThreadCount: commentThreads.count,
+                lastActivity: lastActivity,
+                recentComments: Array(recent.prefix(8))
+            )
         } catch {
             return nil
         }

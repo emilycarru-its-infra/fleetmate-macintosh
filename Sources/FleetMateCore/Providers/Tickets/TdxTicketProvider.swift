@@ -24,7 +24,7 @@ public struct TdxUnifiedTicket: UnifiedTicket, Sendable {
     /// Original TDX ticket for full access to all fields.
     public let rawTicket: TdxTicket
     
-    public init(from ticket: TdxTicket, baseUrl: String?) {
+    public init(from ticket: TdxTicket, webUrl: String?) {
         let ticketId = ticket.id ?? 0
         self.id = String(ticketId)
         self.ticketNumber = String(ticketId)
@@ -35,17 +35,14 @@ public struct TdxUnifiedTicket: UnifiedTicket, Sendable {
         self.type = ticket.typeName
         self.requestor = ticket.requestorName
         self.assignedTo = ticket.responsibleFullName
-        self.responsibleGroup = ticket.accountName
+        self.responsibleGroup = ticket.responsibleGroupName
         self.createdDate = Self.parseDate(ticket.createdDate)
         self.modifiedDate = Self.parseDate(ticket.modifiedDate)
         self.dueDate = Self.parseDate(ticket.respondByDate)
         self.closedDate = nil // TDX doesn't expose closed date directly
         
-        if let baseUrl = baseUrl, let uri = ticket.uri {
-            self.externalUrl = "\(baseUrl)\(uri)"
-        } else {
-            self.externalUrl = nil
-        }
+        // `Uri` is the ticket's API path, not a page a person can open.
+        self.externalUrl = webUrl
         
         self.rawTicket = ticket
     }
@@ -134,7 +131,7 @@ public actor TdxTicketProvider: TicketProvider {
         }
         
         let tickets = try await service.searchTickets(search: request)
-        return tickets.map { TdxUnifiedTicket(from: $0, baseUrl: config.tdxBaseUrl) }
+        return tickets.map { TdxUnifiedTicket(from: $0, webUrl: $0.id.map(config.tdxTicketWebUrl)) }
     }
     
     public func getTicket(ticketId: String) async throws -> TdxUnifiedTicket? {
@@ -146,7 +143,7 @@ public actor TdxTicketProvider: TicketProvider {
             return nil
         }
         
-        return TdxUnifiedTicket(from: ticket, baseUrl: config.tdxBaseUrl)
+        return TdxUnifiedTicket(from: ticket, webUrl: ticket.id.map(config.tdxTicketWebUrl))
     }
     
     public func searchTickets(query: String, limit: Int) async throws -> [TdxUnifiedTicket] {
@@ -159,7 +156,7 @@ public actor TdxTicketProvider: TicketProvider {
         }
         
         let tickets = try await service.searchTickets(search: request)
-        return tickets.map { TdxUnifiedTicket(from: $0, baseUrl: config.tdxBaseUrl) }
+        return tickets.map { TdxUnifiedTicket(from: $0, webUrl: $0.id.map(config.tdxTicketWebUrl)) }
     }
     
     public func createTicket(request: UnifiedCreateTicketRequest) async throws -> TdxUnifiedTicket {

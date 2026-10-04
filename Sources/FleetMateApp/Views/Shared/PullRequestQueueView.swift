@@ -181,8 +181,11 @@ final class PullRequestQueueModel: ObservableObject {
             if let rateLimit = gitHub.errors.first(where: {
                 $0.source == .gitHub && $0.message.localizedCaseInsensitiveContains("rate limit")
             }) {
-                gitHubBackoffUntil = Date().addingTimeInterval(15 * 60)
-                dbg.info("GitHub PR queue rate-limited, backing off 15 min: \(rateLimit.message)", category: "dashboard")
+                // Wait as long as GitHub said to — its reset time or Retry-After,
+                // recorded by the shared gate — not a fixed fifteen minutes.
+                gitHubBackoffUntil = GitHubRateLimitGate.status(.graphql).blockedUntil
+                    ?? Date().addingTimeInterval(60)
+                dbg.info("GitHub PR queue rate-limited until \(gitHubBackoffUntil!): \(rateLimit.message)", category: "dashboard")
                 mergeGitHubFallback(into: &merged)
             } else {
                 cachedGitHub = PullRequestQueue(

@@ -82,9 +82,10 @@ extension DeviceFacet: FilterCategoryProtocol {}
 
 extension FilterState where Category == DeviceFacet {
     /// Offer only values the rows carry, with how many rows carry each. The
-    /// Apple organization's categories are hidden when none is configured.
-    func buildFromRows(_ rows: [DeviceListRow], hasAppleOrg: Bool) {
-        hiddenCategories = hasAppleOrg ? [] : DeviceFacet.appleOrgOnly
+    /// Apple organization's and Autopilot's categories are hidden when the
+    /// source is absent.
+    func buildFromRows(_ rows: [DeviceListRow], hasAppleOrg: Bool, hasAutopilot: Bool = false) {
+        hiddenCategories = DeviceFacet.hidden(hasAppleOrg: hasAppleOrg, hasAutopilot: hasAutopilot)
         for facet in DeviceFacet.allCases {
             var counts: [String: Int] = [:]
             for row in rows { counts[row.value(for: facet), default: 0] += 1 }

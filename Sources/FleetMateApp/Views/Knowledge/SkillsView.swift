@@ -8,16 +8,20 @@ struct SkillsListView: View {
     @Binding var selection: SkillCatalog.Entry?
     let filter: String
 
-    private var grouped: [(SkillCatalog.Entry.Kind, [SkillCatalog.Entry])] {
+    private var grouped: [(String, [SkillCatalog.Entry])] {
         let needle = filter.trimmingCharacters(in: .whitespaces)
         let entries = knowledge.skills.entries.filter {
             needle.isEmpty || $0.name.localizedCaseInsensitiveContains(needle)
                 || $0.summary.localizedCaseInsensitiveContains(needle)
         }
-        return SkillCatalog.Entry.Kind.allCases.compactMap { kind in
-            let rows = entries.filter { $0.kind == kind }
-            return rows.isEmpty ? nil : (kind, rows)
+        var out: [(String, [SkillCatalog.Entry])] = []
+        for origin in SkillCatalog.Entry.Origin.allCases {
+            for kind in SkillCatalog.Entry.Kind.allCases {
+                let rows = entries.filter { $0.origin == origin && $0.kind == kind }
+                if !rows.isEmpty { out.append(("\(kind.rawValue) · \(origin.rawValue)", rows)) }
+            }
         }
+        return out
     }
 
     var body: some View {
@@ -37,19 +41,15 @@ struct SkillsListView: View {
             .padding(.vertical, 6)
             Divider()
 
-            if !knowledge.isSkillsConfigured {
-                ContentUnavailableView("No skills source",
-                                       systemImage: "wand.and.stars",
-                                       description: Text("Set agentsHubRepoUrl in FleetMate's settings profile."))
-            } else if grouped.isEmpty {
+            if grouped.isEmpty {
                 ContentUnavailableView("No skills yet", systemImage: "wand.and.stars",
                                        description: Text(knowledge.syncError ?? "They appear once the first fetch finishes."))
             } else {
                 List(selection: Binding(get: { selection?.id }, set: { id in
                     selection = knowledge.skills.entries.first { $0.id == id }
                 })) {
-                    ForEach(grouped, id: \.0) { kind, rows in
-                        Section(kind.rawValue) {
+                    ForEach(grouped, id: \.0) { title, rows in
+                        Section(title) {
                             ForEach(rows) { entry in
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(entry.name).appFont(.body, weight: .medium)
@@ -80,7 +80,7 @@ struct SkillDetailView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(entry.name).appFont(.title2, weight: .semibold)
-                    Text(entry.kind.rawValue.dropLast())
+                    Text(entry.origin == .local ? "\(entry.kind.rawValue.dropLast()) · this Mac" : String(entry.kind.rawValue.dropLast()))
                         .appFont(.caption, weight: .medium)
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Color.secondary.opacity(0.12), in: Capsule())
@@ -113,7 +113,8 @@ struct SkillDetailView: View {
                     }
                 }
                 Divider()
-                MarkdownTextView(content: entry.body)
+                MarkdownTextView(content: entry.body, document: true)
+                    .frame(maxWidth: 900, alignment: .leading)
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)

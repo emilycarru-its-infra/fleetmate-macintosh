@@ -8,7 +8,7 @@ import ASBMUtilCore
 /// Settings works in the CLI. Everything Apple-specific stays behind this
 /// type: the app layer sees only FleetMate's `AppleOrg*` models.
 public actor AppleOrgService {
-    public let profile: AppleOrgProfile
+    public nonisolated let profile: AppleOrgProfile
     private let client: APIClient
 
     /// Above this many serials, a re-read after an action reloads the whole
@@ -46,7 +46,15 @@ public actor AppleOrgService {
                 found.append(AppleOrgProfile(name: name, clientId: blob.clientId))
             }
         }
-        return found.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        // Two profiles holding the same credential are one organization;
+        // reading both would count every device twice. A named profile is
+        // kept over the generic "default".
+        var byClient: [String: AppleOrgProfile] = [:]
+        for p in found {
+            if let kept = byClient[p.clientId], kept.name != "default" { continue }
+            byClient[p.clientId] = p
+        }
+        return byClient.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     public static var currentProfileName: String { ASBMUtilCore.Keychain.getCurrentProfile() }
@@ -99,13 +107,13 @@ public actor AppleOrgService {
         let assignments = AppleOrgJoin.assignments(fromServerListings: listings)
 
         let servers = rawServers.map {
-            AppleOrgServer(id: $0.id, name: $0.serverName ?? $0.id, type: $0.serverType,
+            AppleOrgServer(id: $0.id, orgId: profile.name, name: $0.serverName ?? $0.id, type: $0.serverType,
                            deviceCount: listings[$0.id]?.count)
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
         let devices = attributes.map { attr in
-            Self.map(attr, assignedServerId: assignments[AppleOrgJoin.normalize(attr.serialNumber)]
+            self.map(attr, assignedServerId: assignments[AppleOrgJoin.normalize(attr.serialNumber)]
                      ?? attr.deviceManagementServiceId)
         }
         dbg.info("Read \(devices.count) devices and \(servers.count) services from \(profile.serviceName)", category: "appleorg")
@@ -115,6 +123,7 @@ public actor AppleOrgService {
     /// Re-read a few devices after an action, one request pair per device.
     public func reread(serials: [String]) async -> [AppleOrgDevice] {
         let client = self.client
+        let orgId = profile.name
         return await withTaskGroup(of: AppleOrgDevice?.self) { group in
             // Apple drops HTTP/2 streams above about four at once.
             var pending = serials[...]
@@ -123,7 +132,7 @@ public actor AppleOrgService {
                 group.addTask {
                     guard let attr = try? await client.getDeviceAttributes(serialNumber: serial) else { return nil }
                     let server = try? await client.getAssignedMdmRaw(deviceId: serial).data?.id
-                    return Self.map(attr, assignedServerId: server)
+                    return Self.map(attr, orgId: orgId, assignedServerId: server)
                 }
             }
             for _ in 0..<4 { addNext() }
@@ -188,9 +197,14 @@ public actor AppleOrgService {
 
     // MARK: - Mapping
 
-    static func map(_ a: DeviceAttributes, assignedServerId: String?) -> AppleOrgDevice {
+    func map(_ a: DeviceAttributes, assignedServerId: String?) -> AppleOrgDevice {
+        Self.map(a, orgId: profile.name, assignedServerId: assignedServerId)
+    }
+
+    static func map(_ a: DeviceAttributes, orgId: String, assignedServerId: String?) -> AppleOrgDevice {
         AppleOrgDevice(
             serialNumber: a.serialNumber,
+            orgId: orgId,
             model: a.displayModel,
             productFamily: a.productFamily,
             status: a.status,

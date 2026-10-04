@@ -40,16 +40,13 @@ private struct AppleOrgSettingsForm: View {
                 }
                 ForEach(store.profiles) { profile in
                     HStack {
-                        Image(systemName: profile.name == store.activeProfileName ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(profile.name == store.activeProfileName ? Color.accentColor : .secondary)
+                        Image(systemName: "building.2")
+                            .foregroundStyle(.secondary)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(profile.name).appFont(.body, weight: .medium)
-                            Text(profile.serviceName).appFont(.caption).foregroundStyle(.secondary)
+                            Text(store.label(for: profile.name)).appFont(.body, weight: .medium)
+                            Text("Profile: \(profile.name)").appFont(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        if profile.name != store.activeProfileName {
-                            Button("Use") { store.switchProfile(profile.name) }
-                        }
                         Button {
                             profilePendingDelete = profile
                         } label: {
@@ -62,7 +59,7 @@ private struct AppleOrgSettingsForm: View {
             } header: {
                 Text("Apple School and Business Manager")
             } footer: {
-                Text("Profiles are shared with the asbmutil command-line tool. The private key is kept in the keychain.")
+                Text("Every profile is read, and its devices appear in Devices beside their Intune records. Profiles are shared with the asbmutil command-line tool; the private key is kept in the keychain.")
                     .appFont(.caption)
                     .foregroundStyle(.secondary)
             }

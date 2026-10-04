@@ -428,6 +428,8 @@ public struct WindowsAutopilotDevice: Codable, Identifiable, Sendable {
     public let managedDeviceId: String?
     public let deploymentProfileAssignmentStatus: String?
     public let deploymentProfileAssignedDateTime: String?
+    public let groupTag: String?
+    public let purchaseOrderIdentifier: String?
 }
 
 public struct WindowsAutopilotDevicesResponse: Codable {

@@ -90,6 +90,28 @@ public struct RosterComputer: Identifiable, Hashable, Sendable, Codable {
         if let osVersion, !osVersion.isEmpty { parts.append(osVersion) }
         return parts.joined(separator: "  ")
     }
+
+    /// Everything known about the machine, one labelled line per fact, for
+    /// pasting into a ticket or a chat. `status` is the scan's reading of it.
+    public func allInfo(ip: String?, status: String, info: MachineInfo?) -> String {
+        var lines = ["Name: \(displayName)"]
+        if hasHostname && hostname != displayName { lines.append("Hostname: \(hostname)") }
+        if let ip, !ip.isEmpty { lines.append("IP: \(ip)") }
+        if !isAdhoc { lines.append("Serial: \(serial)") }
+        if !asset.isEmpty { lines.append("Asset: \(asset)") }
+        if !location.isEmpty { lines.append("Location: \(location)") }
+        if !fleet.isEmpty { lines.append("Fleet: \(fleet)") }
+        lines.append("Status: \(status)")
+        if let info {
+            lines.append("Console user: \(info.hasConsoleUser ? info.consoleUser : "(login window)")")
+            if !info.osVersion.isEmpty { lines.append("OS: macOS \(info.osVersion)") }
+            if !info.uptime.isEmpty { lines.append("Uptime: \(info.uptime)") }
+            lines.append("Remote access: SSH \(info.sshReady ? "ready" : "not ready"), Screen Sharing \(info.screenSharingReady ? "ready" : "not ready")")
+            if !info.clientIdentifier.isEmpty { lines.append("Client identifier: \(info.clientIdentifier)") }
+            if !info.topApps.isEmpty { lines.append("Apps: \(info.topApps.joined(separator: ", "))") }
+        }
+        return lines.joined(separator: "\n")
+    }
 }
 
 /// A sidebar group: a lab, a kiosk room, a department's staff machines, or a

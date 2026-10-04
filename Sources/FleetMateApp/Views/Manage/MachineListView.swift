@@ -445,6 +445,9 @@ struct MachineRow: View {
         }
         Divider()
         Button("Copy Inventory Line") { ManageClipboard.copy(manage.inventoryLine(for: computer)) }
+        Button("Copy All Info") {
+            ManageClipboard.copy(computer.allInfo(ip: manage.ipFor(computer), status: manage.scanSummary.mode == .unknown ? "Not scanned" : (isOnline ? "Online" : "Offline"), info: info))
+        }
         if selected.count > 1 {
             Divider()
             Button("Copy Selected Hostnames") { ManageClipboard.copy(selected.map(\.displayName).joined(separator: "\n")) }

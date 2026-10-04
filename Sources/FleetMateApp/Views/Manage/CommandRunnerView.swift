@@ -457,6 +457,10 @@ struct CommandEditorSheet: View {
 struct CommandHistoryPopover: View {
     @ObservedObject var manage: ManageState
     @Binding var isPresented: Bool
+    @State private var pendingRerun: CommandHistoryEntry?
+    @State private var confirmingClear = false
+
+    private var targetCount: Int { manage.onlineSelectedComputers.count }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -464,7 +468,7 @@ struct CommandHistoryPopover: View {
                 Text("History").appFont(.headline)
                 Spacer()
                 if !manage.commandHistory.isEmpty {
-                    Button("Clear") { manage.clearHistory() }
+                    Button("Clear History") { confirmingClear = true }
                         .buttonStyle(.borderless)
                         .appFont(.caption)
                         .foregroundStyle(.secondary)
@@ -486,7 +490,12 @@ struct CommandHistoryPopover: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(manage.commandHistory) { entry in
-                            HistoryRow(manage: manage, entry: entry, isPresented: $isPresented)
+                            HistoryRow(
+                                entry: entry,
+                                canRerun: targetCount > 0 && !manage.isRunning,
+                                onLoad: { load(entry) },
+                                onRerun: { pendingRerun = entry }
+                            )
                             Divider().padding(.leading, 12)
                         }
                     }
@@ -494,14 +503,43 @@ struct CommandHistoryPopover: View {
                 .frame(maxHeight: 340)
             }
         }
-        .frame(width: 440)
+        .frame(width: 520)
+        .confirmationDialog(
+            "Rerun on \(targetCount) machine\(targetCount == 1 ? "" : "s")?",
+            isPresented: Binding(get: { pendingRerun != nil }, set: { if !$0 { pendingRerun = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Rerun") {
+                if let entry = pendingRerun {
+                    manage.runQuickCommand(entry.command, label: entry.label)
+                    isPresented = false
+                }
+                pendingRerun = nil
+            }
+            Button("Cancel", role: .cancel) { pendingRerun = nil }
+        } message: {
+            if let entry = pendingRerun {
+                Text("Runs \u{201C}\(entry.label)\u{201D} again on every selected online machine.")
+            }
+        }
+        .confirmationDialog("Clear the command history?", isPresented: $confirmingClear, titleVisibility: .visible) {
+            Button("Clear History", role: .destructive) { manage.clearHistory() }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func load(_ entry: CommandHistoryEntry) {
+        manage.customCommand = entry.command
+        manage.selectedCommandID = nil
+        isPresented = false
     }
 }
 
 struct HistoryRow: View {
-    @ObservedObject var manage: ManageState
     let entry: CommandHistoryEntry
-    @Binding var isPresented: Bool
+    let canRerun: Bool
+    let onLoad: () -> Void
+    let onRerun: () -> Void
     @State private var isHovered = false
 
     private var relativeTime: String {
@@ -522,18 +560,21 @@ struct HistoryRow: View {
             }
             Spacer()
             Text(relativeTime).appFont(.caption2).foregroundStyle(.secondary)
-            Button("Use") {
-                manage.customCommand = entry.command
-                manage.selectedCommandID = nil
-                isPresented = false
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .help("Put this command in the box; Run confirms it as usual")
+            Button("Load into Runner", action: onLoad)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Put this command in the box; Run confirms it as usual")
+            Button("Rerun", action: onRerun)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(!canRerun)
+                .help(canRerun ? "Run this command again on the selected online machines" : "Select at least one online machine first")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(isHovered ? Color.primary.opacity(0.05) : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2, perform: onLoad)
         .onHover { isHovered = $0 }
     }
 }

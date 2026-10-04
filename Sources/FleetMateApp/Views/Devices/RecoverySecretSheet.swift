@@ -53,7 +53,7 @@ struct RecoverySecretSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text("Shown only while this sheet is open. Not saved or logged.")
+            Text("Shown only while this sheet is open. Not saved or logged; a copied value is hidden from clipboard history and cleared after a minute.")
                 .appFont(.caption2)
                 .foregroundColor(.secondary)
 
@@ -84,9 +84,7 @@ struct RecoverySecretSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 Button {
-                    let pasteboard = NSPasteboard.general
-                    pasteboard.clearContents()
-                    pasteboard.setString(secret.value, forType: .string)
+                    SecretPasteboard.copy(secret.value)
                     copiedId = secret.id
                 } label: {
                     Label(copiedId == secret.id ? "Copied" : "Copy",
@@ -117,6 +115,35 @@ struct RecoverySecretSheet: View {
         } catch {
             errorMessage = "\(error)"
             dbg.warn("Could not reveal \(kind.rawValue) for \(serial)", category: "devices")
+        }
+    }
+}
+
+/// Copies a secret so it does not outlive its use on the clipboard.
+///
+/// The value is marked concealed and transient (the nspasteboard.org
+/// convention), so clipboard managers skip it rather than keep it in their
+/// history, and it is cleared after `lifetime` unless something else has been
+/// copied since.
+enum SecretPasteboard {
+    static let lifetime: Duration = .seconds(60)
+
+    private static let concealed = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+    private static let transient = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+
+    @MainActor
+    static func copy(_ value: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(value, forType: .string)
+        pasteboard.setString("", forType: concealed)
+        pasteboard.setString("", forType: transient)
+        let changeCount = pasteboard.changeCount
+        Task { @MainActor in
+            try? await Task.sleep(for: lifetime)
+            if pasteboard.changeCount == changeCount {
+                pasteboard.clearContents()
+            }
         }
     }
 }

@@ -231,6 +231,9 @@ struct AssetsView: View {
             consumeInventorySearch(text)
         }
         .onChange(of: appState.navigateToModuleFilter) { _, _ in consumeModuleFilter() }
+        .onChange(of: selectedAsset?.id) { _, _ in
+            appState.agentSelection = selectedAsset.map(AgentSelection.init(asset:))
+        }
         .onChange(of: appState.cachedAssets) { _, newAssets in
             filters.buildFromAssets(newAssets)
         }

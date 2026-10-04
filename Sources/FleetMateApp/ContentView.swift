@@ -73,6 +73,11 @@ struct ContentView: View {
                 if #available(macOS 26.0, *) {
                     DefaultToolbarItem(kind: .search, placement: .navigation)
                 }
+                if selectedTab.hasWidgets {
+                    ToolbarItem(placement: .primaryAction) {
+                        GraphsToolbarButton(tab: selectedTab).id(selectedTab)
+                    }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     RecentActivityToolbarButton()
                 }

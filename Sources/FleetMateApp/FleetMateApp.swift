@@ -243,6 +243,8 @@ class AppState: ObservableObject {
 
     // Services (lazy initialization)
     lazy var graphService: GraphService = GraphService(config: config)
+    /// Apple School / Business Manager for the Devices tab's Mac view.
+    let appleOrg = AppleOrgStore()
     lazy var devOpsService: AzureDevOpsService = AzureDevOpsService(config: config)
     lazy var devOpsSsoService: DevOpsSsoService = DevOpsSsoService(tenantId: config.devopsTenantId ?? config.graphTenantId)
     lazy var tdxService: TdxService = TdxService(config: config)

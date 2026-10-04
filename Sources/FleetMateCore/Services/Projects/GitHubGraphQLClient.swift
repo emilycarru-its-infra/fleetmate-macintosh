@@ -170,9 +170,17 @@ public actor GitHubGraphQLClient {
         var request = URLRequest(url: url)
         request.httpMethod = method
         // A conditional GET answered 304 does not count against the hourly
-        // budget, so every poll of an unchanged list is free.
-        let cached = method == "GET" ? GitHubETagCache.shared.entry(for: path) : nil
-        if let cached { request.setValue(cached.etag, forHTTPHeaderField: "If-None-Match") }
+        // budget, so every poll of an unchanged list is free. Inside the
+        // interval GitHub asks for (X-Poll-Interval), don't ask at all.
+        let cached = method == "GET" ? GitHubLocalCache.shared.restEntry(for: path) : nil
+        if let cached, cached.isWithinPollInterval {
+            return cached.body
+        }
+        if let etag = cached?.etag {
+            request.setValue(etag, forHTTPHeaderField: "If-None-Match")
+        } else if let lastModified = cached?.lastModified {
+            request.setValue(lastModified, forHTTPHeaderField: "If-Modified-Since")
+        }
         // URLSession's own cache would answer the 304 itself and hide it.
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -195,12 +203,19 @@ public actor GitHubGraphQLClient {
                     if let http = response.response { GitHubRateLimitGate.record(http, bucket: .core) }
                     switch response.result {
                     case .success(let data):
-                        if response.response?.statusCode == 304, let cached {
-                            continuation.resume(returning: cached.data)
+                        let http = response.response
+                        let poll = http?.value(forHTTPHeaderField: "X-Poll-Interval").flatMap(TimeInterval.init)
+                        if http?.statusCode == 304, let cached {
+                            GitHubLocalCache.shared.touch(path: path, pollInterval: poll)
+                            continuation.resume(returning: cached.body)
                             return
                         }
-                        if method == "GET", let etag = response.response?.value(forHTTPHeaderField: "ETag") {
-                            GitHubETagCache.shared.store(etag: etag, data: data, for: path)
+                        if method == "GET", let http {
+                            GitHubLocalCache.shared.storeREST(
+                                path: path, body: data,
+                                etag: http.value(forHTTPHeaderField: "ETag"),
+                                lastModified: http.value(forHTTPHeaderField: "Last-Modified"),
+                                pollInterval: poll)
                         }
                         continuation.resume(returning: data)
                     case .failure(let error):
@@ -387,27 +402,3 @@ public enum GitHubRateLimitGate {
     }
 }
 
-/// ETags and bodies of recent REST GETs, shared by every client, so a repeat
-/// poll can ask "changed since?" and get a free 304. Bounded and in memory:
-/// a relaunch starts cold, which costs one full round.
-final class GitHubETagCache: @unchecked Sendable {
-    static let shared = GitHubETagCache()
-    private let lock = NSLock()
-    private var entries: [String: (etag: String, data: Data, used: Date)] = [:]
-    private let capacity = 600
-
-    func entry(for path: String) -> (etag: String, data: Data)? {
-        lock.lock(); defer { lock.unlock() }
-        guard let e = entries[path] else { return nil }
-        entries[path]?.used = Date()
-        return (e.etag, e.data)
-    }
-
-    func store(etag: String, data: Data, for path: String) {
-        lock.lock(); defer { lock.unlock() }
-        entries[path] = (etag, data, Date())
-        if entries.count > capacity, let oldest = entries.min(by: { $0.value.used < $1.value.used })?.key {
-            entries[oldest] = nil
-        }
-    }
-}

@@ -72,6 +72,12 @@ public actor GitHubActionsService {
         return PipelineRunLog(runId: runId, sections: sections, truncated: truncated)
     }
 
+    /// One Actions run by id, in the Pipelines list's shape.
+    public func getRun(owner: String, repo: String, runId: Int) async throws -> PipelineRun {
+        let data = try await client.executeREST(path: "/repos/\(owner)/\(repo)/actions/runs/\(runId)")
+        return Self.map(try JSONDecoder().decode(RestRun.self, from: data), owner: owner, repo: repo)
+    }
+
     public func rerun(owner: String, repo: String, runId: Int) async throws {
         _ = try await client.executeREST(method: "POST", path: "/repos/\(owner)/\(repo)/actions/runs/\(runId)/rerun")
     }

@@ -61,6 +61,13 @@ public struct GraphDomainRouter: Sendable {
         if lower.contains("/v1.0/devices") || lower.contains("/beta/devices") {
             return .devices
         }
+        // Device recovery secrets — BitLocker keys and Windows LAPS passwords —
+        // are directory data, but reading them is device lifecycle, so only
+        // DevOps-Devices holds BitlockerKey.Read.All and
+        // DeviceLocalCredential.Read.All.
+        if lower.contains("/informationprotection/bitlocker/") || lower.contains("/directory/devicelocalcredentials") {
+            return .devices
+        }
         // Everything else we touch today (users, groups, directory devices,
         // memberOf) is directory data → DevOps-Identity.
         return .identity

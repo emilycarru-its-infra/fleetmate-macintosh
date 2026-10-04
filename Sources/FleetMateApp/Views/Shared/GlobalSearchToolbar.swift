@@ -55,25 +55,36 @@ struct GlobalSearchToolbarField: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("Search everything", text: $query)
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(focused ? Color.accentColor : .secondary)
+            TextField("", text: $query, prompt: Text("Search everything").foregroundStyle(.secondary))
                 .textFieldStyle(.plain)
                 .focused($focused)
                 .onSubmit { if let first = results.first { open(first) } }
                 .onExitCommand { clear() }
-            if !query.isEmpty {
+            if query.isEmpty {
+                Text("⌘K")
+                    .appFont(fixed: 10, weight: .medium)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+            } else {
                 Button(action: clear) {
                     Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .appFont(.callout)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .frame(width: 240)
-        .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 7))
+        .appFont(.body)
+        .padding(.horizontal, 10)
+        .frame(width: 260, height: 28)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(focused ? Color.accentColor : Color.secondary.opacity(0.35), lineWidth: focused ? 1.5 : 1)
+        )
         .help("Search everything (⌘K)")
         .background(
             // ⌘K from anywhere puts the cursor here.

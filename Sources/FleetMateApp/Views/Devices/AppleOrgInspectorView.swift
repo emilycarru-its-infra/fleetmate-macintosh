@@ -1,116 +1,72 @@
 import SwiftUI
 import FleetMateCore
 
-/// The Mac view's right-hand panel: the device's Apple and Intune records when
-/// one is selected, and the organization actions for any selection.
-struct AppleOrgInspectorView: View {
-    @ObservedObject var store: AppleOrgStore
-    let rows: [AppleOrgRow]
+// MARK: - Inspector section
 
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if rows.count == 1, let row = rows.first {
-                    AppleOrgDeviceDetail(store: store, row: row)
-                } else {
-                    Text("\(rows.count) devices selected")
-                        .appFont(.title3, weight: .semibold)
-                }
-                Divider()
-                AppleOrgActionsSection(store: store, rows: rows)
-            }
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
+/// The device inspector's Apple organization section, shown for a device an
+/// organization holds — and, while the organizations are still being read,
+/// as a loading row for an Apple device that may turn out to be in one.
+struct AppleOrgDetailSection: View {
+    @ObservedObject var store: AppleOrgStore
+    let row: DeviceListRow
+
+    static func applies(to row: DeviceListRow, store: AppleOrgStore) -> Bool {
+        row.apple != nil || (store.hasProfile && store.lastLoaded == nil && row.isApplePlatform)
     }
-}
-
-// MARK: - Detail
-
-private struct AppleOrgDeviceDetail: View {
-    @ObservedObject var store: AppleOrgStore
-    let row: AppleOrgRow
-
-    private var device: AppleOrgDevice { row.device }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(row.intune?.deviceName ?? device.model)
-                    .appFont(.title3, weight: .semibold)
-                    .textSelection(.enabled)
-                Text(device.serialNumber)
-                    .appFont(.callout, design: .monospaced)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-
-            section(store.activeProfile?.serviceName ?? "Apple Organization") {
-                field("Status", row.statusLabel)
-                field("Service", row.serverName ?? "None")
-                field("Model", device.model)
-                if let family = device.productFamily { field("Family", family) }
-                field("Order", device.orderNumber ?? "—")
-                field("Order Date", AppleOrgFormat.date(device.orderDate))
-                field("Purchase Source", row.purchaseSourceLabel)
-                field("Added", AppleOrgFormat.date(device.addedToOrg))
-                if let released = device.releasedFromOrg {
-                    field("Released", AppleOrgFormat.date(released))
+        if row.apple == nil {
+            DetailSection(title: store.profiles.count == 1 ? store.label(for: store.profiles[0].name) : "Apple Organization", icon: "apple.logo") {
+                HStack {
+                    ProgressView().scaleEffect(0.6)
+                    Text("Reading the Apple organization…").appFont(.caption).foregroundColor(.secondary)
                 }
-                ForEach(device.wifiMacAddresses, id: \.self) { field("Wi-Fi MAC", $0, mono: true) }
-                ForEach(device.ethernetMacAddresses, id: \.self) { field("Ethernet MAC", $0, mono: true) }
             }
-
-            section("Migration") {
-                field("Status", row.migrationLabel)
-                if let deadline = device.migrationDeadline {
-                    field("Deadline", AppleOrgFormat.dateTime(deadline))
+        } else if let device = row.apple {
+            VStack(alignment: .leading, spacing: 16) {
+                DetailSection(title: store.label(for: device.orgId), icon: "apple.logo") {
+                    DeviceDetailRow(label: "Status", value: row.orgStatusLabel)
+                    DeviceDetailRow(label: "Management Service", value: row.serverName ?? "None")
+                    DeviceDetailRow(label: "Model", value: device.model)
+                    DeviceDetailRow(label: "Order", value: device.orderNumber, monospaced: true)
+                    DeviceDetailRow(label: "Order Date", value: device.orderDate.map { AppleOrgFormat.date($0) })
+                    DeviceDetailRow(label: "Purchase Source", value: device.purchaseSource == nil ? nil : row.purchaseSourceLabel)
+                    DeviceDetailRow(label: "Added", value: device.addedToOrg.map { AppleOrgFormat.date($0) })
+                    DeviceDetailRow(label: "Released", value: device.releasedFromOrg.map { AppleOrgFormat.date($0) })
+                    ForEach(device.wifiMacAddresses, id: \.self) { DeviceDetailRow(label: "Wi-Fi MAC", value: $0, monospaced: true) }
+                    ForEach(device.ethernetMacAddresses, id: \.self) { DeviceDetailRow(label: "Ethernet MAC", value: $0, monospaced: true) }
+                    DeviceDetailRow(label: "Migration", value: device.migrationStatus == nil ? nil : row.migrationLabel)
+                    DeviceDetailRow(label: "Migration Deadline", value: device.migrationDeadline.map { AppleOrgFormat.dateTime($0) })
+                    DeviceDetailRow(label: "Migration Capable", value: device.isMigrationCapable.map { $0 ? "Yes" : "No" })
                 }
-                field("Capable", device.isMigrationCapable.map { $0 ? "Yes" : "No" } ?? "Unknown")
-            }
 
-            section("AppleCare") { appleCare }
-                .task(id: device.serialNumber) { store.loadAppleCare(serial: device.serialNumber) }
-
-            section("Intune") {
-                if let intune = row.intune {
-                    field("Name", intune.deviceName ?? "—")
-                    field("User", intune.userPrincipalName ?? intune.userDisplayName ?? "—")
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("Compliance").foregroundStyle(.secondary).frame(width: 120, alignment: .leading)
-                        AppleOrgComplianceLabel(row: row)
-                    }
-                    field("OS", [intune.operatingSystem, intune.osVersion].compactMap { $0 }.joined(separator: " "))
-                    field("Enrolled", AppleOrgFormat.isoDate(intune.enrolledDateTime))
-                    field("Last Sync", AppleOrgFormat.isoDate(intune.lastSyncDateTime))
-                } else {
-                    Text("No Intune record has this serial number.")
-                        .foregroundStyle(.secondary)
+                DetailSection(title: "AppleCare", icon: "cross.case") {
+                    appleCare(for: device.serialNumber)
                 }
+                .task(id: device.serialNumber) { store.loadAppleCare(for: device) }
             }
         }
     }
 
     @ViewBuilder
-    private var appleCare: some View {
-        switch store.appleCare[device.serialNumber] {
+    private func appleCare(for serial: String) -> some View {
+        switch store.appleCare[serial] {
         case nil:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("Loading coverage…").foregroundStyle(.secondary)
+            HStack {
+                ProgressView().scaleEffect(0.6)
+                Text("Loading coverage…").appFont(.caption).foregroundColor(.secondary)
             }
         case .failure(let error):
-            Text(error.localizedDescription)
-                .foregroundStyle(.secondary)
+            Text(error.localizedDescription).appFont(.caption).foregroundColor(.secondary)
         case .success(let agreements) where agreements.isEmpty:
-            Text("No coverage reported.").foregroundStyle(.secondary)
+            Text("No coverage reported.").appFont(.caption).foregroundColor(.secondary)
         case .success(let agreements):
             ForEach(Array(agreements.enumerated()), id: \.offset) { _, agreement in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(agreement.description).appFont(.body, weight: .medium)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(agreement.description).appFont(.caption).fontWeight(.medium)
                     Text(coverageLine(agreement))
-                        .appFont(.caption)
-                        .foregroundStyle(isActive(agreement) ? .green : .secondary)
+                        .appFont(.caption2)
+                        .foregroundColor(isActive(agreement) ? .green : .secondary)
                 }
             }
         }
@@ -128,121 +84,133 @@ private struct AppleOrgDeviceDetail: View {
         if let n = a.agreementNumber { parts.append(n) }
         return parts.joined(separator: " · ")
     }
-
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).appFont(.headline)
-            content()
-        }
-    }
-
-    private func field(_ label: String, _ value: String, mono: Bool = false) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label).foregroundStyle(.secondary).frame(width: 120, alignment: .leading)
-            Text(value.isEmpty ? "—" : value)
-                .appFont(.body, design: mono ? .monospaced : .default)
-                .textSelection(.enabled)
-            Spacer(minLength: 0)
-        }
-    }
 }
 
 // MARK: - Actions
 
-/// An action waiting on the user's confirmation, with the serials it will
-/// actually reach — devices it cannot apply to are dropped up front and named.
+/// An action waiting on the user's confirmation. Unassign is sent once per
+/// current service, so one confirmation can carry several submissions.
 private struct PendingOrgAction: Identifiable {
     let id = UUID()
     let title: String
     let message: String
     let destructive: Bool
-    /// One or more submissions: unassign goes once per current service.
     let steps: [(AppleOrgAction, [String])]
 }
 
-private struct AppleOrgActionsSection: View {
+/// The Apple organization's actions in the Device Actions panel. Shown only
+/// when one organization holds every selected device — every action names a
+/// service, and a service means nothing outside its own organization — and
+/// each action only when it applies to every one of them.
+struct AppleOrgActionsGroup: View {
     @ObservedObject var store: AppleOrgStore
-    let rows: [AppleOrgRow]
+    let rows: [DeviceListRow]
 
+    @State private var expanded: Set<String> = ["service"]
     @State private var targetServerId: String = ""
     @State private var deadline = Calendar.current.date(byAdding: .day, value: 30, to: Date()) ?? Date()
     @State private var pending: PendingOrgAction?
     @State private var isRunning = false
     @State private var outcome: (ok: Bool, message: String)?
 
-    private var serials: [String] { rows.map(\.device.serialNumber) }
-    private var activeRows: [AppleOrgRow] { rows.filter { $0.device.releasedFromOrg == nil } }
-    private var assignedRows: [AppleOrgRow] { activeRows.filter { $0.device.assignedServerId != nil } }
-    private var migratingRows: [AppleOrgRow] { activeRows.filter { $0.device.hasActiveMigration } }
-    private var migratableRows: [AppleOrgRow] { activeRows.filter { $0.device.isMigrationCapable == true } }
-    private var targetName: String { store.servers.first { $0.id == targetServerId }?.name ?? "" }
+    private var devices: [AppleOrgDevice] { rows.compactMap(\.apple) }
+    private var orgId: String { devices.first?.orgId ?? "" }
+    private var orgServers: [AppleOrgServer] { store.servers(in: orgId) }
+    private var isSchool: Bool { store.profile(named: orgId)?.isSchool ?? false }
+    private var serials: [String] { devices.map(\.serialNumber) }
+    private var noneReleased: Bool { devices.allSatisfy { $0.releasedFromOrg == nil } }
+    private var canUnassign: Bool { noneReleased && devices.allSatisfy { $0.assignedServerId != nil } }
+    private var canSchedule: Bool { noneReleased && devices.allSatisfy { $0.isMigrationCapable == true } }
+    private var canChangeMigration: Bool { noneReleased && devices.allSatisfy(\.hasActiveMigration) }
+    private var canRelease: Bool { noneReleased && !isSchool }
+    private var targetName: String { orgServers.first { $0.id == targetServerId }?.name ?? "" }
     private var deadlineRange: ClosedRange<Date> { Date()...AppleOrgAction.latestDeadline() }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Actions").appFont(.headline)
-
-            GroupBox("Device Management Service") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Picker("Service", selection: $targetServerId) {
-                        Text("Choose…").tag("")
-                        ForEach(store.servers) { Text($0.name).tag($0.id) }
-                    }
-                    .labelsHidden()
-                    HStack {
-                        Button("Assign") { confirmAssign() }
-                            .disabled(targetServerId.isEmpty || activeRows.isEmpty)
-                        Button("Unassign") { confirmUnassign() }
-                            .disabled(assignedRows.isEmpty)
-                    }
-                    Text("Assignment takes effect at the device's next enrollment or erase.")
-                        .appFont(.caption).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(4)
-            }
-
-            GroupBox("Migration") {
-                VStack(alignment: .leading, spacing: 8) {
-                    DatePicker("Deadline", selection: $deadline, in: deadlineRange, displayedComponents: [.date, .hourAndMinute])
-                    HStack {
-                        Button("Schedule") { confirmSchedule() }
-                            .disabled(targetServerId.isEmpty || migratableRows.isEmpty)
-                            .help("Move to the chosen service without erasing, by the deadline")
-                        Button("Change Deadline") { confirmUpdateDeadline() }
-                            .disabled(migratingRows.isEmpty)
-                        Button("Cancel Migration") { confirmCancelMigration() }
-                            .disabled(migratingRows.isEmpty)
-                    }
-                    Text("No erase: the device keeps running under its current service until it moves. Deadlines are at most \(AppleOrgAction.maxMigrationDays) days out.")
-                        .appFont(.caption).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(4)
-            }
-
-            if !store.isSchool {
-                GroupBox("Organization") {
+        VStack(spacing: 0) {
+            if noneReleased {
+                ActionAccordion(
+                    title: "Assign Management Service",
+                    icon: "server.rack",
+                    isExpanded: expanded.contains("service"),
+                    onToggle: { toggle("service") }
+                ) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Button("Release from Organization…") { confirmRelease() }
-                            .disabled(activeRows.isEmpty)
-                        Text("Removes the device from the organization for good. It can only come back through a purchase or Apple Configurator.")
-                            .appFont(.caption).foregroundStyle(.secondary)
+                        Text("Choose which \(store.label(for: orgId)) service the device enrolls with. Takes effect at its next enrollment or erase.")
+                            .appFont(.caption).foregroundColor(.secondary)
+                        servicePicker
+                        HStack {
+                            Button(action: confirmAssign) {
+                                Label("Assign", systemImage: "arrow.right.circle").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(targetServerId.isEmpty)
+                            if canUnassign {
+                                Button(action: confirmUnassign) {
+                                    Label("Unassign", systemImage: "minus.circle").frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                        status
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(4)
                 }
             }
 
-            if isRunning {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Waiting for Apple to finish…").foregroundStyle(.secondary)
+            if canSchedule || canChangeMigration {
+                ActionAccordion(
+                    title: "Migrate Management Service",
+                    icon: "arrow.left.arrow.right.circle",
+                    isExpanded: expanded.contains("migration"),
+                    onToggle: { toggle("migration") }
+                ) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Move to another service without erasing. The device keeps running under its current service until it moves; deadlines are at most \(AppleOrgAction.maxMigrationDays) days out.")
+                            .appFont(.caption).foregroundColor(.secondary)
+                        if canSchedule { servicePicker }
+                        DatePicker("Deadline", selection: $deadline, in: deadlineRange, displayedComponents: [.date, .hourAndMinute])
+                            .appFont(.caption)
+                        if canSchedule {
+                            Button(action: confirmSchedule) {
+                                Label("Schedule Migration", systemImage: "calendar.badge.clock").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(targetServerId.isEmpty)
+                        }
+                        if canChangeMigration {
+                            HStack {
+                                Button(action: confirmUpdateDeadline) {
+                                    Text("Change Deadline").frame(maxWidth: .infinity)
+                                }
+                                Button(action: confirmCancelMigration) {
+                                    Text("Cancel Migration").frame(maxWidth: .infinity)
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                        status
+                    }
                 }
-            } else if let outcome {
-                Label(outcome.message, systemImage: outcome.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(outcome.ok ? .green : .orange)
-                    .appFont(.callout)
+            }
+
+            if canRelease {
+                ActionAccordion(
+                    title: "Release from Organization",
+                    icon: "rectangle.portrait.and.arrow.right",
+                    isExpanded: expanded.contains("release"),
+                    onToggle: { toggle("release") }
+                ) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Remove the device from \(store.label(for: orgId)) for good. It stops enrolling automatically.")
+                            .appFont(.caption).foregroundColor(.secondary)
+                        Button(action: confirmRelease) {
+                            Label("Release", systemImage: "rectangle.portrait.and.arrow.right").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.orange)
+                        status
+                    }
+                }
             }
         }
         .disabled(isRunning)
@@ -252,80 +220,95 @@ private struct AppleOrgActionsSection: View {
         } message: { action in
             Text(action.message)
         }
-        .onChange(of: serials) { _, _ in outcome = nil }
+        .onChange(of: serials) { _, _ in outcome = nil; targetServerId = "" }
     }
 
-    // MARK: Confirmations
+    private func toggle(_ section: String) {
+        withAnimation {
+            if expanded.contains(section) { expanded.remove(section) } else { expanded.insert(section) }
+        }
+    }
+
+    private var servicePicker: some View {
+        Picker("Service", selection: $targetServerId) {
+            Text("Choose a service…").tag("")
+            ForEach(orgServers) { Text($0.name).tag($0.id) }
+        }
+        .labelsHidden()
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        if isRunning {
+            HStack(spacing: 6) {
+                ProgressView().scaleEffect(0.6)
+                Text("Waiting for Apple to finish…").appFont(.caption).foregroundColor(.secondary)
+            }
+        } else if let outcome {
+            Label(outcome.message, systemImage: outcome.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .appFont(.caption)
+                .foregroundColor(outcome.ok ? .green : .orange)
+        }
+    }
 
     private func count(_ n: Int) -> String { "\(n) device\(n == 1 ? "" : "s")" }
 
-    private func skipped(_ total: Int, _ reached: Int, _ reason: String) -> String {
-        total == reached ? "" : " \(count(total - reached)) \(reason) will be skipped."
-    }
-
     private func confirmAssign() {
-        let reach = activeRows.map(\.device.serialNumber)
         pending = PendingOrgAction(
             title: "Assign",
-            message: "Assign \(count(reach.count)) to \(targetName)? It takes effect at each device's next enrollment or erase.\(skipped(rows.count, reach.count, "already released"))",
+            message: "Assign \(count(serials.count)) to \(targetName)? It takes effect at each device's next enrollment or erase.",
             destructive: false,
-            steps: [(.assign(serverId: targetServerId), reach)]
+            steps: [(.assign(serverId: targetServerId), serials)]
         )
     }
 
     private func confirmUnassign() {
-        let groups = Dictionary(grouping: assignedRows, by: { $0.device.assignedServerId! })
-        let steps = groups.map { (AppleOrgAction.unassign(serverId: $0.key), $0.value.map(\.device.serialNumber)) }
-        let names = groups.keys.compactMap { id in store.servers.first { $0.id == id }?.name }.sorted()
+        let groups = Dictionary(grouping: devices, by: { $0.assignedServerId ?? "" }).filter { !$0.key.isEmpty }
+        let names = groups.keys.compactMap { id in orgServers.first { $0.id == id }?.name }.sorted()
         pending = PendingOrgAction(
             title: "Unassign",
-            message: "Unassign \(count(assignedRows.count)) from \(names.joined(separator: ", "))? They will not enroll automatically until assigned again.\(skipped(rows.count, assignedRows.count, "with no service"))",
+            message: "Unassign \(count(serials.count)) from \(names.joined(separator: ", "))? They will not enroll automatically until assigned again.",
             destructive: true,
-            steps: steps
+            steps: groups.map { (AppleOrgAction.unassign(serverId: $0.key), $0.value.map(\.serialNumber)) }
         )
     }
 
     private func confirmSchedule() {
-        let reach = migratableRows.map(\.device.serialNumber)
         pending = PendingOrgAction(
             title: "Schedule Migration",
-            message: "Migrate \(count(reach.count)) to \(targetName) by \(AppleOrgFormat.dateTime(deadline))? Users are prompted, and the move is enforced on the device at the deadline.\(skipped(rows.count, reach.count, "not migration-capable"))",
+            message: "Migrate \(count(serials.count)) to \(targetName) by \(AppleOrgFormat.dateTime(deadline))? Users are prompted, and the move is enforced on the device at the deadline.",
             destructive: false,
-            steps: [(.scheduleMigration(serverId: targetServerId, deadline: deadline), reach)]
+            steps: [(.scheduleMigration(serverId: targetServerId, deadline: deadline), serials)]
         )
     }
 
     private func confirmUpdateDeadline() {
-        let reach = migratingRows.map(\.device.serialNumber)
-        let earliest = migratingRows.compactMap(\.device.migrationDeadline).min()
+        let earliest = devices.compactMap(\.migrationDeadline).min()
         let shortening = earliest.map { deadline < $0 } ?? false
         pending = PendingOrgAction(
             title: "Change Deadline",
-            message: "Move the migration deadline for \(count(reach.count)) to \(AppleOrgFormat.dateTime(deadline))?"
-                + (shortening ? " An earlier deadline applies immediately, without giving users a chance to delay." : "")
-                + skipped(rows.count, reach.count, "with no migration in progress"),
+            message: "Move the migration deadline for \(count(serials.count)) to \(AppleOrgFormat.dateTime(deadline))?"
+                + (shortening ? " An earlier deadline applies immediately, without giving users a chance to delay." : ""),
             destructive: shortening,
-            steps: [(.updateMigrationDeadline(deadline), reach)]
+            steps: [(.updateMigrationDeadline(deadline), serials)]
         )
     }
 
     private func confirmCancelMigration() {
-        let reach = migratingRows.map(\.device.serialNumber)
         pending = PendingOrgAction(
             title: "Cancel Migration",
-            message: "Cancel the migration for \(count(reach.count))? They stay on their current service.\(skipped(rows.count, reach.count, "with no migration in progress"))",
+            message: "Cancel the migration for \(count(serials.count))? They stay on their current service.",
             destructive: true,
-            steps: [(.cancelMigration, reach)]
+            steps: [(.cancelMigration, serials)]
         )
     }
 
     private func confirmRelease() {
-        let reach = activeRows.map(\.device.serialNumber)
         pending = PendingOrgAction(
             title: "Release",
-            message: "Release \(count(reach.count)) from the organization? This cannot be undone: the devices leave Apple Business Manager and stop enrolling automatically.",
+            message: "Release \(count(serials.count)) from \(store.label(for: orgId))? This cannot be undone: the devices leave the organization and stop enrolling automatically.",
             destructive: true,
-            steps: [(.release, reach)]
+            steps: [(.release, serials)]
         )
     }
 
@@ -336,13 +319,37 @@ private struct AppleOrgActionsSection: View {
             var failures: [String] = []
             var successes: [String] = []
             for (step, serials) in action.steps where !serials.isEmpty {
-                let result = await store.perform(step, serials: serials)
-                (result.ok ? { successes.append(result.message) } : { failures.append(result.message) })()
+                let result = await store.perform(step, serials: serials, in: orgId)
+                if result.ok { successes.append(result.message) } else { failures.append(result.message) }
             }
             outcome = failures.isEmpty
                 ? (true, successes.joined(separator: " "))
                 : (false, failures.joined(separator: " "))
             isRunning = false
         }
+    }
+}
+
+// MARK: - Formatting
+
+enum AppleOrgFormat {
+    static func date(_ date: Date?) -> String {
+        guard let date else { return DeviceListRow.missing }
+        return date.formatted(date: .abbreviated, time: .omitted)
+    }
+
+    static func dateTime(_ date: Date?) -> String {
+        guard let date else { return DeviceListRow.missing }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    static func isoDate(_ iso: String?) -> String {
+        guard let iso, !iso.isEmpty else { return DeviceListRow.missing }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: iso) { return date(d) }
+        f.formatOptions = [.withInternetDateTime]
+        if let d = f.date(from: iso) { return date(d) }
+        return String(iso.prefix(10))
     }
 }

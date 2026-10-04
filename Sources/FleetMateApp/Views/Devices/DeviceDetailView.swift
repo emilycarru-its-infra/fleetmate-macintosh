@@ -1,12 +1,90 @@
 import SwiftUI
 import FleetMateCore
 
-/// Detail panel showing comprehensive device information from Intune/Graph API.
-/// Displayed when a single device is selected in the device list.
+/// The device inspector. The device's platform and the systems that know it
+/// decide which sections appear; nothing that cannot apply is shown.
 struct DeviceDetailView: View {
     @EnvironmentObject var appState: AppState
+    let row: DeviceListRow
+
+    private var intune: IntuneDevice? { row.intune }
+    private var apple: AppleOrgDevice? { row.apple }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                Divider()
+                VStack(alignment: .leading, spacing: 16) {
+                    summarySection
+                    Divider()
+                    // The device's own sources decide what shows: the Apple
+                    // organization's section for a device it holds, Intune's
+                    // for an enrolled one.
+                    if AppleOrgDetailSection.applies(to: row, store: appState.appleOrg) {
+                        AppleOrgDetailSection(store: appState.appleOrg, row: row)
+                        if intune != nil { Divider() }
+                    }
+                    if let intune {
+                        IntuneDeviceSections(device: intune)
+                    }
+                }
+                .padding()
+            }
+        }
+        .background(Color(NSColor.controlBackgroundColor))
+    }
+
+    private var header: some View {
+        HStack {
+            Image(systemName: deviceIcon)
+                .appFont(.title)
+                .foregroundColor(.accentColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(intune?.deviceName ?? apple?.model ?? "Unknown Device")
+                    .appFont(.title2)
+                    .fontWeight(.bold)
+                    .textSelection(.enabled)
+                Text(intune?.managedDeviceName ?? row.serialNumber ?? "")
+                    .appFont(.subheadline)
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+            }
+            Spacer()
+            ComplianceBadge(state: intune == nil ? "Not Enrolled" : intune?.complianceState)
+        }
+        .padding()
+    }
+
+    /// The device as a whole, from whichever record has each value.
+    private var summarySection: some View {
+        DetailSection(title: "Summary", icon: "info.circle") {
+            DeviceDetailRow(label: "Device Name", value: intune?.deviceName)
+            DeviceDetailRow(label: "Serial Number", value: row.serialNumber, monospaced: true)
+            DeviceDetailRow(label: "Platform", value: row.platformLabel)
+            DeviceDetailRow(label: "Model", value: intune?.model ?? apple?.model)
+            DeviceDetailRow(label: "OS", value: [intune?.operatingSystem, intune?.osVersion].compactMap { $0 }.joined(separator: " "))
+            DeviceDetailRow(label: "Primary User", value: intune?.userDisplayName ?? intune?.userPrincipalName)
+            DeviceDetailRow(label: "Last Check-in", value: intune?.lastSyncDateTime.map { AppleOrgFormat.isoDate($0) })
+            DeviceDetailRow(label: "Enrollment", value: row.isEnrolled ? nil : "Not enrolled in Intune")
+        }
+    }
+
+    private var deviceIcon: String {
+        let os = (row.platformLabel ?? "").lowercased()
+        if os.contains("mac") { return "laptopcomputer" }
+        if os.contains("ios") || os.contains("ipad") { return "ipad" }
+        if os.contains("windows") { return "desktopcomputer" }
+        if os.contains("android") { return "phone" }
+        return "desktopcomputer"
+    }
+}
+
+/// The Intune record's sections, which load groups, apps and compliance.
+private struct IntuneDeviceSections: View {
+    @EnvironmentObject var appState: AppState
     let device: IntuneDevice
-    
+
     @State private var groupMemberships: [DeviceGroupMembership] = []
     @State private var detectedApps: [DetectedApp] = []
     @State private var compliancePolicies: [DeviceCompliancePolicyState] = []
@@ -21,33 +99,26 @@ struct DeviceDetailView: View {
         let id: String
         let policy: DeviceCompliancePolicyState
     }
-    
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                // Header
-                deviceHeader
-                
-                Divider()
-                
-                // Sections
-                VStack(alignment: .leading, spacing: 16) {
-                    deviceSummarySection
-                    Divider()
-                    groupMembershipSection
-                    Divider()
-                    enrollmentSection
-                    Divider()
-                    hardwareSection
-                    Divider()
-                    complianceSection
-                    Divider()
-                    managedAppsSection
-                }
-                .padding()
+        VStack(alignment: .leading, spacing: 16) {
+            if let error = errorMessage {
+                Text(error)
+                    .appFont(.caption)
+                    .foregroundColor(.orange)
             }
+            deviceSummarySection
+            Divider()
+            groupMembershipSection
+            Divider()
+            enrollmentSection
+            Divider()
+            hardwareSection
+            Divider()
+            complianceSection
+            Divider()
+            managedAppsSection
         }
-        .background(Color(NSColor.controlBackgroundColor))
         .task(id: device.id) {
             await loadDeviceDetails()
         }
@@ -56,42 +127,11 @@ struct DeviceDetailView: View {
                 .environmentObject(appState)
         }
     }
-    
-    // MARK: - Header
-    
-    private var deviceHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Image(systemName: deviceIcon)
-                    .appFont(.title)
-                    .foregroundColor(.accentColor)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(device.deviceName ?? "Unknown Device")
-                        .appFont(.title2)
-                        .fontWeight(.bold)
-                        .textSelection(.enabled)
-                    Text(device.managedDeviceName ?? device.serialNumber ?? "")
-                        .appFont(.subheadline)
-                        .foregroundColor(.secondary)
-                        .textSelection(.enabled)
-                }
-                Spacer()
-                ComplianceBadge(state: device.complianceState)
-            }
-            
-            if let error = errorMessage {
-                Text(error)
-                    .appFont(.caption)
-                    .foregroundColor(.red)
-            }
-        }
-        .padding()
-    }
-    
+
     // MARK: - Device Summary
     
     private var deviceSummarySection: some View {
-        DetailSection(title: "Summary", icon: "info.circle") {
+        DetailSection(title: "Device Management Service", icon: "shield.lefthalf.filled") {
             DeviceDetailRow(label: "Device Name", value: device.deviceName)
             DeviceDetailRow(label: "Management Name", value: device.managedDeviceName)
             DeviceDetailRow(label: "Ownership", value: ownershipDisplay)
@@ -318,15 +358,6 @@ struct DeviceDetailView: View {
     }
     
     // MARK: - Helpers
-    
-    private var deviceIcon: String {
-        let os = (device.operatingSystem ?? "").lowercased()
-        if os.contains("mac") { return "laptopcomputer" }
-        if os.contains("ios") || os.contains("ipad") { return "ipad" }
-        if os.contains("windows") { return "desktopcomputer" }
-        if os.contains("android") { return "phone" }
-        return "desktopcomputer"
-    }
     
     private var ownershipDisplay: String? {
         guard let ownership = device.managedDeviceOwnerType else { return nil }

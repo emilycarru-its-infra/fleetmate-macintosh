@@ -12,6 +12,17 @@ public struct AppleOrgProfile: Identifiable, Hashable, Sendable {
     public var serviceName: String { isSchool ? "Apple School Manager" : "Apple Business Manager" }
     public var id: String { name }
 
+    /// What to call each organization: its service, with the profile name
+    /// added only when two profiles are the same kind of service.
+    public static func labels(for profiles: [AppleOrgProfile]) -> [String: String] {
+        var out: [String: String] = [:]
+        for p in profiles {
+            let sameKind = profiles.filter { $0.isSchool == p.isSchool }.count > 1
+            out[p.name] = sameKind ? "\(p.serviceName) (\(p.name))" : p.serviceName
+        }
+        return out
+    }
+
     public init(name: String, clientId: String) {
         self.name = name
         self.clientId = clientId
@@ -21,13 +32,16 @@ public struct AppleOrgProfile: Identifiable, Hashable, Sendable {
 /// A device management service (an MDM server entry) in the Apple organization.
 public struct AppleOrgServer: Identifiable, Hashable, Sendable {
     public let id: String
+    /// The profile name of the organization the service belongs to.
+    public let orgId: String
     public let name: String
     public let type: String?
     /// Devices assigned to it, from the server-side listing. Nil until read.
     public var deviceCount: Int?
 
-    public init(id: String, name: String, type: String?, deviceCount: Int? = nil) {
+    public init(id: String, orgId: String = "", name: String, type: String?, deviceCount: Int? = nil) {
         self.id = id
+        self.orgId = orgId
         self.name = name
         self.type = type
         self.deviceCount = deviceCount
@@ -37,6 +51,8 @@ public struct AppleOrgServer: Identifiable, Hashable, Sendable {
 /// One device as the Apple organization reports it.
 public struct AppleOrgDevice: Identifiable, Hashable, Sendable {
     public let serialNumber: String
+    /// The profile name of the organization that holds the device.
+    public var orgId: String
     public let model: String
     public let productFamily: String?
     /// `ASSIGNED` or `UNASSIGNED`.
@@ -58,13 +74,14 @@ public struct AppleOrgDevice: Identifiable, Hashable, Sendable {
     public var id: String { serialNumber }
 
     public init(
-        serialNumber: String, model: String, productFamily: String? = nil, status: String? = nil,
+        serialNumber: String, orgId: String = "", model: String, productFamily: String? = nil, status: String? = nil,
         assignedServerId: String? = nil, orderNumber: String? = nil, purchaseSource: String? = nil,
         addedToOrg: Date? = nil, orderDate: Date? = nil, isMigrationCapable: Bool? = nil,
         migrationStatus: String? = nil, migrationDeadline: Date? = nil, releasedFromOrg: Date? = nil,
         wifiMacAddresses: [String] = [], ethernetMacAddresses: [String] = []
     ) {
         self.serialNumber = serialNumber
+        self.orgId = orgId
         self.model = model
         self.productFamily = productFamily
         self.status = status
@@ -161,38 +178,58 @@ public struct AppleOrgActivityResult: Sendable {
     }
 }
 
-// MARK: - Joined with Intune
+// MARK: - One row per device, Intune first
 
-/// An Apple organization device paired with the Intune record of the same
-/// serial, when there is one.
-public struct AppleOrgRow: Identifiable, Sendable {
-    public let device: AppleOrgDevice
+/// A row of the Devices list: an Intune record enriched with the Apple
+/// organization's record of the same serial, or an Apple organization device
+/// Intune does not know yet, so it can still be assigned.
+public struct DeviceListRow: Identifiable, Sendable {
     public let intune: IntuneDevice?
+    public let apple: AppleOrgDevice?
     public let serverName: String?
+    /// The organization holding the device, as `AppleOrgProfile.labels` names it.
+    public let orgName: String?
 
-    public var id: String { device.serialNumber }
+    /// Intune rows keep the Intune ID — every MDM action is keyed on it.
+    /// Organization-only rows are prefixed so they can never be mistaken
+    /// for one.
+    public var id: String { intune?.id ?? Self.orgOnlyPrefix + (apple?.serialNumber ?? "") }
+    public static let orgOnlyPrefix = "apple-org:"
+
     public var isEnrolled: Bool { intune != nil }
+    public var serialNumber: String? { intune?.serialNumber ?? apple?.serialNumber }
 
-    public init(device: AppleOrgDevice, intune: IntuneDevice?, serverName: String?) {
-        self.device = device
+    public init(intune: IntuneDevice?, apple: AppleOrgDevice?, serverName: String?, orgName: String? = nil) {
         self.intune = intune
+        self.apple = apple
         self.serverName = serverName
+        self.orgName = orgName
     }
 
-    // Sort keys: String so Table's KeyPathComparator can use them directly.
-    public var serialKey: String { device.serialNumber }
-    public var modelKey: String { device.model }
-    public var statusKey: String { statusLabel }
-    public var serverKey: String { serverName ?? "" }
-    public var orderKey: String { device.orderNumber ?? "" }
-    public var sourceKey: String { purchaseSourceLabel }
-    public var addedKey: String { device.addedToOrg.map { ISO8601DateFormatter().string(from: $0) } ?? "" }
-    public var migrationKey: String { migrationLabel }
-    public var nameKey: String { intune?.deviceName ?? "" }
-    public var complianceKey: String { complianceLabel }
-    public var lastSyncKey: String { intune?.lastSyncDateTime ?? "" }
+    /// Intune's operating system, or for an organization-only row the one its
+    /// product family implies, so a Platform filter keeps it.
+    public var platformLabel: String? {
+        if let os = intune?.operatingSystem, !os.isEmpty { return os }
+        switch apple?.productFamily?.lowercased() {
+        case "mac": return "macOS"
+        case "ipad": return "iPadOS"
+        case "iphone": return "iOS"
+        case "appletv": return "tvOS"
+        case "vision": return "visionOS"
+        case let f?: return f
+        case nil: return nil
+        }
+    }
 
-    public var statusLabel: String {
+    /// A Mac, iPhone, iPad or other Apple device, by whichever record says.
+    public var isApplePlatform: Bool {
+        if apple != nil { return true }
+        let p = (platformLabel ?? "").lowercased()
+        return p.contains("mac") || p.contains("ios") || p.contains("ipad") || p.contains("tvos") || p.contains("visionos")
+    }
+
+    public var orgStatusLabel: String {
+        guard let device = apple else { return "Not in Organization" }
         if device.releasedFromOrg != nil { return "Released" }
         switch device.status?.uppercased() {
         case "ASSIGNED": return "Assigned"
@@ -202,8 +239,13 @@ public struct AppleOrgRow: Identifiable, Sendable {
         }
     }
 
+    public var serviceLabel: String {
+        guard apple != nil else { return "Not in Organization" }
+        return serverName ?? "No Service"
+    }
+
     public var purchaseSourceLabel: String {
-        switch device.purchaseSource?.uppercased() {
+        switch apple?.purchaseSource?.uppercased() {
         case "APPLE": return "Apple"
         case "RESELLER": return "Reseller"
         case "MANUALLY_ADDED": return "Manually Added"
@@ -213,7 +255,7 @@ public struct AppleOrgRow: Identifiable, Sendable {
     }
 
     public var migrationLabel: String {
-        guard let status = device.migrationStatus?.uppercased(), !status.isEmpty else { return "None" }
+        guard let status = apple?.migrationStatus?.uppercased(), !status.isEmpty else { return "None" }
         switch status {
         case "REQUESTED": return "Requested"
         case "STARTED": return "In Progress"
@@ -223,73 +265,120 @@ public struct AppleOrgRow: Identifiable, Sendable {
         }
     }
 
-    public var complianceLabel: String {
+    public var enrollmentLabel: String { isEnrolled ? "Enrolled" : "Not Enrolled" }
+
+    // MARK: Column values — the same columns for every row, "—" when the
+    // row's sources have no value.
+
+    public static let missing = "—"
+
+    public var nameText: String { intune?.deviceName ?? Self.missing }
+    public var serialText: String { serialNumber ?? Self.missing }
+    public var platformText: String { platformLabel ?? Self.missing }
+    public var osText: String {
+        let parts = [intune?.operatingSystem, intune?.osVersion].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.isEmpty ? Self.missing : parts.joined(separator: " ")
+    }
+    public var userText: String { intune?.userDisplayName ?? intune?.userPrincipalName ?? Self.missing }
+    public var modelText: String { intune?.model ?? apple?.model ?? Self.missing }
+    public var manufacturerText: String { intune?.manufacturer ?? (apple != nil ? "Apple" : Self.missing) }
+    public var ownershipText: String { intune?.managedDeviceOwnerType?.capitalized ?? Self.missing }
+    public var complianceText: String {
         guard let intune else { return "Not Enrolled" }
         return intune.complianceState?.capitalized ?? "Unknown"
     }
+    public var serviceText: String { serverName ?? Self.missing }
+    public var orgStatusText: String { apple == nil ? Self.missing : orgStatusLabel }
+    /// The device's grouping in its provisioning system: the Apple order
+    /// number for an Apple organization device.
+    public var groupOrOrderText: String { apple?.orderNumber ?? Self.missing }
+    public var migrationText: String { apple == nil ? Self.missing : migrationLabel }
+    public var purchaseSourceText: String { apple == nil ? Self.missing : purchaseSourceLabel }
 
-    /// The value a filter facet reads for this row. Every facet answers for
-    /// every row, so a filter never silently drops a row whose value was
-    /// simply absent.
-    public func value(for facet: AppleOrgFacet) -> String {
+    /// The value a Devices filter reads for this row. Every facet answers
+    /// for every row, so a filter never drops a row just because one of its
+    /// sources lacked the value.
+    public func value(for facet: DeviceFacet) -> String {
         switch facet {
-        case .status: statusLabel
-        case .server: serverName ?? "No Service"
-        case .model: device.model
-        case .order: device.orderNumber ?? "No Order"
-        case .purchaseSource: purchaseSourceLabel
+        case .managementService: serviceLabel
+        case .orgStatus: orgStatusLabel
+        case .appleOrganization: apple == nil ? "Not in Organization" : (orgName ?? "Apple Organization")
+        case .platform: platformLabel ?? "Unknown"
+        case .compliance: complianceText
+        case .manufacturer: intune?.manufacturer ?? (apple != nil ? "Apple" : "Unknown")
+        case .model: intune?.model ?? apple?.model ?? "Unknown"
+        case .ownership: intune?.managedDeviceOwnerType ?? "Unknown"
         case .migration: migrationLabel
-        case .enrollment: isEnrolled ? "Enrolled in Intune" : "Not Enrolled"
-        case .compliance: complianceLabel
+        case .enrollment: enrollmentLabel
         }
     }
+
+    // Sort keys. Dates sort as ISO strings; a missing value sorts first.
+    public var lastSyncKey: String { intune?.lastSyncDateTime ?? "" }
+    public var addedKey: String { apple?.addedToOrg.map { ISO8601DateFormatter().string(from: $0) } ?? "" }
 }
 
-/// Facets the Mac device list filters on.
-public enum AppleOrgFacet: String, CaseIterable, Identifiable, Sendable {
-    case status = "Organization Status"
-    case server = "Device Management Service"
-    case enrollment = "Enrollment"
+/// The Devices list's filter categories, in the order the Filters popover
+/// lists them: the Apple organization's first, then Intune's.
+public enum DeviceFacet: String, CaseIterable, Identifiable, Sendable {
+    case managementService = "Device Management Service"
+    case orgStatus = "Organization Status"
+    case appleOrganization = "Apple Organization"
+    case platform = "Platform"
     case compliance = "Compliance"
-    case migration = "Migration"
+    case manufacturer = "Manufacturer"
     case model = "Model"
-    case order = "Order"
-    case purchaseSource = "Purchase Source"
+    case ownership = "Ownership"
+    case migration = "Migration"
+    case enrollment = "Enrollment"
+
     public var id: String { rawValue }
+
+    /// Facets with nothing to say when no Apple organization is configured.
+    public static let appleOrgOnly: Set<DeviceFacet> = [.managementService, .orgStatus, .appleOrganization, .migration]
 }
 
 public enum AppleOrgJoin {
-    /// Serials compare uppercased and trimmed: Intune and Apple disagree on
-    /// neither today, but a hand-entered Intune serial can carry whitespace.
+    /// Serials compare uppercased and trimmed: a hand-entered Intune serial
+    /// can carry whitespace.
     public static func normalize(_ serial: String) -> String {
         serial.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
     }
 
-    /// Pair each Apple device with the Intune record of the same serial. When
-    /// Intune holds two records for one serial (a re-enrolment leaves the old
-    /// one behind until it ages out), the most recently synced wins.
-    public static func join(
-        devices: [AppleOrgDevice],
+    /// Every Intune record becomes a row, carrying the Apple record of its
+    /// serial when the organization has one — two Intune records of one
+    /// serial (a re-enrolment leaves the old one until it ages out) both
+    /// carry it. Apple devices no Intune record matches follow as their own
+    /// rows, so they stay visible and assignable.
+    public static func merge(
         intune: [IntuneDevice],
-        servers: [AppleOrgServer]
-    ) -> [AppleOrgRow] {
-        var bySerial: [String: IntuneDevice] = [:]
-        for record in intune {
-            guard let serial = record.serialNumber, !serial.isEmpty else { continue }
-            let key = normalize(serial)
-            if let existing = bySerial[key], (existing.lastSyncDateTime ?? "") >= (record.lastSyncDateTime ?? "") {
-                continue
-            }
-            bySerial[key] = record
-        }
+        apple: [AppleOrgDevice],
+        servers: [AppleOrgServer],
+        orgLabels: [String: String] = [:]
+    ) -> [DeviceListRow] {
         let serverNames = Dictionary(servers.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
-        return devices.map { device in
-            AppleOrgRow(
-                device: device,
-                intune: bySerial[normalize(device.serialNumber)],
-                serverName: device.assignedServerId.flatMap { serverNames[$0] }
-            )
+        // A device released from one organization and re-added to another is
+        // reported by both; the one still holding it wins.
+        let appleBySerial = Dictionary(apple.map { (normalize($0.serialNumber), $0) }) { a, b in
+            a.releasedFromOrg == nil ? a : b
         }
+        func row(_ record: IntuneDevice?, _ d: AppleOrgDevice?) -> DeviceListRow {
+            DeviceListRow(intune: record, apple: d,
+                          serverName: d?.assignedServerId.flatMap { serverNames[$0] },
+                          orgName: d.flatMap { orgLabels[$0.orgId] })
+        }
+
+        var matched = Set<String>()
+        var rows: [DeviceListRow] = intune.map { record in
+            let key = record.serialNumber.map(normalize) ?? ""
+            let device = key.isEmpty ? nil : appleBySerial[key]
+            if device != nil { matched.insert(key) }
+            return row(record, device)
+        }
+        for (key, device) in appleBySerial where !matched.contains(key) {
+            rows.append(row(nil, device))
+        }
+        return rows
     }
 
     /// Serial → server ID from each server's device listing, which is the

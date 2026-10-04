@@ -117,6 +117,7 @@ struct ContentView: View {
                 }
             }
             .onAppear {
+                terminals.defaultLaunch = appState.agentDefaultLaunch
                 if appState.agentAutoStart && terminals.sessions.isEmpty {
                     terminals.open(appState.agentDefaultLaunch, focus: false)
                 }

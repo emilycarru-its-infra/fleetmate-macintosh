@@ -185,8 +185,8 @@ struct FleetMateCommands: Commands {
                 appState.terminals.toggle(defaultLaunch: appState.agentDefaultLaunch)
             }
             .keyboardShortcut("`", modifiers: .control)
-            Button("New Terminal Session") { appState.terminals.open(appState.agentDefaultLaunch) }
-                .keyboardShortcut("`", modifiers: [.control, .shift])
+            Button("New Terminal Tab") { appState.terminals.open(appState.agentDefaultLaunch) }
+                .keyboardShortcut("t", modifiers: .command)
 
             Divider()
 

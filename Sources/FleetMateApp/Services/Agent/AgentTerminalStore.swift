@@ -28,34 +28,134 @@ struct AgentLaunch: Hashable {
     }
 }
 
+/// Keys a terminal handles itself while it has focus, the way Terminal and
+/// iTerm do, ahead of the app's menus.
+enum TerminalShortcut {
+    case newSession, closeSession, split, clear, next, previous, select(Int)
+
+    init?(_ event: NSEvent) {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        switch (flags, key) {
+        case (.command, "t"): self = .newSession
+        case (.command, "w"): self = .closeSession
+        case (.command, "d"): self = .split
+        case (.command, "k"): self = .clear
+        case ([.command, .shift], "]"), ([.command, .shift], "}"), (.control, "\t"): self = .next
+        case ([.command, .shift], "["), ([.command, .shift], "{"), ([.control, .shift], "\t"): self = .previous
+        case (.command, _) where Int(key).map({ (1...9).contains($0) }) == true:
+            self = .select(Int(key)! - 1)
+        default:
+            if event.keyCode == 48, flags.contains(.control) { // Tab
+                self = flags.contains(.shift) ? .previous : .next
+            } else {
+                return nil
+            }
+        }
+    }
+}
+
+/// SwiftTerm's view with the hooks a session list needs: output and bell
+/// reported out, and terminal shortcuts caught while it has focus.
+final class FleetMateTerminalView: LocalProcessTerminalView {
+    var onOutput: (() -> Void)?
+    var onBell: (() -> Void)?
+    var onShortcut: ((TerminalShortcut) -> Void)?
+
+    override func dataReceived(slice: ArraySlice<UInt8>) {
+        super.dataReceived(slice: slice)
+        onOutput?()
+    }
+
+    override func bell(source: Terminal) {
+        super.bell(source: source)
+        onBell?()
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if window?.firstResponder === self, let shortcut = TerminalShortcut(event) {
+            onShortcut?(shortcut)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    /// Clear the screen and scrollback, then ask the shell to redraw its prompt.
+    func clearScreen() {
+        feed(text: "\u{1b}[2J\u{1b}[3J\u{1b}[H")
+        send([0x0c])
+    }
+}
+
 /// One terminal: a pseudo-terminal running the session's command, with the
 /// view that draws it. The view is created once and kept for the session's
 /// life, so moving between tabs or hiding the panel never ends the process.
 @MainActor
 final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, LocalProcessTerminalViewDelegate {
+    enum Activity { case idle, busy, attention, exited }
+
     let id = UUID()
     let launch: AgentLaunch
-    let view: LocalProcessTerminalView
-    @Published var title: String
-    @Published private(set) var exited = false
+    let view: FleetMateTerminalView
+    /// What the program running in the session calls it: an agent's session
+    /// name (Claude's /rename), or the shell's title.
+    @Published private(set) var programTitle: String?
+    /// The shell's working directory, followed as it changes.
+    @Published private(set) var directory: String
+    @Published private(set) var activity: Activity = .idle
     /// Take keyboard focus the next time the view is shown. Set for sessions
     /// the person opened; a session started at launch must not steal typing
     /// from whatever they are doing.
-    var wantsFocus = false
+    @Published var wantsFocus = false
+    /// Set by the store: whether this session is on screen, so a bell from a
+    /// session out of sight flags it for attention.
+    var isShown = false {
+        didSet { if isShown, activity == .attention { activity = .idle } }
+    }
+
+    private var lastOutput = Date.distantPast
+    private var poll: Timer?
+
+    var title: String {
+        if let programTitle, !programTitle.isEmpty { return programTitle }
+        return launch.label
+    }
+
+    /// The directory with the home folder as ~.
+    var shortDirectory: String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return directory.hasPrefix(home) ? "~" + directory.dropFirst(home.count) : directory
+    }
 
     init(launch: AgentLaunch, contextPath: String) {
         self.launch = launch
-        self.title = launch.label
-        self.view = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 240))
+        let start = launch.directory.map { ($0 as NSString).expandingTildeInPath }
+            ?? FileManager.default.homeDirectoryForCurrentUser.path
+        self.directory = start
+        self.view = FleetMateTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 240))
         super.init()
         view.processDelegate = self
         view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         view.nativeBackgroundColor = .textBackgroundColor
         view.nativeForegroundColor = .textColor
-        start(contextPath: contextPath)
+        view.onOutput = { [weak self] in
+            Task { @MainActor in self?.noteOutput() }
+        }
+        view.onBell = { [weak self] in
+            Task { @MainActor in
+                guard let self, !self.isShown else { return }
+                self.activity = .attention
+            }
+        }
+        startProcess(contextPath: contextPath, directory: start)
+        // Follow the shell's directory and let a busy session settle back to
+        // idle once output stops.
+        poll = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }
     }
 
-    private func start(contextPath: String) {
+    private func startProcess(contextPath: String, directory: String) {
         let shell = ProcessInfo.processInfo.environment["SHELL"].flatMap { $0.isEmpty ? nil : $0 } ?? "/bin/zsh"
         var args = ["-l"]
         let command = launch.command.trimmingCharacters(in: .whitespaces)
@@ -79,13 +179,36 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         env["FLEETMATE_CONTEXT"] = contextPath
         let environment = env.map { "\($0.key)=\($0.value)" }
 
-        let directory = launch.directory.map { ($0 as NSString).expandingTildeInPath }
-            ?? FileManager.default.homeDirectoryForCurrentUser.path
         view.startProcess(executable: shell, args: args, environment: environment,
                           execName: nil, currentDirectory: directory)
     }
 
+    private func noteOutput() {
+        lastOutput = Date()
+        if activity == .idle { activity = .busy }
+    }
+
+    private func refresh() {
+        guard activity != .exited else { return }
+        if activity == .busy, Date().timeIntervalSince(lastOutput) > 2 { activity = .idle }
+        if let pid = view.process?.shellPid, pid > 0, let cwd = Self.workingDirectory(of: pid), cwd != directory {
+            directory = cwd
+        }
+    }
+
+    /// A process's current directory, from the kernel.
+    static func workingDirectory(of pid: pid_t) -> String? {
+        var info = proc_vnodepathinfo()
+        let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, size) == size else { return nil }
+        return withUnsafePointer(to: &info.pvi_cdir.vip_path) {
+            $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
+        }
+    }
+
     func terminate() {
+        poll?.invalidate()
+        poll = nil
         view.terminate()
     }
 
@@ -98,15 +221,19 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
     nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
 
     nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        Task { @MainActor in
-            if !title.isEmpty { self.title = title }
-        }
+        Task { @MainActor in self.programTitle = title.trimmingCharacters(in: .whitespaces) }
     }
 
-    nonisolated func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    nonisolated func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        guard let directory, let url = URL(string: directory), url.isFileURL else { return }
+        Task { @MainActor in self.directory = url.path }
+    }
 
     nonisolated func processTerminated(source: TerminalView, exitCode: Int32?) {
-        Task { @MainActor in self.exited = true }
+        Task { @MainActor in
+            self.activity = .exited
+            self.poll?.invalidate()
+        }
     }
 }
 
@@ -115,10 +242,12 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
 @MainActor
 final class AgentTerminalStore: ObservableObject {
     @Published private(set) var sessions: [AgentTerminalSession] = []
-    @Published var selectedId: AgentTerminalSession.ID?
+    @Published var selectedId: AgentTerminalSession.ID? { didSet { updateShown() } }
     /// The session shown in the right-hand pane when split.
-    @Published var splitId: AgentTerminalSession.ID?
-    @Published var isVisible = false
+    @Published var splitId: AgentTerminalSession.ID? { didSet { updateShown() } }
+    @Published var isVisible = false { didSet { updateShown() } }
+    /// What ⌘T opens. Kept current by the window from the person's settings.
+    var defaultLaunch: AgentLaunch = .shell
 
     let contextPath: String
 
@@ -136,6 +265,10 @@ final class AgentTerminalStore: ObservableObject {
     func open(_ launch: AgentLaunch, focus: Bool = true) -> AgentTerminalSession {
         let session = AgentTerminalSession(launch: launch, contextPath: contextPath)
         session.wantsFocus = focus
+        let id = session.id
+        session.view.onShortcut = { [weak self] shortcut in
+            Task { @MainActor in self?.handle(shortcut, from: id) }
+        }
         sessions.append(session)
         selectedId = session.id
         isVisible = true
@@ -148,7 +281,7 @@ final class AgentTerminalStore: ObservableObject {
             splitId = nil
             return
         }
-        let base = selected?.launch ?? .shell
+        let base = selected?.launch ?? defaultLaunch
         let current = selectedId
         let session = open(base, focus: false)
         splitId = session.id
@@ -161,9 +294,18 @@ final class AgentTerminalStore: ObservableObject {
         sessions.remove(at: index)
         if splitId == id { splitId = nil }
         if selectedId == id {
-            selectedId = sessions.last(where: { $0.id != splitId })?.id ?? sessions.last?.id
+            let neighbour = sessions.indices.contains(index) ? sessions[index] : sessions.last
+            selectedId = neighbour?.id == splitId ? sessions.first { $0.id != splitId }?.id : neighbour?.id
+            selected?.wantsFocus = true
         }
         if sessions.isEmpty { isVisible = false }
+    }
+
+    func select(_ id: AgentTerminalSession.ID, focus: Bool = true) {
+        if id == splitId { splitId = selectedId }
+        selectedId = id
+        if focus { selected?.wantsFocus = true }
+        isVisible = true
     }
 
     func toggle(defaultLaunch: AgentLaunch) {
@@ -177,6 +319,31 @@ final class AgentTerminalStore: ObservableObject {
 
     func terminateAll() {
         sessions.forEach { $0.terminate() }
+    }
+
+    private func cycle(by offset: Int) {
+        guard !sessions.isEmpty else { return }
+        let index = sessions.firstIndex { $0.id == selectedId } ?? 0
+        let next = (index + offset + sessions.count) % sessions.count
+        select(sessions[next].id)
+    }
+
+    private func handle(_ shortcut: TerminalShortcut, from id: AgentTerminalSession.ID) {
+        switch shortcut {
+        case .newSession: open(defaultLaunch)
+        case .closeSession: close(id)
+        case .split: toggleSplit()
+        case .clear: sessions.first { $0.id == id }?.view.clearScreen()
+        case .next: cycle(by: 1)
+        case .previous: cycle(by: -1)
+        case .select(let n): if sessions.indices.contains(n) { select(sessions[n].id) }
+        }
+    }
+
+    private func updateShown() {
+        for session in sessions {
+            session.isShown = isVisible && (session.id == selectedId || session.id == splitId)
+        }
     }
 }
 

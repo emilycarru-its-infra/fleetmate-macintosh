@@ -396,6 +396,122 @@ final class DevelopmentModel: ObservableObject {
 
     // MARK: Loading
 
+    // MARK: Links
+
+    /// Open what a `fleetmate://` link names: switch to its segment and select
+    /// it, fetching it by id when the lists don't hold it.
+    func open(_ link: FleetMateLink, appState: AppState) {
+        searchText = ""
+        Task {
+            do {
+                switch link {
+                case .pullRequest(let host, let number):
+                    segment = .pullRequests
+                    selectedSource = nil
+                    selectedRepo = nil
+                    onlyMine = false
+                    if let pr = queue.pullRequests.first(where: { Self.matches($0, host: host, number: number) }) {
+                        selectedPullRequest = pr
+                        return
+                    }
+                    let fetched: UnifiedPullRequest?
+                    switch host {
+                    case .azureDevOps(let project, let repo):
+                        fetched = try await appState.devOpsService.getUnifiedPullRequest(project: project, repository: repo, id: number)
+                    case .gitHub(let owner, let repo):
+                        fetched = try await GitHubPullRequestService(config: gitHubConfig(appState))
+                            .getPullRequest(owner: owner, repo: repo, number: number)
+                    }
+                    guard let fetched else { throw LinkOpenError("Pull request \(number) was not found.") }
+                    selectedPullRequest = fetched
+
+                case .commit(let host, let sha):
+                    segment = .commits
+                    if let repo = repositoryCommits.first(where: { Self.matches($0, host: host) }),
+                       let commit = repo.commits.first(where: { $0.id.hasPrefix(sha) || sha.hasPrefix($0.id) }) {
+                        selectedCommit = .init(repository: repo, commit: commit)
+                        return
+                    }
+                    // Not in the recent list: the detail pane loads it by sha.
+                    let repository: RepositoryCommits
+                    switch host {
+                    case .azureDevOps(let project, let repo):
+                        repository = RepositoryCommits(source: .azureDevOps, container: project, repository: repo,
+                                                       repositoryId: repo, webUrl: "", defaultBranch: nil, commits: [])
+                    case .gitHub(let owner, let repo):
+                        repository = RepositoryCommits(source: .gitHub, container: owner, repository: repo,
+                                                       webUrl: "https://github.com/\(owner)/\(repo)", defaultBranch: nil, commits: [])
+                    }
+                    selectedCommit = .init(repository: repository,
+                                           commit: PullRequestCommit(id: sha, message: "", authorName: nil, date: nil))
+
+                case .azureDevOpsRun(let project, let runId):
+                    segment = .pipelines
+                    pipelineStatusFilter = nil
+                    if let run = pipelineRuns.first(where: { $0.source == .azureDevOps && $0.runId == runId }) {
+                        selectedRun = run
+                    } else {
+                        selectedRun = try await appState.devOpsService.getPipelineRun(project: project, buildId: runId)
+                    }
+
+                case .gitHubRun(let owner, let repo, let runId):
+                    segment = .pipelines
+                    pipelineStatusFilter = nil
+                    if let run = pipelineRuns.first(where: { $0.source == .gitHub && $0.runId == runId }) {
+                        selectedRun = run
+                    } else {
+                        selectedRun = try await GitHubActionsService(config: gitHubConfig(appState))
+                            .getRun(owner: owner, repo: repo, runId: runId)
+                    }
+
+                case .azureDevOpsPipeline(let project, let definitionId):
+                    // A pipeline opens on its latest run.
+                    segment = .pipelines
+                    pipelineStatusFilter = nil
+                    guard let run = pipelineRuns
+                        .filter({ $0.source == .azureDevOps && $0.container == project && $0.pipelineId == definitionId })
+                        .first
+                    else { throw LinkOpenError("Pipeline \(definitionId) in \(project) has no recent runs.") }
+                    selectedRun = run
+
+                case .workItem, .gitHubIssue:
+                    break // Routed to Projects by AppState.
+                }
+            } catch {
+                appState.linkError = error.localizedDescription
+            }
+        }
+    }
+
+    private struct LinkOpenError: LocalizedError {
+        let message: String
+        init(_ message: String) { self.message = message }
+        var errorDescription: String? { message }
+    }
+
+    private static func matches(_ pr: UnifiedPullRequest, host: FleetMateLink.Host, number: Int) -> Bool {
+        guard pr.number == number else { return false }
+        switch host {
+        case .azureDevOps(let project, let repo):
+            return pr.source == .azureDevOps && pr.container.caseInsensitiveCompare(project) == .orderedSame
+                && pr.repository.caseInsensitiveCompare(repo) == .orderedSame
+        case .gitHub(let owner, let repo):
+            return pr.source == .gitHub && pr.container.caseInsensitiveCompare(owner) == .orderedSame
+                && pr.repository.caseInsensitiveCompare(repo) == .orderedSame
+        }
+    }
+
+    private static func matches(_ repo: RepositoryCommits, host: FleetMateLink.Host) -> Bool {
+        switch host {
+        case .azureDevOps(let project, let name):
+            return repo.source == .azureDevOps && repo.container.caseInsensitiveCompare(project) == .orderedSame
+                && repo.repository.caseInsensitiveCompare(name) == .orderedSame
+        case .gitHub(let owner, let name):
+            return repo.source == .gitHub && repo.container.caseInsensitiveCompare(owner) == .orderedSame
+                && repo.repository.caseInsensitiveCompare(name) == .orderedSame
+        }
+    }
+
     private func gitHubConfig(_ appState: AppState) -> GitHubProviderConfig {
         appState.config.tasks?.providers.github ?? GitHubProviderConfig()
     }
@@ -676,7 +792,15 @@ private struct DevelopmentContent: View {
         .onChange(of: appState.devOpsSsoAuthenticated) { _, ready in
             if ready { model.loadPullRequests(appState: appState, force: true) }
         }
+        .onAppear(perform: consumeLink)
+        .onChange(of: appState.pendingDevelopmentLink) { _, _ in consumeLink() }
         .actionErrorBanner($model.actionError)
+    }
+
+    private func consumeLink() {
+        guard let link = appState.pendingDevelopmentLink else { return }
+        appState.pendingDevelopmentLink = nil
+        model.open(link, appState: appState)
     }
 
     private var searchText: String { model.searchText }

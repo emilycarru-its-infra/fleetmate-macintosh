@@ -92,12 +92,8 @@ struct GlobalSearchToolbarField: View {
                 .strokeBorder(focused ? Color.accentColor : Color.secondary.opacity(0.35), lineWidth: focused ? 1.5 : 1)
         )
         .help("Search everything (⌘K)")
-        .background(
-            // ⌘K from anywhere puts the cursor here.
-            Button("") { focused = true }
-                .keyboardShortcut("k", modifiers: .command)
-                .opacity(0)
-        )
+        // ⌘K (Edit › Search Everything) puts the cursor here from any tab.
+        .onChange(of: appState.globalSearchFocusRequest) { _, _ in focused = true }
         .popover(isPresented: $showResults, arrowEdge: .bottom) {
             ScrollView {
                 if results.isEmpty {

@@ -832,7 +832,9 @@ private struct DevelopmentContent: View {
             SegmentedPill(
                 selection: $model.segment,
                 options: visibleSegments,
-                label: { $0 == .inbox && model.unreadCount > 0 ? "Inbox \(model.unreadCount)" : $0.rawValue },
+                // The segment only shows while there is unread mail, so the
+                // name alone says it; the count was noise in the toolbar.
+                label: { $0.rawValue },
                 segmentWidth: nil
             )
 

@@ -35,7 +35,44 @@ public enum FleetMateLink: Equatable, Sendable {
 
     // MARK: Parse
 
+    /// A link arrives from anywhere — a web page, a chat message — and its
+    /// names end up in API paths, so each must be a plain name: no slashes,
+    /// no `.`/`..`, no query or fragment characters.
     public static func parse(_ url: URL) throws -> FleetMateLink {
+        let link = try parseUnchecked(url)
+        guard link.names.allSatisfy(isSafeName) else {
+            throw FleetMateLinkError.malformed(url.absoluteString, expected: "plain project, owner and repository names")
+        }
+        return link
+    }
+
+    public static func parseWeb(_ url: URL) throws -> FleetMateLink {
+        let link = try parseWebUnchecked(url)
+        guard link.names.allSatisfy(isSafeName) else { throw FleetMateLinkError.unsupportedWebURL(url.absoluteString) }
+        return link
+    }
+
+    private var names: [String] {
+        switch self {
+        case .pullRequest(let host, _), .commit(let host, _):
+            switch host {
+            case .azureDevOps(let p, let r): return [p, r]
+            case .gitHub(let o, let r): return [o, r]
+            }
+        case .azureDevOpsRun(let p, _), .azureDevOpsPipeline(let p, _): return [p]
+        case .gitHubRun(let o, let r, _), .gitHubIssue(let o, let r, _): return [o, r]
+        case .workItem: return []
+        }
+    }
+
+    static func isSafeName(_ name: String) -> Bool {
+        guard !name.isEmpty, name.count <= 100, name != ".", name != ".." else { return false }
+        return name.unicodeScalars.allSatisfy {
+            CharacterSet.alphanumerics.contains($0) || "-_. ".unicodeScalars.contains($0)
+        }
+    }
+
+    private static func parseUnchecked(_ url: URL) throws -> FleetMateLink {
         guard url.scheme?.lowercased() == scheme else { throw FleetMateLinkError.notFleetMate(url.absoluteString) }
         let route = (url.host ?? "").lowercased()
         let parts = url.path.split(separator: "/").map { $0.removingPercentEncoding ?? String($0) }
@@ -92,7 +129,7 @@ public enum FleetMateLink: Equatable, Sendable {
     /// A web URL from Azure DevOps or GitHub. Azure DevOps is recognised by its
     /// path shape (`/_git/`, `/_build`, `/_workitems/`), not its host, so
     /// any server name works.
-    public static func parseWeb(_ url: URL) throws -> FleetMateLink {
+    private static func parseWebUnchecked(_ url: URL) throws -> FleetMateLink {
         let parts = url.path.split(separator: "/").map { $0.removingPercentEncoding ?? String($0) }
         let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         func item(_ name: String) -> Int? { query.first { $0.name.lowercased() == name.lowercased() }?.value.flatMap(Int.init) }

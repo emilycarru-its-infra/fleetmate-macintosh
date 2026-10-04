@@ -139,6 +139,9 @@ class AppState: ObservableObject {
     /// search lands on a specific asset (serial / tag / name), distinct from
     /// `navigateToFilter` which drives the status filter.
     @Published var navigateToInventorySearch: String?
+    /// Snipe-IT asset to open in the Inventory tab on arrival — the exact
+    /// deep link from Recent Activity and global search.
+    @Published var navigateToAssetId: Int?
     /// DevOps work item to open in the Projects tab on arrival.
     @Published var navigateToWorkItemId: Int?
     /// GitHub twin of navigateToWorkItemId: the issue's web URL, which is

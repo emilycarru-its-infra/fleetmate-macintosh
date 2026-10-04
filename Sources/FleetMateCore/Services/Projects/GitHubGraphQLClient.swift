@@ -339,8 +339,20 @@ public enum GitHubRateLimitGate {
         let retryAfter = header("Retry-After").flatMap(TimeInterval.init)
 
         lock.lock()
+        let previous = latest[bucket]
         if let remaining, let limit, let reset { latest[bucket] = (remaining, limit, reset) }
         lock.unlock()
+
+        // Budget trace, one line per call, to measure what a working day of
+        // FleetMate spends (#137). Spent is the drop since this process's last
+        // call in the same window; other tools on the same account also move
+        // it, so a large drop with no FleetMate call between is someone else.
+        if let remaining, let limit {
+            let sameWindow = previous.map { $0.reset == reset } ?? false
+            let spent = sameWindow ? max(0, (previous?.remaining ?? remaining) - remaining) : 0
+            let path = response.url?.path ?? "?"
+            dbg.info("budget \(bucket.rawValue) status=\(response.statusCode) remaining=\(remaining)/\(limit) spent=\(spent) \(path)", category: "github-budget")
+        }
 
         let limited = response.statusCode == 403 || response.statusCode == 429
         if let retryAfter, limited {

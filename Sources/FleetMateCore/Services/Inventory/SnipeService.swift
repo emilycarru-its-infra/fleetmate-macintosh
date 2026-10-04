@@ -195,11 +195,12 @@ public class SnipeService {
         return allAssets
     }
     
-    public func getAssets(search: String? = nil, statusId: Int? = nil, locationId: Int? = nil, limit: Int = 500) async throws -> [SnipeAsset] {
+    public func getAssets(search: String? = nil, statusId: Int? = nil, locationId: Int? = nil, modelId: Int? = nil, limit: Int = 500) async throws -> [SnipeAsset] {
         var parameters: [String: Any] = ["limit": limit]
         if let search = search { parameters["search"] = search }
         if let statusId = statusId { parameters["status_id"] = statusId }
         if let locationId = locationId { parameters["location_id"] = locationId }
+        if let modelId = modelId { parameters["model_id"] = modelId }
         
         return try await fetchList("/api/v1/hardware", parameters: parameters)
     }

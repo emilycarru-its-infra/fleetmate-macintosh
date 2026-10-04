@@ -16,6 +16,13 @@ struct IntuneCommand: AsyncParsableCommand {
             IntuneRetireSubcommand.self,
             IntuneFreshStartSubcommand.self,
             IntuneDeleteRecordSubcommand.self,
+            IntuneDeleteSubcommand.self,
+            IntuneAutopilotResetSubcommand.self,
+            IntuneAutopilotRecordsSubcommand.self,
+            IntuneCleanupSubcommand.self,
+            IntuneSyncSubcommand.self,
+            IntuneRebootSubcommand.self,
+            IntuneLockSubcommand.self,
             IntuneOffboardSubcommand.self,
             IntuneCimianPushSubcommand.self,
             IntuneSettingsSubcommand.self

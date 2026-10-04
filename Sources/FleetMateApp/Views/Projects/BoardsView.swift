@@ -230,6 +230,7 @@ struct BoardsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if appState.config.isDevOpsConfigured { ProjectsWidgetsSection(metrics: appState.widgetMetrics) }
             contentArea
         }
         .onAppCommand { command in

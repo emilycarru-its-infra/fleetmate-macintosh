@@ -455,6 +455,17 @@ private struct DevicesContentView: View {
         .width(min: 80, ideal: 100)
         .customizationID("added")
         .defaultVisibility(.hidden)
+
+        // Read per device on selection, so most rows read "—" — which is why
+        // it is neither sortable nor offered as a filter.
+        TableColumn("Activation Lock") { row in
+            let lock = row.apple.flatMap { appleOrg.activationLock[$0.serialNumber] }
+            Text(lock?.columnText ?? "—")
+                .foregroundStyle(lock?.isLocked == true ? Color.orange : Color.primary)
+        }
+        .width(min: 80, ideal: 110)
+        .customizationID("activationLock")
+        .defaultVisibility(.hidden)
     }
 
     private func selectAllVisible() {

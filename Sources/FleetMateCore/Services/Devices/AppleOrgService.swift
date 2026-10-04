@@ -161,6 +161,13 @@ public actor AppleOrgService {
         }
     }
 
+    /// Activation Lock, read one device at a time. Report only: no bypass code
+    /// is read or stored, and nothing here can clear a lock.
+    public func activationLock(serial: String) async throws -> AppleActivationLock {
+        guard let status = try await client.getActivationLockStatus(serialNumber: serial) else { return .unknown }
+        return AppleActivationLock(isLocked: status.isLocked, lockType: status.lockType)
+    }
+
     // MARK: - Actions
 
     /// Submit an activity and wait for Apple to finish it.

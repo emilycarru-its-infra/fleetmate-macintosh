@@ -23,7 +23,7 @@ let package = Package(
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
         // Apple School and Business Manager API client. Pinned to a revision
         // because the newest tag predates the migration and release endpoints.
-        .package(url: "https://github.com/rodchristiansen/asbmutil.git", revision: "0b43dbe53d2c6e9f4b46991edf0e9bb4823b56ac"),
+        .package(url: "https://github.com/rodchristiansen/asbmutil.git", revision: "8ef39a52749a9d2567e4b0299d2d1224daa1d433"),
     ],
     targets: [
         // Shared library with services, models, and config

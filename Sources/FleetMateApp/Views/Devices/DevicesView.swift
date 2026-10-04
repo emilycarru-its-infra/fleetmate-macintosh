@@ -287,7 +287,7 @@ private struct DevicesContentView: View {
                 Button("Cancel", role: .cancel) { }
                 Button("Autopilot Reset", role: .destructive) { performAutopilotReset() }
             } message: {
-                Text("Autopilot-reset \(selectedDevices.count) device(s)? Apps and settings are removed; enrollment is kept and the device re-provisions.")
+                Text("Autopilot-reset \(selectedDevices.count) device(s)? Kept: the Entra join and the Intune enrollment. Removed: user data, user accounts, apps and settings. The device returns to the out-of-box experience and re-provisions.")
             }
             .alert("Confirm Delete Record", isPresented: $showDeleteRecordConfirmation) {
                 Button("Cancel", role: .cancel) { }
@@ -665,8 +665,9 @@ private struct DevicesContentView: View {
         }
     }
 
-    /// Autopilot Reset, as FleetMate for Windows sends it: `cleanWindowsDevice`
-    /// without user data, so apps and settings go and the enrollment stays.
+    /// Autopilot Reset: a wipe with `keepEnrollmentData: true` and
+    /// `keepUserData: false`, so the device returns to OOBE still Entra-joined
+    /// and enrolled. Fresh Start (`cleanWindowsDevice`) is a different action.
     private func performAutopilotReset() {
         let targets = selectedDevices
         guard !targets.isEmpty else { return }
@@ -675,7 +676,7 @@ private struct DevicesContentView: View {
             actionMessage = "Autopilot-resetting \(targets.count) device(s)..."
             defer { isPerformingAction = false }
             do {
-                let results = try await appState.graphService.freshStartDevices(targets.map(\.id), keepUserData: false)
+                let results = try await appState.graphService.wipeDevices(targets, options: .autopilotReset)
                 let successful = results.filter { $0.success }.count
                 let failed = results.count - successful
                 actionMessage = failed == 0
@@ -1150,7 +1151,7 @@ struct DeviceActionsPanel: View {
                 onToggle: { toggleSection("autopilotreset") }
             ) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Reimage the selected devices through Windows Autopilot: removes apps and settings, keeps enrollment, and re-provisions.")
+                    Text("Return the selected devices to the out-of-box experience. Keeps the Entra join and Intune enrollment; removes user data, apps and settings.")
                         .appFont(.caption)
                         .foregroundColor(.secondary)
                     Button(action: { showAutopilotResetConfirmation = true }) {

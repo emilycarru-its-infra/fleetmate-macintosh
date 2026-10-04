@@ -83,6 +83,10 @@ enum DeviceLock {
         if state.lookupFailed {
             try fail("lookup-failed", "Could not read the device records, so nothing was changed. \(state.lookupError ?? "reason unavailable")")
         }
+        if let refusal = state.refusal {
+            if !json { _ = displayRecordState(state) }
+            try fail("ambiguous-target", refusal)
+        }
         let (entra, refusal) = target(state)
         guard let entra, let entraObjectId = entra.id, let intune = state.intune else { try fail("no-target", refusal ?? "No target device.") }
 
@@ -103,6 +107,10 @@ enum DeviceLock {
         let plan = LockPlan(verb: verb, serial: serial, deviceName: intune.deviceName ?? serial,
                             operatingSystem: intune.operatingSystem, user: intune.userPrincipalName,
                             lastSync: intune.lastSyncDateTime, group: group, inLockGroup: isMember, ticket: ticket)
+        if !json {
+            printTarget(intune)
+            print("  Entra object \(entraObjectId)".dim)
+        }
         let nothingToDo = "Nothing to do. ".yellow + "\(plan.deviceName) is \(locking ? "already" : "not") in \(group)."
 
         guard confirm else {

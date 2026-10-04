@@ -16,11 +16,51 @@ func lifecycleGraphService() throws -> GraphService {
     return service
 }
 
-/// Serial number or managedDevice id → managedDevice id. A GUID passes through.
-func lifecycleDeviceId(_ service: GraphService, _ identifier: String) async throws -> String {
-    if UUID(uuidString: identifier) != nil { return identifier }
-    if let device = try await service.getDeviceBySerial(identifier), !device.id.isEmpty { return device.id }
-    return identifier
+/// Resolve a destructive command's target to exactly one Intune record.
+///
+/// Serial numbers match with `eq` and a GUID by path; a name never matches.
+/// Invalid input and more than one match exit with the candidates listed.
+/// Returns nil only when nothing matches, so the caller can decide whether a
+/// missing record is a refusal or the orphan case.
+func resolveExactTarget(_ service: GraphService, _ identifier: String) async throws -> IntuneDevice? {
+    let match: ExactMatch<IntuneDevice>
+    do {
+        match = try await service.resolveManagedDeviceExactly(identifier)
+    } catch let error as DeviceIdentifierError {
+        print(error.message.red)
+        throw ExitCode.failure
+    }
+    switch match {
+    case .one(let device):
+        return device
+    case .none:
+        return nil
+    case .many(let devices):
+        print("\(devices.count) Intune records match \(identifier); refusing to choose one. Re-run with the managedDevice id:".red)
+        printTargetCandidates(devices)
+        throw ExitCode.failure
+    }
+}
+
+/// As `resolveExactTarget`, but a missing record is also a refusal.
+func requireExactTarget(_ service: GraphService, _ identifier: String) async throws -> IntuneDevice {
+    guard let device = try await resolveExactTarget(service, identifier) else {
+        print("No Intune record matches \(identifier) exactly. Nothing was sent.".red)
+        throw ExitCode.failure
+    }
+    return device
+}
+
+func printTargetCandidates(_ devices: [IntuneDevice]) {
+    for d in devices {
+        print("  \(d.id)  \(d.deviceName ?? "-")  serial=\(d.serialNumber ?? "-")  \(d.platform.displayName)  last sync \(String((d.lastSyncDateTime ?? "-").prefix(10)))")
+    }
+}
+
+/// What a destructive command is about to act on, printed before it acts.
+func printTarget(_ device: IntuneDevice) {
+    print("Target: ".bold + "\(device.deviceName ?? "-")  serial=\(device.serialNumber ?? "-")  \(device.platform.displayName)")
+    print("  managedDevice \(device.id)  Entra deviceId \(device.azureADDeviceId ?? "-")".dim)
 }
 
 func reportLifecycleAction(_ results: [BulkActionResult], action: String) throws {
@@ -60,13 +100,18 @@ struct IntuneAutopilotResetSubcommand: AsyncParsableCommand {
     var confirm: Bool = false
 
     func run() async throws {
-        guard confirm else {
-            print("This will reset \(identifier) to OOBE, removing profiles, apps and settings. Re-run with --confirm to proceed.".yellow)
+        let service = try lifecycleGraphService()
+        let device = try await requireExactTarget(service, identifier)
+        printTarget(device)
+        guard device.platform == .windows else {
+            print("AutoPilot Reset is Windows only.".red)
             throw ExitCode.failure
         }
-        let service = try lifecycleGraphService()
-        let id = try await lifecycleDeviceId(service, identifier)
-        try reportLifecycleAction(try await service.autopilotResetDevices([id], keepUserData: keepUserData), action: "AutoPilot Reset")
+        guard confirm else {
+            print("Dry run. ".yellow + "This would reset it to OOBE, removing profiles, apps and settings. Re-run with --confirm to proceed.")
+            return
+        }
+        try reportLifecycleAction(try await service.autopilotResetDevices([device.id], keepUserData: keepUserData), action: "AutoPilot Reset")
     }
 }
 
@@ -85,13 +130,14 @@ struct IntuneDeleteSubcommand: AsyncParsableCommand {
     var confirm: Bool = false
 
     func run() async throws {
-        guard confirm else {
-            print("This will delete the Intune record for \(identifier), leaving it unmanaged until it re-enrolls. Re-run with --confirm to proceed.".yellow)
-            throw ExitCode.failure
-        }
         let service = try lifecycleGraphService()
-        let id = try await lifecycleDeviceId(service, identifier)
-        try reportLifecycleAction(try await service.deleteIntuneRecords([id]), action: "delete")
+        let device = try await requireExactTarget(service, identifier)
+        printTarget(device)
+        guard confirm else {
+            print("Dry run. ".yellow + "This would delete the Intune record, leaving it unmanaged until it re-enrolls. Re-run with --confirm to proceed.")
+            return
+        }
+        try reportLifecycleAction(try await service.deleteIntuneRecords([device.id]), action: "delete")
     }
 }
 
@@ -126,6 +172,14 @@ struct IntuneAutopilotRecordsSubcommand: AsyncParsableCommand {
 /// "none" for an enrolled machine sends people chasing a hash that was never missing.
 @discardableResult
 func displayRecordState(_ state: DeviceRecordState) -> Bool {
+    if let refusal = state.refusal {
+        print(refusal.red)
+        if !state.intuneCandidates.isEmpty { printTargetCandidates(state.intuneCandidates) }
+        for ap in state.autopilotCandidates {
+            print("  Autopilot \(ap.id ?? "-")  serial=\(ap.serialNumber ?? "-")  enrollmentState=\(ap.enrollmentState ?? "-")")
+        }
+        return false
+    }
     if state.lookupFailed {
         print("Could not read the records for \(state.serial).".red)
         print((state.lookupError ?? "reason unavailable").dim)
@@ -197,6 +251,12 @@ struct IntuneCleanupSubcommand: AsyncParsableCommand {
             return
         }
 
+        // Show exactly what will be removed, and refuse on a failed or
+        // ambiguous read, before deleting anything.
+        let current = await service.getDeviceRecordState(serial: serial)
+        guard displayRecordState(current) else { throw ExitCode.failure }
+        print("")
+
         let result = await service.cleanDeviceRecords(serial: serial)
         if json {
             try printLifecycleJSON(result)
@@ -234,7 +294,9 @@ struct IntuneSyncSubcommand: AsyncParsableCommand {
 
     func run() async throws {
         let service = try lifecycleGraphService()
-        let id = try await lifecycleDeviceId(service, identifier)
+        let device = try await requireExactTarget(service, identifier)
+        printTarget(device)
+        let id = device.id
         try reportLifecycleAction(try await service.syncDevices([id]), action: "sync")
     }
 }
@@ -247,7 +309,9 @@ struct IntuneRebootSubcommand: AsyncParsableCommand {
 
     func run() async throws {
         let service = try lifecycleGraphService()
-        let id = try await lifecycleDeviceId(service, identifier)
+        let device = try await requireExactTarget(service, identifier)
+        printTarget(device)
+        let id = device.id
         try reportLifecycleAction(try await service.rebootDevices([id]), action: "reboot")
     }
 }
@@ -261,9 +325,17 @@ struct IntuneLockSubcommand: AsyncParsableCommand {
     @Option(help: "Optional PIN (macOS)")
     var pin: String?
 
+    @Flag(help: "Required to actually lock; without it this is a dry run")
+    var confirm: Bool = false
+
     func run() async throws {
         let service = try lifecycleGraphService()
-        let id = try await lifecycleDeviceId(service, identifier)
-        try reportLifecycleAction(try await service.remoteLockDevices([id], pin: pin), action: "lock")
+        let device = try await requireExactTarget(service, identifier)
+        printTarget(device)
+        guard confirm else {
+            print("Dry run. ".yellow + "Re-run with --confirm to lock it.")
+            return
+        }
+        try reportLifecycleAction(try await service.remoteLockDevices([device.id], pin: pin), action: "lock")
     }
 }

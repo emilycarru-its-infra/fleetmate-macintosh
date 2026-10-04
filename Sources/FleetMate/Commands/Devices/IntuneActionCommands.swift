@@ -15,20 +15,28 @@ private func graphServiceOrExit() throws -> GraphService {
     return service
 }
 
-/// Resolve a serial number to a managedDevice id; if no device matches, assume
-/// the identifier already is a managedDevice id and pass it through.
+/// Resolve to exactly one managedDevice id, or refuse. There is no
+/// pass-through: an identifier nothing matches is never sent as if it were an id.
 private func resolveDeviceId(_ service: GraphService, _ identifier: String) async throws -> String {
-    if let device = try await service.getDeviceBySerial(identifier), !device.id.isEmpty {
-        return device.id
-    }
-    return identifier
+    let device = try await requireExactTarget(service, identifier)
+    printTarget(device)
+    return device.id
 }
 
 /// Resolve to the full record so platform-specific options can be applied.
-/// Returns nil when nothing matches, which every caller that needs a platform
-/// treats as fatal.
+/// Exact matches only; nil when nothing matches, and a refusal (with the
+/// candidates) when the input is invalid or matches more than one record.
 private func resolveDevice(_ service: GraphService, _ identifier: String) async throws -> IntuneDevice? {
-    try await service.resolveManagedDevice(identifier)
+    let device = try await resolveExactTarget(service, identifier)
+    if let device { printTarget(device) }
+    return device
+}
+
+/// As `resolveDevice`, for actions that cannot be sent without a record.
+private func requireDevice(_ service: GraphService, _ identifier: String) async throws -> IntuneDevice {
+    let device = try await requireExactTarget(service, identifier)
+    printTarget(device)
+    return device
 }
 
 private func reportBulk(_ results: [BulkActionResult], action: String) throws {
@@ -105,39 +113,30 @@ struct IntuneWipeSubcommand: AsyncParsableCommand {
             obliterationBehavior: obliteration
         )
 
-        let device = try await resolveDevice(service, identifier)
+        let device = try await requireDevice(service, identifier)
 
         if dryRun {
-            let platform = device?.platform ?? .other
+            let platform = device.platform
             printDryRunHeader(device: device, identifier: identifier)
-            if device == nil {
-                print("  No Intune device matches — the request would go out with only the keys every platform accepts.".yellow)
-            }
-            print("  POST managedDevices/\(device?.id ?? identifier)/wipe")
+            print("  POST managedDevices/\(device.id)/wipe")
             print("       \(GraphService.describe(options.requestBody(for: platform)))")
             printDroppedWipeOptions(options, platform: platform)
             print("\nDry run — nothing was sent.".cyan)
             return
         }
 
-        let results: [BulkActionResult]
-        if let device {
-            print("Wiping \(device.deviceName ?? identifier) (\(device.platform.displayName))".cyan)
-            results = try await service.wipeDevices([device], options: options)
-        } else {
-            // Unknown platform — send only the keys every platform accepts.
-            results = try await service.wipeDevices([identifier], options: options)
-        }
+        print("Wiping \(device.deviceName ?? identifier) (\(device.platform.displayName))".cyan)
+        let results = try await service.wipeDevices([device], options: options)
         // Cleanup is not optional: stale Entra twins left behind fail the next
         // OOBE and wedge the Enrollment Status Page. Only run it when the wipe was
         // actually accepted, and use the name captured before the wipe renamed the
         // bound object.
         if results.contains(where: { $0.success }) {
-            let serial = device?.serialNumber ?? identifier
+            let serial = device.serialNumber ?? identifier
             let cleanup = await service.cleanStaleEntraTwins(
                 serial: serial,
-                knownNames: [device?.deviceName].compactMap { $0 },
-                liveAzureADDeviceId: device?.azureADDeviceId)
+                knownNames: [device.deviceName].compactMap { $0 },
+                liveAzureADDeviceId: device.azureADDeviceId)
             for line in cleanup.deleted { print("  deleted \(line)".green) }
             for line in cleanup.failed { print("  cleanup failed: \(line)".red) }
             for name in cleanup.resyncRisk {
@@ -206,9 +205,9 @@ struct IntuneRetireSubcommand: AsyncParsableCommand {
         let service = try graphServiceOrExit()
 
         if dryRun {
-            let device = try await resolveDevice(service, identifier)
+            let device = try await requireDevice(service, identifier)
             printDryRunHeader(device: device, identifier: identifier)
-            print("  POST managedDevices/\(device?.id ?? identifier)/retire")
+            print("  POST managedDevices/\(device.id)/retire")
             print("\nDry run — nothing was sent.".cyan)
             return
         }
@@ -250,21 +249,21 @@ struct IntuneFreshStartSubcommand: AsyncParsableCommand {
             throw ExitCode.failure
         }
         let service = try graphServiceOrExit()
-        let device = try await resolveDevice(service, identifier)
-        if let device, device.platform != .windows {
+        let device = try await requireDevice(service, identifier)
+        if device.platform != .windows {
             print("\(device.deviceName ?? identifier) is \(device.platform.displayName) — Fresh Start is Windows only.".red)
             throw ExitCode.failure
         }
 
         if dryRun {
             printDryRunHeader(device: device, identifier: identifier)
-            print("  POST managedDevices/\(device?.id ?? identifier)/cleanWindowsDevice")
+            print("  POST managedDevices/\(device.id)/cleanWindowsDevice")
             print("       {\"keepUserData\":\(keepUserData)}")
             print("\nDry run — nothing was sent.".cyan)
             return
         }
 
-        let results = try await service.freshStartDevices([device?.id ?? identifier], keepUserData: keepUserData)
+        let results = try await service.freshStartDevices([device.id], keepUserData: keepUserData)
         try reportBulk(results, action: "fresh start")
     }
 }
@@ -299,9 +298,9 @@ struct IntuneDeleteRecordSubcommand: AsyncParsableCommand {
         let service = try graphServiceOrExit()
 
         if dryRun {
-            let device = try await resolveDevice(service, identifier)
+            let device = try await requireDevice(service, identifier)
             printDryRunHeader(device: device, identifier: identifier)
-            print("  DELETE managedDevices/\(device?.id ?? identifier)")
+            print("  DELETE managedDevices/\(device.id)")
             print("\nDry run — nothing was sent.".cyan)
             return
         }
@@ -403,6 +402,12 @@ struct IntuneOffboardSubcommand: AsyncParsableCommand {
         // stamped outlive that record, and they are precisely what a
         // half-finished cleanup leaves behind — so resolve those rather than
         // refuse the run. Nothing at all matching is still a failure.
+        // The orphan path is reachable by serial only, and only for one identity.
+        if let identities = try? await service.autopilotDevices(exactSerial: identifier), identities.count > 1 {
+            print("\(identities.count) Autopilot identities have serial \(identifier); refusing to choose one:".red)
+            for ap in identities { print("  \(ap.id ?? "-")  serial=\(ap.serialNumber ?? "-")  enrollmentState=\(ap.enrollmentState ?? "-")") }
+            throw ExitCode.failure
+        }
         let records = await service.resolveOrphanRecords(identifier)
         guard !records.isEmpty else {
             print("No Intune, Autopilot or Entra record matches \(identifier)".red)
@@ -411,6 +416,7 @@ struct IntuneOffboardSubcommand: AsyncParsableCommand {
 
         let name = records.entra?.displayName ?? records.autopilot?.serialNumber ?? identifier
         print("\(name) has no Intune record — cleaning up the directory records it left behind".yellow)
+        print("Target: ".bold + "serial=\(records.autopilot?.serialNumber ?? "-")  Autopilot \(records.autopilot?.id ?? "-")  Entra object \(records.entra?.id ?? "-")")
 
         if dryRun {
             printPlan(service.previewOffboardOrphan(identifier, records: records, plan: plan))

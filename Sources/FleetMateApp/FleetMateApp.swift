@@ -164,6 +164,17 @@ class AppState: ObservableObject {
             case .gitHubIssue(let owner, let repo, let number):
                 navigateToGitHubIssueUrl = "https://github.com/\(owner)/\(repo)/issues/\(number)"
                 navigateToTab = .projects
+            case .device(let id):
+                navigateToDeviceId = id
+                navigateToTab = .devices
+            case .asset(let id):
+                navigateToAssetId = id
+                navigateToTab = .inventory
+            case .ticket(let id):
+                navigateToTicketId = id
+                navigateToTab = .tickets
+            case .user, .group:
+                navigateToTab = .identity
             default:
                 pendingDevelopmentLink = link
                 navigateToTab = .development

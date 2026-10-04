@@ -49,9 +49,9 @@ public extension WindowsAutopilotDevice {
 
 /// Where a Windows device stands between Autopilot and Intune.
 public enum AutopilotRegistration: String, CaseIterable, Sendable {
-    case registeredAndEnrolled = "Registered and Enrolled"
+    case registeredAndEnrolled = "Registered"
     case registeredNotEnrolled = "Registered, Not Enrolled"
-    case enrolledNotRegistered = "Enrolled, Not Registered"
+    case enrolledNotRegistered = "Not Registered"
 }
 
 /// Autopilot identities matched to the Intune records they describe.

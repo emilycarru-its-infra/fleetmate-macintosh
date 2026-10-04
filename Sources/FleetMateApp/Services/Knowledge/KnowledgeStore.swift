@@ -28,11 +28,13 @@ final class KnowledgeStore: ObservableObject {
     var isSkillsConfigured: Bool { hubMirror != nil }
 
     func configure(_ config: FleetMateConfig) {
+        // The DevOps sign-in only ever goes to the DevOps server.
+        let devOpsHost = URL(string: config.effectiveDevopsBaseUrl)?.host
         handbookMirror = config.handbookRepoUrl.map {
-            RepoMirror(name: "handbook", remoteURL: $0, paths: ["website/content"])
+            RepoMirror(name: "handbook", remoteURL: $0, paths: ["website/content"], tokenHost: devOpsHost)
         }
         hubMirror = config.agentsHubRepoUrl.map {
-            RepoMirror(name: "agents-hub", remoteURL: $0, paths: ["agents"])
+            RepoMirror(name: "agents-hub", remoteURL: $0, paths: ["agents"], tokenHost: devOpsHost)
         }
         siteURL = config.handbookSiteUrl
     }

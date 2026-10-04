@@ -70,9 +70,6 @@ struct ContentView: View {
                     DefaultToolbarItem(kind: .search, placement: .automatic)
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    GlobalSearchToolbarField()
-                }
-                ToolbarItem(placement: .primaryAction) {
                     RecentActivityToolbarButton()
                 }
                 ToolbarItem(placement: .primaryAction) {
@@ -101,6 +98,10 @@ struct ContentView: View {
                         .background(.orange.opacity(0.12), in: .rect(cornerRadius: 4))
                         .help("One or more systems are logged in as a Service Principal")
                     }
+                }
+                // Last, at the far right, where search is looked for.
+                ToolbarItem(placement: .primaryAction) {
+                    GlobalSearchToolbarField()
                 }
             }
             .onAppear {

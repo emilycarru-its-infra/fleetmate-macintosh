@@ -30,7 +30,8 @@ struct KPI: Identifiable {
 // MARK: - Widget Metrics
 
 /// The numbers behind every tab's Widgets section, computed from the shared
-/// caches. Owned by AppState rather than the tab views: ContentView swaps the
+/// caches the tabs themselves load (only the work-item and ReportMate
+/// figures, which no tab list holds, are fetched here). Owned by AppState rather than the tab views: ContentView swaps the
 /// tab content wholesale on every switch, so a view-owned copy came back empty
 /// and recomputed (and, for ReportMate and sprints, refetched) each visit.
 @MainActor
@@ -77,8 +78,15 @@ final class WidgetMetrics: ObservableObject {
 
     func isLoading(_ section: Section) -> Bool { loading.contains(section) }
 
+    /// A forced reload that arrived mid-load (a cache landing while the first
+    /// read was still in flight) runs once the current load finishes.
+    private var pendingReload: Set<Section> = []
+
     func load(_ section: Section, appState: AppState, force: Bool = false) async {
-        if loading.contains(section) { return }
+        if loading.contains(section) {
+            if force { pendingReload.insert(section) }
+            return
+        }
         if !force, let at = loadedAt[section], Date().timeIntervalSince(at) < Self.freshness { return }
         loading.insert(section)
         defer {
@@ -92,20 +100,16 @@ final class WidgetMetrics: ObservableObject {
         case .workItems:  await loadWorkItems(appState)
         case .inventory:  await loadInventory(appState)
         }
+        if pendingReload.remove(section) != nil {
+            loading.remove(section)
+            await load(section, appState: appState, force: true)
+        }
     }
 
     private func loadDevices(_ appState: AppState) async {
         guard appState.config.isGraphConfigured else { return }
-        if appState.cachedDevices.isEmpty && !appState.isDevicesCacheValid {
-            do {
-                let devices = try await appState.graphService.getManagedDevices(limit: 10000)
-                appState.updateDevicesCache(devices)
-            } catch {
-                dbg.error("Widget device fetch: \(error)", category: "widgets")
-                return
-            }
-        }
-
+        // The Devices tab loads the cache; widgets only read it, so a cold
+        // start makes one Graph read rather than two racing each other.
         let devices = appState.cachedDevices
         guard !devices.isEmpty else { return }
 
@@ -170,17 +174,6 @@ final class WidgetMetrics: ObservableObject {
 
     private func loadTickets(_ appState: AppState) async {
         guard appState.config.isTdxConfigured else { return }
-        if appState.cachedTickets.isEmpty && !appState.isTicketsCacheValid {
-            do {
-                var search = TicketSearchRequest(maxResults: 500)
-                if let gid = appState.config.tdxResponsibleGroupId { search.responsibleGroupIds = [gid] }
-                let tickets = try await appState.tdxService.searchTickets(search: search, maxResults: 500)
-                appState.updateTicketsCache(tickets)
-            } catch {
-                dbg.error("Widget ticket fetch: \(error)", category: "widgets")
-            }
-        }
-
         let tickets = appState.cachedTickets
         guard !tickets.isEmpty else { return }
         let closed = Set(["closed", "cancelled", "canceled"])
@@ -255,18 +248,6 @@ final class WidgetMetrics: ObservableObject {
 
     private func loadInventory(_ appState: AppState) async {
         guard appState.config.isSnipeConfigured else { return }
-        if appState.cachedAssets.isEmpty && !appState.isAssetsCacheValid {
-            // Only attempt the call with auth in hand (SSO cookies or API key).
-            guard appState.snipeService.isConfigured else { return }
-            do {
-                let assets = try await appState.snipeService.getAllAssets()
-                appState.updateAssetsCache(assets)
-            } catch {
-                dbg.error("Widget asset fetch: \(error)", category: "widgets")
-                return
-            }
-        }
-
         let assets = appState.cachedAssets
         guard !assets.isEmpty else { return }
 

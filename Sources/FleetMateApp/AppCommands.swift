@@ -187,6 +187,13 @@ struct FleetMateCommands: Commands {
             .keyboardShortcut("`", modifiers: .control)
             Button("New Terminal Tab") { appState.terminals.open(appState.agentDefaultLaunch) }
                 .keyboardShortcut("t", modifiers: .command)
+            Button("Terminal Full Window") {
+                let terminals = appState.terminals
+                if terminals.sessions.isEmpty { terminals.open(appState.agentDefaultLaunch) }
+                terminals.isVisible = true
+                terminals.isMaximized.toggle()
+            }
+            .keyboardShortcut(.return, modifiers: [.command, .shift])
 
             Divider()
 

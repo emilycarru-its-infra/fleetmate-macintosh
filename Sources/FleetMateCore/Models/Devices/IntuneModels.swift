@@ -550,6 +550,11 @@ public struct WipeOptions: Sendable, Equatable {
 
     /// The request body for `POST managedDevices/{id}/wipe`, trimmed to the keys
     /// the given platform accepts.
+    /// Intune's Autopilot Reset: a wipe that keeps the Entra join and the
+    /// enrollment and removes user data, apps and settings, returning the
+    /// device to OOBE. It is not Fresh Start (`cleanWindowsDevice`).
+    public static let autopilotReset = WipeOptions(keepEnrollmentData: true, keepUserData: false)
+
     public func requestBody(for platform: DevicePlatform) -> [String: Any] {
         var body: [String: Any] = [
             "keepEnrollmentData": keepEnrollmentData,

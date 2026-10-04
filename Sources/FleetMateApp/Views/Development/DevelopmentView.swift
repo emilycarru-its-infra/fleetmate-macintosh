@@ -24,6 +24,8 @@ final class DevelopmentModel: ObservableObject {
     @Published private(set) var pullRequestsLoadedAt: Date?
     @Published var selectedSource: PullRequestSource?
     @Published var selectedRepo: String?
+    @Published var selectedCommitRepo: String?
+    @Published var selectedPipelineRepo: String?
     @Published var onlyMine = false
     @Published var selectedPullRequest: UnifiedPullRequest?
     @Published private(set) var availableSources: Set<PullRequestSource> = []
@@ -62,6 +64,7 @@ final class DevelopmentModel: ObservableObject {
     func visibleRepositoryCommits(matching search: String) -> [RepositoryCommits] {
         var rows = repositoryCommits
         if let selectedSource { rows = rows.filter { $0.source == selectedSource } }
+        if let selectedCommitRepo { rows = rows.filter { $0.displayName == selectedCommitRepo } }
         let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
         if !needle.isEmpty {
             rows = rows.compactMap { repo in
@@ -156,6 +159,7 @@ final class DevelopmentModel: ObservableObject {
     func visiblePipelineRuns(matching search: String) -> [PipelineRun] {
         var rows = pipelineRuns
         if let selectedSource { rows = rows.filter { $0.source == selectedSource } }
+        if let selectedPipelineRepo { rows = rows.filter { Self.pipelineRepoKey($0) == selectedPipelineRepo } }
         if let pipelineStatusFilter {
             rows = rows.filter { matches($0, status: pipelineStatusFilter) }
         }
@@ -202,6 +206,25 @@ final class DevelopmentModel: ObservableObject {
             latest[key] = run
         }
         return Set(latest.values.map(\.id))
+    }
+
+    /// Repositories with commits in the current source scope, by commit count.
+    var commitRepoCounts: [(repo: String, count: Int)] {
+        let scoped = selectedSource.map { s in repositoryCommits.filter { $0.source == s } } ?? repositoryCommits
+        var counts: [String: Int] = [:]
+        for repo in scoped { counts[repo.displayName, default: 0] += repo.commits.count }
+        guard counts.count > 1 else { return [] }
+        return counts.map { ($0.key, $0.value) }.sorted { $0.1 == $1.1 ? $0.0 < $1.0 : $0.1 > $1.1 }
+    }
+
+    /// A run's repository, or its project when the run has none.
+    static func pipelineRepoKey(_ run: PipelineRun) -> String {
+        run.repository.map { "\(run.container)/\($0)" } ?? run.container
+    }
+
+    var pipelineRepoCounts: [(repo: String, count: Int)] {
+        let scoped = selectedSource.map { s in pipelineRuns.filter { $0.source == s } } ?? pipelineRuns
+        return scoped.repoCounts(Self.pipelineRepoKey)
     }
 
     func togglePipelineStatus(_ status: PipelineRunStatus) {
@@ -364,6 +387,8 @@ final class DevelopmentModel: ObservableObject {
     func toggleSource(_ source: PullRequestSource) {
         selectedSource = (selectedSource == source) ? nil : source
         selectedRepo = nil
+        selectedCommitRepo = nil
+        selectedPipelineRepo = nil
     }
 
     func toggleRepo(_ repo: String) {
@@ -790,26 +815,14 @@ private struct DevelopmentContent: View {
                     model.onlyMine.toggle()
                 }
                 .help("Only pull requests I created, review or took part in")
+                if !model.repoCounts.isEmpty {
+                    RepoFilterMenu(selection: $model.selectedRepo, counts: model.repoCounts)
+                }
                 Spacer()
                 Text("\(model.visiblePullRequests(matching: searchText).count) open")
                     .appFont(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
-            }
-            let repos = model.repoCounts
-            if !repos.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 4) {
-                        ForEach(repos, id: \.repo) { entry in
-                            chip(
-                                title: entry.repo,
-                                count: entry.count,
-                                tint: .secondary,
-                                isSelected: model.selectedRepo == entry.repo
-                            ) { model.toggleRepo(entry.repo) }
-                        }
-                    }
-                }
             }
         }
         .padding(.horizontal, 12)
@@ -945,6 +958,9 @@ private struct DevelopmentContent: View {
                             ) { model.toggleSource(source) }
                         }
                     }
+                }
+                if !model.commitRepoCounts.isEmpty {
+                    RepoFilterMenu(selection: $model.selectedCommitRepo, counts: model.commitRepoCounts)
                 }
                 Spacer()
                 if let at = model.commitsLoadedAt {

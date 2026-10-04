@@ -297,45 +297,14 @@ struct PullRequestQueueSection: View {
         }
     }
 
-    /// Secondary filter: one pill per repository in the current source scope,
-    /// busiest first. Only rendered when there's a real choice to make.
+    /// Secondary filter: a repository dropdown in the current source scope.
+    /// Only rendered when there's a real choice to make.
     @ViewBuilder
     private var repoFilterRow: some View {
         let repos = model.repoCounts
         if !repos.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(repos.prefix(14), id: \.repo) { entry in
-                        repoChip(entry.repo, count: entry.count)
-                    }
-                }
-            }
+            RepoFilterMenu(selection: $model.selectedRepo, counts: repos)
         }
-    }
-
-    private func repoChip(_ repo: String, count: Int) -> some View {
-        let isSelected = model.selectedRepo == repo
-        return Button(action: {
-            withAnimation(.smooth(duration: 0.15)) { model.toggleRepo(repo) }
-        }) {
-            HStack(spacing: 4) {
-                Image(systemName: "folder")
-                    .appFont(.caption2)
-                Text(repo).appFont(.caption2, weight: .medium)
-                Text("\(count)")
-                    .appFont(.caption2)
-                    .monospacedDigit()
-                    .foregroundStyle(isSelected ? Color.white.opacity(0.75) : Color.secondary)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.1))
-            .foregroundStyle(isSelected ? Color.white : Color.secondary)
-            .clipShape(Capsule())
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .help(isSelected ? "Clear the \(repo) filter" : "Show only \(repo)")
     }
 
     // MARK: Header

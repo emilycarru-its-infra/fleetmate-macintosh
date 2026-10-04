@@ -143,6 +143,7 @@ struct ContentView: View {
                 }
             }
             .actionErrorBanner($appState.linkError, title: "Couldn't open link")
+            .modifier(HandbookReaderHost(knowledge: appState.knowledge))
             .onChange(of: appState.navigateToTab) { _, newTab in
                 if let tab = newTab {
                     appState.selectedTab = tab

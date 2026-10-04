@@ -64,6 +64,13 @@ public class AzureDevOpsService {
     /// that gated on `hasValidToken` alone stopped asking once it lapsed and
     /// never reached the refresh inside `request`, so the app looked signed
     /// out after sitting idle. Returns whether a valid token is now held.
+    /// The current bearer token, refreshed first if it has lapsed — for
+    /// tools outside this service, like git, that need the same sign-in.
+    public func currentToken() async -> String? {
+        guard await ensureValidToken() else { return nil }
+        return bearerToken
+    }
+
     @discardableResult
     public func ensureValidToken() async -> Bool {
         if hasValidToken { return true }

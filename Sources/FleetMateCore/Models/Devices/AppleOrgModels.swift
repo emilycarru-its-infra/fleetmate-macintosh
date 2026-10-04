@@ -468,3 +468,58 @@ public enum AppleOrgJoin {
         return out
     }
 }
+
+/// A device's Activation Lock state as its Apple organization reports it.
+///
+/// The organization is the authority here: it knows the live state, covers
+/// Macs as well as iPhones and iPads, and is the only source that says which
+/// kind of lock is set. A read that fails or returns nothing is `.unknown`,
+/// never `.disabled` — "Disabled" from a failure would be the wrong answer.
+public enum AppleActivationLock: Hashable, Sendable {
+    case mdmLock
+    case userLock
+    /// Locked, but the organization did not say which kind.
+    case enabled
+    case disabled
+    case unknown
+
+    /// Maps the organization's answer. `nil` means it could not report one.
+    public init(isLocked: Bool?, lockType: String?) {
+        guard let isLocked else { self = .unknown; return }
+        guard isLocked else { self = .disabled; return }
+        switch lockType?.uppercased() {
+        case "MDM": self = .mdmLock
+        case "USER": self = .userLock
+        default: self = .enabled
+        }
+    }
+
+    public var isLocked: Bool {
+        switch self {
+        case .mdmLock, .userLock, .enabled: true
+        case .disabled, .unknown: false
+        }
+    }
+
+    /// Short value for the table column.
+    public var columnText: String {
+        switch self {
+        case .mdmLock: "Enabled — MDM"
+        case .userLock: "Enabled — User"
+        case .enabled: "Enabled"
+        case .disabled: "Disabled"
+        case .unknown: "Unknown"
+        }
+    }
+
+    /// Full value for the inspector, saying what the lock means for clearing it.
+    public var detailText: String {
+        switch self {
+        case .mdmLock: "Enabled — MDM lock (bypass code escrowed; clearing doesn't need the owner)"
+        case .userLock: "Enabled — User lock (needs the owner's Apple Account)"
+        case .enabled: "Enabled"
+        case .disabled: "Disabled"
+        case .unknown: "Unknown"
+        }
+    }
+}

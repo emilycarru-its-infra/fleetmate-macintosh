@@ -39,6 +39,8 @@ public struct IntuneDevice: Codable, Identifiable, Sendable {
     public let skuFamily: String?
     public let azureADRegistered: Bool?
     public let deviceRegistrationState: String?
+    /// Graph reports this as a string: "Unknown", "True" or "False".
+    public let jailBroken: String?
     
     public var id: String { _id ?? serialNumber ?? UUID().uuidString }
     
@@ -53,7 +55,7 @@ public struct IntuneDevice: Codable, Identifiable, Sendable {
         case deviceCategoryDisplayName, managementAgent, notes
         case physicalMemoryInBytes, wiFiMacAddress, ethernetMacAddress
         case imei, meid, phoneNumber, subscriberCarrier, joinType, skuFamily
-        case azureADRegistered, deviceRegistrationState
+        case azureADRegistered, deviceRegistrationState, jailBroken
     }
 }
 

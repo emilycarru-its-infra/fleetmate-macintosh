@@ -198,6 +198,7 @@ private struct IntuneDeviceSections: View {
             DeviceDetailRow(label: "Management State", value: device.managementState)
             DeviceDetailRow(label: "Azure AD Registered", value: device.azureADRegistered == true ? "Yes" : (device.azureADRegistered == false ? "No" : nil))
             DeviceDetailRow(label: "Device Category", value: device.deviceCategoryDisplayName)
+            DeviceDetailRow(label: "Jailbroken", value: device.jailBroken)
             
             if isLoadingCompliance {
                 HStack {

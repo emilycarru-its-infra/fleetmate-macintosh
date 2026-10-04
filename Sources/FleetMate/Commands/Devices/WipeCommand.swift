@@ -79,6 +79,15 @@ struct WipeCommand: AsyncParsableCommand {
             print("No targets resolved. ".yellow + "Pass serials, or --location/--model/--file.")
             throw ExitCode.failure
         }
+        // Every target must be a well-formed serial before anything is read:
+        // a stray fragment from a file or an inventory field is refused, not
+        // turned into a Graph query.
+        let invalid = targets.filter { (try? DeviceIdentifier.validateSerial($0)) == nil }
+        guard invalid.isEmpty else {
+            print("Refusing: \(invalid.count) target(s) are not valid serial numbers (letters and digits only):".red)
+            for bad in invalid { print("  \(bad)") }
+            throw ExitCode.failure
+        }
         guard targets.count <= max else {
             print("\(targets.count) targets exceeds the --max ceiling of \(max).".red)
             print("Narrow the targeting, or raise --max deliberately.".dim)
@@ -106,6 +115,20 @@ struct WipeCommand: AsyncParsableCommand {
                 print((unreadable[0].lookupError ?? "reason unavailable").dim)
                 print("")
                 print("This is usually an elevation problem, not a device problem. ".yellow + "Check az login, then retry.")
+            }
+            throw ExitCode.failure
+        }
+
+        // A serial that matches more than one Intune record or Autopilot
+        // identity is refused for the whole batch, with the candidates named.
+        let ambiguous = states.filter { $0.refusal != nil }
+        if !ambiguous.isEmpty {
+            if json {
+                struct Ambiguous: Encodable { let error: String; let targets: [DeviceRecordState] }
+                try printLifecycleJSON(Ambiguous(error: "ambiguous-target", targets: ambiguous))
+            } else {
+                print("Refusing: \(ambiguous.count) target(s) do not resolve to exactly one device. Nothing was changed.".red)
+                for state in ambiguous { _ = displayRecordState(state) }
             }
             throw ExitCode.failure
         }
@@ -305,6 +328,11 @@ struct WipeCommand: AsyncParsableCommand {
                   + (s.entraDevices.isEmpty ? "none" : "\(s.entraDevices.count)").col(7)
                   + (s.autopilot == nil ? "missing" : "present").col(11)
                   + note)
+        }
+        print("")
+        for s in states {
+            let entraIds = s.entraDevices.compactMap(\.id).joined(separator: ",")
+            print("  \(s.serial): \(s.intune?.platform.displayName ?? "-")  managedDevice \(s.intune?.id ?? "-")  Autopilot \(s.autopilot?.id ?? "-")  Entra \(entraIds.isEmpty ? "-" : entraIds)".dim)
         }
         let noAutopilot = states.filter { $0.autopilot == nil }.count
         if noAutopilot > 0 {

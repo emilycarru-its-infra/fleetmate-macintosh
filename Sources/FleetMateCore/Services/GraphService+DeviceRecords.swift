@@ -15,6 +15,16 @@ public struct DeviceRecordState: Codable, Sendable {
     public var lookupFailed = false
     public var lookupError: String?
 
+    /// Why a destructive action must not proceed even though the lookup worked:
+    /// the input was not a valid serial, or it matched more than one record.
+    /// Set together with the candidates so the caller can list them.
+    public var refusal: String?
+    public var intuneCandidates: [IntuneDevice] = []
+    public var autopilotCandidates: [WindowsAutopilotDevice] = []
+
+    /// True only when the records were read and identify one machine.
+    public var canAct: Bool { !lookupFailed && refusal == nil }
+
     /// Entra still holds a device object but Intune has no record — the state
     /// that fails the next OOBE at "Registering your device for mobile management".
     public var isOrphaned: Bool { intune == nil && !entraDevices.isEmpty }
@@ -69,8 +79,16 @@ extension GraphService {
     /// object for one serial. Entra objects are found both through the deviceId
     /// the Autopilot identity and Intune record point at, and by display name,
     /// because an orphan is exactly the case where one of those links is broken.
-    public func getDeviceRecordState(serial: String) async -> DeviceRecordState {
-        var state = DeviceRecordState(serial: serial)
+    public func getDeviceRecordState(serial rawSerial: String) async -> DeviceRecordState {
+        var state = DeviceRecordState(serial: rawSerial)
+        let serial: String
+        do {
+            serial = try DeviceIdentifier.validateSerial(rawSerial)
+        } catch {
+            state.refusal = error.localizedDescription
+            return state
+        }
+        state.serial = serial
         guard let headers = await headers() else {
             state.lookupFailed = true
             state.lookupError = "Not authenticated to Microsoft Graph"
@@ -78,8 +96,26 @@ extension GraphService {
         }
 
         do {
-            state.autopilot = try await getAutopilotDeviceBySerial(serial)
-            state.intune = try await getDeviceBySerial(serial)
+            // Exact serial matches only, and all of them: a second record with
+            // the same serial is a refusal, never "take the first".
+            let autopilot = try await autopilotDevices(exactSerial: serial)
+            let intune = ExactMatch.resolve(
+                try await getManagedDevices(filter: ODataFilter.equals("serialNumber", serial), limit: 10),
+                matching: serial) { $0.serialNumber }
+            switch intune {
+            case .one(let device): state.intune = device
+            case .many(let devices):
+                state.intuneCandidates = devices
+                state.refusal = "\(devices.count) Intune records have serial \(serial); refusing to choose one."
+            case .none: break
+            }
+            if autopilot.count == 1 {
+                state.autopilot = autopilot[0]
+            } else if autopilot.count > 1 {
+                state.autopilotCandidates = autopilot
+                state.refusal = state.refusal ?? "\(autopilot.count) Autopilot identities have serial \(serial); refusing to choose one."
+            }
+            guard state.refusal == nil else { return state }
 
             var seen = Set<String>()
             func add(_ devices: [EntraDevice]) {
@@ -91,12 +127,12 @@ extension GraphService {
 
             for deviceId in [state.autopilot?.azureActiveDirectoryDeviceId, state.intune?.azureADDeviceId] {
                 guard let deviceId, !deviceId.isEmpty else { continue }
-                add(try await entraDevices(filter: "deviceId eq '\(Self.odataEscape(deviceId))'", headers: headers))
+                add(try await entraDevices(filter: ODataFilter.equals("deviceId", deviceId), headers: headers))
             }
 
             let intuneName = state.intune?.deviceName
             if let name = intuneName, !name.isEmpty {
-                add(try await entraDevices(filter: "displayName eq '\(Self.odataEscape(name))'", headers: headers))
+                add(try await entraDevices(filter: ODataFilter.equals("displayName", name), headers: headers))
             }
             // A machine that already lost its Intune record has no name to search
             // by, but the objects found through Autopilot carry the names it has
@@ -105,7 +141,7 @@ extension GraphService {
                 !$0.isEmpty && $0.caseInsensitiveCompare(intuneName ?? "") != .orderedSame
             })
             for name in knownNames {
-                add(try await entraDevices(filter: "displayName eq '\(Self.odataEscape(name))'", headers: headers))
+                add(try await entraDevices(filter: ODataFilter.equals("displayName", name), headers: headers))
             }
         } catch {
             state.lookupFailed = true
@@ -125,6 +161,10 @@ extension GraphService {
         guard !state.lookupFailed else {
             result.lookupFailed = true
             result.errors.append("Could not read the current records for \(serial), so nothing was changed. \(state.lookupError ?? "")")
+            return result
+        }
+        if let refusal = state.refusal {
+            result.errors.append("\(refusal) Nothing was changed.")
             return result
         }
         result.retainedAutopilotId = state.autopilot?.id
@@ -165,6 +205,10 @@ extension GraphService {
         guard let headers = await headers() else { return [] }
         var results: [BulkActionResult] = []
         for id in deviceIds {
+            guard (try? DeviceIdentifier.validateGuid(id)) != nil else {
+                results.append(BulkActionResult(deviceId: id, success: false, error: "Not a managedDevice id"))
+                continue
+            }
             let url = "\(baseUrl)/deviceManagement/managedDevices/\(id)/cleanWindowsDevice"
             do {
                 try await postAction(url: url, body: ["keepUserData": keepUserData], headers: headers)
@@ -181,17 +225,25 @@ extension GraphService {
         try await deleteManagedDevices(deviceIds)
     }
 
-    /// Entra device objects by display name or, for a GUID, by deviceId or object id.
+    /// Entra device objects by exact display name or, for a GUID, by deviceId
+    /// or object id. Read-only lookups may use a name; destructive callers use
+    /// `findEntraDevices(id:)`.
     public func findEntraDevices(_ query: String) async throws -> [EntraDevice] {
+        if let id = try? DeviceIdentifier.validateGuid(query) { return try await findEntraDevices(id: id) }
         guard let headers = await headers() else { throw GraphServiceError.notAuthenticated }
-        let escaped = Self.odataEscape(query)
-        if UUID(uuidString: query) != nil {
-            let byDeviceId = try await entraDevices(filter: "deviceId eq '\(escaped)'", headers: headers)
-            if !byDeviceId.isEmpty { return byDeviceId }
-            let byObjectId: EntraDevice? = try? await fetch(url: "\(baseUrl)/devices/\(query)", headers: headers)
-            return byObjectId.map { [$0] } ?? []
-        }
-        return try await entraDevices(filter: "displayName eq '\(escaped)'", headers: headers)
+        let name = query.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { throw DeviceIdentifierError("An empty name matches nothing.") }
+        return try await entraDevices(filter: ODataFilter.equals("displayName", name), headers: headers)
+    }
+
+    /// Entra device objects by GUID only: the deviceId, else the object id.
+    public func findEntraDevices(id rawId: String) async throws -> [EntraDevice] {
+        let id = try DeviceIdentifier.validateGuid(rawId)
+        guard let headers = await headers() else { throw GraphServiceError.notAuthenticated }
+        let byDeviceId = try await entraDevices(filter: ODataFilter.equals("deviceId", id), headers: headers)
+        if !byDeviceId.isEmpty { return byDeviceId }
+        let byObjectId: EntraDevice? = try? await fetch(url: "\(baseUrl)/devices/\(id)", headers: headers)
+        return byObjectId.map { [$0] } ?? []
     }
 
     /// Delete Entra device objects by object id.
@@ -218,12 +270,8 @@ extension GraphService {
     }
 
     private func entraDevices(filter: String, headers: HTTPHeaders) async throws -> [EntraDevice] {
-        let encoded = filter.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let encoded = ODataFilter.encode(filter)
         let response: EntraDeviceListResponse = try await fetch(url: "\(baseUrl)/devices?$filter=\(encoded)&$top=50", headers: headers)
         return response.value
-    }
-
-    static func odataEscape(_ value: String) -> String {
-        value.replacingOccurrences(of: "'", with: "''")
     }
 }

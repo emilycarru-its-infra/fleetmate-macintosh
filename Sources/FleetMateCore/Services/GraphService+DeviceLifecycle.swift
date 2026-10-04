@@ -94,7 +94,7 @@ public extension GraphService {
 
         var url = "\(baseUrl)/deviceManagement/windowsAutopilotDeviceIdentities?$top=\(pageSize(for: limit))"
         if let filter, !filter.isEmpty {
-            let escaped = filter.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filter
+            let escaped = ODataFilter.encode(filter)
             url += "&$filter=\(escaped)"
         }
 
@@ -112,12 +112,23 @@ public extension GraphService {
     ///
     /// Autopilot's `$filter` supports `contains` on `serialNumber` but not
     /// `eq`, so the match is narrowed here rather than by Graph.
+    ///
+    /// Only an exact serial match counts: a partial one is a different machine.
+    /// Two exact matches (a hash registered twice) return nil here; destructive
+    /// callers use `autopilotDevices(exactSerial:)` to see and refuse them.
     func getAutopilotDeviceBySerial(_ serialNumber: String) async throws -> WindowsAutopilotDevice? {
-        let trimmed = serialNumber.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let escaped = trimmed.replacingOccurrences(of: "'", with: "''")
-        let matches = try await getAutopilotDevices(filter: "contains(serialNumber,'\(escaped)')", limit: 25)
-        return matches.first { $0.serialNumber?.caseInsensitiveCompare(trimmed) == .orderedSame } ?? matches.first
+        let exact = try await autopilotDevices(exactSerial: serialNumber)
+        return exact.count == 1 ? exact[0] : nil
+    }
+
+    /// Every Autopilot identity whose serial equals `serialNumber` exactly
+    /// (case-insensitive). `contains` is only the server-side prefilter Graph
+    /// allows on this collection; selection is by equality, here.
+    public func autopilotDevices(exactSerial serialNumber: String) async throws -> [WindowsAutopilotDevice] {
+        let serial = try DeviceIdentifier.validateSerial(serialNumber)
+        let candidates = try await getAutopilotDevices(
+            filter: "contains(serialNumber,\(ODataFilter.literal(serial)))", limit: 25)
+        return candidates.filter { $0.serialNumber?.caseInsensitiveCompare(serial) == .orderedSame }
     }
 
     /// Delete Autopilot registrations, releasing the hardware hashes so the
@@ -169,8 +180,7 @@ public extension GraphService {
     /// paths.
     func getEntraDevice(deviceId: String) async throws -> EntraDevice? {
         guard let headers = await headers() else { return nil }
-        let escaped = deviceId.replacingOccurrences(of: "'", with: "''")
-        let filter = "deviceId eq '\(escaped)'".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let filter = ODataFilter.encode(ODataFilter.equals("deviceId", deviceId))
         let url = "\(baseUrl)/devices?$filter=\(filter)&$top=1"
         let response: EntraDeviceListResponse? = try? await fetch(url: url, headers: headers)
         return response?.value.first
@@ -209,13 +219,26 @@ public extension GraphService {
 
     // MARK: - Offboard
 
-    /// Resolve a serial number or managedDevice id to the full device record.
+    /// Resolve a serial number or managedDevice id to the full device record —
+    /// only when it identifies exactly one. Names are never matched: two
+    /// machines can share one, and a destructive action must not guess.
     func resolveManagedDevice(_ identifier: String) async throws -> IntuneDevice? {
-        if UUID(uuidString: identifier) != nil, let device = try await getManagedDevice(id: identifier) {
-            return device
+        try await resolveManagedDeviceExactly(identifier).single
+    }
+
+    /// Exact resolution for destructive actions: a managedDevice GUID by path,
+    /// or `serialNumber eq` with every exact match returned so duplicates are
+    /// refused rather than silently reduced to the first. Invalid input throws
+    /// `DeviceIdentifierError` before any request is made.
+    public func resolveManagedDeviceExactly(_ identifier: String) async throws -> ExactMatch<IntuneDevice> {
+        switch try DeviceIdentifier.parse(identifier) {
+        case .guid(let id):
+            guard let device = try await getManagedDevice(id: id) else { return .none }
+            return .one(device)
+        case .serial(let serial):
+            let candidates = try await getManagedDevices(filter: ODataFilter.equals("serialNumber", serial), limit: 10)
+            return .resolve(candidates, matching: serial) { $0.serialNumber }
         }
-        if let device = try await getDeviceBySerial(identifier) { return device }
-        return try await getDeviceByName(identifier)
     }
 
     /// Resolve the directory records for an identifier with no Intune record.

@@ -47,55 +47,59 @@ struct EntraDeviceSubcommand: AsyncParsableCommand {
 struct EntraDeleteDeviceSubcommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "delete-device",
-        abstract: "Delete an Entra device object (DESTRUCTIVE)"
+        abstract: "Delete an Entra device object (DESTRUCTIVE)",
+        discussion: """
+        Takes a deviceId or object id only. A display name is not accepted: two \
+        machines can share one, and `fleetmate entra device <name>` lists the ids \
+        to choose from. A deviceId that matches more than one object is refused.
+        """
     )
 
-    @Argument(help: "Display name, deviceId or object id")
-    var query: String
+    @Argument(help: "deviceId or object id (GUID)")
+    var id: String
 
     @Flag(help: "Required to actually delete")
     var confirm: Bool = false
 
-    @Flag(help: "Delete every object matching the query, not just a unique match")
-    var all: Bool = false
-
     func run() async throws {
         let service = try lifecycleGraphService()
-        let devices = try await service.findEntraDevices(query)
-
-        guard !devices.isEmpty else {
-            print("No Entra device object found: \(query)".yellow)
-            return
+        let devices: [EntraDevice]
+        do {
+            devices = try await service.findEntraDevices(id: id)
+        } catch let error as DeviceIdentifierError {
+            print(error.message.red)
+            print("Look the id up with: fleetmate entra device <name>".dim)
+            throw ExitCode.failure
         }
 
-        // Refuse to guess between duplicates: deleting the wrong one of a matched
-        // pair unenrolls a working machine.
-        if devices.count > 1 && !all {
-            print("\(devices.count) objects match \(query). ".yellow + "Pass an object id, or --all to delete every match:")
-            for d in devices {
-                print("  \((d.id ?? "-").dim)  \(d.displayName ?? "-")  trust=\(d.trustType ?? "-")  last sign-in \(String((d.approximateLastSignInDateTime ?? "-").prefix(10)))")
+        let match = ExactMatch.resolve(devices, matching: id.lowercased()) { device in
+            [device.id, device.deviceId].compactMap { $0?.lowercased() }.first { $0 == id.lowercased() }
+        }
+        switch match {
+        case .none:
+            print("No Entra device object has id \(id).".yellow)
+            throw ExitCode.failure
+        case .many(let all):
+            // Refuse to guess between duplicates: deleting the wrong one of a
+            // matched pair unenrolls a working machine.
+            print("\(all.count) objects match \(id); refusing to choose one. Re-run with an object id:".red)
+            for d in all { print("  \(d.id ?? "-")  \(d.displayName ?? "-")  trust=\(d.trustType ?? "-")  last sign-in \(String((d.approximateLastSignInDateTime ?? "-").prefix(10)))") }
+            throw ExitCode.failure
+        case .one(let device):
+            guard let objectId = device.id else { throw ExitCode.failure }
+            print("Target: ".bold + "\(device.displayName ?? "-")  \(device.operatingSystem ?? "-")  trust=\(device.trustType ?? "-")")
+            print("  object \(objectId)  deviceId \(device.deviceId ?? "-")".dim)
+            guard confirm else {
+                print("Dry run. ".yellow + "Re-run with --confirm to delete this object.")
+                return
             }
-            throw ExitCode.failure
-        }
-
-        guard confirm else {
-            print("This will delete \(devices.count) Entra device object(s):".yellow)
-            for d in devices { print("  \((d.id ?? "-").dim)  \(d.displayName ?? "-")") }
-            print("Re-run with --confirm to proceed.")
-            throw ExitCode.failure
-        }
-
-        var failed = false
-        for d in devices {
-            guard let id = d.id else { continue }
-            let result = try await service.deleteEntraDeviceObjects([id]).first
+            let result = try await service.deleteEntraDeviceObjects([objectId]).first
             if result?.success == true {
-                print("Deleted ".green + "\(d.displayName ?? id) (\(id))")
+                print("Deleted ".green + "\(device.displayName ?? objectId) (\(objectId))")
             } else {
-                failed = true
-                print("Failed ".red + "\(d.displayName ?? id) (\(id)): \(result?.error ?? "not deleted")")
+                print("Failed ".red + "\(device.displayName ?? objectId) (\(objectId)): \(result?.error ?? "not deleted")")
+                throw ExitCode.failure
             }
         }
-        if failed { throw ExitCode.failure }
     }
 }

@@ -262,10 +262,22 @@ public struct DeviceListRow: Identifiable, Sendable {
         }
     }
 
-    public static let autopilotService = "Windows Autopilot"
+    /// The MDM a Windows device enrolls with. Autopilot is a registration
+    /// program, not a management service, so it never names one: a Windows
+    /// device with an Intune MDM record is managed by Intune, and one that is
+    /// only registered has none yet.
+    public var windowsServiceName: String? {
+        guard apple == nil, registration != nil || DevicePlatform(operatingSystem: platformLabel) == .windows,
+              let intune else { return nil }
+        let agent = intune.managementAgent?.lowercased() ?? "mdm"
+        return agent.contains("mdm") ? "Intune" : nil
+    }
 
     public var serviceLabel: String {
-        guard apple != nil else { return autopilot != nil ? Self.autopilotService : "Not in Organization" }
+        guard apple != nil else {
+            if let windows = windowsServiceName { return windows }
+            return registration != nil ? "No Service" : "Not in Organization"
+        }
         return serverName ?? "No Service"
     }
 
@@ -314,7 +326,7 @@ public struct DeviceListRow: Identifiable, Sendable {
         guard let intune else { return "Not Enrolled" }
         return intune.complianceState?.capitalized ?? "Unknown"
     }
-    public var serviceText: String { serverName ?? (autopilot != nil ? Self.autopilotService : Self.missing) }
+    public var serviceText: String { serverName ?? windowsServiceName ?? Self.missing }
     public var orgStatusText: String { apple == nil && registration == nil ? Self.missing : orgStatusLabel }
     /// The device's grouping in its provisioning system: the Apple order
     /// number for an Apple organization device, the group tag for an

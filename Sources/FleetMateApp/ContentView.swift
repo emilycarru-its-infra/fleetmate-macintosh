@@ -70,6 +70,9 @@ struct ContentView: View {
                     DefaultToolbarItem(kind: .search, placement: .automatic)
                 }
                 ToolbarItem(placement: .primaryAction) {
+                    RecentActivityToolbarButton()
+                }
+                ToolbarItem(placement: .primaryAction) {
                     Button(action: { showAuthPopover.toggle() }) {
                         ElevationShieldLabel()
                     }
@@ -166,14 +169,13 @@ struct ContentView: View {
 
     private func validateSelectedTab() {
         if !selectedTab.isEnabled(config: appState.config) {
-            appState.selectedTab = .dashboard
+            appState.selectedTab = .development
         }
     }
 
     @ViewBuilder
     private var tabContent: some View {
         switch selectedTab {
-        case .dashboard: DashboardView()
         case .devices:   DevicesView()
         case .manage:    ManageView(manage: appState.manageState)
         case .inventory: AssetsView()

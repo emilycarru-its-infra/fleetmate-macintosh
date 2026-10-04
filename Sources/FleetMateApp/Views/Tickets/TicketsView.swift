@@ -587,6 +587,7 @@ struct TicketsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // No header — everything in toolbar
+            if appState.config.isTdxConfigured { TicketsWidgetsSection(metrics: appState.widgetMetrics) }
             contentSection
         }
         .onChange(of: selectedTicketIds) { _, newIds in

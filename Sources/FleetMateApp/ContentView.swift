@@ -71,9 +71,8 @@ struct ContentView: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: { showAuthPopover.toggle() }) {
-                        Label("Authentication", systemImage: "lock.shield")
+                        ElevationShieldLabel()
                     }
-                    .help("Authentication status for every connected system")
                     .popover(isPresented: $showAuthPopover, arrowEdge: .bottom) {
                         AuthSettingsView()
                             .environmentObject(appState)
@@ -123,7 +122,7 @@ struct ContentView: View {
                    shouldRetrySso(.tdx) {
                     appState.attemptSilentTdxSso()
                 }
-                if newTab == .projects,
+                if newTab == .projects || newTab == .development,
                    !appState.devOpsSsoAuthenticated,
                    appState.isDevOpsSsoConfigured,
                    shouldRetrySso(.devops) {
@@ -180,6 +179,7 @@ struct ContentView: View {
         case .inventory: AssetsView()
         case .tickets:   TicketsView()
         case .projects:  BoardsView()
+        case .development: DevelopmentView()
         case .identity:  IdentityView()
         }
     }

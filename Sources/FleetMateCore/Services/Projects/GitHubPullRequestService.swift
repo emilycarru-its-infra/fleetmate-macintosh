@@ -38,9 +38,20 @@ public actor GitHubPullRequestService {
       headRefName
       author { login }
       repository { name owner { login } }
-      comments { totalCount }
-      reviewThreads { totalCount }
-      reviewRequests(first: 10) {
+      comments(last: 3) {
+        totalCount
+        nodes { databaseId author { login } body createdAt url }
+      }
+      reviews(last: 3) {
+        nodes { databaseId author { login } body state submittedAt url }
+      }
+      reviewThreads(last: 3) {
+        totalCount
+        nodes {
+          comments(last: 1) { nodes { databaseId author { login } body createdAt url path } }
+        }
+      }
+      reviewRequests(first: 5) {
         nodes {
           requestedReviewer {
             ... on User { login name }
@@ -48,7 +59,7 @@ public actor GitHubPullRequestService {
           }
         }
       }
-      latestReviews(first: 10) {
+      latestReviews(first: 5) {
         nodes { state author { login } }
       }
     }
@@ -101,6 +112,145 @@ public actor GitHubPullRequestService {
                 PullRequestQueueError(source: .gitHub, message: error.localizedDescription)
             ])
         }
+    }
+
+    /// The wider queue the Code section shows: everything `getMyPullRequests`
+    /// returns, plus PRs the user is merely involved in and every open PR in
+    /// the given owners' repositories (`user:<owner>` matches orgs and users).
+    ///
+    /// Owners are deduplicated case-insensitively. Each extra owner costs one
+    /// search point, so a handful is fine and dozens is not.
+    public func getOpenPullRequests(owners: [String], limit: Int = 100) async -> PullRequestQueue {
+        var queue = await getMyPullRequests(limit: limit)
+
+        var seen: Set<String> = []
+        let ownerList = owners
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+
+        var searches: [Search] = [
+            Search(query: "is:pr is:open archived:false involves:@me sort:updated-desc", relation: .involved)
+        ]
+        searches += ownerList.map {
+            Search(query: "is:pr is:open archived:false user:\($0) sort:updated-desc", relation: .organization)
+        }
+
+        let outcome = await runSearches(searches, limit: limit)
+        for pr in outcome.pullRequests { queue.insert(pr) }
+        if let message = outcome.error {
+            queue.errors.append(PullRequestQueueError(source: .gitHub, message: message))
+        }
+        dbg.info("GitHub getOpenPullRequests(owners: \(ownerList.count)) → \(queue.pullRequests.count) PRs", category: "github")
+        return queue
+    }
+
+    private struct Search {
+        let query: String
+        let relation: PullRequestRelation
+    }
+
+    private struct SearchOutcome {
+        var pullRequests: [UnifiedPullRequest] = []
+        var error: String?
+    }
+
+    /// GitHub caps a single GraphQL request by the nodes it *could* return,
+    /// and a dozen aliased searches at 100 rows each with nested comments
+    /// blows past it ("Resource limits for this query exceeded"). Searches
+    /// therefore run in small batches; when a batch trips the limit it is
+    /// split in half and retried, down to one search at half the rows, so
+    /// the queue degrades instead of failing.
+    private func runSearches(_ searches: [Search], limit: Int, batchSize: Int = 3) async -> SearchOutcome {
+        var outcome = SearchOutcome()
+        var index = 0
+        while index < searches.count {
+            let batch = Array(searches[index..<min(index + batchSize, searches.count)])
+            do {
+                outcome.pullRequests += try await execute(batch: batch, limit: limit)
+                index += batch.count
+            } catch {
+                let message = error.localizedDescription
+                let overLimit = message.localizedCaseInsensitiveContains("resource limits")
+                if overLimit, batch.count > 1 {
+                    // Re-run this window with a smaller batch.
+                    let smaller = await runSearches(batch, limit: limit, batchSize: max(1, batch.count / 2))
+                    outcome.pullRequests += smaller.pullRequests
+                    if let inner = smaller.error { outcome.error = inner }
+                    index += batch.count
+                } else if overLimit, limit > 25 {
+                    let smaller = await runSearches(batch, limit: limit / 2, batchSize: 1)
+                    outcome.pullRequests += smaller.pullRequests
+                    if let inner = smaller.error { outcome.error = inner }
+                    index += batch.count
+                } else {
+                    dbg.error("GitHub search batch failed: \(message)", category: "github")
+                    outcome.error = message
+                    // A rate limit or auth failure will hit every batch; stop.
+                    if message.localizedCaseInsensitiveContains("rate limit")
+                        || message.contains("No GitHub authentication token") {
+                        break
+                    }
+                    index += batch.count
+                }
+            }
+        }
+        return outcome
+    }
+
+    private func execute(batch: [Search], limit: Int) async throws -> [UnifiedPullRequest] {
+        var aliases: [String] = []
+        var declarations: [String] = ["$first: Int!"]
+        var variables: [String: Any] = ["first": limit]
+        for (index, search) in batch.enumerated() {
+            aliases.append("s\(index): search(query: $q\(index), type: ISSUE, first: $first) { nodes { ...PullRequestFields } }")
+            declarations.append("$q\(index): String!")
+            variables["q\(index)"] = search.query
+        }
+        let query = """
+        \(Self.pullRequestFragment)
+        query(\(declarations.joined(separator: ", "))) {
+          \(aliases.joined(separator: "\n  "))
+        }
+        """
+        let data = try await client.executeRaw(query: query, variables: variables)
+        var out: [UnifiedPullRequest] = []
+        for (index, search) in batch.enumerated() {
+            let nodes = (data["s\(index)"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+            out += nodes.compactMap { Self.map($0, relation: search.relation) }
+        }
+        return out
+    }
+
+    /// Owners the signed-in user belongs to: their own login plus every
+    /// organization membership the token can see. Feeds `getOpenPullRequests`.
+    public func getViewerOwners() async throws -> [String] {
+        let data = try await client.executeRaw(query: """
+        query { viewer { login organizations(first: 50) { nodes { login } } } }
+        """)
+        guard let viewer = data["viewer"] as? [String: Any] else { return [] }
+        var owners: [String] = []
+        if let login = viewer["login"] as? String { owners.append(login) }
+        let orgs = (viewer["organizations"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+        owners.append(contentsOf: orgs.compactMap { $0["login"] as? String })
+        return owners
+    }
+
+    /// One pull request by coordinates, in the queue's unified shape — used to
+    /// open a PR the inbox points at that the queue has not loaded.
+    public func getPullRequest(owner: String, repo: String, number: Int) async throws -> UnifiedPullRequest? {
+        let query = """
+        \(Self.pullRequestFragment)
+        query($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) { ...PullRequestFields }
+          }
+        }
+        """
+        let data = try await client.executeRaw(query: query, variables: [
+            "owner": owner, "repo": repo, "number": number
+        ])
+        guard let node = (data["repository"] as? [String: Any])?["pullRequest"] as? [String: Any] else { return nil }
+        return Self.map(node, relation: .involved)
     }
 
     /// Whether a usable GitHub token is reachable, without surfacing a login UI.
@@ -157,6 +307,275 @@ public actor GitHubPullRequestService {
             files: diffFiles,
             truncated: files.count >= 100
         )
+    }
+
+    // MARK: - Commits
+
+    /// Repositories under each owner pushed to since `since`, with their
+    /// latest default-branch commits. One GraphQL request for all owners.
+    public func getRecentCommits(owners: [String], since: Date, perRepo: Int = 10, reposPerOwner: Int = 30) async throws -> [RepositoryCommits] {
+        var seen: Set<String> = []
+        let ownerList = owners
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+        guard !ownerList.isEmpty else { return [] }
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        let sinceString = formatter.string(from: since)
+        let sinceDay = String(sinceString.prefix(10))
+
+        var aliases: [String] = []
+        var declarations: [String] = ["$since: GitTimestamp!", "$perRepo: Int!", "$repos: Int!"]
+        var variables: [String: Any] = ["since": sinceString, "perRepo": perRepo, "repos": reposPerOwner]
+        for (index, owner) in ownerList.enumerated() {
+            declarations.append("$owner\(index): String!")
+            variables["owner\(index)"] = "user:\(owner) pushed:>=\(sinceDay) sort:updated-desc"
+            aliases.append("""
+            owner\(index): search(query: $owner\(index), type: REPOSITORY, first: $repos) {
+              nodes {
+                ... on Repository {
+                  name url owner { login }
+                  defaultBranchRef {
+                    name
+                    target {
+                      ... on Commit {
+                        history(first: $perRepo, since: $since) {
+                          nodes { oid message messageHeadline committedDate url parents { totalCount } author { name user { login } } }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """)
+        }
+        let query = "query(\(declarations.joined(separator: ", "))) {\n\(aliases.joined(separator: "\n"))\n}"
+        let data = try await client.executeRaw(query: query, variables: variables)
+
+        var out: [RepositoryCommits] = []
+        for index in ownerList.indices {
+            let nodes = (data["owner\(index)"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+            for node in nodes {
+                guard let name = node["name"] as? String,
+                      let url = node["url"] as? String,
+                      let owner = (node["owner"] as? [String: Any])?["login"] as? String
+                else { continue }
+                let branchRef = node["defaultBranchRef"] as? [String: Any]
+                let history = ((branchRef?["target"] as? [String: Any])?["history"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+                let commits: [PullRequestCommit] = history.compactMap { commit in
+                    guard let oid = commit["oid"] as? String else { return nil }
+                    let parentCount = (commit["parents"] as? [String: Any])?["totalCount"] as? Int
+                    let message = commit["message"] as? String ?? commit["messageHeadline"] as? String ?? ""
+                    // Pull-request merge commits carry no change of their own.
+                    if MergeCommitFilter.isMerge(message: message, parentCount: parentCount) { return nil }
+                    let author = commit["author"] as? [String: Any]
+                    let login = (author?["user"] as? [String: Any])?["login"] as? String
+                    return PullRequestCommit(
+                        id: oid,
+                        message: commit["message"] as? String ?? commit["messageHeadline"] as? String ?? "",
+                        authorName: login ?? author?["name"] as? String,
+                        date: PullRequestDateParser.parse(commit["committedDate"] as? String),
+                        url: commit["url"] as? String
+                    )
+                }
+                guard !commits.isEmpty else { continue }
+                out.append(RepositoryCommits(
+                    source: .gitHub,
+                    container: owner,
+                    repository: name,
+                    webUrl: url,
+                    defaultBranch: branchRef?["name"] as? String,
+                    commits: commits
+                ))
+            }
+        }
+        // The same repo can surface under two owners (a fork the user owns
+        // and the org original); keep the first, newest activity first.
+        var unique: [String: RepositoryCommits] = [:]
+        for repo in out where unique[repo.id] == nil { unique[repo.id] = repo }
+        let result = unique.values.sorted { $0.latestDate > $1.latestDate }
+        dbg.info("GitHub getRecentCommits(owners: \(ownerList.count)) → \(result.count) repos", category: "github")
+        return result
+    }
+
+    /// Full message and per-file diff for one commit.
+    public func getCommitDetail(owner: String, repo: String, sha: String) async throws -> CommitDetail {
+        let data = try await client.executeREST(path: "/repos/\(owner)/\(repo)/commits/\(sha)")
+        let commit = try JSONDecoder().decode(RestCommitDetail.self, from: data)
+        let files = commit.files ?? []
+        let diffFiles: [DiffFile] = files.map { file in
+            if let patch = file.patch {
+                return DiffParser.parseBareHunks(patch, fileName: file.filename)
+            }
+            return DiffFile(headerLines: [], oldPath: file.filename, newPath: file.filename)
+        }
+        return CommitDetail(
+            message: commit.commit.message,
+            files: diffFiles,
+            changes: files.map { CommitChange(path: $0.filename, changeType: $0.status ?? "edit") },
+            additions: commit.stats?.additions ?? 0,
+            deletions: commit.stats?.deletions ?? 0,
+            truncated: files.count >= 300
+        )
+    }
+
+    private struct RestCommitDetail: Decodable {
+        let commit: Inner
+        let files: [File]?
+        let stats: Stats?
+        struct Inner: Decodable { let message: String }
+        struct File: Decodable {
+            let filename: String
+            let status: String?
+            let patch: String?
+        }
+        struct Stats: Decodable {
+            let additions: Int?
+            let deletions: Int?
+        }
+    }
+
+    // MARK: - PR actions (REST + GraphQL)
+
+    private enum ReviewEvent: String, Sendable {
+        case approve = "APPROVE"
+        case requestChanges = "REQUEST_CHANGES"
+        case comment = "COMMENT"
+    }
+
+    /// Submits a review. GitHub requires a body for request-changes and
+    /// comment reviews; approvals may be empty.
+    private func submitReview(owner: String, repo: String, number: Int, event: ReviewEvent, body: String?) async throws {
+        var payload: [String: Any] = ["event": event.rawValue]
+        if let body, !body.isEmpty { payload["body"] = body }
+        _ = try await client.executeREST(
+            method: "POST",
+            path: "/repos/\(owner)/\(repo)/pulls/\(number)/reviews",
+            body: payload
+        )
+        dbg.info("GitHub submitReview \(owner)/\(repo)#\(number) \(event.rawValue)", category: "github")
+    }
+
+    public func approve(owner: String, repo: String, number: Int) async throws {
+        try await submitReview(owner: owner, repo: repo, number: number, event: .approve, body: nil)
+    }
+
+    public func requestChanges(owner: String, repo: String, number: Int, body: String) async throws {
+        try await submitReview(owner: owner, repo: repo, number: number, event: .requestChanges, body: body)
+    }
+
+    /// A plain conversation comment (not a review).
+    public func comment(owner: String, repo: String, number: Int, body: String) async throws {
+        _ = try await client.executeREST(
+            method: "POST",
+            path: "/repos/\(owner)/\(repo)/issues/\(number)/comments",
+            body: ["body": body]
+        )
+    }
+
+    public func merge(owner: String, repo: String, number: Int, method: PullRequestMergeMethod) async throws {
+        _ = try await client.executeREST(
+            method: "PUT",
+            path: "/repos/\(owner)/\(repo)/pulls/\(number)/merge",
+            body: ["merge_method": method.rawValue]
+        )
+        dbg.info("GitHub merged \(owner)/\(repo)#\(number) via \(method.rawValue)", category: "github")
+    }
+
+    public func close(owner: String, repo: String, number: Int) async throws {
+        _ = try await client.executeREST(
+            method: "PATCH",
+            path: "/repos/\(owner)/\(repo)/pulls/\(number)",
+            body: ["state": "closed"]
+        )
+    }
+
+    /// Converts between draft and ready for review. Both mutations need the
+    /// PR's node id, so this is one lookup plus one mutation.
+    public func setReady(owner: String, repo: String, number: Int, ready: Bool) async throws {
+        let lookup = try await client.executeRaw(query: """
+        query($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id } }
+        }
+        """, variables: ["owner": owner, "repo": repo, "number": number])
+        guard let nodeId = ((lookup["repository"] as? [String: Any])?["pullRequest"] as? [String: Any])?["id"] as? String else {
+            throw GitHubGraphQLError.noData
+        }
+        let mutation = ready
+            ? "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }"
+            : "mutation($id: ID!) { convertPullRequestToDraft(input: {pullRequestId: $id}) { pullRequest { isDraft } } }"
+        _ = try await client.executeRaw(query: mutation, variables: ["id": nodeId])
+    }
+
+    /// CI checks and commit statuses on the head commit, normalized.
+    public func getChecks(owner: String, repo: String, number: Int) async throws -> [PullRequestCheck] {
+        let query = """
+        query($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) {
+              commits(last: 1) {
+                nodes {
+                  commit {
+                    statusCheckRollup {
+                      contexts(first: 100) {
+                        nodes {
+                          __typename
+                          ... on CheckRun {
+                            name status conclusion detailsUrl
+                            isRequired(pullRequestNumber: $number)
+                          }
+                          ... on StatusContext {
+                            context state targetUrl
+                            isRequired(pullRequestNumber: $number)
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        let data = try await client.executeRaw(query: query, variables: ["owner": owner, "repo": repo, "number": number])
+        let commits = (((data["repository"] as? [String: Any])?["pullRequest"] as? [String: Any])?["commits"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+        let rollup = ((commits.first?["commit"] as? [String: Any])?["statusCheckRollup"] as? [String: Any])
+        let contexts = (rollup?["contexts"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+
+        return contexts.compactMap { node in
+            let required = node["isRequired"] as? Bool ?? false
+            switch node["__typename"] as? String {
+            case "CheckRun":
+                let name = node["name"] as? String ?? "check"
+                let state: PullRequestCheckState
+                if (node["status"] as? String)?.uppercased() != "COMPLETED" {
+                    state = .pending
+                } else {
+                    switch (node["conclusion"] as? String)?.uppercased() {
+                    case "SUCCESS": state = .success
+                    case "FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE": state = .failure
+                    case "SKIPPED": state = .skipped
+                    default: state = .neutral
+                    }
+                }
+                return PullRequestCheck(name: name, state: state, detailsUrl: node["detailsUrl"] as? String, isRequired: required)
+            case "StatusContext":
+                let name = node["context"] as? String ?? "status"
+                let state: PullRequestCheckState
+                switch (node["state"] as? String)?.uppercased() {
+                case "SUCCESS": state = .success
+                case "FAILURE", "ERROR": state = .failure
+                case "PENDING", "EXPECTED": state = .pending
+                default: state = .neutral
+                }
+                return PullRequestCheck(name: name, state: state, detailsUrl: node["targetUrl"] as? String, isRequired: required)
+            default:
+                return nil
+            }
+        }
     }
 
     private struct RestPullRequest: Decodable {
@@ -311,6 +730,7 @@ public actor GitHubPullRequestService {
 
         let commentCount = ((node["comments"] as? [String: Any])?["totalCount"] as? Int ?? 0)
             + ((node["reviewThreads"] as? [String: Any])?["totalCount"] as? Int ?? 0)
+        let recentComments = Self.recentComments(node)
 
         return UnifiedPullRequest(
             source: .gitHub,
@@ -328,7 +748,47 @@ public actor GitHubPullRequestService {
             commentCount: commentCount,
             reviewers: Array(reviewersByName.values).sorted { $0.displayName < $1.displayName },
             webUrl: url,
-            relations: [relation]
+            relations: [relation],
+            recentComments: recentComments
         )
+    }
+
+    /// Conversation comments, review summaries and inline review comments,
+    /// merged newest-first. Reviews with no body (a bare approve) are dropped:
+    /// the vote pips already carry them.
+    private static func recentComments(_ node: [String: Any]) -> [PullRequestComment] {
+        var out: [PullRequestComment] = []
+
+        func comment(_ entry: [String: Any], dateKey: String, prefix: String? = nil) -> PullRequestComment? {
+            let body = (entry["body"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !body.isEmpty, let id = entry["databaseId"] as? Int else { return nil }
+            let path = entry["path"] as? String
+            let text = path.map { "`\($0)` — \(body)" } ?? body
+            return PullRequestComment(
+                id: "\(prefix ?? "c")\(id)",
+                authorName: (entry["author"] as? [String: Any])?["login"] as? String ?? "unknown",
+                body: text,
+                date: PullRequestDateParser.parse(entry[dateKey] as? String),
+                isSystem: false,
+                url: entry["url"] as? String
+            )
+        }
+
+        let comments = (node["comments"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+        out += comments.compactMap { comment($0, dateKey: "createdAt") }
+
+        let reviews = (node["reviews"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+        out += reviews.compactMap { comment($0, dateKey: "submittedAt", prefix: "r") }
+
+        let threads = (node["reviewThreads"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+        for thread in threads {
+            let inline = (thread["comments"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+            out += inline.compactMap { comment($0, dateKey: "createdAt", prefix: "t") }
+        }
+
+        return out
+            .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+            .prefix(8)
+            .map { $0 }
     }
 }

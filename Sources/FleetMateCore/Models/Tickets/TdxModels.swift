@@ -295,6 +295,9 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
 public struct TicketSearchRequest: Codable {
     public var searchText: String?
     public var statusIds: [Int]?
+    /// TDX status classes: 1 New, 2 In Process, 3 Completed, 4 Cancelled,
+    /// 5 On Hold, 6 Requested.
+    public var statusClassIds: [Int]?
     public var typeIds: [Int]?
     public var priorityIds: [Int]?
     public var responsibleUids: [String]?
@@ -305,9 +308,13 @@ public struct TicketSearchRequest: Codable {
     public var createdDateTo: String?
     public var maxResults: Int = 50
 
+    /// Status classes a ticket is still being worked in.
+    public static let openStatusClassIds = [1, 2, 5, 6]
+
     public init(
         searchText: String? = nil,
         statusIds: [Int]? = nil,
+        statusClassIds: [Int]? = nil,
         typeIds: [Int]? = nil,
         priorityIds: [Int]? = nil,
         responsibleUids: [String]? = nil,
@@ -320,6 +327,7 @@ public struct TicketSearchRequest: Codable {
     ) {
         self.searchText = searchText
         self.statusIds = statusIds
+        self.statusClassIds = statusClassIds
         self.typeIds = typeIds
         self.priorityIds = priorityIds
         self.responsibleUids = responsibleUids
@@ -334,6 +342,7 @@ public struct TicketSearchRequest: Codable {
     enum CodingKeys: String, CodingKey {
         case searchText = "SearchText"
         case statusIds = "StatusIDs"
+        case statusClassIds = "StatusClassIDs"
         case typeIds = "TypeIDs"
         case priorityIds = "PriorityIDs"
         case responsibleUids = "ResponsibleUids"

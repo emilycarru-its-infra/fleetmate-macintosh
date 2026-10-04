@@ -174,22 +174,30 @@ struct DashboardView: View {
                 } catch {
                     return
                 }
-                pullRequestModel.load(appState: appState, force: true)
+                pullRequestModel.load(appState: appState, force: true,
+                                      gitHubMaxAge: PullRequestQueueModel.gitHubBackgroundMaxAge)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            pullRequestModel.load(appState: appState, force: true)
+            // Every app switch used to refetch GitHub; with many switches an
+            // hour that alone could drain the search budget.
+            pullRequestModel.load(appState: appState, force: true,
+                                  gitHubMaxAge: PullRequestQueueModel.gitHubBackgroundMaxAge)
         }
         .onChange(of: appState.cachedDevices.count) { _, _ in refreshSection(.devices) }
         .onChange(of: appState.cachedAssets.count) { _, _ in refreshSection(.assets) }
         .onChange(of: appState.cachedTickets.count) { _, _ in refreshSection(.tickets) }
-        .onChange(of: appState.cachedWorkItems.count) { _, _ in refreshSection(.tickets) }
+        .onChange(of: appState.cachedMyWorkItems.count) { _, _ in refreshSection(.tickets) }
         .onChange(of: appState.showOnboardingWizard) { _, s in if !s { refreshSection(.all) } }
         .onChange(of: appState.snipeSsoAuthenticated) { _, a in if a { refreshSection(.assets) } }
         .onChange(of: appState.secretsConfigured) { _, _ in refreshSection(.all) }
         // DevOps PRs need the SSO bearer token, which usually lands after first paint.
         .onChange(of: appState.devOpsSsoAuthenticated) { _, a in
-            if a { pullRequestModel.load(appState: appState, force: true) }
+            if a {
+                pullRequestModel.load(appState: appState, force: true)
+                // So do the signed-in user's work items (@Me).
+                refreshSection(.tickets)
+            }
         }
     }
 
@@ -391,9 +399,9 @@ struct DashboardView: View {
 
     private func buildAlerts() -> [AlertPill] {
         var pills: [AlertPill] = []
-        if nonCompliantCount > 0 { pills.append(.init(text: "\(nonCompliantCount) non-compliant", color: .red, tab: .devices)) }
+        if nonCompliantCount > 0 { pills.append(.init(text: "\(nonCompliantCount) non-compliant", color: .orange, tab: .devices)) }
         if staleCount > 0 { pills.append(.init(text: "\(staleCount) stale (30d+)", color: .orange, tab: .devices)) }
-        if slaViolatedCount > 0 { pills.append(.init(text: "\(slaViolatedCount) SLA violations", color: .red, tab: .tickets)) }
+        if slaViolatedCount > 0 { pills.append(.init(text: "\(slaViolatedCount) SLA violations", color: .orange, tab: .tickets)) }
         if unassignedCount > 5 { pills.append(.init(text: "\(unassignedCount) unassigned assets", color: .blue, tab: .inventory)) }
         return pills
     }
@@ -417,7 +425,7 @@ struct DashboardView: View {
         if appState.config.isGraphConfigured {
             kpis.append(KPI(title: "Devices", value: "\(deviceCount)", icon: "laptopcomputer", color: .blue, loading: isLoadingFleet, tab: .devices))
             if nonCompliantCount > 0 {
-                kpis.append(KPI(title: "Non-Compliant", value: "\(nonCompliantCount)", icon: "exclamationmark.triangle", color: .red, loading: false, tab: .devices))
+                kpis.append(KPI(title: "Non-Compliant", value: "\(nonCompliantCount)", icon: "exclamationmark.triangle", color: .orange, loading: false, tab: .devices))
             }
             if staleCount > 0 {
                 kpis.append(KPI(title: "Stale (30d+)", value: "\(staleCount)", icon: "clock.badge.exclamationmark", color: .orange, loading: false, tab: .devices))
@@ -501,7 +509,7 @@ struct DashboardView: View {
                             donutChart(ticketStatusSlices, size: 180, tab: .tickets, filterCategory: "Status")
                             if slaViolatedCount > 0 {
                                 Text("\(slaViolatedCount) SLA violated")
-                                    .appFont(.caption2).foregroundStyle(.red)
+                                    .appFont(.caption2).foregroundStyle(.orange)
                             }
                         }
                     }
@@ -539,7 +547,7 @@ struct DashboardView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 12) {
                             miniStat("Managed", "\(rmDeviceCount)", color: .blue)
-                            miniStat("Errors", "\(rmErrorCount)", color: rmErrorCount > 0 ? .red : .green)
+                            miniStat("Errors", "\(rmErrorCount)", color: rmErrorCount > 0 ? .orange : .green)
                         }
                         if isLoadingReportMate && errorCategoryBars.isEmpty {
                             SkeletonChartCard()
@@ -737,7 +745,29 @@ struct DashboardView: View {
     /// tap gesture, NOT `.chartAngleSelection`: angle selection tracks the
     /// pointer continuously, so merely resting the cursor on a donut navigated
     /// tabs — the long-mysterious "app randomly opens Inventory" bug.
+    /// Donut on the left, a legend carrying every count on the right. The
+    /// legend is ours rather than Swift Charts': its trailing legend took its
+    /// width out of the plot and ellipsized the labels.
     private func donutChart(_ slices: [ChartSlice], size: CGFloat, tab: AppTab? = nil, filterCategory: String? = nil) -> some View {
+        let diameter = min(size, 150)
+        return HStack(alignment: .center, spacing: 14) {
+            donutPlot(slices, tab: tab, filterCategory: filterCategory)
+                .frame(width: diameter, height: diameter)
+            ChartLegendList(slices: slices) { label in
+                guard let tab else { return }
+                openChartFilter(tab: tab, category: filterCategory, label: label)
+            }
+            .frame(minWidth: 110, maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(minHeight: diameter)
+    }
+
+    private static func wedgeFraction(_ slice: ChartSlice, of slices: [ChartSlice]) -> Double {
+        let total = slices.reduce(0) { $0 + $1.value }
+        return total > 0 ? Double(slice.value) / Double(total) : 0
+    }
+
+    private func donutPlot(_ slices: [ChartSlice], tab: AppTab?, filterCategory: String?) -> some View {
         Chart(slices) { slice in
             SectorMark(
                 angle: .value("Count", slice.value),
@@ -746,15 +776,19 @@ struct DashboardView: View {
             )
             .foregroundStyle(by: .value("Category", slice.label))
             .annotation(position: .overlay) {
-                if slice.value > 0 {
-                    Text("\(slice.value)")
+                // Only wedges wide enough to hold a number get one, at its
+                // natural width; every count is in the legend regardless.
+                if Self.wedgeFraction(slice, of: slices) >= 0.12 {
+                    Text(slice.value, format: .number)
                         .appFont(.caption2, weight: .bold)
+                        .monospacedDigit()
                         .foregroundStyle(.white)
+                        .fixedSize()
                 }
             }
         }
         .chartForegroundStyleScale(domain: slices.map(\.label), range: slices.map(\.color))
-        .chartLegend(position: .trailing, alignment: .center, spacing: 8)
+        .chartLegend(.hidden)
         .chartOverlay { proxy in
             GeometryReader { geo in
                 Rectangle().fill(Color.clear).contentShape(Rectangle())
@@ -783,7 +817,6 @@ struct DashboardView: View {
                     }
             }
         }
-        .frame(height: size)
     }
 
     /// Bar/wedge deep-link: strip any "(count)" suffix from the label, stash
@@ -796,39 +829,13 @@ struct DashboardView: View {
         navigate(to: tab)
     }
 
+    /// Horizontal bars as a three-column grid — label, bar, count — so the
+    /// count has a column of its own and can never be squeezed into "8…" by
+    /// a long bar, which is what Swift Charts' trailing annotation did.
     private func barChart(_ bars: [ChartBar], height: CGFloat, tab: AppTab? = nil, filterCategory: String? = nil) -> some View {
-        Chart(bars) { bar in
-            BarMark(
-                x: .value("Count", bar.value),
-                y: .value("Label", bar.label)
-            )
-            .foregroundStyle(by: .value("Category", bar.label))
-            .annotation(position: .trailing, alignment: .leading) {
-                if bar.value > 0 {
-                    Text("\(bar.value)").appFont(.caption2).foregroundStyle(.secondary)
-                }
-            }
-        }
-        .chartForegroundStyleScale(domain: bars.map(\.label), range: bars.map(\.color))
-        .chartLegend(.hidden)
-        .chartXAxis(.hidden)
-        .chartYAxis {
-            // AxisValueLabel is chart content, not a View, so it takes a resolved
-            // Font rather than the .appFont modifier.
-            AxisMarks { _ in AxisValueLabel().font(AppTextStyle.caption2.font(scale: fontScale)) }
-        }
-        .chartOverlay { proxy in
-            GeometryReader { geo in
-                Rectangle().fill(Color.clear).contentShape(Rectangle())
-                    .onTapGesture { location in
-                        guard let tab, let plotAnchor = proxy.plotFrame else { return }
-                        let plot = geo[plotAnchor]
-                        guard let label: String = proxy.value(atY: location.y - plot.origin.y) else { return }
-                        openChartFilter(tab: tab, category: filterCategory, label: label)
-                    }
-            }
-        }
-        .frame(height: max(height, CGFloat(bars.count) * 28))
+        HorizontalBarList(bars: bars, onSelect: tab.map { tab in
+            { label in openChartFilter(tab: tab, category: filterCategory, label: label) }
+        })
     }
 
     private func emptyState(_ msg: String) -> some View {
@@ -899,7 +906,7 @@ struct DashboardView: View {
         let compliant = deviceCount - nonCompliantCount
         complianceSlices = [
             ChartSlice(label: "Compliant", value: compliant, color: .green),
-            ChartSlice(label: "Non-Compliant", value: nonCompliantCount, color: .red)
+            ChartSlice(label: "Non-Compliant", value: nonCompliantCount, color: .orange)
         ].filter { $0.value > 0 }
 
         let platformColorMap: [String: Color] = [
@@ -941,7 +948,7 @@ struct DashboardView: View {
                 .map { (cat: $0.key, count: $0.value.reduce(0) { $0 + $1.deviceCount }) }
                 .sorted { $0.count > $1.count }
                 .prefix(8)
-            errorCategoryBars = cats.map { ChartBar(label: $0.cat.rawValue, value: $0.count, color: .red) }
+            errorCategoryBars = cats.map { ChartBar(label: $0.cat.rawValue, value: $0.count, color: .orange) }
         } catch {
             dbg.error("Dashboard ReportMate: \(error)", category: "dashboard")
         }
@@ -988,43 +995,47 @@ struct DashboardView: View {
                 }, by: { $0.priorityName ?? "None" })
                     .map { (label: $0.key, count: $0.value.count) }
                     .sorted { (priorityOrder[$0.label] ?? 99) < (priorityOrder[$1.label] ?? 99) }
-                let prioColors: [Color] = [.green, .orange, .red, .purple, .gray]
-                ticketPriorityBars = prios.enumerated().map { i, p in ChartBar(label: p.label, value: p.count, color: prioColors[i % prioColors.count]) }
+                // Keyed by name, not position, so a missing priority never
+                // shifts the others' colours. No red: High is orange.
+                let prioColors: [String: Color] = ["Low": .green, "Medium": .blue, "High": .orange]
+                let otherColors: [Color] = [.purple, .gray, .teal]
+                ticketPriorityBars = prios.enumerated().map { i, p in
+                    ChartBar(label: p.label, value: p.count, color: prioColors[p.label] ?? otherColors[i % otherColors.count])
+                }
             }
         }
 
         // Work Items
         if appState.config.isDevOpsConfigured {
-            if appState.cachedWorkItems.isEmpty && !appState.isWorkItemsCacheValid {
+            // The signed-in user's open items across every project — the same
+            // set the work-items card lists, so the donut and KPI agree with it.
+            if !appState.isMyWorkItemsCacheValid {
                 do {
-                    let items = try await appState.devOpsService.getWorkItems(limit: 200)
-                    appState.updateWorkItemsCache(items)
+                    let items = try await appState.devOpsService.getMyOpenWorkItems()
+                    appState.updateMyWorkItemsCache(items)
                 } catch {
                     dbg.error("Dashboard work items fetch: \(error)", category: "dashboard")
                 }
             }
 
-            let workItems = appState.cachedWorkItems
+            let workItems = appState.cachedMyWorkItems
+            activeWorkItems = workItems.count
+            if workItems.isEmpty { workItemSlices = [] }
             if !workItems.isEmpty {
                 let states = Dictionary(grouping: workItems, by: { $0.fields?.state ?? "Unknown" })
                     .map { (state: $0.key, count: $0.value.count) }
                     .sorted { $0.count > $1.count }
-                let sc: [Color] = [.blue, .green, .orange, .red, .gray, .brown]
+                let sc: [Color] = [.blue, .green, .orange, .purple, .gray, .brown]
                 workItemSlices = states.enumerated().map { i, s in
                     ChartSlice(label: "\(s.state) (\(s.count))", value: s.count, color: sc[i % sc.count])
                 }
-                activeWorkItems = workItems.filter {
-                    let s = $0.fields?.state?.lowercased() ?? ""
-                    return s != "done" && s != "closed" && s != "removed"
-                }.count
 
                 do {
                     let sprints = try await appState.devOpsService.getSprints()
                     if let current = sprints.first(where: { $0.isCurrent }) {
                         let name = current.name ?? "Current"
                         let si = workItems.filter { $0.fields?.iterationPath?.hasSuffix(name) == true }
-                        let done = si.filter { $0.fields?.state?.lowercased() == "done" }.count
-                        sprintInfo = "Sprint: \(name) · \(done)/\(si.count) done"
+                        sprintInfo = "Sprint: \(name) · \(si.count) open"
                     }
                 } catch {
                     dbg.error("Dashboard sprints: \(error)", category: "dashboard")
@@ -1061,7 +1072,7 @@ struct DashboardView: View {
             .map { (status: $0.key, count: $0.value.count) }
             .sorted { $0.count > $1.count }
             .prefix(5)
-        let sc: [Color] = [.green, .blue, .orange, .red, .gray]
+        let sc: [Color] = [.green, .blue, .orange, .purple, .gray]
         assetStatusSlices = statusGroups.enumerated().map { i, s in
             ChartSlice(label: "\(s.status) (\(s.count))", value: s.count, color: sc[i % sc.count])
         }
@@ -1070,7 +1081,7 @@ struct DashboardView: View {
             .map { (cat: $0.key, count: $0.value.count) }
             .sorted { $0.count > $1.count }
             .prefix(8)
-        let catColors: [Color] = [.orange, .blue, .purple, .teal, .green, .red, .brown, .indigo]
+        let catColors: [Color] = [.orange, .blue, .purple, .teal, .green, .pink, .brown, .indigo]
         assetCategoryBars = cats.enumerated().map { i, c in ChartBar(label: c.cat, value: c.count, color: catColors[i % catColors.count]) }
 
         // Fetch recent activity log (last 24h worth, up to 50 entries)
@@ -1186,6 +1197,110 @@ struct DashboardView: View {
     }
 }
 
+// MARK: - Horizontal Bar List
+
+/// Label | bar | count rows. The label column sizes to the longest label (up to
+/// a cap, past which the label truncates); the count column sizes to the
+/// widest count and never truncates; the bar takes whatever is left.
+struct HorizontalBarList: View {
+    let bars: [ChartBar]
+    var onSelect: ((String) -> Void)? = nil
+
+    @State private var hovered: UUID?
+
+    var body: some View {
+        let maxValue = max(bars.map(\.value).max() ?? 0, 1)
+        Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 7) {
+            ForEach(bars) { bar in
+                GridRow {
+                    Text(bar.label)
+                        .appFont(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: 160, alignment: .leading)
+                        .help(bar.label)
+                        .modifier(BarRowInteraction(id: bar.id, label: bar.label, hovered: $hovered, onSelect: onSelect))
+                    GeometryReader { geo in
+                        let fraction = CGFloat(bar.value) / CGFloat(maxValue)
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(bar.color.opacity(hovered == bar.id ? 0.72 : 1))
+                            .frame(width: bar.value > 0 ? max(geo.size.width * fraction, 3) : 0)
+                            .frame(maxHeight: .infinity, alignment: .center)
+                    }
+                    .frame(minWidth: 40, maxWidth: .infinity)
+                    .frame(height: 14)
+                    .modifier(BarRowInteraction(id: bar.id, label: bar.label, hovered: $hovered, onSelect: onSelect))
+                    Text(bar.value, format: .number)
+                        .appFont(.caption2, weight: .medium)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                        .gridColumnAlignment(.trailing)
+                        .modifier(BarRowInteraction(id: bar.id, label: bar.label, hovered: $hovered, onSelect: onSelect))
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+/// Hover highlight and click-through shared by every cell of a bar row (a
+/// GridRow takes no gestures of its own).
+private struct BarRowInteraction: ViewModifier {
+    let id: UUID
+    let label: String
+    @Binding var hovered: UUID?
+    let onSelect: ((String) -> Void)?
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { hovered = id } else if hovered == id { hovered = nil }
+            }
+            .onTapGesture { onSelect?(label) }
+    }
+}
+
+// MARK: - Chart Legend
+
+/// Swatch, label and count per slice. Labels wrap onto a second line rather
+/// than truncate; the count sits in its own trailing column at natural width.
+struct ChartLegendList: View {
+    let slices: [ChartSlice]
+    var onSelect: ((String) -> Void)? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(slices) { slice in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Circle().fill(slice.color).frame(width: 8, height: 8)
+                    Text(Self.displayLabel(slice))
+                        .appFont(.caption2)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 6)
+                    Text(slice.value, format: .number)
+                        .appFont(.caption2, weight: .medium)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { onSelect?(slice.label) }
+            }
+        }
+    }
+
+    /// Some slice labels already end in "(count)"; the legend shows the count
+    /// in its own column, so drop the duplicate.
+    static func displayLabel(_ slice: ChartSlice) -> String {
+        let suffix = " (\(slice.value))"
+        return slice.label.hasSuffix(suffix) ? String(slice.label.dropLast(suffix.count)) : slice.label
+    }
+}
+
 // MARK: - Treemap Chart
 
 struct TreemapChart: View {
@@ -1208,14 +1323,16 @@ struct TreemapChart: View {
                             .fill(slice.color.opacity(hoveredSlice?.id == slice.id ? 0.72 : 1.0))
                             .frame(width: max(rect.width - 2, 0), height: max(rect.height - 2, 0))
                             .overlay {
-                                if rect.width > 40 && rect.height > 30 {
+                                if rect.width > 48 && rect.height > 30 {
                                     VStack(spacing: 1) {
                                         Text(slice.label)
                                             .appFont(.caption2, weight: .bold)
                                             .lineLimit(1)
                                             .minimumScaleFactor(0.7)
-                                        Text("\(slice.value)")
+                                        Text(slice.value, format: .number)
                                             .appFont(.caption2)
+                                            .monospacedDigit()
+                                            .fixedSize()
                                     }
                                     .foregroundStyle(.white)
                                 }
@@ -1247,16 +1364,22 @@ struct TreemapChart: View {
                 }
             }
             .frame(height: height)
-            // Legend
-            HStack(spacing: 10) {
+            // Legend: whole entries flow onto the next line; an entry never
+            // breaks inside itself.
+            DashboardFlowLayout(spacing: 10) {
                 ForEach(slices) { slice in
                     HStack(spacing: 4) {
                         Circle().fill(slice.color).frame(width: 7, height: 7)
-                        Text("\(slice.label) (\(slice.value))")
+                        Text(slice.label)
                             .appFont(.caption2).foregroundStyle(.secondary)
+                        Text(slice.value, format: .number)
+                            .appFont(.caption2, weight: .medium).monospacedDigit()
                     }
+                    .fixedSize()
+                    .onTapGesture { onSelect?(slice.label) }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

@@ -69,9 +69,16 @@ struct DashboardTasksPane: View {
     /// The row being read in place. Rows link out through the context menu.
     @State private var lightboxTask: UnifiedTask?
 
+    /// Widest area path rendered so far, so the path column fits its longest
+    /// entry instead of truncating, and the title column starts at one x.
+    @State private var pathColumnWidth: CGFloat = 0
+
+    /// The signed-in user's open work items across every project. The query
+    /// already excludes finished states; filtering again keeps the list right
+    /// when an item is closed from inside the app before the next refresh.
     private var activeWorkItems: [WorkItem] {
-        let closed: Set<String> = ["done", "closed", "removed", "completed", "resolved"]
-        return appState.cachedWorkItems
+        let closed = Set(AzureDevOpsService.finishedWorkItemStates.map { $0.lowercased() })
+        return appState.cachedMyWorkItems
             .filter { !closed.contains(($0.fields?.state ?? "").lowercased()) }
             .sorted { ($0.fields?.changedDate ?? "") > ($1.fields?.changedDate ?? "") }
     }
@@ -171,6 +178,11 @@ struct DashboardTasksPane: View {
                                 if index < visibleWorkItems.count - 1 { Divider() }
                             }
                         }
+                        .onPreferenceChange(PathColumnWidthKey.self) { width in
+                            // Only ever widen: shrinking as rows scroll out
+                            // would make the title column jump.
+                            if width > pathColumnWidth { pathColumnWidth = ceil(width) }
+                        }
                     }
                     .frame(maxHeight: 540)
                 }
@@ -187,15 +199,20 @@ struct DashboardTasksPane: View {
             lightboxTask = TaskLightboxView.workItemStub(item, config: appState.config)
         } label: {
             // Invisible grid: fixed-width columns so pills line up down the
-            // list. Area path leads (where the ids used to be), title flexes,
-            // then Type / Iteration / State pill columns.
+            // list. Area path leads (where the ids used to be) at its full
+            // width — never truncated — and the title takes what is left and
+            // truncates instead; then Type / Iteration / State pill columns.
             HStack(spacing: 8) {
                 Text(breadcrumb(item.fields?.areaPath) ?? "")
                     .appFont(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .truncationMode(.head)
-                    .frame(width: 170, alignment: .leading)
+                    .fixedSize()
+                    .background(GeometryReader { geo in
+                        Color.clear.preference(key: PathColumnWidthKey.self, value: geo.size.width)
+                    })
+                    .frame(minWidth: pathColumnWidth, alignment: .leading)
+                    .layoutPriority(1)
                 Text(item.fields?.title ?? "(untitled)")
                     .appFont(.caption)
                     .lineLimit(1)
@@ -363,5 +380,13 @@ struct DashboardTasksPane: View {
             .background(tint.opacity(0.12))
             .foregroundStyle(tint)
             .clipShape(Capsule())
+    }
+}
+
+/// Reports the widest area-path text in the work-items list.
+private struct PathColumnWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }

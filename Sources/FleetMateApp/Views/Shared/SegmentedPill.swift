@@ -9,7 +9,9 @@ struct SegmentedPill<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [Value]
     let label: (Value) -> String
-    var segmentWidth: CGFloat = 56
+    /// Fixed segment width for equal-width switches (List / Board). Nil sizes
+    /// each segment to its label, for controls whose labels differ in length.
+    var segmentWidth: CGFloat? = 56
 
     @Namespace private var pillNS
 
@@ -19,6 +21,9 @@ struct SegmentedPill<Value: Hashable>: View {
                 Text(label(option))
                     .appFont(fixed: 12, weight: selection == option ? .semibold : .regular)
                     .foregroundStyle(selection == option ? .primary : .secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, segmentWidth == nil ? 12 : 0)
                     .frame(width: segmentWidth, height: 24)
                     .background {
                         if selection == option {

@@ -468,6 +468,8 @@ public struct GitCommitRef: Codable, Identifiable {
     public let committer: GitUserDate?
     public let url: String?
     public let remoteUrl: String?
+    /// Parent commit ids; present on the single-commit endpoint.
+    public let parents: [String]?
 
     public var id: String { commitId }
 
@@ -564,6 +566,8 @@ public struct GitPullRequestComment: Codable {
     public let isDeleted: Bool?
     public let publishedDate: String?
     public let lastUpdatedDate: String?
+    public let content: String?
+    public let author: IdentityRef?
 }
 
 public struct GitPullRequestThreadsResponse: Codable {

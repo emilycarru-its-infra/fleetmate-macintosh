@@ -176,7 +176,12 @@ class AppState: ObservableObject {
     @Published var cachedDevices: [IntuneDevice] = []
     @Published var cachedAssets: [SnipeAsset] = []
     @Published var cachedTickets: [TdxTicket] = []
+    /// The organization's most recently changed work items, anyone's and in
+    /// any state: feeds global search and the activity feed.
     @Published var cachedWorkItems: [WorkItem] = []
+    /// Every open work item assigned to the signed-in user, across all
+    /// projects: feeds the Dashboard's work-items card, donut and KPI.
+    @Published var cachedMyWorkItems: [WorkItem] = []
     @Published var cachedUsers: [SnipeUser] = []
     @Published var cachedEntraUsers: [EntraUser] = []
     @Published private(set) var isAssignedUsersLoading = false
@@ -209,6 +214,9 @@ class AppState: ObservableObject {
     /// The dashboard's task tables (DevOps work items + GitHub issues) —
     /// AppState-owned for the same tab-switch-survival reason as the PR queue.
     let dashboardTasks = DashboardTasksModel()
+    /// Development tab: the wide PR queue, GitHub inbox and activity feed,
+    /// kept across tab switches.
+    let development = DevelopmentModel()
 
     /// Everything the Projects tab loads from Azure DevOps and GitHub.
     ///
@@ -224,6 +232,7 @@ class AppState: ObservableObject {
     private var assetsCacheTime: Date?
     private var ticketsCacheTime: Date?
     private var workItemsCacheTime: Date?
+    private var myWorkItemsCacheTime: Date?
     private var usersCacheTime: Date?
     private var groupsCacheTime: Date?
     
@@ -387,12 +396,14 @@ class AppState: ObservableObject {
         assetsCacheTime = nil
         ticketsCacheTime = nil
         workItemsCacheTime = nil
+        myWorkItemsCacheTime = nil
         usersCacheTime = nil
         groupsCacheTime = nil
         cachedDevices = []
         cachedAssets = []
         cachedTickets = []
         cachedWorkItems = []
+        cachedMyWorkItems = []
         cachedUsers = []
         cachedEntraUsers = []
         cachedGroups = []
@@ -412,6 +423,9 @@ class AppState: ObservableObject {
     
     /// Check if work items cache is valid
     var isWorkItemsCacheValid: Bool { isCacheValid(workItemsCacheTime) }
+
+    /// Check if the signed-in user's open work items are still fresh
+    var isMyWorkItemsCacheValid: Bool { isCacheValid(myWorkItemsCacheTime) }
     
     /// Check if users cache is valid
     var isUsersCacheValid: Bool { isCacheValid(usersCacheTime) }
@@ -442,6 +456,12 @@ class AppState: ObservableObject {
         cachedWorkItems = workItems
         workItemsCacheTime = Date()
     }
+
+    /// Update the signed-in user's open work items
+    func updateMyWorkItemsCache(_ workItems: [WorkItem]) {
+        cachedMyWorkItems = workItems
+        myWorkItemsCacheTime = Date()
+    }
     
     /// Update users cache
     func updateUsersCache(snipeUsers: [SnipeUser], entraUsers: [EntraUser]) {
@@ -466,7 +486,10 @@ class AppState: ObservableObject {
     func invalidateTicketsCache() { ticketsCacheTime = nil }
     
     /// Invalidate work items cache
-    func invalidateWorkItemsCache() { workItemsCacheTime = nil }
+    func invalidateWorkItemsCache() {
+        workItemsCacheTime = nil
+        myWorkItemsCacheTime = nil
+    }
     
     /// Invalidate users cache
     func invalidateUsersCache() { usersCacheTime = nil }
@@ -482,8 +505,58 @@ class AppState: ObservableObject {
     func warmElevationSessions() async {
         guard config.graphUsesAze else { azeSessionState = .direct; return }
         azeSessionState = .warming
+        elevationCreating = Set(Self.elevationDomains)
         let warmed = await graphService.warmElevationSessions()
+        elevationCreating = []
         azeSessionState = warmed ? .warm : .failed
+        await refreshElevationInfo()
+        startElevationPolling()
+    }
+
+    // MARK: - Elevation session status (window chrome)
+
+    /// The domains Graph rides on, and so the ones the indicator reports.
+    static let elevationDomains: [GraphDomain] = [.devices, .identity]
+
+    /// Last `az container show` snapshot per domain.
+    @Published var elevationInfo: [GraphDomain: ElevationSessionInfo] = [:]
+    /// Domains whose session is being created right now, before a container
+    /// exists to read.
+    @Published var elevationCreating: Set<GraphDomain> = []
+    private var elevationPollTask: Task<Void, Never>?
+
+    /// Per-domain status at `now`. The expiry tag lets the label flip on time
+    /// without polling; views re-derive it on a timeline.
+    func elevationStatus(_ domain: GraphDomain, at now: Date = Date()) -> ElevationStatus {
+        if elevationCreating.contains(domain) { return .starting }
+        guard let info = elevationInfo[domain] else { return .unknown }
+        return info.status(at: now)
+    }
+
+    /// The worst status across the domains, for the single indicator.
+    func elevationAggregate(at now: Date = Date()) -> ElevationStatus {
+        Self.elevationDomains.map { elevationStatus($0, at: now) }.max { $0.rank < $1.rank } ?? .unknown
+    }
+
+    func refreshElevationInfo() async {
+        guard config.graphUsesAze else { return }
+        let session = ElevationSession()
+        for domain in Self.elevationDomains {
+            elevationInfo[domain] = await session.sessionInfo(domain)
+        }
+    }
+
+    /// Re-read the containers every five minutes; az calls are cheap but not
+    /// free, and the expiry tag covers the time in between.
+    private func startElevationPolling() {
+        guard elevationPollTask == nil else { return }
+        elevationPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(300))
+                guard !Task.isCancelled else { return }
+                await self?.refreshElevationInfo()
+            }
+        }
     }
 
     /// Fill `cachedGroupDevices` for every cached group that doesn't have its
@@ -667,6 +740,17 @@ class AppState: ObservableObject {
                         dbg.info("Work items preloaded: \(items.count) items", category: "preload")
                     } catch {
                         dbg.error("Work items preload FAILED: \(error)", category: "preload")
+                    }
+                }
+            }
+            if config.isDevOpsConfigured && !isMyWorkItemsCacheValid && devOpsService.hasValidToken {
+                group.addTask { @MainActor in
+                    do {
+                        let items = try await self.devOpsService.getMyOpenWorkItems()
+                        self.updateMyWorkItemsCache(items)
+                        dbg.info("My open work items preloaded: \(items.count) items", category: "preload")
+                    } catch {
+                        dbg.error("My work items preload FAILED: \(error)", category: "preload")
                     }
                 }
             }

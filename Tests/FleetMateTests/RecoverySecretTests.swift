@@ -80,3 +80,13 @@ final class RecoverySecretTests: XCTestCase {
         XCTAssertTrue(command.contains("--headers 'Content-Type=application/json' --body '{}'"))
     }
 }
+
+final class RecoverySecretRoutingTests: XCTestCase {
+    func testRecoverySecretReadsRouteToDevicesIdentity() {
+        let router = GraphDomainRouter()
+        XCTAssertEqual(router.domain(for: "https://graph.microsoft.com/v1.0/informationProtection/bitlocker/recoveryKeys?$filter=deviceId eq 'x'"), .devices)
+        XCTAssertEqual(router.domain(for: "https://graph.microsoft.com/v1.0/informationProtection/bitlocker/recoveryKeys/k?$select=key"), .devices)
+        XCTAssertEqual(router.domain(for: "https://graph.microsoft.com/v1.0/directory/deviceLocalCredentials/x?$select=credentials"), .devices)
+        XCTAssertEqual(router.domain(for: "https://graph.microsoft.com/v1.0/users/x"), .identity)
+    }
+}

@@ -38,12 +38,38 @@ struct AppleOrgDetailSection: View {
                     DeviceDetailRow(label: "Migration", value: device.migrationStatus == nil ? nil : row.migrationLabel)
                     DeviceDetailRow(label: "Migration Deadline", value: device.migrationDeadline.map { AppleOrgFormat.dateTime($0) })
                     DeviceDetailRow(label: "Migration Capable", value: device.isMigrationCapable.map { $0 ? "Yes" : "No" })
+                    activationLock(for: device.serialNumber)
                 }
+                .task(id: device.serialNumber) { store.loadActivationLock(for: device) }
 
                 DetailSection(title: "AppleCare", icon: "cross.case") {
                     appleCare(for: device.serialNumber)
                 }
                 .task(id: device.serialNumber) { store.loadAppleCare(for: device) }
+            }
+        }
+    }
+
+    /// Report only: no bypass code is shown and nothing here clears a lock.
+    @ViewBuilder
+    private func activationLock(for serial: String) -> some View {
+        if let lock = store.activationLock[serial] {
+            HStack(alignment: .top) {
+                Text("Activation Lock")
+                    .appFont(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(width: 140, alignment: .leading)
+                Text(lock.detailText)
+                    .appFont(.caption)
+                    .foregroundColor(lock.isLocked ? .orange : .primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                Spacer(minLength: 0)
+            }
+        } else {
+            HStack {
+                ProgressView().scaleEffect(0.6)
+                Text("Reading Activation Lock…").appFont(.caption).foregroundColor(.secondary)
             }
         }
     }

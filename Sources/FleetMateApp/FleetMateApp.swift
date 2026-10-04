@@ -17,6 +17,9 @@ struct FleetMateApp: App {
         // the top of the View menu, promising document tabs that don't exist —
         // directly above the ⌘1–⌘6 items that do the switching.
         NSWindow.allowsAutomaticWindowTabbing = false
+
+        // Settings ▸ Appearance ▸ Theme, applied before the first window draws.
+        MainActor.assumeIsolated { AppTheme.stored.apply() }
     }
 
     var body: some Scene {

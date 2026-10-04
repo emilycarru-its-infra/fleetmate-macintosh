@@ -51,6 +51,10 @@ struct CimianPushSubcommand: AsyncParsableCommand {
 
     func run() async throws {
         let serialList = serials.flatMap { $0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } }.filter { !$0.isEmpty }
+        if let bad = serialList.first(where: { (try? DeviceIdentifier.validateSerial($0)) == nil }) {
+            print("'\(bad)' is not a valid serial number: use letters and digits only.".red)
+            throw ExitCode.failure
+        }
         guard !serialList.isEmpty || group != nil else {
             print("Specify --serial or --group to target devices".red)
             print("  fleetmate cimian push --serial SERIAL1".cyan)
@@ -141,7 +145,7 @@ struct CimianPushSubcommand: AsyncParsableCommand {
         if let groupId = try await service.getGroupByName(group)?.id ?? (UUID(uuidString: group) != nil ? group : nil) {
             for member in try await service.getGroupDeviceMembers(groupId, limit: 500) {
                 guard let deviceId = member.deviceId, !deviceId.isEmpty else { continue }
-                devices += try await service.getManagedDevices(filter: "azureADDeviceId eq '\(deviceId)'", limit: 1)
+                devices += try await service.getManagedDevices(filter: ODataFilter.equals("azureADDeviceId", deviceId), limit: 1)
             }
         }
         guard !devices.isEmpty else {
@@ -169,8 +173,18 @@ struct CimianPushSubcommand: AsyncParsableCommand {
         var results: [CimianPushResult] = []
         var resolved: [IntuneDevice] = []
         for serial in serials {
-            if let device = try await service.getDeviceBySerial(serial) { resolved.append(device) } else {
+            let match: ExactMatch<IntuneDevice>
+            do { match = try await service.resolveManagedDeviceExactly(serial) } catch {
+                results.append(CimianPushResult(deviceIdentifier: serial, deviceName: nil, channel: "Intune", success: false, message: error.localizedDescription))
+                continue
+            }
+            switch match {
+            case .one(let device): resolved.append(device)
+            case .none:
                 results.append(CimianPushResult(deviceIdentifier: serial, deviceName: nil, channel: "Intune", success: false, message: "Device not found in Intune"))
+            case .many(let devices):
+                results.append(CimianPushResult(deviceIdentifier: serial, deviceName: nil, channel: "Intune", success: false,
+                                                message: "\(devices.count) Intune records have this serial; use a managedDevice id"))
             }
         }
         guard !resolved.isEmpty, !noSync else { return results }

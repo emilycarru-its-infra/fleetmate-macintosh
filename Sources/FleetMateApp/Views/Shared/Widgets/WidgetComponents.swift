@@ -4,11 +4,23 @@ import FleetMateCore
 
 // MARK: - Widgets Section
 
-/// The collapsible "Widgets" strip at the top of a tab: a header row with a
-/// disclosure chevron, then the tab's cards laid out by `WidgetRowLayout`.
-/// The strip takes only the height its cards need, so the tab's own content
-/// below keeps its layout; collapsed, the strip is just the header row.
-/// Collapsed state is kept per tab.
+extension AppTab {
+    /// Tabs that carry a Widgets strip; the toolbar's Graphs button is
+    /// offered only on these.
+    var hasWidgets: Bool {
+        switch self {
+        case .development, .projects, .devices, .inventory, .tickets: true
+        case .manage, .identity: false
+        }
+    }
+
+    /// Per-tab persistence key for whether the widgets are hidden.
+    var widgetsCollapsedKey: String { "widgets.collapsed.\(rawValue)" }
+}
+
+/// A tab's widgets as an invisible accordion: no header of its own, shown or
+/// hidden from the toolbar's Graphs button. Hidden, the tab is exactly its
+/// own layout. State is kept per tab.
 struct WidgetsSection<Content: View>: View {
     let tab: AppTab
     @ViewBuilder var content: Content
@@ -18,36 +30,48 @@ struct WidgetsSection<Content: View>: View {
     init(tab: AppTab, @ViewBuilder content: () -> Content) {
         self.tab = tab
         self.content = content()
-        _collapsed = AppStorage(wrappedValue: false, "widgets.collapsed.\(tab.rawValue)")
+        _collapsed = AppStorage(wrappedValue: false, tab.widgetsCollapsedKey)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) { collapsed.toggle() }
-            } label: {
-                HStack {
-                    Text("Widgets").appFont(.callout, weight: .medium)
-                    Spacer()
-                    Image(systemName: "chevron.down")
-                        .rotationEffect(.degrees(collapsed ? 0 : 180))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
             if !collapsed {
                 WidgetRowLayout(spacing: 12, minUnitWidth: 240) {
                     content
                 }
                 .padding(.horizontal, 16)
-                .padding(.bottom, 12)
+                .padding(.vertical, 12)
+                .overlay(alignment: .bottom) { Divider() }
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .fixedSize(horizontal: false, vertical: true)
-        .overlay(alignment: .bottom) { Divider() }
+        .clipped()
+    }
+}
+
+/// Toolbar toggle for the current tab's widgets. Rebuilt per tab (`.id`) so
+/// its storage key follows the tab.
+struct GraphsToolbarButton: View {
+    let tab: AppTab
+    @AppStorage private var collapsed: Bool
+
+    init(tab: AppTab) {
+        self.tab = tab
+        _collapsed = AppStorage(wrappedValue: false, tab.widgetsCollapsedKey)
+    }
+
+    var body: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.22)) { collapsed.toggle() }
+        } label: {
+            Image(systemName: "chart.bar.xaxis")
+                .foregroundStyle(collapsed ? Color.secondary : Color.accentColor)
+        }
+        .keyboardShortcut("g", modifiers: [.command, .option])
+        .help(collapsed ? "Show Graphs (⌥⌘G)" : "Hide Graphs (⌥⌘G)")
+        .accessibilityLabel("Graphs")
+        .accessibilityValue(collapsed ? "Hidden" : "Shown")
     }
 }
 

@@ -66,8 +66,11 @@ struct ContentView: View {
                 // right of it — the shield ended up stranded mid-toolbar. On
                 // macOS 26 the search field can be positioned explicitly, so
                 // claim it here and declare the shield after it.
+                // The tab's own filter field sits on the left with the tab's
+                // controls, so search-everything can be the last item on the
+                // right.
                 if #available(macOS 26.0, *) {
-                    DefaultToolbarItem(kind: .search, placement: .automatic)
+                    DefaultToolbarItem(kind: .search, placement: .navigation)
                 }
                 ToolbarItem(placement: .primaryAction) {
                     RecentActivityToolbarButton()

@@ -24,6 +24,17 @@ struct ProjectsCache {
     var currentGhConfig: GitHubProviderConfig?
     var projectStatusField: GitHubProjectField?
 
+    // GitHub Projects v2 board (the Projects mode). Loaded on first open and on
+    // Refresh only — never polled, since every page is a GraphQL query against
+    // the shared per-user budget.
+    var githubBoardItems: [GitHubProjectItem] = []
+    var githubBoardLoadedAt: Date?
+    var githubBoardError: String?
+    /// Refresh requests made, and the one the loaded items answer. They differ
+    /// only after Refresh, which is what makes the board reload.
+    var githubBoardRefreshRequested = 0
+    var githubBoardRefreshLoaded = 0
+
     // Reference data backing the create/edit menus
     var teamMembers: [IdentityRef] = []
     var areaPaths: [String] = []

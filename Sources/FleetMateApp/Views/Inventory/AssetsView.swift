@@ -1640,7 +1640,7 @@ struct ColumnResizeHandle: View {
             .padding(.horizontal, 4.5)
             .contentShape(Rectangle())
             .gesture(
-                DragGesture(minimumDistance: 4)
+                DragGesture(minimumDistance: 4, coordinateSpace: .global)
                     .onChanged { value in
                         if !isDragging {
                             isDragging = true

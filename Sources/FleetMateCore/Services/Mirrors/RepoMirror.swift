@@ -15,7 +15,12 @@ public actor RepoMirror {
     public private(set) var lastSynced: Date?
     public private(set) var lastError: String?
 
-    public init(name: String, remoteURL: String, branch: String = "main", paths: [String] = [], root: URL? = nil) {
+    /// The only host the sign-in token may be sent to.
+    public let tokenHost: String?
+
+    public init(name: String, remoteURL: String, branch: String = "main", paths: [String] = [],
+                tokenHost: String? = nil, root: URL? = nil) {
+        self.tokenHost = tokenHost?.lowercased()
         self.name = name
         self.remoteURL = remoteURL
         self.branch = branch
@@ -41,9 +46,12 @@ public actor RepoMirror {
         // The token rides in git's environment config for this call only:
         // not on the command line, where `ps` would show it, and never in
         // the repository's config file.
-        if let bearerToken, !bearerToken.isEmpty {
+        // Only over HTTPS, only to the DevOps host, and scoped to that host's
+        // URLs — a misconfigured remote, a redirect or a submodule elsewhere
+        // never sees it.
+        if let bearerToken, !bearerToken.isEmpty, let scope = tokenScope {
             env["GIT_CONFIG_COUNT"] = "2"
-            env["GIT_CONFIG_KEY_0"] = "http.extraHeader"
+            env["GIT_CONFIG_KEY_0"] = "http.\(scope).extraHeader"
             env["GIT_CONFIG_VALUE_0"] = "Authorization: Bearer \(bearerToken)"
             // The token is the sign-in; keep credential helpers out of it.
             env["GIT_CONFIG_KEY_1"] = "credential.helper"
@@ -71,6 +79,13 @@ public actor RepoMirror {
     }
 
     public func recordFailure(_ message: String) { lastError = message }
+
+    /// `https://<host>/` when the remote is HTTPS on the token's host.
+    var tokenScope: String? {
+        guard let tokenHost, let url = URL(string: remoteURL),
+              url.scheme?.lowercased() == "https", url.host?.lowercased() == tokenHost else { return nil }
+        return "https://\(tokenHost)/"
+    }
 
     @discardableResult
     private func git(_ args: [String], in dir: URL?, env: [String: String]) async throws -> String {

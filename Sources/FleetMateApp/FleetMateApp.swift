@@ -149,6 +149,8 @@ class AppState: ObservableObject {
     @Published var navigateToGitHubIssueUrl: String?
     /// A `fleetmate://` pull, commit or pipeline link for Development to open.
     @Published var pendingDevelopmentLink: FleetMateLink?
+    /// Bumped by ⌘K; the toolbar search field takes focus on each change.
+    @Published var globalSearchFocusRequest = 0
     /// Why the last `fleetmate://` link could not be opened.
     @Published var linkError: String?
 

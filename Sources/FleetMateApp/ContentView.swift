@@ -69,6 +69,14 @@ struct ContentView: View {
                 if #available(macOS 26.0, *) {
                     DefaultToolbarItem(kind: .search, placement: .automatic)
                 }
+                if selectedTab.hasWidgets {
+                    ToolbarItem(placement: .primaryAction) {
+                        GraphsToolbarButton(tab: selectedTab).id(selectedTab)
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    RecentActivityToolbarButton()
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: { showAuthPopover.toggle() }) {
                         ElevationShieldLabel()
@@ -166,14 +174,13 @@ struct ContentView: View {
 
     private func validateSelectedTab() {
         if !selectedTab.isEnabled(config: appState.config) {
-            appState.selectedTab = .dashboard
+            appState.selectedTab = .development
         }
     }
 
     @ViewBuilder
     private var tabContent: some View {
         switch selectedTab {
-        case .dashboard: DashboardView()
         case .devices:   DevicesView()
         case .manage:    ManageView(manage: appState.manageState)
         case .inventory: AssetsView()

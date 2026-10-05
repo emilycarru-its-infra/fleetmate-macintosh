@@ -161,6 +161,7 @@ struct AssetsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if appState.config.isSnipeConfigured { InventoryWidgetsSection(metrics: appState.widgetMetrics) }
             // Content
             if !appState.config.isSnipeConfigured {
                 VStack {

@@ -22,6 +22,10 @@ final class AppleOrgStore: ObservableObject {
     /// session. A missing entry is a read in flight.
     @Published private(set) var appleCare: [String: Result<[AppleCareAgreement], Error>] = [:]
 
+    /// Activation Lock per serial, read when a device is selected and kept for
+    /// the session. A missing entry is a read not yet made or still in flight.
+    @Published private(set) var activationLock: [String: AppleActivationLock] = [:]
+
     private var services: [String: AppleOrgService] = [:]
     private var loadTask: Task<Void, Never>?
 
@@ -55,6 +59,7 @@ final class AppleOrgStore: ObservableObject {
         devices = []
         servers = []
         appleCare = [:]
+        activationLock = [:]
         lastLoaded = nil
         loadErrors = [:]
     }
@@ -141,6 +146,21 @@ final class AppleOrgStore: ObservableObject {
                 appleCare[serial] = .success(try await s.appleCare(serial: serial))
             } catch {
                 appleCare[serial] = .failure(error)
+            }
+        }
+    }
+
+    func loadActivationLock(for device: AppleOrgDevice) {
+        let serial = device.serialNumber
+        guard activationLock[serial] == nil else { return }
+        Task {
+            do {
+                let s = try await service(for: device.orgId)
+                activationLock[serial] = try await s.activationLock(serial: serial)
+            } catch {
+                // A failed read is unknown, never disabled.
+                activationLock[serial] = .unknown
+                dbg.warn("Activation Lock read failed: \(error.localizedDescription)", category: "appleorg")
             }
         }
     }

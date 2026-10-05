@@ -684,3 +684,32 @@ public struct TdxLookupItem: Identifiable, Hashable, Sendable {
         self.name = name
     }
 }
+
+// MARK: - Assets
+
+/// A TeamDynamix asset, the fields `fleetmate tdx assets` shows.
+public struct TdxAsset: Codable, Identifiable, Sendable {
+    public let id: Int
+    public let name: String?
+    public let tag: String?
+    public let serialNumber: String?
+    public let externalId: String?
+    public let model: String?
+    public let manufacturer: String?
+    public let productType: String?
+    public let status: String?
+    public let location: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "ID"
+        case name = "Name"
+        case tag = "Tag"
+        case serialNumber = "SerialNumber"
+        case externalId = "ExternalID"
+        case model = "ModelName"
+        case manufacturer = "ManufacturerName"
+        case productType = "ProductModelName"
+        case status = "StatusName"
+        case location = "LocationName"
+    }
+}

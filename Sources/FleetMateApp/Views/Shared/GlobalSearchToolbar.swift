@@ -55,16 +55,10 @@ enum GlobalSearchRouter {
 /// and groups. ⌘K focuses it; results drop down beneath it.
 struct GlobalSearchToolbarField: View {
     @EnvironmentObject var appState: AppState
-    /// On a narrow window the field rests as a magnifier and opens to full
-    /// width when clicked or on ⌘K, so it never spills into the toolbar's
-    /// overflow menu.
-    var compact = false
     @State private var query = ""
     @State private var results: [GlobalSearchResult] = []
     @State private var showResults = false
     @FocusState private var focused: Bool
-
-    private var collapsed: Bool { compact && !focused && query.isEmpty }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -76,11 +70,7 @@ struct GlobalSearchToolbarField: View {
                 .focused($focused)
                 .onSubmit { if let first = results.first { open(first) } }
                 .onExitCommand { clear() }
-                .frame(width: collapsed ? 0 : nil)
-                .opacity(collapsed ? 0 : 1)
-            if collapsed {
-                EmptyView()
-            } else if query.isEmpty {
+            if query.isEmpty {
                 Text("⌘K")
                     .appFont(fixed: 10, weight: .medium)
                     .foregroundStyle(.secondary)
@@ -95,9 +85,8 @@ struct GlobalSearchToolbarField: View {
             }
         }
         .appFont(.body)
-        .padding(.horizontal, collapsed ? 7 : 10)
-        .frame(width: collapsed ? 32 : 260, height: 28)
-        .animation(.smooth(duration: 0.18), value: collapsed)
+        .padding(.horizontal, 10)
+        .frame(width: 260, height: 28)
         .contentShape(Rectangle())
         .onTapGesture { focused = true }
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))

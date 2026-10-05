@@ -23,7 +23,7 @@ struct UserSidebarRow: View {
             }
             Spacer()
             Circle()
-                .fill(user.accountEnabled == false ? Color.red : Color.green)
+                .fill(user.accountEnabled == false ? Color.orange : Color.green)
                 .frame(width: 8, height: 8)
                 .help(user.accountEnabled == false ? "Disabled" : "Enabled")
         }
@@ -75,8 +75,8 @@ struct EntraUserInspector: View {
             Divider()
             Picker("", selection: $tab) {
                 Text("Properties").tag(InspectorTab.properties)
-                Text("Devices (\(devices.count))").tag(InspectorTab.devices)
-                Text("Groups (\(groups.count))").tag(InspectorTab.groups)
+                Text("Devices").tag(InspectorTab.devices)
+                Text("Groups").tag(InspectorTab.groups)
             }
             .pickerStyle(.segmented)
             .labelsHidden()

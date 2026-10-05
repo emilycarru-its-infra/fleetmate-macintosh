@@ -676,7 +676,7 @@ struct BoardsView: View {
         case .priority:
             let grouped = Dictionary(grouping: filteredTasks, by: { $0.priority ?? 0 })
             let order = [1, 2, 3, 4, 0]
-            let labels = [1: ("Critical", Color.red), 2: ("High", Color.orange), 3: ("Medium", Color.yellow), 4: ("Low", Color.green), 0: ("None", Color.gray)]
+            let labels = [1: ("Critical", Color.orange), 2: ("High", Color.orange), 3: ("Medium", Color.yellow), 4: ("Low", Color.green), 0: ("None", Color.gray)]
             return order.map { key in
                 let info = labels[key] ?? ("Priority \(key)", .blue)
                 return (info.0, info.1, grouped[key] ?? [])
@@ -713,7 +713,7 @@ struct BoardsView: View {
         case "closed":
             return .gray
         case "removed":
-            return .red
+            return .orange
         default:
             return .blue
         }

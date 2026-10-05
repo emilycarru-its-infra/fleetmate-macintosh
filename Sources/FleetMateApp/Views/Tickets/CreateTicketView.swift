@@ -127,7 +127,7 @@ struct CreateTicketView: View {
             if let errorMessage {
                 Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
                     .appFont(.caption)
-                    .foregroundColor(.red)
+                    .foregroundColor(.orange)
                     .lineLimit(2)
             }
             Spacer()
@@ -247,7 +247,7 @@ struct CreateTicketView: View {
             HStack(spacing: 2) {
                 Text(label)
                 if required {
-                    Text(verbatim: "*").foregroundColor(.red)
+                    Text(verbatim: "*").foregroundColor(.orange)
                 }
             }
             .appFont(.caption)

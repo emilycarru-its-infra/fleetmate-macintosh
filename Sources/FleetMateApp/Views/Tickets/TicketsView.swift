@@ -436,7 +436,7 @@ struct TicketsView: View {
     /// Tickets that have sat for weeks should read as such at a glance.
     private func ageColor(_ days: Int?) -> Color {
         guard let days else { return .secondary }
-        if days >= 30 { return .red }
+        if days >= 30 { return .orange }
         if days >= 14 { return .orange }
         return .secondary
     }
@@ -1280,10 +1280,10 @@ struct TicketsView: View {
             if let errMsg = saveErrorMessage {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(.red)
+                        .foregroundColor(.orange)
                     Text(errMsg)
                         .appFont(.caption)
-                        .foregroundColor(.red)
+                        .foregroundColor(.orange)
                     Spacer()
                     Button(action: { saveErrorMessage = nil }) {
                         Image(systemName: "xmark")
@@ -1292,7 +1292,7 @@ struct TicketsView: View {
                     .buttonStyle(.plain)
                 }
                 .padding(6)
-                .background(Color.red.opacity(0.1))
+                .background(Color.orange.opacity(0.1))
                 .cornerRadius(6)
             }
 

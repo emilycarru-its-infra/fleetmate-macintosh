@@ -115,7 +115,9 @@ private struct DevicesContentView: View {
 
         guard !parts.isEmpty else { return "No offboard steps are selected." }
         let steps = parts.count == 1 ? parts[0] : parts.dropLast().joined(separator: ", ") + " and " + parts[parts.count - 1]
-        return "This will \(steps) for \(selectedDevices.count) device(s). This cannot be undone."
+        let orphans = offboardOrphanRows.count
+        let note = orphans == 0 ? "" : " \(orphans) of them have no Intune record, so the wipe or retire is skipped for those."
+        return "This will \(steps) for \(selectedDevices.count + orphans) device(s).\(note) This cannot be undone."
     }
 
     private var mainContent: some View {
@@ -734,20 +736,30 @@ private struct DevicesContentView: View {
         }
     }
 
+    /// Selected rows Autopilot registered but Intune never enrolled. Offboard
+    /// cleans up the records they do have, from the identity the row carries.
+    private var offboardOrphanRows: [DeviceListRow] {
+        selectedRows.filter { $0.intune == nil && $0.autopilot != nil }
+    }
+
     private func performOffboard() {
         let targets = selectedDevices
-        guard !targets.isEmpty else { return }
+        let orphans = offboardOrphanRows.compactMap(\.autopilot)
+        guard !targets.isEmpty || !orphans.isEmpty else { return }
 
         Task {
             isPerformingAction = true
-            actionMessage = "Offboarding \(targets.count) device(s)..."
+            actionMessage = "Offboarding \(targets.count + orphans.count) device(s)..."
             offboardResults = []
             defer { isPerformingAction = false }
 
             var plan = offboardPlan
             plan.wipeOptions = wipeOptions
 
-            let results = await appState.graphService.offboardDevices(targets, plan: plan)
+            var results = targets.isEmpty ? [] : await appState.graphService.offboardDevices(targets, plan: plan)
+            for identity in orphans {
+                results.append(await appState.graphService.offboardRegisteredOnly(identity, plan: plan))
+            }
             offboardResults = results.sorted { ($0.deviceName ?? $0.identifier) < ($1.deviceName ?? $1.identifier) }
 
             let succeeded = results.filter { $0.success }.count
@@ -825,6 +837,10 @@ struct DeviceActionsPanel: View {
     private var selectedDevices: [IntuneDevice] { selectedRows.compactMap(\.intune) }
     /// Every selected device has an Intune record.
     private var allEnrolled: Bool { !selectedRows.isEmpty && selectedRows.allSatisfy { $0.intune != nil } }
+    /// Every selected device is enrolled, or at least registered in Autopilot.
+    private var canOffboard: Bool {
+        !selectedRows.isEmpty && selectedRows.allSatisfy { $0.intune != nil || $0.autopilot != nil }
+    }
     /// The selection when one Apple organization holds every selected
     /// device; empty otherwise, including a selection spanning two.
     private var appleRows: [DeviceListRow] {
@@ -916,7 +932,7 @@ struct DeviceActionsPanel: View {
                     }
                     Text(message)
                         .appFont(.caption)
-                        .foregroundColor(message.contains("Error") ? .red : .green)
+                        .foregroundColor(message.contains("Error") ? .orange : .green)
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
@@ -931,6 +947,11 @@ struct DeviceActionsPanel: View {
                     if allEnrolled {
                         intuneActions
                     }
+                    // Offboard also reaches devices Autopilot registered and
+                    // Intune never enrolled: it cleans up what records remain.
+                    if canOffboard {
+                        offboardSection
+                    }
                     if !appleRows.isEmpty {
                         AppleOrgActionsGroup(store: appleOrg, rows: appleRows)
                     }
@@ -943,6 +964,89 @@ struct DeviceActionsPanel: View {
             Spacer()
         }
         .background(Color(NSColor.controlBackgroundColor))
+    }
+
+    @ViewBuilder
+    private var offboardSection: some View {
+        // Offboard Section
+        ActionAccordion(
+            title: "Offboard Device",
+            icon: "shippingbox.and.arrow.backward",
+            isExpanded: expandedSections.contains("offboard"),
+            onToggle: { toggleSection("offboard") }
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Decommission across Intune, Autopilot and Entra in one pass. Steps that do not apply to a device's platform are skipped.")
+                    .appFont(.caption)
+                    .foregroundColor(.secondary)
+
+                Picker("Intune action", selection: $offboardPlan.terminalAction) {
+                    ForEach(OffboardPlan.TerminalAction.allCases) { action in
+                        Text(action.displayName).tag(action)
+                    }
+                }
+                .pickerStyle(.menu)
+                .appFont(.caption)
+
+                if offboardPlan.terminalAction == .wipe {
+                    Text("Uses the wipe options set above.")
+                        .appFont(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Toggle("Delete the Autopilot registration", isOn: $offboardPlan.deleteAutopilotRegistration)
+                    .appFont(.caption)
+                    .help("Windows only. Releases the hardware hash so the device can be re-registered elsewhere.")
+
+                Picker("Entra device", selection: $offboardPlan.entraAction) {
+                    ForEach(OffboardPlan.EntraAction.allCases) { action in
+                        Text(action.displayName).tag(action)
+                    }
+                }
+                .pickerStyle(.menu)
+                .appFont(.caption)
+
+                Toggle("Delete the Intune record", isOn: $offboardPlan.deleteIntuneRecord)
+                    .appFont(.caption)
+
+                if offboardPlan.deleteIntuneRecord && offboardPlan.terminalAction != .none {
+                    Label("The pending action lives on the Intune record — deleting it before the device checks in cancels the \(offboardPlan.terminalAction == .wipe ? "wipe" : "retire").", systemImage: "exclamationmark.triangle")
+                        .appFont(.caption)
+                        .foregroundColor(.orange)
+                }
+
+                Button(action: { showOffboardConfirmation = true }) {
+                    Label("Offboard Device", systemImage: "shippingbox.and.arrow.backward")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .disabled(isPerformingAction)
+
+                if !offboardResults.isEmpty {
+                    Divider()
+                    ForEach(offboardResults) { result in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(result.deviceName ?? result.identifier)
+                                .appFont(.caption)
+                                .fontWeight(.medium)
+                            ForEach(result.steps) { step in
+                                HStack(alignment: .top, spacing: 4) {
+                                    Image(systemName: stepIcon(step.outcome))
+                                        .foregroundColor(stepColor(step.outcome))
+                                    Text(step.detail.map { "\(step.step) — \($0)" } ?? step.step)
+                                        .foregroundColor(.secondary)
+                                }
+                                .appFont(.caption)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+        }
+
+        Divider()
     }
 
     @ViewBuilder
@@ -1219,85 +1323,6 @@ struct DeviceActionsPanel: View {
             Divider()
         }
 
-        // Offboard Section
-        ActionAccordion(
-            title: "Offboard Device",
-            icon: "shippingbox.and.arrow.backward",
-            isExpanded: expandedSections.contains("offboard"),
-            onToggle: { toggleSection("offboard") }
-        ) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Decommission across Intune, Autopilot and Entra in one pass. Steps that do not apply to a device's platform are skipped.")
-                    .appFont(.caption)
-                    .foregroundColor(.secondary)
-
-                Picker("Intune action", selection: $offboardPlan.terminalAction) {
-                    ForEach(OffboardPlan.TerminalAction.allCases) { action in
-                        Text(action.displayName).tag(action)
-                    }
-                }
-                .pickerStyle(.menu)
-                .appFont(.caption)
-
-                if offboardPlan.terminalAction == .wipe {
-                    Text("Uses the wipe options set above.")
-                        .appFont(.caption)
-                        .foregroundColor(.secondary)
-                }
-
-                Toggle("Delete the Autopilot registration", isOn: $offboardPlan.deleteAutopilotRegistration)
-                    .appFont(.caption)
-                    .help("Windows only. Releases the hardware hash so the device can be re-registered elsewhere.")
-
-                Picker("Entra device", selection: $offboardPlan.entraAction) {
-                    ForEach(OffboardPlan.EntraAction.allCases) { action in
-                        Text(action.displayName).tag(action)
-                    }
-                }
-                .pickerStyle(.menu)
-                .appFont(.caption)
-
-                Toggle("Delete the Intune record", isOn: $offboardPlan.deleteIntuneRecord)
-                    .appFont(.caption)
-
-                if offboardPlan.deleteIntuneRecord && offboardPlan.terminalAction != .none {
-                    Label("The pending action lives on the Intune record — deleting it before the device checks in cancels the \(offboardPlan.terminalAction == .wipe ? "wipe" : "retire").", systemImage: "exclamationmark.triangle")
-                        .appFont(.caption)
-                        .foregroundColor(.orange)
-                }
-
-                Button(action: { showOffboardConfirmation = true }) {
-                    Label("Offboard Device", systemImage: "shippingbox.and.arrow.backward")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .disabled(isPerformingAction)
-
-                if !offboardResults.isEmpty {
-                    Divider()
-                    ForEach(offboardResults) { result in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(result.deviceName ?? result.identifier)
-                                .appFont(.caption)
-                                .fontWeight(.medium)
-                            ForEach(result.steps) { step in
-                                HStack(alignment: .top, spacing: 4) {
-                                    Image(systemName: stepIcon(step.outcome))
-                                        .foregroundColor(stepColor(step.outcome))
-                                    Text(step.detail.map { "\(step.step) — \($0)" } ?? step.step)
-                                        .foregroundColor(.secondary)
-                                }
-                                .appFont(.caption)
-                            }
-                        }
-                        .padding(.vertical, 2)
-                    }
-                }
-            }
-        }
-
-        Divider()
 
         // App Reinstall Section
         ActionAccordion(
@@ -1390,7 +1415,7 @@ struct DeviceActionsPanel: View {
         switch outcome {
         case .succeeded: return .green
         case .skipped: return .secondary
-        case .failed: return .red
+        case .failed: return .orange
         }
     }
 }

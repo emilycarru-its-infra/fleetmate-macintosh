@@ -13,6 +13,12 @@ enum BoardsViewMode: String, CaseIterable {
     case board = "Board"
 }
 
+/// Where the Board segment's columns come from.
+enum BoardSource: String, CaseIterable {
+    case devOps = "Azure DevOps"
+    case github = "GitHub Project"
+}
+
 enum GroupByOption: String, CaseIterable {
     case state = "State"
     case column = "Board"
@@ -48,6 +54,7 @@ struct BoardsView: View {
     @State private var filters = FilterState<TaskFilterCategory>()
     @State private var showFilters = false
     @State private var groupBy: GroupByOption = .column
+    @AppStorage("projects.board.source") private var boardSource: BoardSource = .devOps
     @State private var showClosed = false
     @State private var selectedTask: UnifiedTask? = nil
     @State private var isSyncing = false
@@ -241,7 +248,7 @@ struct BoardsView: View {
         .onAppCommand { command in
             switch command {
             case .refresh:
-                loadTasks(); loadGhProjectInfo(); loadBoards(); loadQueries(force: true)
+                refreshAll()
             case .newItem:
                 // The toolbar's + is a menu of three item types; ⌘N takes the
                 // first one this project can actually create.
@@ -356,7 +363,19 @@ struct BoardsView: View {
             // is the stored-queries view and has no use for them. PillMenu,
             // not Menu/Picker — the macOS 26 glass toolbar renders those
             // icon-only, leaving an empty pill.
-            if viewMode == .board {
+            // The Board's source: Azure DevOps work items, or the configured
+            // GitHub Projects v2 project. Offered once a GitHub provider is set up.
+            if viewMode == .board && currentGhConfig != nil {
+                PillMenu(
+                    selection: $boardSource,
+                    options: BoardSource.allCases,
+                    label: { $0.rawValue }
+                )
+                .help("Board source")
+                .onChange(of: boardSource) { selectedTask = nil }
+            }
+
+            if viewMode == .board && effectiveBoardSource == .devOps {
                 PillMenu(
                     selection: $groupBy,
                     options: GroupByOption.allCases,
@@ -435,7 +454,7 @@ struct BoardsView: View {
                 .help("Sync tasks to Planner / Markdown")
             }
 
-            Button(action: { loadTasks(); loadGhProjectInfo(); loadBoards(); loadQueries(force: true) }) {
+            Button(action: refreshAll) {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .disabled(isLoading || isLoadingGhInfo || isLoadingQueries)
@@ -510,7 +529,32 @@ struct BoardsView: View {
         }
     }
 
+    /// GitHub only when a GitHub provider is configured, whatever was stored.
+    private var effectiveBoardSource: BoardSource {
+        currentGhConfig == nil ? .devOps : boardSource
+    }
+
+    private func refreshAll() {
+        loadTasks(); loadGhProjectInfo(); loadBoards(); loadQueries(force: true)
+        if viewMode == .board && effectiveBoardSource == .github {
+            appState.projects.githubBoardRefreshRequested += 1
+        }
+    }
+
+    @ViewBuilder
     private var boardContent: some View {
+        if effectiveBoardSource == .github {
+            GitHubProjectBoardView(
+                searchText: searchText,
+                isResolvingProject: isLoadingGhInfo,
+                selectedTask: $selectedTask
+            )
+        } else {
+            devOpsBoardContent
+        }
+    }
+
+    private var devOpsBoardContent: some View {
         Group {
             if isLoading {
                 VStack {
@@ -1570,6 +1614,11 @@ struct BoardsView: View {
                 } else {
                     projectId = try await service.listProjects(
                         scope: scope, owner: owner, repo: ghConfig.repo, limit: 1).first?.id
+                }
+                if projectId != currentProjectId {
+                    // A different project: the board's items belong to the old one.
+                    appState.projects.githubBoardItems = []
+                    appState.projects.githubBoardLoadedAt = nil
                 }
                 currentProjectId = projectId
                 if let pid = projectId {

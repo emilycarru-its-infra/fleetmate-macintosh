@@ -77,39 +77,29 @@ extension FilterState where Category == TicketFilterCategory {
 
 // MARK: - Device Filters
 
-enum DeviceFilterCategory: String, FilterCategoryProtocol {
-    case platform = "Platform"
-    case compliance = "Compliance"
-    case manufacturer = "Manufacturer"
-    case model = "Model"
-    case ownership = "Ownership"
-    var id: String { rawValue }
-}
+typealias DeviceFilterCategory = DeviceFacet
+extension DeviceFacet: FilterCategoryProtocol {}
 
-extension FilterState where Category == DeviceFilterCategory {
-    func buildFromDevices(_ devices: [IntuneDevice]) {
-        func extract(_ keyPath: (IntuneDevice) -> String?) -> [String] {
-            Array(Set(devices.compactMap(keyPath).filter { !$0.isEmpty })).sorted()
+extension FilterState where Category == DeviceFacet {
+    /// Offer only values the rows carry, with how many rows carry each. The
+    /// Apple organization's categories are hidden when none is configured.
+    func buildFromRows(_ rows: [DeviceListRow], hasAppleOrg: Bool) {
+        hiddenCategories = hasAppleOrg ? [] : DeviceFacet.appleOrgOnly
+        for facet in DeviceFacet.allCases {
+            var counts: [String: Int] = [:]
+            for row in rows { counts[row.value(for: facet), default: 0] += 1 }
+            availableValues[facet] = counts.keys.sorted()
+            valueCounts[facet] = counts
         }
-        availableValues[.platform] = extract { $0.operatingSystem }
-        availableValues[.compliance] = extract { $0.complianceState?.capitalized }
-        availableValues[.manufacturer] = extract { $0.manufacturer }
-        availableValues[.model] = extract { $0.model }
-        availableValues[.ownership] = extract { $0.managedDeviceOwnerType }
+        if hiddenCategories.contains(selectedCategory),
+           let first = DeviceFacet.allCases.first(where: { !hiddenCategories.contains($0) }) {
+            selectedCategory = first
+        }
     }
 
-    func matches(_ device: IntuneDevice) -> Bool {
-        for (category, selected) in selectedValues where !selected.isEmpty {
-            let value: String?
-            switch category {
-            case .platform:     value = device.operatingSystem
-            case .compliance:   value = device.complianceState?.capitalized
-            case .manufacturer: value = device.manufacturer
-            case .model:        value = device.model
-            case .ownership:    value = device.managedDeviceOwnerType
-            }
-            if let v = value, !selected.contains(v) { return false }
-            if value == nil { return false }
+    func matches(_ row: DeviceListRow) -> Bool {
+        for (facet, selected) in selectedValues where !selected.isEmpty && !hiddenCategories.contains(facet) {
+            if !selected.contains(row.value(for: facet)) { return false }
         }
         return true
     }

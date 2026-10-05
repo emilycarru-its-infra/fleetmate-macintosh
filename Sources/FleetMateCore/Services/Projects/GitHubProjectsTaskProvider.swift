@@ -268,6 +268,12 @@ public actor GitHubProjectsTaskProvider: TaskProvider {
     // MARK: - Mapping
 
     private func itemToUnifiedTask(_ item: GitHubProjectItem) -> UnifiedTask? {
+        Self.unifiedTask(from: item, providerId: providerId)
+    }
+
+    /// Maps a project item to the task shape the Projects views and sidebars use.
+    /// Nil for redacted items. Shared with the GitHub project board.
+    public static func unifiedTask(from item: GitHubProjectItem, providerId: String = "github") -> UnifiedTask? {
         let title: String
         var description: String? = nil
         var externalUrl: String? = nil
@@ -299,7 +305,7 @@ public actor GitHubProjectsTaskProvider: TaskProvider {
             $0.fieldName.lowercased() == "status"
         }
         let bucket = statusFv?.singleSelectValue
-        let state = Self.mapStatusToState(statusFv?.singleSelectValue, contentState: item.content?.state)
+        let state = mapStatusToState(statusFv?.singleSelectValue, contentState: item.content?.state)
 
         // Priority mapping
         var priority: Int? = nil

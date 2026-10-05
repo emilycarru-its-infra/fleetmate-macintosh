@@ -62,6 +62,16 @@ final class FleetMateLinkTests: XCTestCase {
         XCTAssertThrowsError(try parse("fleetmate://open?url=https://example.com/x"))
     }
 
+    func testItemRoutes() throws {
+        XCTAssertEqual(try parse("fleetmate://device/1f2e3d4c-0000-4abc-9def-1234567890ab"),
+                       .device(id: "1f2e3d4c-0000-4abc-9def-1234567890ab"))
+        XCTAssertEqual(try parse("fleetmate://asset/3302"), .asset(id: 3302))
+        XCTAssertEqual(try parse("fleetmate://ticket/1234567"), .ticket(id: 1234567))
+        XCTAssertEqual(try parse("fleetmate://user/someone@example.com"), .user(id: "someone@example.com"))
+        XCTAssertThrowsError(try parse("fleetmate://asset/abc"))
+        XCTAssertThrowsError(try parse("fleetmate://device/..%2Fx"))
+    }
+
     /// Names reach API paths, so a link can't smuggle in path segments.
     func testRejectsPathTricks() {
         XCTAssertThrowsError(try parse("fleetmate://pipeline/github/..%2F..%2Fuser/x/1"))

@@ -382,10 +382,22 @@ struct QueriesListView<MenuContent: View>: View {
                 }
             }
             if !visible.isEmpty {
+                // Most recently active query first within its area.
+                visible.sort { Self.latestChange($0.0) > Self.latestChange($1.0) }
                 result.append((section.bucket, visible))
             }
         }
-        return result
+        // And the area with the most recent activity first.
+        return result.sorted { lhs, rhs in
+            let l = lhs.1.map { Self.latestChange($0.0) }.max() ?? .distantPast
+            let r = rhs.1.map { Self.latestChange($0.0) }.max() ?? .distantPast
+            return l > r
+        }
+    }
+
+    /// When anything in a query last changed.
+    private static func latestChange(_ run: QueryRunDisplay) -> Date {
+        run.rows.map(\.task.updatedAt).max() ?? .distantPast
     }
 
     private func queryNameMatches(_ run: QueryRunDisplay) -> Bool {

@@ -476,7 +476,7 @@ final class DevelopmentModel: ObservableObject {
                     else { throw LinkOpenError("Pipeline \(definitionId) in \(project) has no recent runs.") }
                     selectedRun = run
 
-                case .workItem, .gitHubIssue:
+                case .workItem, .gitHubIssue, .device, .asset, .ticket, .user, .group:
                     break // Routed to Projects by AppState.
                 }
             } catch {

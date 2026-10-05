@@ -50,11 +50,28 @@ struct EntraUserInspector: View {
     @State private var groups: [EntraGroup] = []
     @State private var isLoading = true
 
+    // Directory writes — each one is confirmed before it is sent.
+    @State private var pendingAccountChange: Bool?
+    @State private var groupToAdd = ""
+    @State private var pendingAddGroup: String?
+    @State private var pendingRemoveGroup: EntraGroup?
+    @State private var isWriting = false
+    @State private var writeError: String?
+
     private var u: EntraUser { full ?? user }
 
     var body: some View {
         VStack(spacing: 0) {
             header
+            if let writeError {
+                Label(writeError, systemImage: "exclamationmark.triangle")
+                    .appFont(.caption)
+                    .foregroundColor(.orange)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+            }
             Divider()
             Picker("", selection: $tab) {
                 Text("Properties").tag(InspectorTab.properties)
@@ -77,6 +94,50 @@ struct EntraUserInspector: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task(id: user.id) { await load() }
+        .alert(pendingAccountChange == true ? "Enable account?" : "Disable account?",
+               isPresented: Binding(
+                   get: { pendingAccountChange != nil },
+                   set: { if !$0 { pendingAccountChange = nil } }
+               ),
+               presenting: pendingAccountChange) { enable in
+            Button("Cancel", role: .cancel) { pendingAccountChange = nil }
+            Button(enable ? "Enable" : "Disable", role: enable ? nil : .destructive) {
+                pendingAccountChange = nil
+                Task { await setAccount(enabled: enable) }
+            }
+        } message: { enable in
+            Text(enable
+                 ? "\(userLabel) will be able to sign in again."
+                 : "\(userLabel) will be unable to sign in.")
+        }
+        .alert("Add to group?", isPresented: Binding(
+            get: { pendingAddGroup != nil },
+            set: { if !$0 { pendingAddGroup = nil } }
+        ), presenting: pendingAddGroup) { group in
+            Button("Cancel", role: .cancel) { pendingAddGroup = nil }
+            Button("Add") {
+                pendingAddGroup = nil
+                Task { await addToGroup(group) }
+            }
+        } message: { group in
+            Text("Add \(userLabel) to \u{201C}\(group)\u{201D}?")
+        }
+        .alert("Remove from group?", isPresented: Binding(
+            get: { pendingRemoveGroup != nil },
+            set: { if !$0 { pendingRemoveGroup = nil } }
+        ), presenting: pendingRemoveGroup) { group in
+            Button("Cancel", role: .cancel) { pendingRemoveGroup = nil }
+            Button("Remove", role: .destructive) {
+                pendingRemoveGroup = nil
+                Task { await removeFromGroup(group) }
+            }
+        } message: { group in
+            Text("Remove \(userLabel) from \u{201C}\(group.displayName ?? "this group")\u{201D}?")
+        }
+    }
+
+    private var userLabel: String {
+        u.displayName ?? u.userPrincipalName ?? "This user"
     }
 
     // MARK: Header
@@ -100,7 +161,12 @@ struct EntraUserInspector: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 6) {
                 enabledBadge
-                if isLoading { ProgressView().controlSize(.small) }
+                Button(u.accountEnabled == false ? "Enable Account" : "Disable Account") {
+                    pendingAccountChange = u.accountEnabled == false
+                }
+                .controlSize(.small)
+                .disabled(isWriting || full == nil)
+                if isLoading || isWriting { ProgressView().controlSize(.small) }
             }
         }
         .padding()
@@ -110,7 +176,7 @@ struct EntraUserInspector: View {
         let enabled = u.accountEnabled != false
         return Label(enabled ? "Enabled" : "Disabled",
                      systemImage: enabled ? "checkmark.circle.fill" : "xmark.circle.fill")
-            .foregroundColor(enabled ? .green : .red)
+            .foregroundColor(enabled ? .green : .orange)
             .appFont(.callout)
     }
 
@@ -191,7 +257,7 @@ struct EntraUserInspector: View {
                         if device.isCompliant == true {
                             tagBadge("Compliant", .green)
                         } else if device.isCompliant == false {
-                            tagBadge("Non-compliant", .red)
+                            tagBadge("Non-compliant", .orange)
                         }
                         if device.isManaged == true {
                             tagBadge("Managed", .secondary)
@@ -209,6 +275,16 @@ struct EntraUserInspector: View {
 
     private var groupsTab: some View {
         VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                TextField("Group name or id…", text: $groupToAdd)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(requestAddGroup)
+                Button("Add to Group", action: requestAddGroup)
+                    .disabled(groupToAdd.trimmingCharacters(in: .whitespaces).isEmpty || isWriting || u.id == nil)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            Divider()
             if groups.isEmpty {
                 emptyTab("No group memberships", "person.2")
             } else {
@@ -224,6 +300,9 @@ struct EntraUserInspector: View {
                             }
                         }
                         Spacer()
+                        Button("Remove") { pendingRemoveGroup = group }
+                            .controlSize(.small)
+                            .disabled(isWriting || group.id == nil || u.id == nil)
                     }
                     .padding(.horizontal).padding(.vertical, 7)
                     Divider()
@@ -231,6 +310,50 @@ struct EntraUserInspector: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private func requestAddGroup() {
+        let group = groupToAdd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !group.isEmpty, u.id != nil else { return }
+        pendingAddGroup = group
+    }
+
+    // MARK: Directory writes
+
+    private func setAccount(enabled: Bool) async {
+        guard let key = u.id ?? u.userPrincipalName else { return }
+        await write("\(enabled ? "enable" : "disable") the account") {
+            try await appState.graphService.setUserAccountEnabled(key, enabled: enabled)
+        }
+    }
+
+    private func addToGroup(_ group: String) async {
+        guard let objectId = u.id else { return }
+        await write("add to \(group)") {
+            try await appState.graphService.addGroupMember(group: group, objectId: objectId)
+        }
+        if writeError == nil { groupToAdd = "" }
+    }
+
+    private func removeFromGroup(_ group: EntraGroup) async {
+        guard let objectId = u.id, let groupId = group.id else { return }
+        await write("remove from \(group.displayName ?? "the group")") {
+            try await appState.graphService.removeGroupMember(group: groupId, objectId: objectId)
+        }
+    }
+
+    /// Runs one confirmed write, then re-reads the user so the badge and the
+    /// group list show what Entra now holds rather than what we asked for.
+    private func write(_ what: String, _ action: () async throws -> Void) async {
+        isWriting = true
+        writeError = nil
+        defer { isWriting = false }
+        do {
+            try await action()
+            await load()
+        } catch {
+            writeError = "Couldn't \(what): \(error.localizedDescription)"
+        }
     }
 
     // MARK: Reusable pieces

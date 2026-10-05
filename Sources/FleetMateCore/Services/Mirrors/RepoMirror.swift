@@ -68,6 +68,11 @@ public actor RepoMirror {
                 try await git(["sparse-checkout", "set"] + paths, in: localURL, env: env)
             }
         } else {
+            // Paths can grow (the Handbook added its data folder); keep the
+            // sparse set in step with what this build asks for.
+            if !paths.isEmpty {
+                try await git(["sparse-checkout", "set"] + paths, in: localURL, env: env)
+            }
             try await git(auth + ["fetch", "--depth", "1", "origin", branch], in: localURL, env: env)
             try await git(["reset", "--hard", "FETCH_HEAD"], in: localURL, env: env)
             try await git(["clean", "-fdx"], in: localURL, env: env)

@@ -15,6 +15,8 @@ struct DeviceDetailView: View {
     @State private var isLoadingCompliance = false
     @State private var errorMessage: String?
     @State private var selectedPolicy: SelectedCompliancePolicy?
+    @State private var pendingSecret: RecoverySecretKind?
+    @State private var revealingSecret: RecoverySecretKind?
 
     /// Wraps a policy state so the sheet has a stable, non-optional id.
     private struct SelectedCompliancePolicy: Identifiable {
@@ -38,6 +40,10 @@ struct DeviceDetailView: View {
                     Divider()
                     enrollmentSection
                     Divider()
+                    if !availableSecrets.isEmpty {
+                        recoverySecretsSection
+                        Divider()
+                    }
                     hardwareSection
                     Divider()
                     complianceSection
@@ -54,6 +60,27 @@ struct DeviceDetailView: View {
         .sheet(item: $selectedPolicy) { selected in
             CompliancePolicyLightboxView(device: device, policy: selected.policy)
                 .environmentObject(appState)
+        }
+        .sheet(item: $revealingSecret) { kind in
+            RecoverySecretSheet(kind: kind, device: device)
+                .environmentObject(appState)
+        }
+        .confirmationDialog(
+            pendingSecret.map { "Show the \($0.displayName.lowercased())?" } ?? "",
+            isPresented: Binding(
+                get: { pendingSecret != nil },
+                set: { if !$0 { pendingSecret = nil } }
+            ),
+            presenting: pendingSecret
+        ) { kind in
+            Button("Show") { revealingSecret = kind }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("The value is fetched for \(device.deviceName ?? "this device") only, shown once and not saved. The read is recorded in the directory audit log.")
+        }
+        .onChange(of: device.id) { _, _ in
+            pendingSecret = nil
+            revealingSecret = nil
         }
     }
     
@@ -119,6 +146,28 @@ struct DeviceDetailView: View {
         }
     }
     
+    // MARK: - Recovery Secrets
+
+    private var availableSecrets: [RecoverySecretKind] {
+        RecoverySecretKind.available(for: device.platform)
+    }
+
+    private var recoverySecretsSection: some View {
+        DetailSection(title: "Recovery Secrets", icon: "lock.shield") {
+            HStack(spacing: 8) {
+                ForEach(availableSecrets) { kind in
+                    Button {
+                        pendingSecret = kind
+                    } label: {
+                        Label(kind.displayName, systemImage: kind.systemImage)
+                    }
+                    .controlSize(.small)
+                    .help("Fetch and show this device's \(kind.displayName.lowercased())")
+                }
+            }
+        }
+    }
+
     // MARK: - Hardware
     
     private var hardwareSection: some View {

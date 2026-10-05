@@ -116,7 +116,7 @@ public struct FleetMateConfig: Codable {
     public var tdxBaseUrl: String?
     public var tdxAppId: Int?  // Legacy fallback
     public var tdxTicketingAppId: Int?  // 115 at the reference site
-    public var tdxAssetsAppId: Int?  // 116 at the reference site
+    public var tdxAssetsAppId: Int?
     public var tdxUsername: String?
     public var tdxPassword: String?
     public var tdxBeid: String?

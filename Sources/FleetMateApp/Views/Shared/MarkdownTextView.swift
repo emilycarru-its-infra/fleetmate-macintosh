@@ -12,6 +12,11 @@ import FleetMateCore
 /// - **Markdown content** (from GitHub, Gitea, user input): rendered via `MarkdownUI`.
 struct MarkdownTextView: View {
     let content: String
+    /// A whole document (a Handbook page, a SKILL.md) rather than a comment:
+    /// real heading sizes and paragraph spacing.
+    var document: Bool = false
+
+    private var theme: MarkdownUI.Theme { document ? .fleetMateDocument : .fleetMate }
 
     var body: some View {
         if content.isEmpty {
@@ -25,11 +30,11 @@ struct MarkdownTextView: View {
             // SwiftUI Text) discarded paragraph styles: tables flattened to a
             // line per cell, bullets lost their indent, paragraphs their air.
             Markdown(HtmlToMarkdown.convert(content))
-                .markdownTheme(.fleetMate)
+                .markdownTheme(theme)
                 .textSelection(.enabled)
         } else {
             Markdown(content)
-                .markdownTheme(.fleetMate)
+                .markdownTheme(theme)
                 .textSelection(.enabled)
         }
     }
@@ -90,6 +95,72 @@ extension MarkdownUI.Theme {
             Image(systemName: configuration.isCompleted ? "checkmark.square.fill" : "square")
                 .foregroundColor(configuration.isCompleted ? .accentColor : .secondary)
                 .appFont(fixed: 14)
+        }
+}
+
+extension MarkdownUI.Theme {
+    /// For full documents: the comment theme plus a heading scale, air
+    /// between blocks, padded table cells and a rule under the top headings.
+    static let fleetMateDocument = Theme.fleetMate
+        .heading1 { configuration in
+            VStack(alignment: .leading, spacing: 6) {
+                configuration.label
+                    .markdownTextStyle { FontWeight(.bold); FontSize(24) }
+                Divider()
+            }
+            .markdownMargin(top: 20, bottom: 10)
+        }
+        .heading2 { configuration in
+            VStack(alignment: .leading, spacing: 5) {
+                configuration.label
+                    .markdownTextStyle { FontWeight(.semibold); FontSize(19) }
+                Divider()
+            }
+            .markdownMargin(top: 22, bottom: 8)
+        }
+        .heading3 { configuration in
+            configuration.label
+                .markdownTextStyle { FontWeight(.semibold); FontSize(16) }
+                .markdownMargin(top: 16, bottom: 6)
+        }
+        .heading4 { configuration in
+            configuration.label
+                .markdownTextStyle { FontWeight(.semibold); FontSize(14) }
+                .markdownMargin(top: 12, bottom: 4)
+        }
+        .paragraph { configuration in
+            configuration.label
+                .lineSpacing(3)
+                .markdownMargin(top: 0, bottom: 12)
+        }
+        .list { configuration in
+            configuration.label
+                .markdownMargin(top: 0, bottom: 12)
+        }
+        .listItem { configuration in
+            configuration.label
+                .markdownMargin(top: 3, bottom: 3)
+        }
+        .table { configuration in
+            configuration.label
+                .markdownTableBorderStyle(.init(color: .secondary.opacity(0.3)))
+                .markdownTableBackgroundStyle(
+                    .alternatingRows(Color.secondary.opacity(0.06), Color.clear)
+                )
+                .markdownMargin(top: 0, bottom: 14)
+        }
+        .tableCell { configuration in
+            configuration.label
+                .markdownTextStyle {
+                    if configuration.row == 0 { FontWeight(.semibold) }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .codeBlock { configuration in
+            CodeBlockWithCopy(configuration: configuration)
+                .markdownMargin(top: 0, bottom: 14)
         }
 }
 

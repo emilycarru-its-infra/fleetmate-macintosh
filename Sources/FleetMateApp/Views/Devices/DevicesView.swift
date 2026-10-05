@@ -1,22 +1,28 @@
 import SwiftUI
 import FleetMateCore
 
-enum DeviceSortField: String, CaseIterable {
-    case serial = "Serial"
-    case name = "Name"
-    case compliance = "Compliance"
-    case os = "OS"
-    case user = "User"
-    case lastSync = "Last Sync"
-}
-
+/// One list for every device: each Intune record, enriched with its Apple
+/// organization record by serial, plus the organization's devices Intune
+/// does not hold yet. The columns are the same for every row.
 struct DevicesView: View {
     @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        DevicesContentView(appleOrg: appState.appleOrg, autopilot: appState.autopilot)
+    }
+}
+
+private struct DevicesContentView: View {
+    @EnvironmentObject var appState: AppState
+    @ObservedObject var appleOrg: AppleOrgStore
+    @ObservedObject var autopilot: AutopilotStore
     @State private var isLoading = false
+    @State private var showHashImport = false
     @State private var searchText = ""
     @State private var selectedDeviceIds: Set<String> = []
-    @State private var sortField: DeviceSortField = .serial
-    @State private var sortAscending = true
+    @State private var rows: [DeviceListRow] = []
+    @State private var sortOrder = [KeyPathComparator(\DeviceListRow.serialText)]
+    @SceneStorage("devices.columns") private var columnCustomization: TableColumnCustomization<DeviceListRow>
     @State private var filters = FilterState<DeviceFilterCategory>()
     @State private var showFilters = false
     
@@ -30,6 +36,9 @@ struct DevicesView: View {
     @State private var showRetireConfirmation = false
     @State private var showFreshStartConfirmation = false
     @State private var showOffboardConfirmation = false
+    @State private var showAutopilotResetConfirmation = false
+    @State private var showDeleteRecordConfirmation = false
+    @State private var showPushCimianConfirmation = false
     @State private var wipeOptions = WipeOptions()
     @State private var freshStartKeepUserData = true
     @State private var offboardPlan = OffboardPlan()
@@ -40,41 +49,47 @@ struct DevicesView: View {
     @State private var selectedAppId: String?
     @State private var appSearchText = ""
     
-    // Use cached devices from appState
-    var devices: [IntuneDevice] { appState.cachedDevices }
-
-    var filteredDevices: [IntuneDevice] {
-        var result = devices
-
+    var filteredRows: [DeviceListRow] {
+        var result = rows
         if filters.hasActiveFilters {
             result = result.filter { filters.matches($0) }
         }
-
         if !searchText.isEmpty {
+            let q = searchText
             result = result.filter {
-                ($0.deviceName?.localizedCaseInsensitiveContains(searchText) ?? false) ||
-                ($0.serialNumber?.localizedCaseInsensitiveContains(searchText) ?? false) ||
-                ($0.userPrincipalName?.localizedCaseInsensitiveContains(searchText) ?? false)
+                ($0.intune?.deviceName?.localizedCaseInsensitiveContains(q) ?? false) ||
+                ($0.serialNumber?.localizedCaseInsensitiveContains(q) ?? false) ||
+                ($0.intune?.userPrincipalName?.localizedCaseInsensitiveContains(q) ?? false) ||
+                ($0.apple?.orderNumber?.localizedCaseInsensitiveContains(q) ?? false) ||
+                ($0.autopilot?.groupTag?.localizedCaseInsensitiveContains(q) ?? false) ||
+                ($0.autopilot?.purchaseOrderIdentifier?.localizedCaseInsensitiveContains(q) ?? false) ||
+                ($0.serverName?.localizedCaseInsensitiveContains(q) ?? false) ||
+                $0.modelText.localizedCaseInsensitiveContains(q)
             }
         }
-
-        return result.sorted { a, b in
-            let aVal: String
-            let bVal: String
-            switch sortField {
-            case .serial: aVal = a.serialNumber ?? ""; bVal = b.serialNumber ?? ""
-            case .name: aVal = a.deviceName ?? ""; bVal = b.deviceName ?? ""
-            case .compliance: aVal = a.complianceState ?? ""; bVal = b.complianceState ?? ""
-            case .os: aVal = a.operatingSystem ?? ""; bVal = b.operatingSystem ?? ""
-            case .user: aVal = a.userDisplayName ?? ""; bVal = b.userDisplayName ?? ""
-            case .lastSync: aVal = a.lastSyncDateTime ?? ""; bVal = b.lastSyncDateTime ?? ""
-            }
-            return sortAscending ? aVal.localizedCompare(bVal) == .orderedAscending : aVal.localizedCompare(bVal) == .orderedDescending
-        }
+        return result.sorted(using: sortOrder)
     }
-    
+
+    var selectedRows: [DeviceListRow] {
+        rows.filter { selectedDeviceIds.contains($0.id) }
+    }
+
+    /// The Intune records in the selection — every Intune action is keyed on
+    /// these, never on an organization-only row.
     var selectedDevices: [IntuneDevice] {
-        devices.filter { selectedDeviceIds.contains($0.id) }
+        selectedRows.compactMap(\.intune)
+    }
+
+    private func rebuildRows() {
+        let merged = AppleOrgJoin.merge(
+            intune: appState.cachedDevices,
+            apple: appleOrg.devices,
+            servers: appleOrg.servers,
+            orgLabels: appleOrg.orgLabels
+        )
+        rows = AutopilotJoin.enrich(merged, autopilot: autopilot.identities)
+        filters.buildFromRows(rows, hasAppleOrg: appleOrg.hasProfile, hasAutopilot: !autopilot.identities.isEmpty)
+        dbg.debug("Device rows: \(rows.count) from \(appState.cachedDevices.count) Intune, \(appleOrg.devices.count) Apple organization and \(autopilot.identities.count) Autopilot records", category: "devices")
     }
 
     /// Fresh Start is a Windows-only Intune action, so it runs against the
@@ -100,7 +115,7 @@ struct DevicesView: View {
 
         guard !parts.isEmpty else { return "No offboard steps are selected." }
         let steps = parts.count == 1 ? parts[0] : parts.dropLast().joined(separator: ", ") + " and " + parts[parts.count - 1]
-        return "This will \(steps) for \(selectedDeviceIds.count) device(s). This cannot be undone."
+        return "This will \(steps) for \(selectedDevices.count) device(s). This cannot be undone."
     }
 
     private var mainContent: some View {
@@ -116,14 +131,25 @@ struct DevicesView: View {
                             .controlSize(.small)
                     }
                     Spacer()
-                    Text("\(filteredDevices.count) of \(devices.count)")
+                    if appleOrg.isLoading {
+                        ProgressView().controlSize(.small)
+                        Text("Reading Apple organizations…")
+                            .appFont(.caption)
+                            .foregroundColor(.secondary)
+                    } else if autopilot.isLoading {
+                        ProgressView().controlSize(.small)
+                        Text("Reading Autopilot…")
+                            .appFont(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    Text("\(filteredRows.count) of \(rows.count)")
                         .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
                 .padding(.horizontal)
 
                 // Content
-                if !appState.config.isGraphConfigured {
+                if !appState.config.isGraphConfigured && !appleOrg.hasProfile {
                     VStack {
                         ContentUnavailableView(
                             "Not Configured",
@@ -132,69 +158,35 @@ struct DevicesView: View {
                         )
                         Spacer()
                     }
-                } else if isLoading && appState.cachedDevices.isEmpty {
+                } else if (isLoading || appleOrg.isLoading) && rows.isEmpty {
                     VStack {
                         ProgressView("Loading devices...")
                             .padding(.top, 50)
                         Spacer()
                     }
-                } else if filteredDevices.isEmpty {
+                } else if filteredRows.isEmpty {
                     VStack {
                         ContentUnavailableView.search(text: searchText)
                             .padding(.top, 30)
                         Spacer()
                     }
                 } else {
-                    Table(filteredDevices, selection: $selectedDeviceIds) {
-                        TableColumn(deviceSortHeader("Name", field: .name)) { device in
-                            Text(device.deviceName ?? "-")
-                                .textSelection(.enabled)
-                        }
-                        .width(min: 150, ideal: 200)
-
-                        TableColumn(deviceSortHeader("Serial", field: .serial)) { device in
-                            Text(device.serialNumber ?? "-")
-                                .appFont(.body, design: .monospaced)
-                                .textSelection(.enabled)
-                        }
-                        .width(min: 100, ideal: 130)
-
-                        TableColumn(deviceSortHeader("Compliance", field: .compliance)) { device in
-                            ComplianceBadge(state: device.complianceState)
-                        }
-                        .width(min: 100, ideal: 120)
-
-                        TableColumn(deviceSortHeader("OS", field: .os)) { device in
-                            Text("\(device.operatingSystem ?? "-") \(device.osVersion ?? "")")
-                                .textSelection(.enabled)
-                        }
-                        .width(min: 100, ideal: 150)
-
-                        TableColumn(deviceSortHeader("User", field: .user)) { device in
-                            Text(device.userDisplayName ?? device.userPrincipalName ?? "-")
-                                .textSelection(.enabled)
-                        }
-                        .width(min: 150, ideal: 200)
-
-                        TableColumn(deviceSortHeader("Last Sync", field: .lastSync)) { device in
-                            Text(formatDate(device.lastSyncDateTime))
-                                .textSelection(.enabled)
-                        }
-                        .width(min: 100, ideal: 150)
-                    }
+                    deviceTable
                 }
             }
             
             // Detail Panel — shown when exactly one device is selected
-            if selectedDeviceIds.count == 1, let selectedDevice = selectedDevices.first {
-                DeviceDetailView(device: selectedDevice)
+            if selectedDeviceIds.count == 1, let selectedRow = selectedRows.first {
+                DeviceDetailView(row: selectedRow)
                     .frame(minWidth: 456, idealWidth: 540, maxWidth: 660)
             }
             
             // Actions Panel — always visible when devices are selected
             if !selectedDeviceIds.isEmpty {
                 DeviceActionsPanel(
-                    selectedDevices: selectedDevices,
+                    selectedRows: selectedRows,
+                    appleOrg: appleOrg,
+                    autopilot: autopilot,
                     isPerformingAction: $isPerformingAction,
                     actionMessage: $actionMessage,
                     lockPin: $lockPin,
@@ -204,6 +196,9 @@ struct DevicesView: View {
                     showRetireConfirmation: $showRetireConfirmation,
                     showFreshStartConfirmation: $showFreshStartConfirmation,
                     showOffboardConfirmation: $showOffboardConfirmation,
+                    showAutopilotResetConfirmation: $showAutopilotResetConfirmation,
+                    showDeleteRecordConfirmation: $showDeleteRecordConfirmation,
+                    showPushCimianConfirmation: $showPushCimianConfirmation,
                     wipeOptions: $wipeOptions,
                     freshStartKeepUserData: $freshStartKeepUserData,
                     offboardPlan: $offboardPlan,
@@ -224,14 +219,24 @@ struct DevicesView: View {
             if !appState.isDevicesCacheValid {
                 loadDevices()
             }
-            if !devices.isEmpty { filters.buildFromDevices(devices) }
+            appleOrg.load()
+            if appState.config.isGraphConfigured { autopilot.load(using: appState.graphService) }
+            rebuildRows()
             if let id = appState.navigateToDeviceId {
                 selectedDeviceIds = [id]
                 appState.navigateToDeviceId = nil
             }
         }
-        .onChange(of: appState.cachedDevices.count) { _, _ in
-            filters.buildFromDevices(appState.cachedDevices)
+        .onReceive(appState.$cachedDevices) { _ in DispatchQueue.main.async { rebuildRows() } }
+        .onChange(of: appleOrg.devices) { _, _ in rebuildRows() }
+        .onChange(of: appleOrg.servers) { _, _ in rebuildRows() }
+        .onChange(of: appleOrg.profiles) { _, _ in rebuildRows() }
+        .onReceive(autopilot.$identities) { _ in DispatchQueue.main.async { rebuildRows() } }
+        // Hiding a device also deselects it, so an action never reaches a
+        // device that is no longer on screen.
+        .onChange(of: filteredRows.map(\.id)) { _, ids in
+            let visible = Set(ids)
+            if !selectedDeviceIds.isSubset(of: visible) { selectedDeviceIds.formIntersection(visible) }
         }
         .onChange(of: appState.navigateToDeviceId) { _, newId in
             if let id = newId {
@@ -252,31 +257,49 @@ struct DevicesView: View {
                 Button("Cancel", role: .cancel) { }
                 Button("Reboot", role: .destructive) { performReboot() }
             } message: {
-                Text("Are you sure you want to reboot \(selectedDeviceIds.count) device(s)? This will interrupt any active user sessions.")
+                Text("Are you sure you want to reboot \(selectedDevices.count) device(s)? This will interrupt any active user sessions.")
             }
             .alert("Confirm Lock", isPresented: $showLockConfirmation) {
                 Button("Cancel", role: .cancel) { }
                 Button("Lock", role: .destructive) { performLock() }
             } message: {
-                Text("Are you sure you want to lock \(selectedDeviceIds.count) device(s)?")
+                Text("Are you sure you want to lock \(selectedDevices.count) device(s)?")
             }
             .alert("Confirm Wipe", isPresented: $showWipeConfirmation) {
                 Button("Cancel", role: .cancel) { }
                 Button("Wipe", role: .destructive) { performWipe() }
             } message: {
-                Text("This will factory-reset \(selectedDeviceIds.count) device(s)\(wipeOptions.keepUserData ? ", keeping user data where the platform allows" : ", erasing all data"). This cannot be undone.")
+                Text("This will factory-reset \(selectedDevices.count) device(s)\(wipeOptions.keepUserData ? ", keeping user data where the platform allows" : ", erasing all data"). This cannot be undone.")
             }
             .alert("Confirm Retire", isPresented: $showRetireConfirmation) {
                 Button("Cancel", role: .cancel) { }
                 Button("Retire", role: .destructive) { performRetire() }
             } message: {
-                Text("This will remove company data and unenroll \(selectedDeviceIds.count) device(s), leaving personal data intact.")
+                Text("This will remove company data and unenroll \(selectedDevices.count) device(s), leaving personal data intact.")
             }
             .alert("Confirm Fresh Start", isPresented: $showFreshStartConfirmation) {
                 Button("Cancel", role: .cancel) { }
                 Button("Fresh Start", role: .destructive) { performFreshStart() }
             } message: {
                 Text("This will reinstall Windows on \(windowsSelection.count) device(s)\(freshStartKeepUserData ? ", preserving user data" : ", removing user data"). Preinstalled OEM apps are removed and the device stays enrolled.")
+            }
+            .alert("Confirm Autopilot Reset", isPresented: $showAutopilotResetConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Autopilot Reset", role: .destructive) { performAutopilotReset() }
+            } message: {
+                Text("Autopilot-reset \(selectedDevices.count) device(s)? Kept: the Entra join and the Intune enrollment. Removed: user data, user accounts, apps and settings. The device returns to the out-of-box experience and re-provisions.")
+            }
+            .alert("Confirm Delete Record", isPresented: $showDeleteRecordConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete Record", role: .destructive) { performDeleteRecord() }
+            } message: {
+                Text("Delete the Intune record for \(selectedDevices.count) device(s)? This is server-side only and cannot be undone from here. A wipe still pending on a record is cancelled with it.")
+            }
+            .alert("Confirm Push Cimian Run", isPresented: $showPushCimianConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Push Cimian Run") { performPushCimian() }
+            } message: {
+                Text("Force an Intune sync on \(selectedDevices.count) device(s) so the Cimian remediation creates its trigger file on check-in.")
             }
             .alert("Confirm Offboard", isPresented: $showOffboardConfirmation) {
                 Button("Cancel", role: .cancel) { }
@@ -287,10 +310,13 @@ struct DevicesView: View {
     }
 
     var body: some View {
-        actionAlerts(mainContent)
+        actionAlerts(VStack(spacing: 0) {
+            if appState.config.isGraphConfigured { DevicesWidgetsSection(metrics: appState.widgetMetrics) }
+            mainContent
+        })
         .onAppCommand { command in
             switch command {
-            case .refresh:       loadDevices()
+            case .refresh:       refreshAll()
             case .toggleFilters: showFilters.toggle()
             case .clearFilters:  filters.clearAll()
             default:             break
@@ -316,26 +342,163 @@ struct DevicesView: View {
                     FilterPanelView(filters: filters)
                 }
 
-                Button(action: loadDevices) {
+                Button(action: refreshAll) {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
-                .disabled(isLoading)
+                .disabled(isLoading || appleOrg.isLoading || autopilot.isLoading)
+
+                if appState.config.isGraphConfigured {
+                    Button(action: { showHashImport = true }) {
+                        Label("Import Hardware Hashes", systemImage: "square.and.arrow.down")
+                    }
+                    .help("Register Windows devices with Autopilot from a hardware hash CSV")
+                    .sheet(isPresented: $showHashImport) {
+                        AutopilotImportSheet(store: autopilot)
+                    }
+                }
             }
         }
     }
 
-    private func selectAllVisible() {
-        for device in filteredDevices {
-            selectedDeviceIds.insert(device.id)
+    /// The same columns for every device, whichever systems know it; a value
+    /// a row's sources lack reads "—". The first ten show by default, the
+    /// rest from the header's context menu.
+    private var deviceTable: some View {
+        Table(filteredRows, selection: $selectedDeviceIds, sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
+            defaultColumns
+            optionalColumns
         }
     }
 
-    /// Build a sortable column header label with sort indicator
-    private func deviceSortHeader(_ title: String, field: DeviceSortField) -> String {
-        if sortField == field {
-            return "\(title) \(sortAscending ? "▲" : "▼")"
+    @TableColumnBuilder<DeviceListRow, KeyPathComparator<DeviceListRow>>
+    private var defaultColumns: some TableColumnContent<DeviceListRow, KeyPathComparator<DeviceListRow>> {
+        TableColumn("Name", value: \.nameText) { row in
+            Text(row.nameText)
+                .foregroundStyle(row.intune == nil ? Color.secondary : Color.primary)
+                .textSelection(.enabled)
         }
-        return title
+        .width(min: 150, ideal: 200)
+        .customizationID("name")
+
+        TableColumn("Serial", value: \.serialText) { row in
+            Text(row.serialText)
+                .appFont(.body, design: .monospaced)
+                .textSelection(.enabled)
+        }
+        .width(min: 100, ideal: 130)
+        .customizationID("serial")
+
+        TableColumn("Platform", value: \.platformText) { row in
+            Text(row.platformText)
+        }
+        .width(min: 70, ideal: 90)
+        .customizationID("platform")
+
+        TableColumn("OS", value: \.osText) { row in
+            Text(row.osText).textSelection(.enabled)
+        }
+        .width(min: 100, ideal: 150)
+        .customizationID("os")
+
+        TableColumn("User", value: \.userText) { row in
+            Text(row.userText).textSelection(.enabled)
+        }
+        .width(min: 150, ideal: 200)
+        .customizationID("user")
+
+        TableColumn("Compliance", value: \.complianceText) { row in
+            ComplianceBadge(state: row.intune == nil ? "Not Enrolled" : row.intune?.complianceState)
+        }
+        .width(min: 100, ideal: 120)
+        .customizationID("compliance")
+
+        TableColumn("Last Sync", value: \.lastSyncKey) { row in
+            Text(formatDate(row.intune?.lastSyncDateTime))
+                .textSelection(.enabled)
+        }
+        .width(min: 100, ideal: 150)
+        .customizationID("lastSync")
+
+        TableColumn("Management Service", value: \.serviceText) { row in
+            Text(row.serviceText).lineLimit(1)
+        }
+        .width(min: 100, ideal: 140)
+        .customizationID("service")
+
+        TableColumn("Org Status", value: \.orgStatusText) { row in
+            Text(row.orgStatusText)
+        }
+        .width(min: 80, ideal: 95)
+        .customizationID("orgStatus")
+
+        TableColumn("Group / Order", value: \.groupOrOrderText) { row in
+            Text(row.groupOrOrderText).lineLimit(1).textSelection(.enabled)
+        }
+        .width(min: 80, ideal: 110)
+        .customizationID("groupOrder")
+    }
+
+    @TableColumnBuilder<DeviceListRow, KeyPathComparator<DeviceListRow>>
+    private var optionalColumns: some TableColumnContent<DeviceListRow, KeyPathComparator<DeviceListRow>> {
+        TableColumn("Model", value: \.modelText) { row in
+            Text(row.modelText).lineLimit(1)
+        }
+        .width(min: 100, ideal: 160)
+        .customizationID("model")
+        .defaultVisibility(.hidden)
+
+        TableColumn("Manufacturer", value: \.manufacturerText) { row in
+            Text(row.manufacturerText)
+        }
+        .width(min: 80, ideal: 110)
+        .customizationID("manufacturer")
+        .defaultVisibility(.hidden)
+
+        TableColumn("Ownership", value: \.ownershipText) { row in
+            Text(row.ownershipText)
+        }
+        .width(min: 70, ideal: 90)
+        .customizationID("ownership")
+        .defaultVisibility(.hidden)
+
+        TableColumn("Migration", value: \.migrationText) { row in
+            Text(row.migrationText)
+                .foregroundStyle(row.apple?.migrationStatus?.uppercased() == "FAILED" ? Color.orange : Color.primary)
+        }
+        .width(min: 80, ideal: 100)
+        .customizationID("migration")
+        .defaultVisibility(.hidden)
+
+        TableColumn("Purchase Source", value: \.purchaseSourceText) { row in
+            Text(row.purchaseSourceText)
+        }
+        .width(min: 80, ideal: 110)
+        .customizationID("purchaseSource")
+        .defaultVisibility(.hidden)
+
+        TableColumn("Added", value: \.addedKey) { row in
+            Text(AppleOrgFormat.date(row.apple?.addedToOrg))
+        }
+        .width(min: 80, ideal: 100)
+        .customizationID("added")
+        .defaultVisibility(.hidden)
+
+        // Read per device on selection, so most rows read "—" — which is why
+        // it is neither sortable nor offered as a filter.
+        TableColumn("Activation Lock") { row in
+            let lock = row.apple.flatMap { appleOrg.activationLock[$0.serialNumber] }
+            Text(lock?.columnText ?? "—")
+                .foregroundStyle(lock?.isLocked == true ? Color.orange : Color.primary)
+        }
+        .width(min: 80, ideal: 110)
+        .customizationID("activationLock")
+        .defaultVisibility(.hidden)
+    }
+
+    private func selectAllVisible() {
+        for row in filteredRows {
+            selectedDeviceIds.insert(row.id)
+        }
     }
 
     /// Apply a dashboard widget's deep-linked filter (e.g. a Compliance wedge).
@@ -344,6 +507,12 @@ struct DevicesView: View {
               let category = DeviceFilterCategory(rawValue: link.category) else { return }
         appState.navigateToModuleFilter = nil
         filters.selectedValues[category] = [resolveFilterValue(link.value, in: filters.availableValues[category])]
+    }
+
+    private func refreshAll() {
+        loadDevices()
+        appleOrg.load(force: true)
+        if appState.config.isGraphConfigured { autopilot.load(using: appState.graphService, force: true) }
     }
 
     private func loadDevices() {
@@ -379,11 +548,11 @@ struct DevicesView: View {
     private func performSync() {
         Task {
             isPerformingAction = true
-            actionMessage = "Syncing \(selectedDeviceIds.count) device(s)..."
+            actionMessage = "Syncing \(selectedDevices.count) device(s)..."
             defer { isPerformingAction = false }
             
             do {
-                let results = try await appState.graphService.syncDevices(Array(selectedDeviceIds))
+                let results = try await appState.graphService.syncDevices(selectedDevices.map(\.id))
                 let successful = results.filter { $0.success }.count
                 let failed = results.count - successful
                 
@@ -401,11 +570,11 @@ struct DevicesView: View {
     private func performReboot() {
         Task {
             isPerformingAction = true
-            actionMessage = "Rebooting \(selectedDeviceIds.count) device(s)..."
+            actionMessage = "Rebooting \(selectedDevices.count) device(s)..."
             defer { isPerformingAction = false }
             
             do {
-                let results = try await appState.graphService.rebootDevices(Array(selectedDeviceIds))
+                let results = try await appState.graphService.rebootDevices(selectedDevices.map(\.id))
                 let successful = results.filter { $0.success }.count
                 let failed = results.count - successful
                 
@@ -423,12 +592,12 @@ struct DevicesView: View {
     private func performLock() {
         Task {
             isPerformingAction = true
-            actionMessage = "Locking \(selectedDeviceIds.count) device(s)..."
+            actionMessage = "Locking \(selectedDevices.count) device(s)..."
             defer { isPerformingAction = false }
             
             do {
                 let pin = lockPin.isEmpty ? nil : lockPin
-                let results = try await appState.graphService.remoteLockDevices(Array(selectedDeviceIds), pin: pin)
+                let results = try await appState.graphService.remoteLockDevices(selectedDevices.map(\.id), pin: pin)
                 let successful = results.filter { $0.success }.count
                 let failed = results.count - successful
                 
@@ -447,7 +616,7 @@ struct DevicesView: View {
     private func performWipe() {
         Task {
             isPerformingAction = true
-            actionMessage = "Wiping \(selectedDeviceIds.count) device(s)..."
+            actionMessage = "Wiping \(selectedDevices.count) device(s)..."
             defer { isPerformingAction = false }
 
             do {
@@ -499,6 +668,72 @@ struct DevicesView: View {
         }
     }
 
+    /// Autopilot Reset: a wipe with `keepEnrollmentData: true` and
+    /// `keepUserData: false`, so the device returns to OOBE still Entra-joined
+    /// and enrolled. Fresh Start (`cleanWindowsDevice`) is a different action.
+    private func performAutopilotReset() {
+        let targets = selectedDevices
+        guard !targets.isEmpty else { return }
+        Task {
+            isPerformingAction = true
+            actionMessage = "Autopilot-resetting \(targets.count) device(s)..."
+            defer { isPerformingAction = false }
+            do {
+                let results = try await appState.graphService.wipeDevices(targets, options: .autopilotReset)
+                let successful = results.filter { $0.success }.count
+                let failed = results.count - successful
+                actionMessage = failed == 0
+                    ? "Autopilot reset sent to \(successful) device(s)"
+                    : "Autopilot reset sent to \(successful), \(failed) failed"
+            } catch {
+                actionMessage = "Error: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func performDeleteRecord() {
+        let targets = selectedDevices
+        guard !targets.isEmpty else { return }
+        Task {
+            isPerformingAction = true
+            actionMessage = "Deleting \(targets.count) record(s)..."
+            defer { isPerformingAction = false }
+            do {
+                let results = try await appState.graphService.deleteManagedDevices(targets.map(\.id))
+                let successful = results.filter { $0.success }.count
+                let failed = results.count - successful
+                actionMessage = failed == 0
+                    ? "Deleted \(successful) record(s)"
+                    : "Deleted \(successful), \(failed) failed"
+                if successful > 0 { loadDevices() }
+            } catch {
+                actionMessage = "Error: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Cimian runs from a remediation that drops a headless trigger file;
+    /// forcing a sync is what makes the device pick it up now.
+    private func performPushCimian() {
+        let targets = selectedDevices
+        guard !targets.isEmpty else { return }
+        Task {
+            isPerformingAction = true
+            actionMessage = "Pushing Cimian run to \(targets.count) device(s)..."
+            defer { isPerformingAction = false }
+            do {
+                let results = try await appState.graphService.syncDevices(targets.map(\.id))
+                let successful = results.filter { $0.success }.count
+                let failed = results.count - successful
+                actionMessage = failed == 0
+                    ? "Cimian push initiated on \(successful) device(s) - sync forced, remediation will create trigger file on check-in"
+                    : "Push initiated on \(successful), \(failed) sync(s) failed"
+            } catch {
+                actionMessage = "Error: \(error.localizedDescription)"
+            }
+        }
+    }
+
     private func performOffboard() {
         let targets = selectedDevices
         guard !targets.isEmpty else { return }
@@ -526,11 +761,11 @@ struct DevicesView: View {
     private func performRetire() {
         Task {
             isPerformingAction = true
-            actionMessage = "Retiring \(selectedDeviceIds.count) device(s)..."
+            actionMessage = "Retiring \(selectedDevices.count) device(s)..."
             defer { isPerformingAction = false }
 
             do {
-                let results = try await appState.graphService.retireDevices(Array(selectedDeviceIds))
+                let results = try await appState.graphService.retireDevices(selectedDevices.map(\.id))
                 let successful = results.filter { $0.success }.count
                 let failed = results.count - successful
 
@@ -553,12 +788,12 @@ struct DevicesView: View {
         
         Task {
             isPerformingAction = true
-            actionMessage = "Triggering app reinstall on \(selectedDeviceIds.count) device(s)..."
+            actionMessage = "Triggering app reinstall on \(selectedDevices.count) device(s)..."
             defer { isPerformingAction = false }
             
             do {
                 // Reinstall is triggered via sync which re-evaluates app assignments
-                let results = try await appState.graphService.syncDevices(Array(selectedDeviceIds))
+                let results = try await appState.graphService.syncDevices(selectedDevices.map(\.id))
                 let successful = results.filter { $0.success }.count
                 let failed = results.count - successful
                 
@@ -575,7 +810,7 @@ struct DevicesView: View {
     }
 
     private func formatDate(_ dateString: String?) -> String {
-        guard let dateString = dateString else { return "-" }
+        guard let dateString = dateString else { return DeviceListRow.missing }
         return String(dateString.prefix(16)).replacingOccurrences(of: "T", with: " ")
     }
 }
@@ -583,7 +818,19 @@ struct DevicesView: View {
 // MARK: - Device Actions Panel
 
 struct DeviceActionsPanel: View {
-    let selectedDevices: [IntuneDevice]
+    let selectedRows: [DeviceListRow]
+    @ObservedObject var appleOrg: AppleOrgStore
+    @ObservedObject var autopilot: AutopilotStore
+
+    private var selectedDevices: [IntuneDevice] { selectedRows.compactMap(\.intune) }
+    /// Every selected device has an Intune record.
+    private var allEnrolled: Bool { !selectedRows.isEmpty && selectedRows.allSatisfy { $0.intune != nil } }
+    /// The selection when one Apple organization holds every selected
+    /// device; empty otherwise, including a selection spanning two.
+    private var appleRows: [DeviceListRow] {
+        let orgs = Set(selectedRows.map { $0.apple?.orgId })
+        return orgs.count == 1 && orgs.first! != nil ? selectedRows : []
+    }
     @Binding var isPerformingAction: Bool
     @Binding var actionMessage: String?
     @Binding var lockPin: String
@@ -593,6 +840,9 @@ struct DeviceActionsPanel: View {
     @Binding var showRetireConfirmation: Bool
     @Binding var showFreshStartConfirmation: Bool
     @Binding var showOffboardConfirmation: Bool
+    @Binding var showAutopilotResetConfirmation: Bool
+    @Binding var showDeleteRecordConfirmation: Bool
+    @Binding var showPushCimianConfirmation: Bool
     @Binding var wipeOptions: WipeOptions
     @Binding var freshStartKeepUserData: Bool
     @Binding var offboardPlan: OffboardPlan
@@ -620,6 +870,8 @@ struct DeviceActionsPanel: View {
     private var hasWindows: Bool { platforms.contains(.windows) }
     private var hasApple: Bool { platforms.contains(.macOS) || platforms.contains(.ios) }
     private var isMixedPlatform: Bool { platforms.count > 1 }
+    /// Every selected device is an enrolled Windows device.
+    private var allWindows: Bool { allEnrolled && platforms == [.windows] }
     private var windowsCount: Int { selectedDevices.filter { $0.platform == .windows }.count }
 
     var body: some View {
@@ -635,18 +887,18 @@ struct DeviceActionsPanel: View {
             
             // Selected devices summary
             VStack(alignment: .leading, spacing: 4) {
-                Text("\(selectedDevices.count) device(s) selected")
+                Text("\(selectedRows.count) device(s) selected")
                     .appFont(.subheadline)
                     .fontWeight(.medium)
                 
-                if selectedDevices.count <= 3 {
-                    ForEach(selectedDevices, id: \.id) { device in
-                        Text(device.deviceName ?? device.serialNumber ?? "Unknown")
+                if selectedRows.count <= 3 {
+                    ForEach(selectedRows) { row in
+                        Text(row.intune?.deviceName ?? row.serialNumber ?? "Unknown")
                             .appFont(.caption)
                             .foregroundColor(.secondary)
                     }
                 } else {
-                    Text("\(selectedDevices.prefix(2).compactMap { $0.deviceName ?? $0.serialNumber }.joined(separator: ", ")) and \(selectedDevices.count - 2) more...")
+                    Text("\(selectedRows.prefix(2).compactMap { $0.intune?.deviceName ?? $0.serialNumber }.joined(separator: ", ")) and \(selectedRows.count - 2) more...")
                         .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -672,350 +924,18 @@ struct DeviceActionsPanel: View {
             
             ScrollView {
                 VStack(spacing: 0) {
-                    // Sync Section
-                    ActionAccordion(
-                        title: "Sync Device",
-                        icon: "arrow.triangle.2.circlepath",
-                        isExpanded: expandedSections.contains("sync"),
-                        onToggle: { toggleSection("sync") }
-                    ) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Force devices to check in with Intune and re-evaluate policies and app assignments.")
-                                .appFont(.caption)
-                                .foregroundColor(.secondary)
-                            
-                            Button(action: onSync) {
-                                Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(isPerformingAction)
-                        }
+                    // Only actions valid for every selected device are
+                    // offered: Intune's for devices enrolled in it, the Apple
+                    // organization's for devices one organization holds,
+                    // Autopilot's for devices it has an identity for.
+                    if allEnrolled {
+                        intuneActions
                     }
-                    
-                    Divider()
-                    
-                    // Restart Section
-                    ActionAccordion(
-                        title: "Restart Device",
-                        icon: "power",
-                        isExpanded: expandedSections.contains("restart"),
-                        onToggle: { toggleSection("restart") }
-                    ) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Immediately restart the selected devices. Active user sessions will be terminated.")
-                                .appFont(.caption)
-                                .foregroundColor(.secondary)
-                            
-                            Button(action: { showRebootConfirmation = true }) {
-                                Label("Restart", systemImage: "power")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.orange)
-                            .disabled(isPerformingAction)
-                        }
+                    if !appleRows.isEmpty {
+                        AppleOrgActionsGroup(store: appleOrg, rows: appleRows)
                     }
-                    
-                    Divider()
-                    
-                    // Lock Section
-                    ActionAccordion(
-                        title: "Lock Device",
-                        icon: "lock.fill",
-                        isExpanded: expandedSections.contains("lock"),
-                        onToggle: { toggleSection("lock") }
-                    ) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Remotely lock devices. For macOS, you can set a PIN that users must enter to unlock.")
-                                .appFont(.caption)
-                                .foregroundColor(.secondary)
-                            
-                            TextField("PIN (optional, macOS only)", text: $lockPin)
-                                .textFieldStyle(.roundedBorder)
-                            
-                            Button(action: { showLockConfirmation = true }) {
-                                Label("Lock Device", systemImage: "lock.fill")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.red)
-                            .disabled(isPerformingAction)
-                        }
-                    }
-                    
-                    Divider()
-
-                    // Retire Section
-                    ActionAccordion(
-                        title: "Retire Device",
-                        icon: "minus.circle",
-                        isExpanded: expandedSections.contains("retire"),
-                        onToggle: { toggleSection("retire") }
-                    ) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Remove company data and unenroll the selected devices. Personal data is left intact.")
-                                .appFont(.caption)
-                                .foregroundColor(.secondary)
-
-                            Button(action: { showRetireConfirmation = true }) {
-                                Label("Retire Device", systemImage: "minus.circle")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.red)
-                            .disabled(isPerformingAction)
-                        }
-                    }
-
-                    Divider()
-
-                    // Wipe Section
-                    ActionAccordion(
-                        title: "Wipe Device",
-                        icon: "trash.fill",
-                        isExpanded: expandedSections.contains("wipe"),
-                        onToggle: { toggleSection("wipe") }
-                    ) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Factory-reset the selected devices. This cannot be undone.")
-                                .appFont(.caption)
-                                .foregroundColor(.secondary)
-
-                            if isMixedPlatform {
-                                Label("Mixed selection — each device gets only the options its platform supports.", systemImage: "info.circle")
-                                    .appFont(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-
-                            Toggle("Leave the device enrolled", isOn: $wipeOptions.keepEnrollmentData)
-                                .appFont(.caption)
-
-                            if hasWindows {
-                                Toggle("Keep user data (Windows)", isOn: $wipeOptions.keepUserData)
-                                    .appFont(.caption)
-
-                                Toggle("Protected wipe (Windows)", isOn: $wipeOptions.useProtectedWipe)
-                                    .appFont(.caption)
-                                    .help("Retries until it succeeds and cannot be circumvented by the user. A device interrupted mid-wipe may not boot.")
-                            }
-
-                            if hasApple {
-                                TextField("Recovery PIN (macOS/iOS)", text: Binding(
-                                    get: { wipeOptions.macOsUnlockCode ?? "" },
-                                    set: { wipeOptions.macOsUnlockCode = $0.isEmpty ? nil : $0 }
-                                ))
-                                .textFieldStyle(.roundedBorder)
-                                .appFont(.caption)
-                            }
-
-                            if platforms.contains(.macOS) {
-                                Picker("Erase behaviour", selection: Binding(
-                                    get: { wipeOptions.obliterationBehavior ?? .default },
-                                    set: { wipeOptions.obliterationBehavior = $0 }
-                                )) {
-                                    ForEach(WipeOptions.ObliterationBehavior.allCases) { behavior in
-                                        Text(behavior.displayName).tag(behavior)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                                .appFont(.caption)
-                                .help("macOS 12 and later. Erase All Content and Settings is instant; the fallback full erase is not.")
-                            }
-
-                            Button(action: { showWipeConfirmation = true }) {
-                                Label("Wipe Device", systemImage: "trash.fill")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.red)
-                            .disabled(isPerformingAction)
-                        }
-                    }
-
-                    Divider()
-
-                    // Fresh Start Section — Windows only
-                    if hasWindows {
-                        ActionAccordion(
-                            title: "Fresh Start",
-                            icon: "sparkles",
-                            isExpanded: expandedSections.contains("freshstart"),
-                            onToggle: { toggleSection("freshstart") }
-                        ) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Reinstall Windows and remove preinstalled OEM apps. The device stays enrolled and Entra-joined.")
-                                    .appFont(.caption)
-                                    .foregroundColor(.secondary)
-
-                                if isMixedPlatform {
-                                    Text("Applies to the \(windowsCount) Windows device(s) in the selection.")
-                                        .appFont(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-
-                                Toggle("Keep user data and account", isOn: $freshStartKeepUserData)
-                                    .appFont(.caption)
-
-                                Button(action: { showFreshStartConfirmation = true }) {
-                                    Label("Fresh Start", systemImage: "sparkles")
-                                        .frame(maxWidth: .infinity)
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .tint(.orange)
-                                .disabled(isPerformingAction)
-                            }
-                        }
-
-                        Divider()
-                    }
-
-                    // Offboard Section
-                    ActionAccordion(
-                        title: "Offboard Device",
-                        icon: "shippingbox.and.arrow.backward",
-                        isExpanded: expandedSections.contains("offboard"),
-                        onToggle: { toggleSection("offboard") }
-                    ) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Decommission across Intune, Autopilot and Entra in one pass. Steps that do not apply to a device's platform are skipped.")
-                                .appFont(.caption)
-                                .foregroundColor(.secondary)
-
-                            Picker("Intune action", selection: $offboardPlan.terminalAction) {
-                                ForEach(OffboardPlan.TerminalAction.allCases) { action in
-                                    Text(action.displayName).tag(action)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .appFont(.caption)
-
-                            if offboardPlan.terminalAction == .wipe {
-                                Text("Uses the wipe options set above.")
-                                    .appFont(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-
-                            Toggle("Delete the Autopilot registration", isOn: $offboardPlan.deleteAutopilotRegistration)
-                                .appFont(.caption)
-                                .help("Windows only. Releases the hardware hash so the device can be re-registered elsewhere.")
-
-                            Picker("Entra device", selection: $offboardPlan.entraAction) {
-                                ForEach(OffboardPlan.EntraAction.allCases) { action in
-                                    Text(action.displayName).tag(action)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .appFont(.caption)
-
-                            Toggle("Delete the Intune record", isOn: $offboardPlan.deleteIntuneRecord)
-                                .appFont(.caption)
-
-                            if offboardPlan.deleteIntuneRecord && offboardPlan.terminalAction != .none {
-                                Label("The pending action lives on the Intune record — deleting it before the device checks in cancels the \(offboardPlan.terminalAction == .wipe ? "wipe" : "retire").", systemImage: "exclamationmark.triangle")
-                                    .appFont(.caption)
-                                    .foregroundColor(.orange)
-                            }
-
-                            Button(action: { showOffboardConfirmation = true }) {
-                                Label("Offboard Device", systemImage: "shippingbox.and.arrow.backward")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.red)
-                            .disabled(isPerformingAction)
-
-                            if !offboardResults.isEmpty {
-                                Divider()
-                                ForEach(offboardResults) { result in
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(result.deviceName ?? result.identifier)
-                                            .appFont(.caption)
-                                            .fontWeight(.medium)
-                                        ForEach(result.steps) { step in
-                                            HStack(alignment: .top, spacing: 4) {
-                                                Image(systemName: stepIcon(step.outcome))
-                                                    .foregroundColor(stepColor(step.outcome))
-                                                Text(step.detail.map { "\(step.step) — \($0)" } ?? step.step)
-                                                    .foregroundColor(.secondary)
-                                            }
-                                            .appFont(.caption)
-                                        }
-                                    }
-                                    .padding(.vertical, 2)
-                                }
-                            }
-                        }
-                    }
-
-                    Divider()
-
-                    // App Reinstall Section
-                    ActionAccordion(
-                        title: "Reinstall App",
-                        icon: "arrow.down.app.fill",
-                        isExpanded: expandedSections.contains("app"),
-                        onToggle: { toggleSection("app") }
-                    ) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Trigger app reinstallation by initiating a device sync. Select an app to reinstall.")
-                                .appFont(.caption)
-                                .foregroundColor(.secondary)
-                            
-                            HStack {
-                                TextField("Search apps...", text: $appSearchText)
-                                    .textFieldStyle(.roundedBorder)
-                                Button(action: onLoadApps) {
-                                    Image(systemName: "magnifyingglass")
-                                }
-                            }
-                            
-                            if !availableApps.isEmpty {
-                                Picker("Select App", selection: $selectedAppId) {
-                                    Text("Select an app...").tag(nil as String?)
-                                    ForEach(availableApps, id: \.id) { app in
-                                        Text(app.displayName ?? "Unknown")
-                                            .tag(app.id)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                            }
-                            
-                            Button(action: onReinstallApp) {
-                                Label("Trigger Reinstall", systemImage: "arrow.down.app.fill")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(isPerformingAction || selectedAppId == nil)
-                        }
-                        .onAppear {
-                            if availableApps.isEmpty {
-                                onLoadApps()
-                            }
-                        }
-                    }
-                    
-                    Divider()
-                    
-                    // OS Update Section
-                    ActionAccordion(
-                        title: "OS Update",
-                        icon: "arrow.up.circle.fill",
-                        isExpanded: expandedSections.contains("update"),
-                        onToggle: { toggleSection("update") }
-                    ) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Trigger OS update check on Windows devices. For macOS, updates are managed through update policies.")
-                                .appFont(.caption)
-                                .foregroundColor(.secondary)
-                            
-                            Button(action: onSync) {
-                                Label("Check for Updates", systemImage: "arrow.up.circle.fill")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(isPerformingAction)
-                        }
+                    if AutopilotActionsGroup.applies(to: selectedRows) {
+                        AutopilotActionsGroup(store: autopilot, rows: selectedRows)
                     }
                 }
             }
@@ -1023,6 +943,429 @@ struct DeviceActionsPanel: View {
             Spacer()
         }
         .background(Color(NSColor.controlBackgroundColor))
+    }
+
+    @ViewBuilder
+    private var intuneActions: some View {
+        // Sync Section
+        ActionAccordion(
+            title: "Sync Device",
+            icon: "arrow.triangle.2.circlepath",
+            isExpanded: expandedSections.contains("sync"),
+            onToggle: { toggleSection("sync") }
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Force devices to check in with Intune and re-evaluate policies and app assignments.")
+                    .appFont(.caption)
+                    .foregroundColor(.secondary)
+                
+                Button(action: onSync) {
+                    Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isPerformingAction)
+            }
+        }
+        
+        Divider()
+        
+        // Restart Section
+        ActionAccordion(
+            title: "Restart Device",
+            icon: "power",
+            isExpanded: expandedSections.contains("restart"),
+            onToggle: { toggleSection("restart") }
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Immediately restart the selected devices. Active user sessions will be terminated.")
+                    .appFont(.caption)
+                    .foregroundColor(.secondary)
+                
+                Button(action: { showRebootConfirmation = true }) {
+                    Label("Restart", systemImage: "power")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+                .disabled(isPerformingAction)
+            }
+        }
+        
+        Divider()
+        
+        // Lock Section
+        ActionAccordion(
+            title: "Lock Device",
+            icon: "lock.fill",
+            isExpanded: expandedSections.contains("lock"),
+            onToggle: { toggleSection("lock") }
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Remotely lock devices. For macOS, you can set a PIN that users must enter to unlock.")
+                    .appFont(.caption)
+                    .foregroundColor(.secondary)
+                
+                TextField("PIN (optional, macOS only)", text: $lockPin)
+                    .textFieldStyle(.roundedBorder)
+                
+                Button(action: { showLockConfirmation = true }) {
+                    Label("Lock Device", systemImage: "lock.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .disabled(isPerformingAction)
+            }
+        }
+        
+        Divider()
+
+        // Retire Section
+        ActionAccordion(
+            title: "Retire Device",
+            icon: "minus.circle",
+            isExpanded: expandedSections.contains("retire"),
+            onToggle: { toggleSection("retire") }
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Remove company data and unenroll the selected devices. Personal data is left intact.")
+                    .appFont(.caption)
+                    .foregroundColor(.secondary)
+
+                Button(action: { showRetireConfirmation = true }) {
+                    Label("Retire Device", systemImage: "minus.circle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .disabled(isPerformingAction)
+            }
+        }
+
+        Divider()
+
+        // Wipe Section
+        ActionAccordion(
+            title: "Wipe Device",
+            icon: "trash.fill",
+            isExpanded: expandedSections.contains("wipe"),
+            onToggle: { toggleSection("wipe") }
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Factory-reset the selected devices. This cannot be undone.")
+                    .appFont(.caption)
+                    .foregroundColor(.secondary)
+
+                if isMixedPlatform {
+                    Label("Mixed selection — each device gets only the options its platform supports.", systemImage: "info.circle")
+                        .appFont(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Toggle("Leave the device enrolled", isOn: $wipeOptions.keepEnrollmentData)
+                    .appFont(.caption)
+
+                if hasWindows {
+                    Toggle("Keep user data (Windows)", isOn: $wipeOptions.keepUserData)
+                        .appFont(.caption)
+
+                    Toggle("Protected wipe (Windows)", isOn: $wipeOptions.useProtectedWipe)
+                        .appFont(.caption)
+                        .help("Retries until it succeeds and cannot be circumvented by the user. A device interrupted mid-wipe may not boot.")
+                }
+
+                if hasApple {
+                    TextField("Recovery PIN (macOS/iOS)", text: Binding(
+                        get: { wipeOptions.macOsUnlockCode ?? "" },
+                        set: { wipeOptions.macOsUnlockCode = $0.isEmpty ? nil : $0 }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .appFont(.caption)
+                }
+
+                if platforms.contains(.macOS) {
+                    Picker("Erase behaviour", selection: Binding(
+                        get: { wipeOptions.obliterationBehavior ?? .default },
+                        set: { wipeOptions.obliterationBehavior = $0 }
+                    )) {
+                        ForEach(WipeOptions.ObliterationBehavior.allCases) { behavior in
+                            Text(behavior.displayName).tag(behavior)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .appFont(.caption)
+                    .help("macOS 12 and later. Erase All Content and Settings is instant; the fallback full erase is not.")
+                }
+
+                Button(action: { showWipeConfirmation = true }) {
+                    Label("Wipe Device", systemImage: "trash.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .disabled(isPerformingAction)
+            }
+        }
+
+        Divider()
+
+        // Fresh Start Section — Windows only
+        if hasWindows {
+            ActionAccordion(
+                title: "Fresh Start",
+                icon: "sparkles",
+                isExpanded: expandedSections.contains("freshstart"),
+                onToggle: { toggleSection("freshstart") }
+            ) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Reinstall Windows and remove preinstalled OEM apps. The device stays enrolled and Entra-joined.")
+                        .appFont(.caption)
+                        .foregroundColor(.secondary)
+
+                    if isMixedPlatform {
+                        Text("Applies to the \(windowsCount) Windows device(s) in the selection.")
+                            .appFont(.caption)
+                            .foregroundColor(.secondary)
+                    }
+
+                    Toggle("Keep user data and account", isOn: $freshStartKeepUserData)
+                        .appFont(.caption)
+
+                    Button(action: { showFreshStartConfirmation = true }) {
+                        Label("Fresh Start", systemImage: "sparkles")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .disabled(isPerformingAction)
+                }
+            }
+
+            Divider()
+        }
+
+        // Autopilot Reset — every selected device must be enrolled Windows
+        if allWindows {
+            ActionAccordion(
+                title: "Autopilot Reset",
+                icon: "arrow.counterclockwise.circle",
+                isExpanded: expandedSections.contains("autopilotreset"),
+                onToggle: { toggleSection("autopilotreset") }
+            ) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Return the selected devices to the out-of-box experience. Keeps the Entra join and Intune enrollment; removes user data, apps and settings.")
+                        .appFont(.caption)
+                        .foregroundColor(.secondary)
+                    Button(action: { showAutopilotResetConfirmation = true }) {
+                        Label("Autopilot Reset", systemImage: "arrow.counterclockwise.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .disabled(isPerformingAction)
+                }
+            }
+
+            Divider()
+        }
+
+        // Delete Intune Record — every selected device must have a record
+        if allEnrolled {
+            ActionAccordion(
+                title: "Delete Intune Record",
+                icon: "trash.slash",
+                isExpanded: expandedSections.contains("deleterecord"),
+                onToggle: { toggleSection("deleterecord") }
+            ) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Delete the Intune device record server-side only. Nothing is sent to the device; use for stale or duplicate records.")
+                        .appFont(.caption)
+                        .foregroundColor(.secondary)
+                    Button(action: { showDeleteRecordConfirmation = true }) {
+                        Label("Delete Record", systemImage: "trash")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .disabled(isPerformingAction)
+                }
+            }
+
+            Divider()
+        }
+
+        // Push Cimian Run — Windows only
+        if allWindows {
+            ActionAccordion(
+                title: "Push Cimian Run",
+                icon: "shippingbox",
+                isExpanded: expandedSections.contains("cimian"),
+                onToggle: { toggleSection("cimian") }
+            ) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Trigger an immediate Cimian managed software update on selected devices. Creates a .cimian.headless trigger file via Intune remediation. CimianWatcher picks it up within 10 seconds.")
+                        .appFont(.caption)
+                        .foregroundColor(.secondary)
+                    Button(action: { showPushCimianConfirmation = true }) {
+                        Label("Push Cimian Run", systemImage: "shippingbox")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isPerformingAction)
+                }
+            }
+
+            Divider()
+        }
+
+        // Offboard Section
+        ActionAccordion(
+            title: "Offboard Device",
+            icon: "shippingbox.and.arrow.backward",
+            isExpanded: expandedSections.contains("offboard"),
+            onToggle: { toggleSection("offboard") }
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Decommission across Intune, Autopilot and Entra in one pass. Steps that do not apply to a device's platform are skipped.")
+                    .appFont(.caption)
+                    .foregroundColor(.secondary)
+
+                Picker("Intune action", selection: $offboardPlan.terminalAction) {
+                    ForEach(OffboardPlan.TerminalAction.allCases) { action in
+                        Text(action.displayName).tag(action)
+                    }
+                }
+                .pickerStyle(.menu)
+                .appFont(.caption)
+
+                if offboardPlan.terminalAction == .wipe {
+                    Text("Uses the wipe options set above.")
+                        .appFont(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Toggle("Delete the Autopilot registration", isOn: $offboardPlan.deleteAutopilotRegistration)
+                    .appFont(.caption)
+                    .help("Windows only. Releases the hardware hash so the device can be re-registered elsewhere.")
+
+                Picker("Entra device", selection: $offboardPlan.entraAction) {
+                    ForEach(OffboardPlan.EntraAction.allCases) { action in
+                        Text(action.displayName).tag(action)
+                    }
+                }
+                .pickerStyle(.menu)
+                .appFont(.caption)
+
+                Toggle("Delete the Intune record", isOn: $offboardPlan.deleteIntuneRecord)
+                    .appFont(.caption)
+
+                if offboardPlan.deleteIntuneRecord && offboardPlan.terminalAction != .none {
+                    Label("The pending action lives on the Intune record — deleting it before the device checks in cancels the \(offboardPlan.terminalAction == .wipe ? "wipe" : "retire").", systemImage: "exclamationmark.triangle")
+                        .appFont(.caption)
+                        .foregroundColor(.orange)
+                }
+
+                Button(action: { showOffboardConfirmation = true }) {
+                    Label("Offboard Device", systemImage: "shippingbox.and.arrow.backward")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .disabled(isPerformingAction)
+
+                if !offboardResults.isEmpty {
+                    Divider()
+                    ForEach(offboardResults) { result in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(result.deviceName ?? result.identifier)
+                                .appFont(.caption)
+                                .fontWeight(.medium)
+                            ForEach(result.steps) { step in
+                                HStack(alignment: .top, spacing: 4) {
+                                    Image(systemName: stepIcon(step.outcome))
+                                        .foregroundColor(stepColor(step.outcome))
+                                    Text(step.detail.map { "\(step.step) — \($0)" } ?? step.step)
+                                        .foregroundColor(.secondary)
+                                }
+                                .appFont(.caption)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+        }
+
+        Divider()
+
+        // App Reinstall Section
+        ActionAccordion(
+            title: "Reinstall App",
+            icon: "arrow.down.app.fill",
+            isExpanded: expandedSections.contains("app"),
+            onToggle: { toggleSection("app") }
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Trigger app reinstallation by initiating a device sync. Select an app to reinstall.")
+                    .appFont(.caption)
+                    .foregroundColor(.secondary)
+                
+                HStack {
+                    TextField("Search apps...", text: $appSearchText)
+                        .textFieldStyle(.roundedBorder)
+                    Button(action: onLoadApps) {
+                        Image(systemName: "magnifyingglass")
+                    }
+                }
+                
+                if !availableApps.isEmpty {
+                    Picker("Select App", selection: $selectedAppId) {
+                        Text("Select an app...").tag(nil as String?)
+                        ForEach(availableApps, id: \.id) { app in
+                            Text(app.displayName ?? "Unknown")
+                                .tag(app.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+                
+                Button(action: onReinstallApp) {
+                    Label("Trigger Reinstall", systemImage: "arrow.down.app.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isPerformingAction || selectedAppId == nil)
+            }
+            .onAppear {
+                if availableApps.isEmpty {
+                    onLoadApps()
+                }
+            }
+        }
+        
+        Divider()
+        
+        // OS Update Section
+        ActionAccordion(
+            title: "OS Update",
+            icon: "arrow.up.circle.fill",
+            isExpanded: expandedSections.contains("update"),
+            onToggle: { toggleSection("update") }
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Trigger OS update check on Windows devices. For macOS, updates are managed through update policies.")
+                    .appFont(.caption)
+                    .foregroundColor(.secondary)
+                
+                Button(action: onSync) {
+                    Label("Check for Updates", systemImage: "arrow.up.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isPerformingAction)
+            }
+        }
     }
     
     private func toggleSection(_ section: String) {
@@ -1099,7 +1442,7 @@ struct ComplianceBadge: View {
         let (color, icon): (Color, String) = {
             switch state?.lowercased() {
             case "compliant": return (.green, "checkmark.circle.fill")
-            case "noncompliant": return (.red, "xmark.circle.fill")
+            case "noncompliant": return (.orange, "exclamationmark.circle.fill")
             case "ingraceperiod": return (.yellow, "clock.fill")
             default: return (.gray, "questionmark.circle.fill")
             }

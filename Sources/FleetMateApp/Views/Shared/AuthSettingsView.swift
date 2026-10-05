@@ -206,7 +206,7 @@ struct AuthSettingsView: View {
                     if let key = cfg.snipeApiKey {
                         detailRow("API key", maskedToken(key))
                     } else {
-                        detailRow("API key", "missing", .red)
+                        detailRow("API key", "missing", .orange)
                     }
                 }
                 checkedRow(system.lastChecked)
@@ -271,7 +271,7 @@ struct AuthSettingsView: View {
                     detailRow("Attributed to", name, .secondary)
                 }
                 if case .failed(let msg) = system.state {
-                    detailRow("Error", msg, .red)
+                    detailRow("Error", msg, .orange)
                 }
                 cliSignInRow(.devops)
                 checkedRow(system.lastChecked)
@@ -299,7 +299,7 @@ struct AuthSettingsView: View {
                 if let tok   = cfg.tasks?.providers.gitea?.token {
                     detailRow("Token", maskedToken(tok))
                 } else {
-                    detailRow("Token", "missing", .red)
+                    detailRow("Token", "missing", .orange)
                 }
                 checkedRow(system.lastChecked)
             }
@@ -578,7 +578,7 @@ struct AuthSettingsView: View {
         if let outcome = cliSignInResult[id] {
             detailRow(outcome.succeeded ? "az / gh" : "Sign-in error",
                       outcome.message,
-                      outcome.succeeded ? .green : .red)
+                      outcome.succeeded ? .green : .orange)
         }
     }
 
@@ -590,7 +590,7 @@ struct AuthSettingsView: View {
         case .configured:        return .yellow
         case .authenticating:    return .blue
         case .expired:           return .orange
-        case .failed:            return .red
+        case .failed:            return .orange
         case .servicePrincipal:  return .orange
         case .notConfigured:     return .gray
         }

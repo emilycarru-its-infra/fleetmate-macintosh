@@ -9,6 +9,9 @@ struct AddDeviceSheet: View {
     @Binding var isPresented: Bool
     let preferredMode: Mode
     let forceNewGroup: Bool
+    /// Machines already chosen elsewhere (the machine list's "Add to Custom
+    /// Group…"), checked when the sheet opens.
+    let preselected: [RosterComputer]
 
     enum Mode: String, CaseIterable {
         case roster = "Browse Roster"
@@ -30,11 +33,13 @@ struct AddDeviceSheet: View {
     @State private var pastedList = ""
     @State private var groupTarget: GroupTarget = .newGroup
 
-    init(manage: ManageState, isPresented: Binding<Bool>, preferredMode: Mode = .roster, forceNewGroup: Bool = false) {
+    init(manage: ManageState, isPresented: Binding<Bool>, preferredMode: Mode = .roster, forceNewGroup: Bool = false,
+         preselected: [RosterComputer] = []) {
         self.manage = manage
         self._isPresented = isPresented
         self.preferredMode = preferredMode
         self.forceNewGroup = forceNewGroup
+        self.preselected = preselected
     }
 
     private var targetGroupID: UUID? {
@@ -137,6 +142,7 @@ struct AddDeviceSheet: View {
         .frame(width: 480, height: 580)
         .onAppear {
             mode = preferredMode
+            checkedKeys.formUnion(preselected.map(\.id))
             if !forceNewGroup, let current = manage.primaryGroup {
                 groupTarget = .existingGroup(current.id)
             }
@@ -315,7 +321,9 @@ struct AddDeviceSheet: View {
 
     private func commitRoster() {
         guard let groupID = resolveOrCreateGroupID() else { return }
-        for c in filteredComputers where checkedKeys.contains(c.id) && !alreadyInGroup.contains(c.hostname.lowercased()) {
+        let shown = Set(filteredComputers.map(\.id))
+        let candidates = filteredComputers + preselected.filter { !shown.contains($0.id) }
+        for c in candidates where checkedKeys.contains(c.id) && !alreadyInGroup.contains(c.hostname.lowercased()) {
             manage.addDevice(toGroupID: groupID, hostname: c.hostname, ip: manage.ipFor(c) ?? "", serial: c.serial)
         }
         finish(groupID: groupID)

@@ -196,7 +196,7 @@ struct TicketBoardView: View {
         if n.contains("hold") || n.contains("pending") || n.contains("waiting") { return .yellow }
         if n.contains("resolved") || n.contains("completed") { return .green }
         if n.contains("closed") { return .gray }
-        if n.contains("cancel") { return .red }
+        if n.contains("cancel") { return .orange }
         return .secondary
     }
 }
@@ -410,7 +410,7 @@ struct AgeBadge: View {
 
     var body: some View {
         if let days {
-            let color: Color = days >= 30 ? .red : (days >= 14 ? .orange : .secondary)
+            let color: Color = days >= 30 ? .orange : (days >= 14 ? .orange : .secondary)
             Text(verbatim: "\(days)d")
                 .appFont(.caption2, design: .monospaced)
                 .padding(.horizontal, 5)
@@ -430,7 +430,7 @@ struct PriorityBadge: View {
         let color: Color = {
             let p = priority.lowercased()
             if p.contains("urgent") || p.contains("critical") || p.contains("high") {
-                return .red
+                return .orange
             } else if p.contains("medium") {
                 return .orange
             } else if p.contains("low") {

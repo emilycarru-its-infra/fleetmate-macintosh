@@ -168,7 +168,7 @@ struct UserRow: View {
                         .appFont(.caption)
                 } else {
                     Label("Disabled", systemImage: "xmark.circle.fill")
-                        .foregroundColor(.red)
+                        .foregroundColor(.orange)
                         .appFont(.caption)
                 }
             }

@@ -163,7 +163,7 @@ struct CreateWorkItemView: View {
 
                 if let error = errorMessage {
                     Text(error)
-                        .foregroundColor(.red)
+                        .foregroundColor(.orange)
                         .appFont(.caption)
                 }
             }

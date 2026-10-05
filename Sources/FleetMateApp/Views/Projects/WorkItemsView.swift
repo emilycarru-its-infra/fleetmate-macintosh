@@ -155,7 +155,7 @@ struct WorkItemTypeBadge: View {
     var body: some View {
         let (color, icon): (Color, String) = {
             switch type?.lowercased() {
-            case "bug": return (.red, "ladybug")
+            case "bug": return (.orange, "ladybug")
             case "task": return (.blue, "checkmark.square")
             case "user story": return (.purple, "person")
             case "feature": return (.green, "star")
@@ -203,7 +203,7 @@ struct PriorityIndicator: View {
         let p = priority ?? 4
         let color: Color = {
             switch p {
-            case 1: return .red
+            case 1: return .orange
             case 2: return .orange
             case 3: return .yellow
             case 4: return .green

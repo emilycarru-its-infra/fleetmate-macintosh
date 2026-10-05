@@ -6,7 +6,7 @@ import FleetMateCore
 struct StatusCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "status",
-        abstract: "Get fleet status overview from MunkiReport and Snipe-IT"
+        abstract: "Get fleet status overview from Snipe-IT"
     )
     
     @Flag(name: .shortAndLong, help: "Include detailed breakdown")
@@ -19,30 +19,6 @@ struct StatusCommand: AsyncParsableCommand {
         let config = try FleetMateConfig.load()
         
         var status = FleetStatus()
-        
-        // Gather MunkiReport stats
-        let munkiService = MunkiReportService(config: config)
-        do {
-            let stats = try await munkiService.getInstallStats()
-            let devices = try await munkiService.getDevices()
-            let stale = try await munkiService.getStaleDevices(days: 7)
-            let errors = try await munkiService.getErrors()
-            
-            // Aggregate stats from all items
-            let totalInstalls = stats.reduce(0) { $0 + $1.installedCount }
-            let pendingCount = stats.reduce(0) { $0 + $1.failedCount }
-            
-            status.munkiReport = MunkiReportStatus(
-                totalDevices: devices.count,
-                staleDevices: stale.count,
-                totalErrors: errors.count,
-                totalInstalls: totalInstalls,
-                pendingInstalls: pendingCount,
-                connected: true
-            )
-        } catch {
-            status.munkiReport = MunkiReportStatus(connected: false, error: error.localizedDescription)
-        }
         
         // Gather Snipe-IT stats
         let snipeService = SnipeService(config: config)
@@ -84,27 +60,6 @@ struct StatusCommand: AsyncParsableCommand {
         print("                   " + "FleetMate Status".bold.green)
         print("═══════════════════════════════════════════════════════".bold + "\n")
         
-        // MunkiReport Section
-        print("📊 " + "MunkiReport".bold.cyan)
-        if let mr = status.munkiReport {
-            if mr.connected {
-                print("   Status:".lightBlue + "        " + "Connected".green)
-                print("   Total Devices:".lightBlue + " \(mr.totalDevices)")
-                print("   Stale (7d+):".lightBlue + "   " + formatCount(mr.staleDevices, warning: 5, critical: 20))
-                print("   Errors:".lightBlue + "        " + formatCount(mr.totalErrors, warning: 1, critical: 10))
-                print("   Pending:".lightBlue + "       " + formatCount(mr.pendingInstalls, warning: 10, critical: 50))
-            } else {
-                print("   Status:".lightBlue + "        " + "Disconnected".red)
-                if let error = mr.error {
-                    print("   Error:".lightBlue + "         \(error)")
-                }
-            }
-        } else {
-            print("   Status:".lightBlue + "        " + "Not Configured".yellow)
-        }
-        
-        print("")
-        
         // Snipe-IT Section
         print("📦 " + "Snipe-IT".bold.cyan)
         if let snipe = status.snipeIT {
@@ -142,19 +97,8 @@ struct StatusCommand: AsyncParsableCommand {
 // MARK: - Status Models
 
 struct FleetStatus: Codable {
-    var munkiReport: MunkiReportStatus?
     var snipeIT: SnipeITStatus?
     var timestamp: String = ISO8601DateFormatter().string(from: Date())
-}
-
-struct MunkiReportStatus: Codable {
-    var totalDevices: Int = 0
-    var staleDevices: Int = 0
-    var totalErrors: Int = 0
-    var totalInstalls: Int = 0
-    var pendingInstalls: Int = 0
-    var connected: Bool = false
-    var error: String?
 }
 
 struct SnipeITStatus: Codable {

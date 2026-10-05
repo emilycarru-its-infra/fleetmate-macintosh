@@ -315,7 +315,7 @@ struct QueriesListView<MenuContent: View>: View {
             .padding(.horizontal, 2)
             .contentShape(Rectangle().inset(by: -3))
             .gesture(
-                DragGesture(minimumDistance: 1)
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
                         if dragBaseWidth == nil {
                             dragBaseWidth = columnWidths.width(column)

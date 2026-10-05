@@ -12,6 +12,17 @@
 	<string>FleetMate</string>
 	<key>CFBundleIdentifier</key>
 	<string>ca.ecuad.macadmin.fleetmate</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>FleetMate link</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>fleetmate</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>

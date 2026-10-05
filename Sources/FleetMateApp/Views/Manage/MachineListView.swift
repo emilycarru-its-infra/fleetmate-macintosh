@@ -67,6 +67,19 @@ struct MachineListView: View {
         .sheet(isPresented: $showAddDevice) {
             AddDeviceSheet(manage: manage, isPresented: $showAddDevice)
         }
+        .sheet(isPresented: Binding(
+            get: { manage.addToGroupRequest != nil },
+            set: { if !$0 { manage.addToGroupRequest = nil } }
+        )) {
+            AddDeviceSheet(
+                manage: manage,
+                isPresented: Binding(
+                    get: { manage.addToGroupRequest != nil },
+                    set: { if !$0 { manage.addToGroupRequest = nil } }
+                ),
+                preselected: manage.addToGroupRequest ?? []
+            )
+        }
     }
 
     private var selectionSummary: String {
@@ -463,6 +476,11 @@ struct MachineRow: View {
         Button("Open SSH") { manage.openSSH(for: computer) }.disabled(!isOnline)
         Button("Open Screen Sharing") { manage.openScreenSharing(for: computer) }.disabled(!isOnline)
         Button("Open Both") { manage.openSSHAndScreenSharing(for: computer) }.disabled(!isOnline)
+        Divider()
+        Button("Add to Custom Group…") {
+            manage.addToGroupRequest = selected.filter { !$0.isAdhoc }
+        }
+        .disabled(selected.allSatisfy(\.isAdhoc))
         Divider()
         Button("Rescan") { Task { await manage.rescan(computer) } }
     }

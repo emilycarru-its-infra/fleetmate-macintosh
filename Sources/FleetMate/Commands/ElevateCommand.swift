@@ -90,6 +90,11 @@ struct ElevateRestSubcommand: AsyncParsableCommand {
         } catch let error as AzeError {
             FileHandle.standardError.write(Data((error.message + "\n").utf8))
             throw ExitCode(error.exitCode)
+        } catch let error as GraphThrottledError {
+            let message = "Throttled by the service (HTTP \(error.statusCode)); gave up after \(GraphThrottle.maxRetries) retries. Try again later.\n\(error.underlying)\n"
+            FileHandle.standardError.write(Data(message.utf8))
+            // EX_TEMPFAIL: a temporary failure the caller may retry.
+            throw ExitCode(75)
         }
     }
 }

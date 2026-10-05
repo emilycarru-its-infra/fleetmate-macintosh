@@ -164,6 +164,16 @@ public struct FleetMateConfig: Codable {
     // Repo root (detected at runtime)
     public var repoRoot: String?
 
+    // Agent terminal
+    /// What a new terminal session runs: empty for a login shell, else a
+    /// command line such as `claude` or `codex`. The person's own choice in
+    /// Settings wins; this is the managed default.
+    public var agentCommand: String?
+    /// Open a session when the app starts. Nil means the app's default (on).
+    public var agentAutoStart: Bool?
+    /// Repositories offered for new sessions until a person edits their own
+    /// list: local paths or clone URLs. Managed, so a team shares one set.
+    public var repoDefaults: [String] = []
     // Knowledge sources FleetMate keeps its own up-to-date copy of.
     /// Clone URL of the Handbook repository (a Hugo site).
     public var handbookRepoUrl: String?
@@ -532,6 +542,9 @@ public struct FleetMateConfig: Codable {
                     // Booleans arrive as NSNumber; keep them as the words the
                     // credentials file uses.
                     managed[key] = CFGetTypeID(v) == CFBooleanGetTypeID() ? (v.boolValue ? "true" : "false") : v.stringValue
+                case let v as [Any]:
+                    // Lists (repoDefaults) travel as one value per line.
+                    managed[key] = v.compactMap { $0 as? String }.joined(separator: "\n")
                 default: continue
                 }
             }
@@ -582,6 +595,13 @@ public struct FleetMateConfig: Codable {
             config.secureShell?.keyVaultName = v
         }
         config.manage = ManageConfig.applying(credentials: creds, to: config.manage)
+        if let v = get("agentCommand") { config.agentCommand = v }
+        if let v = get("agentAutoStart") { config.agentAutoStart = (v as NSString).boolValue }
+        if let v = get("repoDefaults") {
+            config.repoDefaults = v.split(whereSeparator: \.isNewline)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        }
         if let v = get("handbookRepoUrl") { config.handbookRepoUrl = v }
         if let v = get("handbookSiteUrl") { config.handbookSiteUrl = v }
         if let v = get("agentsHubRepoUrl") { config.agentsHubRepoUrl = v }

@@ -45,7 +45,7 @@ struct TicketAttachmentsView: View {
                 if let errorMessage {
                     Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
                         .appFont(.caption)
-                        .foregroundColor(.red)
+                        .foregroundColor(.orange)
                 }
 
                 VStack(spacing: 6) {

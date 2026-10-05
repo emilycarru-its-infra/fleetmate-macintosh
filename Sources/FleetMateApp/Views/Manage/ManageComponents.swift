@@ -7,7 +7,7 @@ import FleetMateCore
 extension Color {
     static let manageSuccess = Color.green.opacity(0.72)
     static let manageWarning = Color.orange.opacity(0.72)
-    static let manageFailure = Color.red.opacity(0.72)
+    static let manageFailure = Color.orange.opacity(0.72)
     static let manageInfo = Color.blue.opacity(0.70)
     static let manageSelection = Color.accentColor.opacity(0.10)
 }

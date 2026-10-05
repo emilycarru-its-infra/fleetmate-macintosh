@@ -243,7 +243,7 @@ struct CreateIssueView: View {
                 HStack {
                     if let error = errorMessage {
                         Label(error, systemImage: "exclamationmark.triangle")
-                            .foregroundColor(.red)
+                            .foregroundColor(.orange)
                             .appFont(.caption)
                             .lineLimit(2)
                     }

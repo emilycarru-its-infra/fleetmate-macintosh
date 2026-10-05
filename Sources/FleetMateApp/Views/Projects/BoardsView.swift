@@ -772,9 +772,17 @@ struct BoardsView: View {
     private var flatTasks: [UnifiedTask] {
         var tasks = filteredTasks
         if viewMode == .mine {
-            let mine = Set(appState.cachedWorkItems.map { String($0.id) })
-            tasks = tasks.filter { $0.provider != "azdevops" || mine.contains($0.id) }
-                .filter { $0.provider == "azdevops" || !$0.assignees.isEmpty }
+            // The @Me set (assigned to the signed-in user, not finished), the
+            // same one the Dashboard counts — not the org's recent items.
+            let mine = appState.cachedMyWorkItems
+            let ids = Set(mine.map { String($0.id) })
+            tasks = tasks.filter { $0.provider == "azdevops" && ids.contains($0.id) }
+            // Items no shared query covers still belong in Mine — unless the
+            // person is searching or filtering, which those rows can't honour.
+            if searchText.isEmpty && !filters.hasActiveFilters {
+                let shown = Set(tasks.map(\.id))
+                tasks += mine.filter { !shown.contains(String($0.id)) }.map { $0.asUnifiedTask() }
+            }
         }
         return tasks.sorted { $0.updatedAt > $1.updatedAt }
     }

@@ -587,9 +587,11 @@ struct TicketsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // No header — everything in toolbar
+            if appState.config.isTdxConfigured { TicketsWidgetsSection(metrics: appState.widgetMetrics) }
             contentSection
         }
         .onChange(of: selectedTicketIds) { _, newIds in
+            appState.agentSelection = selectedTicket.map(AgentSelection.init(ticket:))
             // A draft belongs to the ticket it was written on — carrying it to
             // the next ticket risks posting it to the wrong conversation.
             newComment = ""
@@ -2807,7 +2809,7 @@ struct TicketColumnResizeHandle: View {
             .padding(.horizontal, 4.5)
             .contentShape(Rectangle())
             .gesture(
-                DragGesture(minimumDistance: 4)
+                DragGesture(minimumDistance: 4, coordinateSpace: .global)
                     .onChanged { value in
                         if !isDragging {
                             isDragging = true

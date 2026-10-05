@@ -20,10 +20,13 @@ struct FleetMateApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        // One window, not a group: FleetMate is a single window, and a
+        // fleetmate:// link sent to a WindowGroup opens a new window each time.
+        Window("FleetMate", id: "main") {
             ContentView()
                 .environmentObject(appState)
                 .appFontScale(fontScale)
+                .onOpenURL { url in appState.open(url) }
                 .task {
                     await appState.preloadAllData()
                 }
@@ -52,6 +55,7 @@ enum AzeSessionState {
     case failed   // warm attempt failed; first real call will retry
 }
 
+/// Receives the Apple Event a `fleetmate://` link arrives as.
 @MainActor
 class AppState: ObservableObject {
     @Published var config: FleetMateConfig
@@ -143,6 +147,42 @@ class AppState: ObservableObject {
     /// GitHub twin of navigateToWorkItemId: the issue's web URL, which is
     /// how the Projects tab identifies a GitHub task.
     @Published var navigateToGitHubIssueUrl: String?
+    /// A `fleetmate://` pull, commit or pipeline link for Development to open.
+    @Published var pendingDevelopmentLink: FleetMateLink?
+    /// Why the last `fleetmate://` link could not be opened.
+    @Published var linkError: String?
+
+    /// Route a `fleetmate://` link to the tab that shows it.
+    func open(_ url: URL) {
+        do {
+            let link = try FleetMateLink.parse(url)
+            dbg.info("Opening link \(url.absoluteString)", category: "links")
+            switch link {
+            case .workItem(let id):
+                navigateToWorkItemId = id
+                navigateToTab = .projects
+            case .gitHubIssue(let owner, let repo, let number):
+                navigateToGitHubIssueUrl = "https://github.com/\(owner)/\(repo)/issues/\(number)"
+                navigateToTab = .projects
+            case .device(let id):
+                navigateToDeviceId = id
+                navigateToTab = .devices
+            case .asset(let id):
+                navigateToAssetId = id
+                navigateToTab = .inventory
+            case .ticket(let id):
+                navigateToTicketId = id
+                navigateToTab = .tickets
+            case .user, .group:
+                navigateToTab = .identity
+            default:
+                pendingDevelopmentLink = link
+                navigateToTab = .development
+            }
+        } catch {
+            linkError = error.localizedDescription
+        }
+    }
     /// A filter to apply in a module tab on arrival — how dashboard chart
     /// wedges/bars deep-link into their section pre-filtered.
     @Published var navigateToModuleFilter: ModuleFilterLink?

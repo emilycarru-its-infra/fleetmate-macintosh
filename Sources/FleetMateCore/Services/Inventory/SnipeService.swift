@@ -260,6 +260,22 @@ public class SnipeService {
         return try await fetchList("/api/v1/reports/activity", parameters: ["limit": limit, "order": "desc", "sort": "created_at"])
     }
     
+    /// An asset's full history, newest first — every update, checkout,
+    /// audit and upload, with the fields each one changed. Falls back to the
+    /// activity report filtered to the asset on servers without the
+    /// per-asset history route.
+    public func getAssetHistory(assetId: Int, limit: Int = 500) async throws -> [SnipeHistoryEntry] {
+        let params: [String: Any] = ["limit": limit, "order": "desc", "sort": "created_at"]
+        do {
+            return try await fetchList("/api/v1/hardware/\(assetId)/history", parameters: params)
+        } catch {
+            var fallback = params
+            fallback["item_type"] = "asset"
+            fallback["item_id"] = assetId
+            return try await fetchList("/api/v1/reports/activity", parameters: fallback)
+        }
+    }
+
     // MARK: - Asset Operations
     
     public func checkoutAsset(assetId: Int, request: SnipeCheckoutRequest) async throws -> SnipeResponse {

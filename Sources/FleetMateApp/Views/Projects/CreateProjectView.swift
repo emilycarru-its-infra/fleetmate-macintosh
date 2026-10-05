@@ -11,8 +11,10 @@ struct CreateProjectView: View {
     @State private var title = ""
     @State private var isCreating = false
     @State private var errorMessage: String?
+    @State private var ownerKind: ProjectOwnerKind = .organization
 
-    private var owner: String { config.organization ?? config.owner ?? "" }
+    /// The organization (or configured owner) a non-personal project goes under.
+    private var organizationOwner: String { config.organization ?? config.owner ?? "" }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -37,13 +39,22 @@ struct CreateProjectView: View {
                         .textFieldStyle(.roundedBorder)
                 }
 
-                Text("Owner: \(owner)")
-                    .appFont(.subheadline)
-                    .foregroundColor(.secondary)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Owner")
+                        .appFont(.headline)
+                    Picker("Owner", selection: $ownerKind) {
+                        Text(organizationOwner.isEmpty ? "Organization" : "Organization (\(organizationOwner))")
+                            .tag(ProjectOwnerKind.organization)
+                        Text("Personal (your GitHub account)")
+                            .tag(ProjectOwnerKind.personal)
+                    }
+                    .pickerStyle(.radioGroup)
+                    .labelsHidden()
+                }
 
                 if let error = errorMessage {
                     Label(error, systemImage: "exclamationmark.triangle")
-                        .foregroundColor(.red)
+                        .foregroundColor(.orange)
                         .appFont(.caption)
                 }
             }
@@ -62,11 +73,16 @@ struct CreateProjectView: View {
             }
             .padding()
         }
-        .frame(minWidth: 400, idealWidth: 450, minHeight: 250, idealHeight: 280)
+        .frame(minWidth: 400, idealWidth: 450, minHeight: 290, idealHeight: 320)
+        .onAppear {
+            // Default to where the configured projects already live.
+            if config.projectScope.lowercased() == "user" || organizationOwner.isEmpty { ownerKind = .personal }
+        }
     }
 
     private func createProject() {
-        guard !title.trimmingCharacters(in: .whitespaces).isEmpty, !owner.isEmpty else { return }
+        let name = title.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, ownerKind == .personal || !organizationOwner.isEmpty else { return }
         isCreating = true
         errorMessage = nil
 
@@ -80,15 +96,14 @@ struct CreateProjectView: View {
                     return
                 }
 
-                // Determine scope and resolve owner ID accordingly
-                let scope: ProjectScope
-                switch config.projectScope.lowercased() {
-                case "user": scope = .user
-                case "repository", "repo": scope = .repository
-                default: scope = .organization
+                let ownerId: String
+                switch ownerKind {
+                case .personal:
+                    ownerId = try await service.getViewer().id
+                case .organization:
+                    ownerId = try await service.getOwnerId(login: organizationOwner, scope: .organization)
                 }
-                let ownerId = try await service.getOwnerId(login: owner, scope: scope)
-                _ = try await service.createProject(ownerId: ownerId, title: title.trimmingCharacters(in: .whitespaces))
+                _ = try await service.createProject(ownerId: ownerId, title: name)
                 onCreated?()
                 dismiss()
             } catch {
@@ -96,4 +111,10 @@ struct CreateProjectView: View {
             }
         }
     }
+}
+
+/// Who owns a new GitHub project.
+enum ProjectOwnerKind: Hashable {
+    case organization
+    case personal
 }

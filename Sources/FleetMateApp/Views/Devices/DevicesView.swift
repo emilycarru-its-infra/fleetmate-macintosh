@@ -287,7 +287,10 @@ struct DevicesView: View {
     }
 
     var body: some View {
-        actionAlerts(mainContent)
+        actionAlerts(VStack(spacing: 0) {
+            if appState.config.isGraphConfigured { DevicesWidgetsSection(metrics: appState.widgetMetrics) }
+            mainContent
+        })
         .onAppCommand { command in
             switch command {
             case .refresh:       loadDevices()

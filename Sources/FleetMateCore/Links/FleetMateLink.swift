@@ -14,6 +14,8 @@ import Foundation
 ///     fleetmate://pipeline/github/<owner>/<repo>/<runId>    Actions run
 ///     fleetmate://workitem/<id>
 ///     fleetmate://issue/github/<owner>/<repo>/<number>
+///     fleetmate://device/<id>   asset/<id>   ticket/<id>
+///     fleetmate://user/<id or UPN>   group/<id>
 ///     fleetmate://open?url=<web URL of any of the above>
 public enum FleetMateLink: Hashable, Sendable {
     public enum Host: Hashable, Sendable {
@@ -30,6 +32,15 @@ public enum FleetMateLink: Hashable, Sendable {
     case gitHubRun(owner: String, repo: String, runId: Int)
     case workItem(id: Int)
     case gitHubIssue(owner: String, repo: String, number: Int)
+    /// An Intune managed device, by its id.
+    case device(id: String)
+    /// A Snipe-IT asset, by its numeric id.
+    case asset(id: Int)
+    /// A TeamDynamix ticket, by its number.
+    case ticket(id: Int)
+    /// An Entra user or group, by object id or user principal name.
+    case user(id: String)
+    case group(id: String)
 
     public static let scheme = "fleetmate"
 
@@ -61,7 +72,7 @@ public enum FleetMateLink: Hashable, Sendable {
             }
         case .azureDevOpsRun(let p, _), .azureDevOpsPipeline(let p, _): return [p]
         case .gitHubRun(let o, let r, _), .gitHubIssue(let o, let r, _): return [o, r]
-        case .workItem: return []
+        case .workItem, .device, .asset, .ticket, .user, .group: return []
         }
     }
 
@@ -114,6 +125,18 @@ public enum FleetMateLink: Hashable, Sendable {
                 throw bad(url, "fleetmate://issue/github/<owner>/<repo>/<number>")
             }
             return .gitHubIssue(owner: parts[1], repo: parts[2], number: n)
+
+        case "device", "user", "group":
+            guard parts.count == 1, isSafeIdentifier(parts[0]) else { throw bad(url, "fleetmate://\(route)/<id>") }
+            switch route {
+            case "device": return .device(id: parts[0])
+            case "user": return .user(id: parts[0])
+            default: return .group(id: parts[0])
+            }
+
+        case "asset", "ticket":
+            guard parts.count == 1, let id = Int(parts[0]) else { throw bad(url, "fleetmate://\(route)/<number>") }
+            return route == "asset" ? .asset(id: id) : .ticket(id: id)
 
         case "open":
             let target = URLComponents(url: url, resolvingAgainstBaseURL: false)?
@@ -193,8 +216,20 @@ public enum FleetMateLink: Hashable, Sendable {
         case .gitHubRun(let o, let r, let id): path = "pipeline/github/\(enc(o))/\(enc(r))/\(id)"
         case .workItem(let id): path = "workitem/\(id)"
         case .gitHubIssue(let o, let r, let n): path = "issue/github/\(enc(o))/\(enc(r))/\(n)"
+        case .device(let id): path = "device/\(enc(id))"
+        case .asset(let id): path = "asset/\(id)"
+        case .ticket(let id): path = "ticket/\(id)"
+        case .user(let id): path = "user/\(enc(id))"
+        case .group(let id): path = "group/\(enc(id))"
         }
         return URL(string: "\(Self.scheme)://\(path)")!
+    }
+
+    /// Device ids are GUIDs; users may be a UPN. No slashes or query marks.
+    static func isSafeIdentifier(_ s: String) -> Bool {
+        !s.isEmpty && s.count <= 200 && s.unicodeScalars.allSatisfy {
+            CharacterSet.alphanumerics.contains($0) || "-_.@".unicodeScalars.contains($0)
+        }
     }
 
     private static func isSHA(_ s: String) -> Bool {
@@ -215,7 +250,7 @@ public enum FleetMateLinkError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .notFleetMate(let s): return "Not a fleetmate:// link: \(s)"
-        case .unknownRoute(let r): return "FleetMate doesn't know the link \"\(r)\". Links open pull, commit, pipeline, workitem, issue or open?url=."
+        case .unknownRoute(let r): return "FleetMate doesn't know the link \"\(r)\". Links open pull, commit, pipeline, workitem, issue, device, asset, ticket, user, group or open?url=."
         case .malformed(let s, let expected): return "The link \(s) is incomplete. Expected \(expected)."
         case .unsupportedWebURL(let s): return "FleetMate can't open \(s). It takes Azure DevOps or GitHub pull request, commit, pipeline, work item and issue URLs."
         }

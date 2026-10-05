@@ -182,9 +182,10 @@ struct DashboardTasksPane: View {
                         if width > pathColumnWidth { pathColumnWidth = ceil(width) }
                     }
                 } else {
-                    // Capped: in the dashboard's outer ScrollView the height
-                    // proposal is unbounded, so without a ceiling this card's
-                    // ideal height is all ~200 rows.
+                    // The ideal height is fixed so ~200 rows never set the
+                    // card's height inside the dashboard's unbounded
+                    // ScrollView; the max is open so the list fills the space
+                    // when the pull-request column beside it is taller.
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(visibleWorkItems.enumerated()), id: \.element.id) { index, item in
@@ -198,7 +199,7 @@ struct DashboardTasksPane: View {
                             if width > pathColumnWidth { pathColumnWidth = ceil(width) }
                         }
                     }
-                    .frame(maxHeight: 540)
+                    .frame(minHeight: 240, idealHeight: 540, maxHeight: .infinity)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

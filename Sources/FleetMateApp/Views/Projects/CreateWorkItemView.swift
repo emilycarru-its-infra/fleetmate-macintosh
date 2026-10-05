@@ -231,7 +231,18 @@ struct CreateWorkItemView: View {
         }
 
         Task {
-            do { teamMembers = try await service.getProjectMembers() } catch {
+            do {
+                teamMembers = try await service.getProjectMembers()
+                // Create Alike passes the source's assignee by display name,
+                // but the picker is keyed by uniqueName; translate it so the
+                // assignee carries over instead of coming up empty.
+                if !assignedTo.isEmpty, !teamMembers.contains(where: { $0.uniqueName == assignedTo }),
+                   let member = teamMembers.first(where: {
+                       $0.displayName?.caseInsensitiveCompare(assignedTo) == .orderedSame
+                   }), let unique = member.uniqueName {
+                    assignedTo = unique
+                }
+            } catch {
                 dbg.debug("Create WI: project members load failed: \(error)", category: "azdo")
             }
         }

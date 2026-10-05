@@ -26,7 +26,8 @@ struct IntuneCommand: AsyncParsableCommand {
             IntuneLockSubcommand.self,
             IntuneOffboardSubcommand.self,
             IntuneCimianPushSubcommand.self,
-            IntuneSettingsSubcommand.self
+            IntuneSettingsSubcommand.self,
+            IntuneUpdatesSubcommand.self
         ],
         defaultSubcommand: IntuneDevicesSubcommand.self
     )
@@ -385,5 +386,98 @@ struct NonCompliantSubcommand: AsyncParsableCommand {
                 print("")
             }
         }
+    }
+}
+
+// MARK: - Windows build inventory
+
+struct IntuneUpdatesSubcommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "updates",
+        abstract: "Summarize observed Windows OS builds across Intune devices"
+    )
+
+    @Option(name: .long, help: "Only include devices synced on or after this UTC date/time (default: 7 days ago)")
+    var since: String?
+
+    @Option(name: [.customShort("b"), .long], parsing: .upToNextOption, help: "Builds to measure, such as 26100.9457 (repeatable)")
+    var build: [String] = []
+
+    @Flag(name: .long, help: "List devices on the selected builds (all builds when --build is omitted)")
+    var list = false
+
+    @Option(name: [.customShort("n"), .long], help: "Maximum Intune devices to read")
+    var limit = 5000
+
+    @Flag(name: .long, help: "Output as JSON")
+    var json = false
+
+    func run() async throws {
+        let cutoff: Date
+        if let since {
+            guard let parsed = Self.parseSince(since) else {
+                print("Invalid --since value: ".red + since)
+                throw ExitCode(2)
+            }
+            cutoff = parsed
+        } else {
+            cutoff = Date().addingTimeInterval(-7 * 86_400)
+        }
+
+        let service = GraphService(config: try FleetMateConfig.load())
+        guard service.isConfigured else {
+            print("Microsoft Graph not configured. Set GRAPH_TENANT_ID and GRAPH_CLIENT_ID.".red)
+            throw ExitCode.failure
+        }
+
+        let devices = try await service.getManagedDevices(filter: ODataFilter.equals("operatingSystem", "Windows"), limit: limit)
+        let inventory = WindowsUpdateInventory.build(from: devices, since: cutoff, selectedBuilds: build)
+
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+            print(String(data: try encoder.encode(inventory), encoding: .utf8) ?? "{}")
+            return
+        }
+
+        let stamp = DateFormatter()
+        stamp.dateFormat = "yyyy-MM-dd HH:mm"
+        stamp.timeZone = TimeZone(identifier: "UTC")
+
+        print("\n\(inventory.totalDevices)".bold + " Windows devices synced since " + "\(stamp.string(from: inventory.since)) UTC".cyan)
+        if !inventory.selectedBuilds.isEmpty {
+            print("\(inventory.matchingDevices)".green + " of " + "\(inventory.totalDevices)".bold
+                  + " (" + String(format: "%.1f%%", inventory.coveragePercentage).bold + ") report "
+                  + inventory.selectedBuilds.joined(separator: ", "))
+        }
+        print("")
+        print(("Observed build".col(20) + " " + "Devices".col(8) + " " + "Fleet".col(8)).underline)
+        for row in inventory.builds {
+            print(row.build.col(20) + " " + row.count.col(8) + " " + String(format: "%.1f%%", row.percentage).col(8))
+        }
+
+        guard list else { print(""); return }
+        print("")
+        print(("Device".col(28) + " " + "Serial".col(16) + " " + "Build".col(14) + " " + "Last sync (UTC)".col(17)).underline)
+        for device in inventory.devices {
+            print(device.deviceName.col(28) + " " + (device.serialNumber ?? "-").col(16) + " "
+                  + device.build.col(14) + " " + stamp.string(from: device.lastSyncDateTime).col(17))
+        }
+        print("")
+    }
+
+    /// A date (`2026-10-01`, read as UTC midnight) or a full ISO 8601 time.
+    static func parseSince(_ raw: String) -> Date? {
+        let iso = ISO8601DateFormatter()
+        if let d = iso.date(from: raw) { return d }
+        let day = DateFormatter()
+        day.locale = Locale(identifier: "en_US_POSIX")
+        day.timeZone = TimeZone(identifier: "UTC")
+        for format in ["yyyy-MM-dd", "yyyy-MM-dd HH:mm", "yyyy-MM-dd'T'HH:mm"] {
+            day.dateFormat = format
+            if let d = day.date(from: raw) { return d }
+        }
+        return nil
     }
 }

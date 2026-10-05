@@ -955,6 +955,28 @@ public class TdxService {
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
+    // MARK: - Assets
+
+    /// Search assets by external id first, then by free text, as FleetMate
+    /// for Windows does. TDX returns partial records from search.
+    public func searchAssets(_ text: String?, maxResults: Int = 50) async throws -> [TdxAsset] {
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
+        let url = config.tdxAssetsUrl("search")
+        let query = text?.trimmingCharacters(in: .whitespaces) ?? ""
+        var body: [String: Any] = ["MaxResults": maxResults]
+        if !query.isEmpty { body["ExternalIDs"] = [query] }
+        var assets: [TdxAsset] = try await post(url, body: body, headers: headers)
+        if assets.isEmpty, !query.isEmpty {
+            assets = try await post(url, body: ["SearchText": query, "MaxResults": maxResults], headers: headers)
+        }
+        return assets
+    }
+
+    public func getAsset(id: Int) async throws -> TdxAsset? {
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
+        return try? await get(config.tdxAssetsUrl("\(id)"), headers: headers)
+    }
+
     // MARK: - Request Plumbing
 
     private func get<T: Decodable>(_ url: String, headers: HTTPHeaders) async throws -> T {

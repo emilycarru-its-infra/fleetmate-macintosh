@@ -12,7 +12,10 @@ struct TdxCommand: AsyncParsableCommand {
             TicketSubcommand.self,
             CreateTicketSubcommand.self,
             CommentSubcommand.self,
+            TdxFromErrorSubcommand.self,
             StatusesSubcommand.self,
+            TdxAssetsSubcommand.self,
+            TdxAssetSubcommand.self,
             VerifySubcommand.self
         ],
         defaultSubcommand: TicketsSubcommand.self

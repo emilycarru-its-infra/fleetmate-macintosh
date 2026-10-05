@@ -29,7 +29,7 @@ public extension GraphService {
 
         var url = "\(baseUrl)/auditLogs/directoryAudits?$top=\(pageSize(for: limit))"
         if let filter, !filter.isEmpty {
-            url += "&$filter=\(filter.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filter)"
+            url += "&$filter=\(ODataFilter.encode(filter))"
         }
 
         var events: [DirectoryAuditEvent] = []
@@ -79,7 +79,7 @@ public extension GraphService {
         var url = "\(betaUrl)/deviceManagement/configurationSettings?$top=\(pageSize(for: 999))"
         if let platform, !platform.isEmpty {
             let filter = "applicability/platform has '\(platform)'"
-            url += "&$filter=\(filter.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filter)"
+            url += "&$filter=\(ODataFilter.encode(filter))"
         }
 
         var matches: [SettingsCatalogDefinition] = []

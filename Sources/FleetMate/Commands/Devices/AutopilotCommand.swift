@@ -215,12 +215,28 @@ struct AutopilotUnassignUserSubcommand: AsyncParsableCommand {
     }
 }
 
-/// Autopilot ids are GUIDs; anything else is treated as a serial and looked up.
+/// Autopilot ids are GUIDs; anything else must be a valid serial matching
+/// exactly one identity. Duplicates are refused with their ids listed.
 private func resolveAutopilotId(_ service: GraphService, _ identifier: String) async throws -> String {
-    if UUID(uuidString: identifier) != nil { return identifier }
-    guard let device = try await service.getAutopilotDeviceBySerial(identifier), let id = device.id else {
-        print("No Autopilot registration for \(identifier)".red)
+    if let id = try? DeviceIdentifier.validateGuid(identifier) { return id }
+    let identities: [WindowsAutopilotDevice]
+    do {
+        identities = try await service.autopilotDevices(exactSerial: identifier)
+    } catch let error as DeviceIdentifierError {
+        print(error.message.red)
         throw ExitCode.failure
     }
-    return id
+    switch identities.count {
+    case 0:
+        print("No Autopilot registration for \(identifier)".red)
+        throw ExitCode.failure
+    case 1:
+        guard let id = identities[0].id else { throw ExitCode.failure }
+        print("Target: ".bold + "serial=\(identities[0].serialNumber ?? "-")  Autopilot \(id)  model=\(identities[0].model ?? "-")")
+        return id
+    default:
+        print("\(identities.count) Autopilot identities have serial \(identifier); refusing to choose one. Re-run with the id:".red)
+        for ap in identities { print("  \(ap.id ?? "-")  enrollmentState=\(ap.enrollmentState ?? "-")") }
+        throw ExitCode.failure
+    }
 }

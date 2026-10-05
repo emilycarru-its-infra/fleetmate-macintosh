@@ -131,7 +131,7 @@ public class GraphService {
 
         var url = "\(baseUrl)/deviceManagement/managedDevices?$top=\(pageSize(for: limit))"
         if let filter = filter {
-            url += "&$filter=\(filter.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filter)"
+            url += "&$filter=\(ODataFilter.encode(filter))"
         }
 
         var allDevices: [IntuneDevice] = []
@@ -151,13 +151,13 @@ public class GraphService {
     }
 
     public func getDeviceBySerial(_ serialNumber: String) async throws -> IntuneDevice? {
-        let filter = "serialNumber eq '\(serialNumber)'"
+        let filter = ODataFilter.equals("serialNumber", serialNumber)
         let devices = try await getManagedDevices(filter: filter, limit: 1)
         return devices.first
     }
 
     public func getDeviceByName(_ deviceName: String) async throws -> IntuneDevice? {
-        let filter = "deviceName eq '\(deviceName)'"
+        let filter = ODataFilter.equals("deviceName", deviceName)
         let devices = try await getManagedDevices(filter: filter, limit: 1)
         return devices.first
     }
@@ -193,7 +193,7 @@ public class GraphService {
     }
 
     public func searchDevices(_ query: String, limit: Int = 50) async throws -> [IntuneDevice] {
-        let filter = "startswith(deviceName, '\(query)')"
+        let filter = "startswith(deviceName, \(ODataFilter.literal(query)))"
         return try await getManagedDevices(filter: filter, limit: limit)
     }
 
@@ -277,8 +277,8 @@ public class GraphService {
     public func searchMobileApps(_ query: String, limit: Int = 50) async throws -> [MobileApp] {
         guard let headers = await headers() else { return [] }
 
-        let filter = "contains(displayName, '\(query)')"
-        let escapedFilter = filter.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filter
+        let filter = "contains(displayName, \(ODataFilter.literal(query)))"
+        let escapedFilter = ODataFilter.encode(filter)
         let url = "\(baseUrl)/deviceAppManagement/mobileApps?$filter=\(escapedFilter)&$top=\(limit)"
 
         let response: MobileAppsResponse = try await fetch(url: url, headers: headers)
@@ -618,8 +618,9 @@ public class GraphService {
     public func searchUsers(_ query: String, limit: Int = 25) async throws -> [EntraUser] {
         guard let headers = await headers() else { return [] }
 
-        let filter = "startswith(displayName, '\(query)') or startswith(userPrincipalName, '\(query)') or startswith(mail, '\(query)')"
-        let escapedFilter = filter.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filter
+        let q = ODataFilter.literal(query)
+        let filter = "startswith(displayName, \(q)) or startswith(userPrincipalName, \(q)) or startswith(mail, \(q))"
+        let escapedFilter = ODataFilter.encode(filter)
         // Explicit $select so the row's enabled/disabled state is correct.
         let url = "\(baseUrl)/users?$filter=\(escapedFilter)&$top=\(limit)&$select=\(EntraUser.rowSelect)"
 
@@ -657,8 +658,8 @@ public class GraphService {
 
         guard let headers = await headers() else { return nil }
 
-        let filter = "displayName eq '\(displayName)'"
-        let escapedFilter = filter.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filter
+        let filter = ODataFilter.equals("displayName", displayName)
+        let escapedFilter = ODataFilter.encode(filter)
         let url = "\(baseUrl)/groups?$filter=\(escapedFilter)"
 
         let response: EntraGroupListResponse = try await fetch(url: url, headers: headers)
@@ -837,8 +838,8 @@ public class GraphService {
     public func searchGroups(_ query: String, limit: Int = 999) async throws -> [EntraGroup] {
         guard let headers = await headers() else { return [] }
 
-        let filter = "startswith(displayName, '\(query)')"
-        let escapedFilter = filter.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? filter
+        let filter = "startswith(displayName, \(ODataFilter.literal(query)))"
+        let escapedFilter = ODataFilter.encode(filter)
         var url = "\(baseUrl)/groups?$filter=\(escapedFilter)&$top=\(pageSize(for: limit))"
 
         // Paginate: a prefix like "Devices-" matches far more than one page, and

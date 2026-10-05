@@ -18,8 +18,7 @@ extension GraphService {
     /// match is returned, because a re-joined machine leaves one per join.
     func getEntraDevices(displayName: String) async throws -> [EntraDevice] {
         guard let headers = await headers() else { return [] }
-        let escaped = displayName.replacingOccurrences(of: "'", with: "''")
-        let filter = "displayName eq '\(escaped)'".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let filter = ODataFilter.encode(ODataFilter.equals("displayName", displayName))
         let url = "\(baseUrl)/devices?$filter=\(filter)&$top=50"
         let response: EntraDeviceListResponse? = try? await fetch(url: url, headers: headers)
         return response?.value ?? []

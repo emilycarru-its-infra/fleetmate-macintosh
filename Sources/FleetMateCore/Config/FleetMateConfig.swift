@@ -174,6 +174,13 @@ public struct FleetMateConfig: Codable {
     /// Repositories offered for new sessions until a person edits their own
     /// list: local paths or clone URLs. Managed, so a team shares one set.
     public var repoDefaults: [String] = []
+    // Knowledge sources FleetMate keeps its own up-to-date copy of.
+    /// Clone URL of the Handbook repository (a Hugo site).
+    public var handbookRepoUrl: String?
+    /// Where staff read the published Handbook, for "Open on site".
+    public var handbookSiteUrl: String?
+    /// Clone URL of the repository holding the shared agent skills and hooks.
+    public var agentsHubRepoUrl: String?
     
     /// Default initializer
     public init() {}
@@ -595,6 +602,9 @@ public struct FleetMateConfig: Codable {
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
         }
+        if let v = get("handbookRepoUrl") { config.handbookRepoUrl = v }
+        if let v = get("handbookSiteUrl") { config.handbookSiteUrl = v }
+        if let v = get("agentsHubRepoUrl") { config.agentsHubRepoUrl = v }
     }
 
     /// Legacy Keychain loader — used when credentials.json doesn't exist yet

@@ -73,45 +73,22 @@ public actor GitHubPullRequestService {
     ///     page at 100; beyond that the queue would need cursor paging.
     ///   - includeDrafts: Draft PRs you authored are usually noise in a review
     ///     queue; PRs assigned to you are included regardless.
-    public func getMyPullRequests(limit: Int = 100, includeDrafts: Bool = true) async -> PullRequestQueue {
+    public func getMyPullRequests(limit: Int = 100, includeDrafts: Bool = true, fullSync: Bool = false) async -> PullRequestQueue {
         let queries = Self.searchQueries(includeDrafts: includeDrafts)
+        let outcome = await runSearches([
+            Search(query: queries.created, relation: .createdByMe),
+            Search(query: queries.assigned, relation: .assignedToMe),
+            Search(query: queries.review, relation: .assignedToMe),
+        ], limit: limit, fullSync: fullSync)
 
-        let query = """
-        \(Self.pullRequestFragment)
-        query($created: String!, $assigned: String!, $review: String!, $first: Int!) {
-          created: search(query: $created, type: ISSUE, first: $first) {
-            nodes { ...PullRequestFields }
-          }
-          assigned: search(query: $assigned, type: ISSUE, first: $first) {
-            nodes { ...PullRequestFields }
-          }
-          review: search(query: $review, type: ISSUE, first: $first) {
-            nodes { ...PullRequestFields }
-          }
+        var queue = PullRequestQueue()
+        for pr in outcome.pullRequests { queue.insert(pr) }
+        if let message = outcome.error {
+            dbg.error("GitHub getMyPullRequests failed: \(message)", category: "github")
+            queue.errors.append(PullRequestQueueError(source: .gitHub, message: message))
         }
-        """
-
-        do {
-            let data = try await client.executeRaw(query: query, variables: [
-                "created": queries.created,
-                "assigned": queries.assigned,
-                "review": queries.review,
-                "first": limit
-            ])
-
-            var queue = PullRequestQueue()
-            absorb(data, key: "created", relation: .createdByMe, into: &queue)
-            absorb(data, key: "assigned", relation: .assignedToMe, into: &queue)
-            absorb(data, key: "review", relation: .assignedToMe, into: &queue)
-
-            dbg.info("GitHub getMyPullRequests → \(queue.pullRequests.count) PRs", category: "github")
-            return queue
-        } catch {
-            dbg.error("GitHub getMyPullRequests failed: \(error)", category: "github")
-            return PullRequestQueue(errors: [
-                PullRequestQueueError(source: .gitHub, message: error.localizedDescription)
-            ])
-        }
+        dbg.info("GitHub getMyPullRequests → \(queue.pullRequests.count) PRs", category: "github")
+        return queue
     }
 
     /// The wider queue the Code section shows: everything `getMyPullRequests`
@@ -120,8 +97,8 @@ public actor GitHubPullRequestService {
     ///
     /// Owners are deduplicated case-insensitively. Each extra owner costs one
     /// search point, so a handful is fine and dozens is not.
-    public func getOpenPullRequests(owners: [String], limit: Int = 100) async -> PullRequestQueue {
-        var queue = await getMyPullRequests(limit: limit)
+    public func getOpenPullRequests(owners: [String], limit: Int = 100, fullSync: Bool = false) async -> PullRequestQueue {
+        var queue = await getMyPullRequests(limit: limit, fullSync: fullSync)
 
         var seen: Set<String> = []
         let ownerList = owners
@@ -135,7 +112,7 @@ public actor GitHubPullRequestService {
             Search(query: "is:pr is:open archived:false user:\($0) sort:updated-desc", relation: .organization)
         }
 
-        let outcome = await runSearches(searches, limit: limit)
+        let outcome = await runSearches(searches, limit: limit, fullSync: fullSync)
         for pr in outcome.pullRequests { queue.insert(pr) }
         if let message = outcome.error {
             queue.errors.append(PullRequestQueueError(source: .gitHub, message: message))
@@ -160,25 +137,25 @@ public actor GitHubPullRequestService {
     /// therefore run in small batches; when a batch trips the limit it is
     /// split in half and retried, down to one search at half the rows, so
     /// the queue degrades instead of failing.
-    private func runSearches(_ searches: [Search], limit: Int, batchSize: Int = 3) async -> SearchOutcome {
+    private func runSearches(_ searches: [Search], limit: Int, fullSync: Bool = false, batchSize: Int = 3) async -> SearchOutcome {
         var outcome = SearchOutcome()
         var index = 0
         while index < searches.count {
             let batch = Array(searches[index..<min(index + batchSize, searches.count)])
             do {
-                outcome.pullRequests += try await execute(batch: batch, limit: limit)
+                outcome.pullRequests += try await execute(batch: batch, limit: limit, fullSync: fullSync)
                 index += batch.count
             } catch {
                 let message = error.localizedDescription
                 let overLimit = message.localizedCaseInsensitiveContains("resource limits")
                 if overLimit, batch.count > 1 {
                     // Re-run this window with a smaller batch.
-                    let smaller = await runSearches(batch, limit: limit, batchSize: max(1, batch.count / 2))
+                    let smaller = await runSearches(batch, limit: limit, fullSync: fullSync, batchSize: max(1, batch.count / 2))
                     outcome.pullRequests += smaller.pullRequests
                     if let inner = smaller.error { outcome.error = inner }
                     index += batch.count
                 } else if overLimit, limit > 25 {
-                    let smaller = await runSearches(batch, limit: limit / 2, batchSize: 1)
+                    let smaller = await runSearches(batch, limit: limit / 2, fullSync: fullSync, batchSize: 1)
                     outcome.pullRequests += smaller.pullRequests
                     if let inner = smaller.error { outcome.error = inner }
                     index += batch.count
@@ -197,14 +174,28 @@ public actor GitHubPullRequestService {
         return outcome
     }
 
-    private func execute(batch: [Search], limit: Int) async throws -> [UnifiedPullRequest] {
+    /// Run a batch of searches. A search synced in the last day asks GitHub
+    /// only for rows updated since its last sync and merges them into the
+    /// stored rows (`GitHubLocalCache`); otherwise, or on `fullSync`, it
+    /// fetches everything and replaces them.
+    private func execute(batch: [Search], limit: Int, fullSync: Bool) async throws -> [UnifiedPullRequest] {
+        let cache = GitHubLocalCache.shared
+        let now = Date()
+        let plans: [(search: Search, key: String, stored: GitHubLocalCache.SearchSnapshot?, query: String)] = batch.map { search in
+            let key = "pr-search|\(search.query)|\(limit)"
+            let stored = fullSync ? nil : cache.searchSnapshot(for: key)
+            let fresh = stored.map { now.timeIntervalSince($0.fullSyncAt) < GitHubLocalCache.fullResyncInterval } ?? false
+            let query = fresh ? GitHubSearchDelta.deltaQuery(for: search.query, since: stored!.syncedAt) : search.query
+            return (search, key, fresh ? stored : nil, query)
+        }
+
         var aliases: [String] = []
         var declarations: [String] = ["$first: Int!"]
         var variables: [String: Any] = ["first": limit]
-        for (index, search) in batch.enumerated() {
+        for (index, plan) in plans.enumerated() {
             aliases.append("s\(index): search(query: $q\(index), type: ISSUE, first: $first) { nodes { ...PullRequestFields } }")
             declarations.append("$q\(index): String!")
-            variables["q\(index)"] = search.query
+            variables["q\(index)"] = plan.query
         }
         let query = """
         \(Self.pullRequestFragment)
@@ -214,9 +205,19 @@ public actor GitHubPullRequestService {
         """
         let data = try await client.executeRaw(query: query, variables: variables)
         var out: [UnifiedPullRequest] = []
-        for (index, search) in batch.enumerated() {
+        for (index, plan) in plans.enumerated() {
             let nodes = (data["s\(index)"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
-            out += nodes.compactMap { Self.map($0, relation: search.relation) }
+            let rows: [[String: Any]]
+            if let stored = plan.stored {
+                rows = GitHubSearchDelta.merge(stored: GitHubSearchDelta.decode(stored.nodes), changes: nodes)
+                cache.storeSearch(.init(nodes: GitHubSearchDelta.encode(rows), syncedAt: now, fullSyncAt: stored.fullSyncAt),
+                                  for: plan.key)
+                dbg.info("GitHub search delta: \(nodes.count) changed, \(rows.count) kept — \(plan.search.query)", category: "github")
+            } else {
+                rows = nodes
+                cache.storeSearch(.init(nodes: GitHubSearchDelta.encode(rows), syncedAt: now, fullSyncAt: now), for: plan.key)
+            }
+            out += rows.compactMap { Self.map($0, relation: plan.search.relation) }
         }
         return out
     }
@@ -313,7 +314,8 @@ public actor GitHubPullRequestService {
 
     /// Repositories under each owner pushed to since `since`, with their
     /// latest default-branch commits. One GraphQL request for all owners.
-    public func getRecentCommits(owners: [String], since: Date, perRepo: Int = 10, reposPerOwner: Int = 30) async throws -> [RepositoryCommits] {
+    public func getRecentCommits(owners: [String], since: Date, perRepo: Int = 10, reposPerOwner: Int = 30,
+                                 fullSync: Bool = false) async throws -> [RepositoryCommits] {
         var seen: Set<String> = []
         let ownerList = owners
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -322,7 +324,15 @@ public actor GitHubPullRequestService {
 
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
-        let sinceString = formatter.string(from: since)
+
+        // Synced within the day: ask only for commits since the last sync and
+        // merge them into the stored repositories.
+        let cacheKey = "commits|\(ownerList.map { $0.lowercased() }.sorted().joined(separator: ","))|\(perRepo)|\(reposPerOwner)"
+        let now = Date()
+        let stored = fullSync ? nil : GitHubLocalCache.shared.searchSnapshot(for: cacheKey)
+        let delta = stored.flatMap { now.timeIntervalSince($0.fullSyncAt) < GitHubLocalCache.fullResyncInterval ? $0 : nil }
+        let fetchSince = delta.map { max(since, $0.syncedAt.addingTimeInterval(-GitHubSearchDelta.overlap)) } ?? since
+        let sinceString = formatter.string(from: fetchSince)
         let sinceDay = String(sinceString.prefix(10))
 
         var aliases: [String] = []
@@ -354,10 +364,27 @@ public actor GitHubPullRequestService {
         let query = "query(\(declarations.joined(separator: ", "))) {\n\(aliases.joined(separator: "\n"))\n}"
         let data = try await client.executeRaw(query: query, variables: variables)
 
-        var out: [RepositoryCommits] = []
+        var fetched: [[String: Any]] = []
         for index in ownerList.indices {
-            let nodes = (data["owner\(index)"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
-            for node in nodes {
+            fetched += (data["owner\(index)"] as? [String: Any])?["nodes"] as? [[String: Any]] ?? []
+        }
+        let windowStart = formatter.string(from: since)
+        let repoNodes: [[String: Any]]
+        if let delta {
+            repoNodes = Self.mergeCommitNodes(stored: GitHubSearchDelta.decode(delta.nodes), changes: fetched,
+                                              windowStart: windowStart, perRepo: perRepo)
+            GitHubLocalCache.shared.storeSearch(.init(nodes: GitHubSearchDelta.encode(repoNodes), syncedAt: now,
+                                                      fullSyncAt: delta.fullSyncAt), for: cacheKey)
+            dbg.info("GitHub commits delta: \(fetched.count) repos changed, \(repoNodes.count) kept", category: "github")
+        } else {
+            repoNodes = fetched
+            GitHubLocalCache.shared.storeSearch(.init(nodes: GitHubSearchDelta.encode(repoNodes), syncedAt: now,
+                                                      fullSyncAt: now), for: cacheKey)
+        }
+
+        var out: [RepositoryCommits] = []
+        do {
+            for node in repoNodes {
                 guard let name = node["name"] as? String,
                       let url = node["url"] as? String,
                       let owner = (node["owner"] as? [String: Any])?["login"] as? String
@@ -391,7 +418,7 @@ public actor GitHubPullRequestService {
                 ))
             }
         }
-        // The same repo can surface under two owners (a fork the user owns
+
         // and the org original); keep the first, newest activity first.
         var unique: [String: RepositoryCommits] = [:]
         for repo in out where unique[repo.id] == nil { unique[repo.id] = repo }
@@ -399,6 +426,50 @@ public actor GitHubPullRequestService {
         dbg.info("GitHub getRecentCommits(owners: \(ownerList.count)) → \(result.count) repos", category: "github")
         return result
     }
+
+    /// Fold newly fetched repository nodes into the stored ones: commits are
+    /// matched by oid, anything older than the window drops, newest first,
+    /// at most `perRepo` per repository.
+    static func mergeCommitNodes(stored: [[String: Any]], changes: [[String: Any]],
+                                 windowStart: String, perRepo: Int) -> [[String: Any]] {
+        func history(_ node: [String: Any]) -> [[String: Any]] {
+            ((node["defaultBranchRef"] as? [String: Any])?["target"] as? [String: Any])
+                .flatMap { ($0["history"] as? [String: Any])?["nodes"] as? [[String: Any]] } ?? []
+        }
+        func with(_ node: [String: Any], history commits: [[String: Any]]) -> [String: Any] {
+            var node = node
+            var ref = node["defaultBranchRef"] as? [String: Any] ?? [:]
+            var target = ref["target"] as? [String: Any] ?? [:]
+            target["history"] = ["nodes": commits]
+            ref["target"] = target
+            node["defaultBranchRef"] = ref
+            return node
+        }
+        var byURL: [String: [String: Any]] = [:]
+        var order: [String] = []
+        for node in stored + changes {
+            guard let url = node["url"] as? String else { continue }
+            guard let existing = byURL[url] else {
+                order.append(url)
+                byURL[url] = node
+                continue
+            }
+            var commits: [String: [String: Any]] = [:]
+            for commit in history(existing) + history(node) {
+                if let oid = commit["oid"] as? String { commits[oid] = commit }
+            }
+            let merged = commits.values
+                .filter { ($0["committedDate"] as? String ?? "") >= windowStart }
+                .sorted { ($0["committedDate"] as? String ?? "") > ($1["committedDate"] as? String ?? "") }
+            byURL[url] = with(node, history: Array(merged.prefix(perRepo)))
+        }
+        return order.compactMap { node -> [String: Any]? in
+            guard let node = byURL[node] else { return nil }
+            let kept = history(node).filter { ($0["committedDate"] as? String ?? "") >= windowStart }
+            return kept.isEmpty ? nil : with(node, history: kept)
+        }
+    }
+
 
     /// Full message and per-file diff for one commit.
     public func getCommitDetail(owner: String, repo: String, sha: String) async throws -> CommitDetail {

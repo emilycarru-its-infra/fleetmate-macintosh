@@ -70,8 +70,7 @@ struct ContentView: View {
                     .disabled(!appState.canGoForward)
                 }
                 ToolbarItem(placement: .principal) {
-                    TabBarWithCounts(development: appState.development,
-                                     selectedTab: $appState.selectedTab, tabs: availableTabs, availableWidth: windowWidth)
+                    GlassTabBar(selectedTab: $appState.selectedTab, tabs: availableTabs, availableWidth: windowWidth)
                 }
                 // The authentication shield belongs to the window, not to the
                 // Dashboard: auth is what breaks any tab, so it has to be
@@ -131,7 +130,7 @@ struct ContentView: View {
                 }
                 // Last, at the far right, where search is looked for.
                 ToolbarItem(placement: .primaryAction) {
-                    GlobalSearchToolbarField()
+                    GlobalSearchToolbarField(compact: windowWidth < GlassTabBar.compactBelow)
                 }
             }
             .onAppear {
@@ -291,15 +290,3 @@ struct ContentView: View {
 }
 #endif
 
-/// The tab bar, watching the models whose counts it shows.
-private struct TabBarWithCounts: View {
-    @ObservedObject var development: DevelopmentModel
-    @Binding var selectedTab: AppTab
-    let tabs: [AppTab]
-    let availableWidth: CGFloat
-
-    var body: some View {
-        GlassTabBar(selectedTab: $selectedTab, tabs: tabs, availableWidth: availableWidth,
-                    counts: [.development: development.unreadCount])
-    }
-}

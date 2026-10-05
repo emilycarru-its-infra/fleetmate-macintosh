@@ -15,6 +15,7 @@ struct GlobalSearchResult: Identifiable, Hashable {
         case issues = "Issues"
         case commits = "Commits"
         case pipelines = "Pipeline Runs"
+        case handbook = "Handbook"
         case users = "Users"
         case groups = "Groups"
 
@@ -28,6 +29,7 @@ struct GlobalSearchResult: Identifiable, Hashable {
             case .issues: return "smallcircle.filled.circle"
             case .commits: return "point.3.connected.trianglepath.dotted"
             case .pipelines: return "play.circle"
+            case .handbook: return "book.closed"
             case .users:     return "person"
             case .groups:    return "person.3"
             }
@@ -50,6 +52,7 @@ struct GlobalSearchResult: Identifiable, Hashable {
     /// Pull requests, issues, commits and runs open through their
     /// fleetmate:// link, the same route an outside link takes.
     var link: FleetMateLink?
+    var handbookPage: HandbookPage?
 }
 
 /// A work-item id the way people actually type it: bare digits, or carrying a
@@ -87,6 +90,10 @@ enum GlobalSearchScanner {
         results += issues(query, appState.dashboardTasks.issues)
         results += commits(query, appState.development.repositoryCommits)
         results += pipelineRuns(query, appState.development.pipelineRuns)
+        results += appState.knowledge.handbook.search(query, limit: perCategoryLimit).map { page in
+            GlobalSearchResult(category: .handbook, id: "hb-\(page.path)", title: page.title,
+                               subtitle: page.breadcrumb, matchLabel: "Handbook", handbookPage: page)
+        }
         results += users(query, appState.cachedEntraUsers)
         results += groups(query, appState.cachedGroups)
         return results

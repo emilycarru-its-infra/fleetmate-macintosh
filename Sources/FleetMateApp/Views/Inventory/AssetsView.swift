@@ -2,15 +2,16 @@ import SwiftUI
 import FleetMateCore
 
 enum AssetSortField: String, CaseIterable {
+    // Declaration order is column order, matching FleetMate for Windows.
     case assetTag = "Asset Tag"
-    case serial = "Serial"
     case name = "Name"
+    case serial = "Serial"
+    case model = "Model"
     case status = "Status"
     case assignedTo = "Assigned To"
     case category = "Category"
     case platform = "Platform"
     case manufacturer = "Manufacturer"
-    case model = "Model"
     case usage = "Usage"
     case catalog = "Catalog"
     case area = "Area"
@@ -98,7 +99,20 @@ struct AssetsView: View {
         .usage: 100, .catalog: 100, .area: 100, .location: 120,
         .lastActivity: 140
     ]
-    @State private var visibleColumns: Set<AssetSortField> = Set(AssetSortField.allCases)
+    /// Columns the person has hidden, kept across launches as raw names.
+    @AppStorage("inventory.hiddenColumns") private var hiddenColumnsRaw = ""
+    private var visibleColumns: Set<AssetSortField> {
+        get {
+            let hidden = Set(hiddenColumnsRaw.split(separator: ",").map(String.init))
+            return Set(AssetSortField.allCases.filter { !hidden.contains($0.rawValue) })
+        }
+        nonmutating set {
+            hiddenColumnsRaw = AssetSortField.allCases
+                .filter { !newValue.contains($0) }
+                .map(\.rawValue)
+                .joined(separator: ",")
+        }
+    }
     @State private var showColumnPicker = false
 
     // New filter system

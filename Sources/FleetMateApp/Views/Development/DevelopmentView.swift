@@ -853,6 +853,9 @@ private struct DevelopmentContent: View {
                     Task { await appState.knowledge.sync(token: await appState.devOpsService.currentToken()) }
                     return
                 }
+                // A manual refresh is the on-demand full resync: GitHub
+                // searches refetch everything instead of only what changed.
+                GitHubLocalCache.shared.invalidateSearches()
                 model.loadAll(appState: appState, force: true)
             }) {
                 Label("Refresh", systemImage: "arrow.clockwise")

@@ -576,6 +576,9 @@ struct PullRequestDetailView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     overviewSection(detail)
                     if !checks.isEmpty { checksSection }
+                    // The Handbook pages about this repository, beside the change to it.
+                    HandbookRelatedSection(knowledge: appState.knowledge,
+                                           terms: [pullRequest.repository, "\(pullRequest.container) \(pullRequest.repository)"])
                     commitsSection(detail)
                     changesSection(detail)
                 }

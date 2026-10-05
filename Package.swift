@@ -22,8 +22,10 @@ let package = Package(
         .package(url: "https://github.com/Alamofire/Alamofire.git", from: "5.8.0"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
         // Apple School and Business Manager API client. Pinned to a revision
-        // because the newest tag predates the migration and release endpoints.
-        .package(url: "https://github.com/rodchristiansen/asbmutil.git", revision: "8ef39a52749a9d2567e4b0299d2d1224daa1d433"),
+        // because asbmutil's date-stamped tags are not semantic versions.
+        .package(url: "https://github.com/rodchristiansen/asbmutil.git", revision: "84393012164215e570ff79405c95490cc370e279"),
+        // 1.12 added Metal shaders, which the Command Line Tools cannot compile.
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", "1.11.2"..<"1.12.0"),
     ],
     targets: [
         // Shared library with services, models, and config
@@ -54,6 +56,7 @@ let package = Package(
             dependencies: [
                 "FleetMateCore",
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             path: "Sources/FleetMateApp"
         ),

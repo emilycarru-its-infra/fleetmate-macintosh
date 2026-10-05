@@ -150,6 +150,18 @@ struct GitHubProjectBoardView: View {
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
+                if let labels = item.content?.labels, !labels.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(labels.prefix(3), id: \.self) { label in
+                            Text(label)
+                                .appFont(.caption2)
+                                .lineLimit(1)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                        }
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(8)

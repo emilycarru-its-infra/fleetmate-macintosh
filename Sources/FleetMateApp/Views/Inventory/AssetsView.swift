@@ -6,6 +6,7 @@ enum AssetSortField: String, CaseIterable {
     case serial = "Serial"
     case name = "Name"
     case status = "Status"
+    case assignedTo = "Assigned To"
     case category = "Category"
     case platform = "Platform"
     case manufacturer = "Manufacturer"
@@ -92,7 +93,7 @@ struct AssetsView: View {
 
     // Column state
     @State private var columnWidths: [AssetSortField: CGFloat] = [
-        .assetTag: 120, .serial: 110, .name: 160, .status: 110,
+        .assetTag: 120, .serial: 110, .name: 160, .status: 110, .assignedTo: 150,
         .category: 110, .platform: 100, .manufacturer: 120, .model: 120,
         .usage: 100, .catalog: 100, .area: 100, .location: 120,
         .lastActivity: 140
@@ -145,6 +146,7 @@ struct AssetsView: View {
             case .serial: aVal = a.serial ?? ""; bVal = b.serial ?? ""
             case .name: aVal = a.name ?? ""; bVal = b.name ?? ""
             case .status: aVal = a.statusLabel?.name ?? ""; bVal = b.statusLabel?.name ?? ""
+            case .assignedTo: aVal = a.assignedTo?.name ?? ""; bVal = b.assignedTo?.name ?? ""
             case .category: aVal = a.category?.name ?? ""; bVal = b.category?.name ?? ""
             case .platform: aVal = a.customFieldByName("Platform")?.value ?? ""; bVal = b.customFieldByName("Platform")?.value ?? ""
             case .manufacturer: aVal = a.manufacturer?.name ?? ""; bVal = b.manufacturer?.name ?? ""
@@ -478,6 +480,8 @@ struct AssetsView: View {
             Text(asset.displayName ?? "-").lineLimit(1)
         case .status:
             StatusBadge(status: asset.statusLabel)
+        case .assignedTo:
+            Text(asset.assignedTo?.name?.htmlDecoded ?? "-").lineLimit(1)
         case .category:
             Text(asset.category?.name ?? "-").lineLimit(1)
         case .platform:

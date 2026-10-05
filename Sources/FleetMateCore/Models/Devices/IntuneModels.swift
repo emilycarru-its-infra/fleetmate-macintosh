@@ -39,6 +39,8 @@ public struct IntuneDevice: Codable, Identifiable, Sendable {
     public let skuFamily: String?
     public let azureADRegistered: Bool?
     public let deviceRegistrationState: String?
+    /// Graph reports this as a string: "Unknown", "True" or "False".
+    public let jailBroken: String?
     
     public var id: String { _id ?? serialNumber ?? UUID().uuidString }
     
@@ -53,7 +55,7 @@ public struct IntuneDevice: Codable, Identifiable, Sendable {
         case deviceCategoryDisplayName, managementAgent, notes
         case physicalMemoryInBytes, wiFiMacAddress, ethernetMacAddress
         case imei, meid, phoneNumber, subscriberCarrier, joinType, skuFamily
-        case azureADRegistered, deviceRegistrationState
+        case azureADRegistered, deviceRegistrationState, jailBroken
     }
 }
 
@@ -607,6 +609,11 @@ public struct WipeOptions: Sendable, Equatable {
 
     /// The request body for `POST managedDevices/{id}/wipe`, trimmed to the keys
     /// the given platform accepts.
+    /// Intune's Autopilot Reset: a wipe that keeps the Entra join and the
+    /// enrollment and removes user data, apps and settings, returning the
+    /// device to OOBE. It is not Fresh Start (`cleanWindowsDevice`).
+    public static let autopilotReset = WipeOptions(keepEnrollmentData: true, keepUserData: false)
+
     public func requestBody(for platform: DevicePlatform) -> [String: Any] {
         var body: [String: Any] = [
             "keepEnrollmentData": keepEnrollmentData,

@@ -270,6 +270,8 @@ public actor ElevationSession {
         guard raw.count == m.rawLen, rawDigest == m.rawMd5 else {
             throw ElevationError.corruptedOutput(expected: m.rawLen, actual: raw.count)
         }
+        let cleanupCommand = ElevationSession.buildCleanup(file: file)
+        _ = try? await handshakeAndRun(uri: uri, body: body, command: cleanupCommand)
         return (String(decoding: raw, as: UTF8.self), m.code)
     }
 
@@ -424,6 +426,15 @@ public actor ElevationSession {
             + "k=$(printf %s \"$d\" | md5sum | cut -d' ' -f1); "
             + "printf '%sAZE_C:%s:%s%s%s%sCE%s\\n' \"$L\" \"$i\" \"$k\" \"$R\" \"$d\" \"$L\" \"$R\"; "
             + "done; printf '%sAZE_DONE%s\\n' \"$L\" \"$R\"; exit\n"
+    }
+
+    /// Remove the verified response as soon as it reaches the client. Graph
+    /// responses can contain credentials, recovery keys, or personal data, so
+    /// the chunk files are a transport buffer rather than a cache.
+    static func buildCleanup(file: String) -> String {
+        ElevationSession.markerVars
+            + "rm -f \(file) \(file).raw /tmp/aze_err; "
+            + "printf '%sAZE_DONE%s\\n' \"$L\" \"$R\"; exit\n"
     }
 
     /// Inflate a raw-DEFLATE stream (RFC 1951, matching python's `wbits=-15`).

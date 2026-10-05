@@ -14,9 +14,11 @@ final class DevelopmentModel: ObservableObject {
         case pullRequests = "Pulls"
         case commits = "Commits"
         case pipelines = "Pipelines"
+        case skills = "Skills"
     }
 
     @Published var segment: Segment = .pullRequests
+    @Published var selectedSkill: SkillCatalog.Entry?
 
     // Pull requests
     @Published private(set) var queue = PullRequestQueue()
@@ -24,6 +26,8 @@ final class DevelopmentModel: ObservableObject {
     @Published private(set) var pullRequestsLoadedAt: Date?
     @Published var selectedSource: PullRequestSource?
     @Published var selectedRepo: String?
+    @Published var selectedCommitRepo: String?
+    @Published var selectedPipelineRepo: String?
     @Published var onlyMine = false
     @Published var selectedPullRequest: UnifiedPullRequest?
     @Published private(set) var availableSources: Set<PullRequestSource> = []
@@ -62,6 +66,7 @@ final class DevelopmentModel: ObservableObject {
     func visibleRepositoryCommits(matching search: String) -> [RepositoryCommits] {
         var rows = repositoryCommits
         if let selectedSource { rows = rows.filter { $0.source == selectedSource } }
+        if let selectedCommitRepo { rows = rows.filter { $0.displayName == selectedCommitRepo } }
         let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
         if !needle.isEmpty {
             rows = rows.compactMap { repo in
@@ -156,6 +161,7 @@ final class DevelopmentModel: ObservableObject {
     func visiblePipelineRuns(matching search: String) -> [PipelineRun] {
         var rows = pipelineRuns
         if let selectedSource { rows = rows.filter { $0.source == selectedSource } }
+        if let selectedPipelineRepo { rows = rows.filter { Self.pipelineRepoKey($0) == selectedPipelineRepo } }
         if let pipelineStatusFilter {
             rows = rows.filter { matches($0, status: pipelineStatusFilter) }
         }
@@ -202,6 +208,25 @@ final class DevelopmentModel: ObservableObject {
             latest[key] = run
         }
         return Set(latest.values.map(\.id))
+    }
+
+    /// Repositories with commits in the current source scope, by commit count.
+    var commitRepoCounts: [(repo: String, count: Int)] {
+        let scoped = selectedSource.map { s in repositoryCommits.filter { $0.source == s } } ?? repositoryCommits
+        var counts: [String: Int] = [:]
+        for repo in scoped { counts[repo.displayName, default: 0] += repo.commits.count }
+        guard counts.count > 1 else { return [] }
+        return counts.map { ($0.key, $0.value) }.sorted { $0.1 == $1.1 ? $0.0 < $1.0 : $0.1 > $1.1 }
+    }
+
+    /// A run's repository, or its project when the run has none.
+    static func pipelineRepoKey(_ run: PipelineRun) -> String {
+        run.repository.map { "\(run.container)/\($0)" } ?? run.container
+    }
+
+    var pipelineRepoCounts: [(repo: String, count: Int)] {
+        let scoped = selectedSource.map { s in pipelineRuns.filter { $0.source == s } } ?? pipelineRuns
+        return scoped.repoCounts(Self.pipelineRepoKey)
     }
 
     func togglePipelineStatus(_ status: PipelineRunStatus) {
@@ -262,8 +287,7 @@ final class DevelopmentModel: ObservableObject {
         }
     }
 
-    // Activity sidebar
-    @Published var showActivity = true
+    // Comment activity, shown in the toolbar's Recent Activity popover.
     @Published var hideMyComments = false
     @Published var searchText = ""
 
@@ -364,6 +388,8 @@ final class DevelopmentModel: ObservableObject {
     func toggleSource(_ source: PullRequestSource) {
         selectedSource = (selectedSource == source) ? nil : source
         selectedRepo = nil
+        selectedCommitRepo = nil
+        selectedPipelineRepo = nil
     }
 
     func toggleRepo(_ repo: String) {
@@ -371,6 +397,122 @@ final class DevelopmentModel: ObservableObject {
     }
 
     // MARK: Loading
+
+    // MARK: Links
+
+    /// Open what a `fleetmate://` link names: switch to its segment and select
+    /// it, fetching it by id when the lists don't hold it.
+    func open(_ link: FleetMateLink, appState: AppState) {
+        searchText = ""
+        Task {
+            do {
+                switch link {
+                case .pullRequest(let host, let number):
+                    segment = .pullRequests
+                    selectedSource = nil
+                    selectedRepo = nil
+                    onlyMine = false
+                    if let pr = queue.pullRequests.first(where: { Self.matches($0, host: host, number: number) }) {
+                        selectedPullRequest = pr
+                        return
+                    }
+                    let fetched: UnifiedPullRequest?
+                    switch host {
+                    case .azureDevOps(let project, let repo):
+                        fetched = try await appState.devOpsService.getUnifiedPullRequest(project: project, repository: repo, id: number)
+                    case .gitHub(let owner, let repo):
+                        fetched = try await GitHubPullRequestService(config: gitHubConfig(appState))
+                            .getPullRequest(owner: owner, repo: repo, number: number)
+                    }
+                    guard let fetched else { throw LinkOpenError("Pull request \(number) was not found.") }
+                    selectedPullRequest = fetched
+
+                case .commit(let host, let sha):
+                    segment = .commits
+                    if let repo = repositoryCommits.first(where: { Self.matches($0, host: host) }),
+                       let commit = repo.commits.first(where: { $0.id.hasPrefix(sha) || sha.hasPrefix($0.id) }) {
+                        selectedCommit = .init(repository: repo, commit: commit)
+                        return
+                    }
+                    // Not in the recent list: the detail pane loads it by sha.
+                    let repository: RepositoryCommits
+                    switch host {
+                    case .azureDevOps(let project, let repo):
+                        repository = RepositoryCommits(source: .azureDevOps, container: project, repository: repo,
+                                                       repositoryId: repo, webUrl: "", defaultBranch: nil, commits: [])
+                    case .gitHub(let owner, let repo):
+                        repository = RepositoryCommits(source: .gitHub, container: owner, repository: repo,
+                                                       webUrl: "https://github.com/\(owner)/\(repo)", defaultBranch: nil, commits: [])
+                    }
+                    selectedCommit = .init(repository: repository,
+                                           commit: PullRequestCommit(id: sha, message: "", authorName: nil, date: nil))
+
+                case .azureDevOpsRun(let project, let runId):
+                    segment = .pipelines
+                    pipelineStatusFilter = nil
+                    if let run = pipelineRuns.first(where: { $0.source == .azureDevOps && $0.runId == runId }) {
+                        selectedRun = run
+                    } else {
+                        selectedRun = try await appState.devOpsService.getPipelineRun(project: project, buildId: runId)
+                    }
+
+                case .gitHubRun(let owner, let repo, let runId):
+                    segment = .pipelines
+                    pipelineStatusFilter = nil
+                    if let run = pipelineRuns.first(where: { $0.source == .gitHub && $0.runId == runId }) {
+                        selectedRun = run
+                    } else {
+                        selectedRun = try await GitHubActionsService(config: gitHubConfig(appState))
+                            .getRun(owner: owner, repo: repo, runId: runId)
+                    }
+
+                case .azureDevOpsPipeline(let project, let definitionId):
+                    // A pipeline opens on its latest run.
+                    segment = .pipelines
+                    pipelineStatusFilter = nil
+                    guard let run = pipelineRuns
+                        .filter({ $0.source == .azureDevOps && $0.container == project && $0.pipelineId == definitionId })
+                        .first
+                    else { throw LinkOpenError("Pipeline \(definitionId) in \(project) has no recent runs.") }
+                    selectedRun = run
+
+                case .workItem, .gitHubIssue, .device, .asset, .ticket, .user, .group:
+                    break // Routed to Projects by AppState.
+                }
+            } catch {
+                appState.linkError = error.localizedDescription
+            }
+        }
+    }
+
+    private struct LinkOpenError: LocalizedError {
+        let message: String
+        init(_ message: String) { self.message = message }
+        var errorDescription: String? { message }
+    }
+
+    private static func matches(_ pr: UnifiedPullRequest, host: FleetMateLink.Host, number: Int) -> Bool {
+        guard pr.number == number else { return false }
+        switch host {
+        case .azureDevOps(let project, let repo):
+            return pr.source == .azureDevOps && pr.container.caseInsensitiveCompare(project) == .orderedSame
+                && pr.repository.caseInsensitiveCompare(repo) == .orderedSame
+        case .gitHub(let owner, let repo):
+            return pr.source == .gitHub && pr.container.caseInsensitiveCompare(owner) == .orderedSame
+                && pr.repository.caseInsensitiveCompare(repo) == .orderedSame
+        }
+    }
+
+    private static func matches(_ repo: RepositoryCommits, host: FleetMateLink.Host) -> Bool {
+        switch host {
+        case .azureDevOps(let project, let name):
+            return repo.source == .azureDevOps && repo.container.caseInsensitiveCompare(project) == .orderedSame
+                && repo.repository.caseInsensitiveCompare(name) == .orderedSame
+        case .gitHub(let owner, let name):
+            return repo.source == .gitHub && repo.container.caseInsensitiveCompare(owner) == .orderedSame
+                && repo.repository.caseInsensitiveCompare(name) == .orderedSame
+        }
+    }
 
     private func gitHubConfig(_ appState: AppState) -> GitHubProviderConfig {
         appState.config.tasks?.providers.github ?? GitHubProviderConfig()
@@ -611,22 +753,18 @@ private struct DevelopmentContent: View {
     @ObservedObject var model: DevelopmentModel
 
     private let listWidth: CGFloat = 470
-    private let activityWidth: CGFloat = 330
 
     var body: some View {
-        HStack(spacing: 0) {
-            leftPane
-                .frame(width: listWidth)
-            Divider()
-            detailPane
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if model.showActivity {
+        VStack(spacing: 0) {
+            DevelopmentWidgetsSection(model: model)
+            HStack(spacing: 0) {
+                leftPane
+                    .frame(width: listWidth)
                 Divider()
-                ActivityPane(model: model)
-                    .frame(width: activityWidth)
+                detailPane
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .searchable(text: $model.searchText, prompt: searchPrompt)
         .toolbar { developmentToolbar }
         .task {
             model.loadAll(appState: appState)
@@ -655,16 +793,26 @@ private struct DevelopmentContent: View {
         .onChange(of: appState.devOpsSsoAuthenticated) { _, ready in
             if ready { model.loadPullRequests(appState: appState, force: true) }
         }
+        .onAppear(perform: consumeLink)
+        .onChange(of: appState.pendingDevelopmentLink) { _, _ in consumeLink() }
         .actionErrorBanner($model.actionError)
+    }
+
+    private func consumeLink() {
+        guard let link = appState.pendingDevelopmentLink else { return }
+        appState.pendingDevelopmentLink = nil
+        model.open(link, appState: appState)
     }
 
     private var searchText: String { model.searchText }
 
     private var searchPrompt: String {
         switch model.segment {
-        case .pullRequests, .inbox: return "Search pull requests..."
-        case .commits: return "Search commits..."
-        case .pipelines: return "Search runs..."
+        case .pullRequests: return "Filter pull requests"
+        case .inbox: return "Filter inbox"
+        case .commits: return "Filter commits"
+        case .pipelines: return "Filter runs"
+        case .skills: return "Filter skills and hooks"
         }
     }
 
@@ -684,7 +832,9 @@ private struct DevelopmentContent: View {
             SegmentedPill(
                 selection: $model.segment,
                 options: visibleSegments,
-                label: { $0 == .inbox && model.unreadCount > 0 ? "Inbox \(model.unreadCount)" : $0.rawValue },
+                // The segment only shows while there is unread mail, so the
+                // name alone says it; the count was noise in the toolbar.
+                label: { $0.rawValue },
                 segmentWidth: nil
             )
 
@@ -698,14 +848,16 @@ private struct DevelopmentContent: View {
                 .help("Mark every notification as read")
             }
 
-            Button {
-                model.showActivity.toggle()
-            } label: {
-                Label("Activity", systemImage: model.showActivity ? "sidebar.trailing" : "sidebar.trailing")
-            }
-            .help(model.showActivity ? "Hide the comment activity sidebar" : "Show comments across all pull requests")
-
-            Button(action: { model.loadAll(appState: appState, force: true) }) {
+            Button(action: {
+                if model.segment == .skills {
+                    Task { await appState.knowledge.sync(token: await appState.devOpsService.currentToken()) }
+                    return
+                }
+                // A manual refresh is the on-demand full resync: GitHub
+                // searches refetch everything instead of only what changed.
+                GitHubLocalCache.shared.invalidateSearches()
+                model.loadAll(appState: appState, force: true)
+            }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .disabled(model.isLoadingPullRequests && model.isLoadingInbox)
@@ -717,13 +869,37 @@ private struct DevelopmentContent: View {
 
     private var leftPane: some View {
         VStack(alignment: .leading, spacing: 0) {
+            listFilter
+            Divider()
             switch model.segment {
             case .pullRequests: pullRequestList
             case .inbox: inboxList
             case .commits: commitsList
             case .pipelines: PipelinesListView(model: model, searchText: searchText)
+            case .skills: SkillsListView(knowledge: appState.knowledge, selection: $model.selectedSkill, filter: searchText)
             }
         }
+    }
+
+    /// Filters the list in view — pull requests, inbox, commits or runs — by
+    /// title, repository, author, branch or number. It sits on the list it
+    /// filters; the toolbar's field searches everything.
+    private var listFilter: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "line.3.horizontal.decrease").foregroundStyle(.secondary)
+            TextField(searchPrompt, text: $model.searchText)
+                .textFieldStyle(.plain)
+                .onExitCommand { model.searchText = "" }
+            if !model.searchText.isEmpty {
+                Button { model.searchText = "" } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .appFont(.callout)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
     }
 
     // MARK: Pull requests
@@ -790,26 +966,14 @@ private struct DevelopmentContent: View {
                     model.onlyMine.toggle()
                 }
                 .help("Only pull requests I created, review or took part in")
+                if !model.repoCounts.isEmpty {
+                    RepoFilterMenu(selection: $model.selectedRepo, counts: model.repoCounts)
+                }
                 Spacer()
                 Text("\(model.visiblePullRequests(matching: searchText).count) open")
                     .appFont(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
-            }
-            let repos = model.repoCounts
-            if !repos.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 4) {
-                        ForEach(repos, id: \.repo) { entry in
-                            chip(
-                                title: entry.repo,
-                                count: entry.count,
-                                tint: .secondary,
-                                isSelected: model.selectedRepo == entry.repo
-                            ) { model.toggleRepo(entry.repo) }
-                        }
-                    }
-                }
             }
         }
         .padding(.horizontal, 12)
@@ -946,6 +1110,9 @@ private struct DevelopmentContent: View {
                         }
                     }
                 }
+                if !model.commitRepoCounts.isEmpty {
+                    RepoFilterMenu(selection: $model.selectedCommitRepo, counts: model.commitRepoCounts)
+                }
                 Spacer()
                 if let at = model.commitsLoadedAt {
                     Text("Checked \(DevelopmentView.relative(at))")
@@ -1051,7 +1218,17 @@ private struct DevelopmentContent: View {
 
     @ViewBuilder
     private var detailPane: some View {
-        if model.segment == .pipelines {
+        if model.segment == .skills {
+            if let entry = model.selectedSkill {
+                SkillDetailView(entry: entry).id(entry.id)
+            } else {
+                ContentUnavailableView(
+                    "Select a skill",
+                    systemImage: "wand.and.stars",
+                    description: Text("The skills, hooks and standards every repository's agents follow, as on main.")
+                )
+            }
+        } else if model.segment == .pipelines {
             if let run = model.selectedRun {
                 PipelineRunDetailView(run: run) {
                     model.loadPipelines(appState: appState, force: true)
@@ -1324,56 +1501,9 @@ struct InboxRow: View {
 }
 
 
-// MARK: - Activity sidebar
+// MARK: - Comment activity
 
-/// Comments and reviews across every loaded pull request, newest first.
-/// Click a row to select its pull request; the link icon opens the comment.
-struct ActivityPane: View {
-    @ObservedObject var model: DevelopmentModel
-    @EnvironmentObject private var appState: AppState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Text("Activity").appFont(.headline)
-                Spacer()
-                Toggle("Hide mine", isOn: $model.hideMyComments)
-                    .toggleStyle(.checkbox)
-                    .appFont(.caption)
-                    .help("Hide comments you wrote")
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            Divider()
-
-            let entries = model.activity(appState: appState)
-            if entries.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "bubble.left.and.bubble.right").appFont(.title2).foregroundStyle(.secondary)
-                    Text(model.isLoadingPullRequests ? "Loading…" : "No recent comments.")
-                        .appFont(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(entries) { entry in
-                            ActivityRow(
-                                entry: entry,
-                                isSelected: model.selectedPullRequest?.id == entry.pullRequest.id
-                            ) {
-                                model.selectedPullRequest = entry.pullRequest
-                            }
-                            Divider().padding(.leading, 12)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
+/// One comment in the Recent Activity popover's Development feed.
 struct ActivityRow: View {
     let entry: DevelopmentModel.ActivityEntry
     let isSelected: Bool

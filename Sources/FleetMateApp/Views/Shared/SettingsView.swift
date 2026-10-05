@@ -18,13 +18,23 @@ struct SettingsView: View {
                 .tag(1)
 
             AppearanceSettingsView()
-                .tabItem { Label("Appearance", systemImage: "textformat.size") }
+                .tabItem { Label("Appearance", systemImage: "circle.lefthalf.filled") }
                 .tag(2)
 
             ManageSettingsView()
                 .environmentObject(appState)
                 .tabItem { Label("Manage", systemImage: "wrench.and.screwdriver") }
                 .tag(3)
+
+            AppleOrgSettingsView()
+                .environmentObject(appState)
+                .tabItem { Label("Apple", systemImage: "apple.logo") }
+            AgentSettingsView()
+                .environmentObject(appState)
+                .tabItem { Label("Agent", systemImage: "terminal") }
+            AboutSettingsView()
+                .tabItem { Label("About", systemImage: "info.circle") }
+                .tag(4)
         }
         .frame(minWidth: 600, maxWidth: 700, minHeight: 700, idealHeight: 900, maxHeight: 1100)
     }

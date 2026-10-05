@@ -2,7 +2,7 @@ import SwiftUI
 import FleetMateCore
 
 enum IdentityTab: String, CaseIterable {
-    case groups = "Groups"
+    case groups = "Entra Groups"
     case users = "Users"
 }
 
@@ -42,7 +42,7 @@ struct IdentityView: View {
                     selection: $selectedTab,
                     options: IdentityTab.allCases,
                     label: { $0.rawValue },
-                    segmentWidth: 62
+                    segmentWidth: 96
                 )
             }
         }

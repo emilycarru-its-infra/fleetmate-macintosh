@@ -1619,6 +1619,12 @@ struct CommitRow: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(commit.id, forType: .string)
             }
+            Button("Copy Link") {
+                guard let url = commit.url else { return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url, forType: .string)
+            }
+            .disabled(commit.url == nil)
         }
     }
 }
@@ -1689,6 +1695,15 @@ struct CommitDetailView: View {
                 }
             }
             .help("Copy the full SHA")
+            Button {
+                guard let url = commit.url else { return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url, forType: .string)
+            } label: {
+                Image(systemName: "link")
+            }
+            .disabled(commit.url == nil)
+            .help("Copy link")
             Button {
                 if let url = commit.url.flatMap(URL.init) { NSWorkspace.shared.open(url) }
             } label: {

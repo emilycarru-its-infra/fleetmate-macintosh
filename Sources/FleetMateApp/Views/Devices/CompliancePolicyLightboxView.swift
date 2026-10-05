@@ -283,7 +283,7 @@ struct CompliancePolicyLightboxView: View {
                         Text("Current value: \(value)").appFont(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
                     }
                     if let err = setting.errorText {
-                        Text(err).appFont(.caption2).foregroundStyle(.red).textSelection(.enabled)
+                        Text(err).appFont(.caption2).foregroundStyle(.orange).textSelection(.enabled)
                     }
                     if let sources = setting.sources, !sources.isEmpty {
                         Text("From " + sources.compactMap { $0.displayName }.joined(separator: ", "))
@@ -426,7 +426,7 @@ struct CompliancePolicyLightboxView: View {
     private func stateColor(_ state: String?) -> Color {
         switch state?.lowercased() {
         case "compliant": return .green
-        case "noncompliant", "error": return .red
+        case "noncompliant", "error": return .orange
         case "conflict": return .orange
         case "notapplicable": return .secondary
         default: return .gray

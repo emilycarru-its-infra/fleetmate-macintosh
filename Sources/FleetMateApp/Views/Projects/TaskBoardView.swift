@@ -147,7 +147,7 @@ struct TaskBoardCard: View {
                     Text(due, style: .date)
                         .appFont(.caption)
                 }
-                .foregroundColor(due < Date() ? .red : .secondary)
+                .foregroundColor(due < Date() ? .orange : .secondary)
             }
         }
         .padding(10)
@@ -195,7 +195,7 @@ struct TaskPriorityBadge: View {
     var body: some View {
         let (color, label): (Color, String) = {
             switch priority {
-            case 1: return (.red, "P1")
+            case 1: return (.orange, "P1")
             case 2: return (.orange, "P2")
             case 3: return (.yellow, "P3")
             default: return (.gray, "P\(priority)")

@@ -32,6 +32,9 @@ final class ManageState: ObservableObject {
     @Published var selection = ManageSelection()
     /// Serials of the checked machines in the current view.
     @Published var selectedComputerIDs: Set<String> = []
+    /// Machines a row's "Add to Custom Group…" asked to add; the machine list
+    /// presents the add sheet while this is set.
+    @Published var addToGroupRequest: [RosterComputer]?
     @Published var customGroups: [CustomGroup] = []
 
     // MARK: - Scan

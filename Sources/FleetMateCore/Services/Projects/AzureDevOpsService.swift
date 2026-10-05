@@ -372,7 +372,9 @@ public class AzureDevOpsService {
 
     /// States that mean a work item is finished, across the Agile, Scrum,
     /// Basic and CMMI processes.
-    public static let finishedWorkItemStates = ["Closed", "Removed", "Done", "Completed"]
+    /// States that take a work item off the user's open list. Resolved counts:
+    /// the work is done and only awaits closing, so it is not something to do.
+    public static let finishedWorkItemStates = ["Closed", "Removed", "Done", "Completed", "Resolved"]
 
     /// Every open work item assigned to the signed-in user, in every project of
     /// the organization, most recently changed first. `@Me` resolves to the

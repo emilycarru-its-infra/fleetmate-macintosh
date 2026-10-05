@@ -4,8 +4,13 @@ import FleetMateCore
 // MARK: - View Mode
 
 enum BoardsViewMode: String, CaseIterable {
+    /// Work items assigned to me, newest change first.
+    case mine = "Mine"
+    /// The shared queries, as before.
+    case list = "Queries"
+    /// Everything loaded, newest change first.
+    case recent = "Recent"
     case board = "Board"
-    case list = "List"
 }
 
 enum GroupByOption: String, CaseIterable {
@@ -340,8 +345,8 @@ struct BoardsView: View {
         ToolbarItemGroup(placement: .navigation) {
             SegmentedPill(
                 selection: $viewMode,
-                options: [.list, .board],
-                label: { $0 == .list ? "List" : "Board" }
+                options: [.mine, .list, .recent, .board],
+                label: { $0.rawValue }
             )
             .onChange(of: appState.devOpsProjectReady) { _, ready in
                 if ready { loadTasks(); loadBoards(); loadQueries() }
@@ -470,6 +475,7 @@ struct BoardsView: View {
         switch viewMode {
         case .board: boardWithSidebar
         case .list:  listWithSidebar
+        case .mine, .recent: flatWithSidebar
         }
     }
 
@@ -694,6 +700,62 @@ struct BoardsView: View {
                     if showDetailSidebar {
                         taskDetailSidebar
                             .frame(width: geometry.size.width * 0.4 - 12)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Mine and Recent: one flat list, newest change first, with the same
+    /// detail sidebar as the queries view.
+    private var flatWithSidebar: some View {
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                flatList
+                    .frame(width: (selectedTask != nil && showDetailSidebar) ? geometry.size.width * 0.6 : geometry.size.width)
+                if selectedTask != nil, showDetailSidebar {
+                    Divider()
+                    taskDetailSidebar
+                        .frame(width: geometry.size.width * 0.4 - 1)
+                }
+            }
+        }
+    }
+
+    /// Work items assigned to me (the same set the Dashboard counts), or
+    /// everything loaded — filtered by the search, the filter panel and
+    /// "show closed", newest change first.
+    private var flatTasks: [UnifiedTask] {
+        var tasks = filteredTasks
+        if viewMode == .mine {
+            let mine = Set(appState.cachedWorkItems.map { String($0.id) })
+            tasks = tasks.filter { $0.provider != "azdevops" || mine.contains($0.id) }
+                .filter { $0.provider == "azdevops" || !$0.assignees.isEmpty }
+        }
+        return tasks.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private var flatList: some View {
+        let tasks = flatTasks
+        return Group {
+            if tasks.isEmpty {
+                ContentUnavailableView(
+                    viewMode == .mine ? "Nothing assigned to you" : "No recent work items",
+                    systemImage: "checkmark.circle",
+                    description: Text(viewMode == .mine
+                        ? "Work items assigned to you appear here, most recently changed first."
+                        : "Work items appear here once the queries load.")
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(tasks, id: \.compositeKey) { task in
+                            TaskListRow(task: task, isSelected: selectedTask?.compositeKey == task.compositeKey)
+                                .contentShape(Rectangle())
+                                .contextMenu { taskContextMenu(for: task) }
+                                .onTapGesture { selectedTask = task; showDetailSidebar = true }
+                            Divider().padding(.leading, 60)
+                        }
                     }
                 }
             }

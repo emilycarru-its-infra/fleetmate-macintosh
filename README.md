@@ -273,32 +273,6 @@ fleetmate devops from-error "Adobe Creative Cloud"  # auto-create from error
 fleetmate devops update 1234 --state Resolved --comment "Fixed by script update"
 ```
 
-### MunkiReport
-
-Query MunkiReport database (legacy support):
-
-```bash
-# List devices
-fleetmate munkireport devices
-
-# Device details
-fleetmate munkireport device ASSET-000
-
-# Munki info
-fleetmate munkireport info ASSET-000
-
-# Managed installs
-fleetmate munkireport installs ASSET-000
-
-# Installation errors
-fleetmate munkireport errors
-
-# Stale devices
-fleetmate munkireport stale --days 14
-
-# Raw SQL query
-fleetmate munkireport query "SELECT serial_number, hostname FROM machines WHERE os_version LIKE '14.%'"
-```
 
 ### Quality Assurance
 

@@ -25,7 +25,6 @@ struct FleetMate: AsyncParsableCommand {
             ReportMateCommand.self,
             DeadlineCommand.self,
             SnipeCommand.self,
-            MunkiReportCommand.self,
             IntuneCommand.self,
             AutopilotCommand.self,
             EntraCommand.self,

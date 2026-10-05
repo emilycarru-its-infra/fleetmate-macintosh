@@ -24,6 +24,9 @@ struct PipelinesListView: View {
                             }
                         }
                     }
+                    if !model.pipelineRepoCounts.isEmpty {
+                        RepoFilterMenu(selection: $model.selectedPipelineRepo, counts: model.pipelineRepoCounts)
+                    }
                     Spacer()
                     if let at = model.pipelinesLoadedAt {
                         Text("Checked \(DevelopmentView.relative(at))")

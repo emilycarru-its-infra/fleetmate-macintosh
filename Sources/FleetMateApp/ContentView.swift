@@ -70,7 +70,8 @@ struct ContentView: View {
                     .disabled(!appState.canGoForward)
                 }
                 ToolbarItem(placement: .principal) {
-                    GlassTabBar(selectedTab: $appState.selectedTab, tabs: availableTabs, availableWidth: windowWidth)
+                    TabBarWithCounts(development: appState.development,
+                                     selectedTab: $appState.selectedTab, tabs: availableTabs, availableWidth: windowWidth)
                 }
                 // The authentication shield belongs to the window, not to the
                 // Dashboard: auth is what breaks any tab, so it has to be
@@ -81,8 +82,19 @@ struct ContentView: View {
                 // right of it — the shield ended up stranded mid-toolbar. On
                 // macOS 26 the search field can be positioned explicitly, so
                 // claim it here and declare the shield after it.
+                // The tab's own filter field sits on the left with the tab's
+                // controls, so search-everything can be the last item on the
+                // right.
                 if #available(macOS 26.0, *) {
-                    DefaultToolbarItem(kind: .search, placement: .automatic)
+                    DefaultToolbarItem(kind: .search, placement: .navigation)
+                }
+                if selectedTab.hasWidgets {
+                    ToolbarItem(placement: .primaryAction) {
+                        GraphsToolbarButton(tab: selectedTab).id(selectedTab)
+                    }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    RecentActivityToolbarButton()
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: { terminals.toggle(defaultLaunch: appState.agentDefaultLaunch) }) {
@@ -116,6 +128,10 @@ struct ContentView: View {
                         .background(.orange.opacity(0.12), in: .rect(cornerRadius: 4))
                         .help("One or more systems are logged in as a Service Principal")
                     }
+                }
+                // Last, at the far right, where search is looked for.
+                ToolbarItem(placement: .primaryAction) {
+                    GlobalSearchToolbarField()
                 }
             }
             .onAppear {
@@ -171,6 +187,8 @@ struct ContentView: View {
                     appState.attemptSilentSnipeSso()
                 }
             }
+            .actionErrorBanner($appState.linkError, title: "Couldn't open link")
+            .modifier(HandbookReaderHost(knowledge: appState.knowledge))
             .onChange(of: appState.navigateToTab) { _, newTab in
                 if let tab = newTab {
                     appState.selectedTab = tab
@@ -202,7 +220,7 @@ struct ContentView: View {
 
     private func validateSelectedTab() {
         if !selectedTab.isEnabled(config: appState.config) {
-            appState.selectedTab = .dashboard
+            appState.selectedTab = .development
         }
     }
 
@@ -255,7 +273,6 @@ struct ContentView: View {
     @ViewBuilder
     private var tabContent: some View {
         switch selectedTab {
-        case .dashboard: DashboardView()
         case .devices:   DevicesView()
         case .manage:    ManageView(manage: appState.manageState)
         case .inventory: AssetsView()
@@ -273,3 +290,16 @@ struct ContentView: View {
         .environmentObject(AppState())
 }
 #endif
+
+/// The tab bar, watching the models whose counts it shows.
+private struct TabBarWithCounts: View {
+    @ObservedObject var development: DevelopmentModel
+    @Binding var selectedTab: AppTab
+    let tabs: [AppTab]
+    let availableWidth: CGFloat
+
+    var body: some View {
+        GlassTabBar(selectedTab: $selectedTab, tabs: tabs, availableWidth: availableWidth,
+                    counts: [.development: development.unreadCount])
+    }
+}

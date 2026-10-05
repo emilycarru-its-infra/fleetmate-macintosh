@@ -29,6 +29,9 @@ struct SettingsView: View {
             AppleOrgSettingsView()
                 .environmentObject(appState)
                 .tabItem { Label("Apple", systemImage: "apple.logo") }
+            AgentSettingsView()
+                .environmentObject(appState)
+                .tabItem { Label("Agent", systemImage: "terminal") }
                 .tag(4)
         }
         .frame(minWidth: 600, maxWidth: 700, minHeight: 700, idealHeight: 900, maxHeight: 1100)

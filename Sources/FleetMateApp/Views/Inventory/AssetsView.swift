@@ -161,6 +161,7 @@ struct AssetsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if appState.config.isSnipeConfigured { InventoryWidgetsSection(metrics: appState.widgetMetrics) }
             // Content
             if !appState.config.isSnipeConfigured {
                 VStack {
@@ -1714,7 +1715,7 @@ struct ColumnResizeHandle: View {
             .padding(.horizontal, 4.5)
             .contentShape(Rectangle())
             .gesture(
-                DragGesture(minimumDistance: 4)
+                DragGesture(minimumDistance: 4, coordinateSpace: .global)
                     .onChanged { value in
                         if !isDragging {
                             isDragging = true

@@ -587,6 +587,7 @@ struct TicketsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // No header — everything in toolbar
+            if appState.config.isTdxConfigured { TicketsWidgetsSection(metrics: appState.widgetMetrics) }
             contentSection
         }
         .onChange(of: selectedTicketIds) { _, newIds in
@@ -2807,7 +2808,7 @@ struct TicketColumnResizeHandle: View {
             .padding(.horizontal, 4.5)
             .contentShape(Rectangle())
             .gesture(
-                DragGesture(minimumDistance: 4)
+                DragGesture(minimumDistance: 4, coordinateSpace: .global)
                     .onChanged { value in
                         if !isDragging {
                             isDragging = true

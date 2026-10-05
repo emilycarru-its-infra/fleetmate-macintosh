@@ -3,14 +3,15 @@ import FleetMateCore
 
 /// Top-level tab identity shared between ContentView and AppState for type-safe programmatic navigation.
 enum AppTab: String, CaseIterable, Identifiable, Hashable {
-    // Declaration order is display order and the ⌘1…⌘8 order. Development
-    // sits in the centre; Tickets goes last.
-    case dashboard = "Dashboard"
+    // Declaration order is display order and the ⌘1…⌘7 order. Development
+    // leads and is the launch tab; Tickets goes last. There is no Dashboard:
+    // each tab carries its own widgets, and Recent Activity is a toolbar
+    // popover.
+    case development = "Development"
+    case projects = "Projects"
     case devices = "Devices"
     case manage = "Manage"
     case inventory = "Inventory"
-    case development = "Development"
-    case projects = "Projects"
     case identity = "Identity"
     case tickets = "Tickets"
 
@@ -18,7 +19,6 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
 
     var icon: String {
         switch self {
-        case .dashboard: "square.grid.2x2"
         case .devices: "laptopcomputer"
         case .manage: "wrench.and.screwdriver"
         case .inventory: "shippingbox"
@@ -31,7 +31,6 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
 
     func isEnabled(config: FleetMateConfig) -> Bool {
         switch self {
-        case .dashboard: true
         case .devices:   config.isGraphConfigured
         case .manage:    config.isManageConfigured
         case .inventory: config.isSnipeConfigured

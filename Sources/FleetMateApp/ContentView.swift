@@ -87,6 +87,12 @@ struct ContentView: View {
                 if #available(macOS 26.0, *) {
                     DefaultToolbarItem(kind: .search, placement: .navigation)
                 }
+                // Push every trailing control to the window's right edge.
+                // Without it they sat right after the centred tab bar, leaving
+                // the right of the toolbar empty and search short of the edge.
+                if #available(macOS 26.0, *) {
+                    ToolbarSpacer(.flexible, placement: .primaryAction)
+                }
                 if selectedTab.hasWidgets {
                     ToolbarItem(placement: .primaryAction) {
                         GraphsToolbarButton(tab: selectedTab).id(selectedTab)
@@ -130,7 +136,7 @@ struct ContentView: View {
                 }
                 // Last, at the far right, where search is looked for.
                 ToolbarItem(placement: .primaryAction) {
-                    GlobalSearchToolbarField(compact: windowWidth < GlassTabBar.compactBelow)
+                    GlobalSearchToolbarField()
                 }
             }
             .onAppear {

@@ -19,10 +19,15 @@ struct DeviceDetailView: View {
                     summarySection
                     Divider()
                     // The device's own sources decide what shows: the Apple
-                    // organization's section for a device it holds, Intune's
+                    // organization's section for a device it holds,
+                    // Autopilot's for a registered Windows device, Intune's
                     // for an enrolled one.
                     if AppleOrgDetailSection.applies(to: row, store: appState.appleOrg) {
                         AppleOrgDetailSection(store: appState.appleOrg, row: row)
+                        if intune != nil || row.autopilot != nil { Divider() }
+                    }
+                    if let identity = row.autopilot {
+                        AutopilotDetailSection(identity: identity, registration: row.registration)
                         if intune != nil { Divider() }
                     }
                     if let intune {

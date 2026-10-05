@@ -916,7 +916,7 @@ struct DeviceActionsPanel: View {
                     }
                     Text(message)
                         .appFont(.caption)
-                        .foregroundColor(message.contains("Error") ? .red : .green)
+                        .foregroundColor(message.contains("Error") ? .orange : .green)
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
@@ -1390,7 +1390,7 @@ struct DeviceActionsPanel: View {
         switch outcome {
         case .succeeded: return .green
         case .skipped: return .secondary
-        case .failed: return .red
+        case .failed: return .orange
         }
     }
 }

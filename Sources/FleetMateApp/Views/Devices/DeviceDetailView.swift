@@ -481,7 +481,7 @@ private struct IntuneDeviceSections: View {
     private func policyStateColor(_ state: String?) -> Color {
         switch state?.lowercased() {
         case "compliant": return .green
-        case "noncompliant", "error": return .red
+        case "noncompliant", "error": return .orange
         case "conflict": return .orange
         default: return .gray
         }

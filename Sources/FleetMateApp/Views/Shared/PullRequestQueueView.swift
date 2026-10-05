@@ -882,7 +882,7 @@ extension PullRequestReviewVote {
     var tint: Color {
         switch self {
         case .approved, .approvedWithSuggestions: return .green
-        case .rejected:                            return .red
+        case .rejected:                            return .orange
         case .waitingForAuthor:                    return .orange
         case .noVote:                              return .gray
         }

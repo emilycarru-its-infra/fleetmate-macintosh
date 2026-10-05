@@ -289,6 +289,20 @@ public extension GraphService {
         return await offboardOrphan(identifier, records: records, plan: plan)
     }
 
+    /// Offboard a device Autopilot registered and Intune never enrolled,
+    /// starting from the exact identity the caller already holds. The Entra
+    /// object is found by the identity's linked device id, never by name.
+    func offboardRegisteredOnly(_ identity: WindowsAutopilotDevice, plan: OffboardPlan) async -> OffboardResult {
+        var entra: EntraDevice?
+        if let deviceId = identity.azureActiveDirectoryDeviceId?.trimmingCharacters(in: .whitespaces),
+           !deviceId.isEmpty, deviceId != "00000000-0000-0000-0000-000000000000",
+           (try? DeviceIdentifier.validateGuid(deviceId)) != nil {
+            entra = try? await getEntraDevice(deviceId: deviceId)
+        }
+        let identifier = identity.serialNumber ?? identity.id ?? "unknown"
+        return await offboardOrphan(identifier, records: OrphanDeviceRecords(autopilot: identity, entra: entra), plan: plan)
+    }
+
     /// Decommission a device whose Intune record is already gone.
     ///
     /// Every step that needs a managedDevice is reported skipped with the reason

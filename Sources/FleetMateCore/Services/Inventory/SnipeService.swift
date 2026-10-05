@@ -254,6 +254,34 @@ public class SnipeService {
         return try await fetchList("/api/v1/statuslabels", parameters: ["limit": 500])
     }
     
+    // MARK: - Raw lists (CLI)
+
+    /// The Snipe-IT list resources the CLI prints without a typed model.
+    public enum ListResource: String, Sendable {
+        case licenses, manufacturers, accessories, consumables, components
+    }
+
+    /// One page of a list resource as raw JSON rows, for CLI tables and
+    /// `--json` output that should carry every field Snipe-IT returns.
+    public func getRawList(_ resource: ListResource, search: String? = nil, limit: Int = 500) async throws -> [[String: Any]] {
+        var parameters: [String: Any] = ["limit": limit]
+        if let search, !search.isEmpty { parameters["search"] = search }
+        let hdrs = try await authHeaders()
+        let url = "\(baseUrl)/api/v1/\(resource.rawValue)"
+        let data: Data = try await withCheckedThrowingContinuation { continuation in
+            session.request(url, parameters: parameters, headers: hdrs)
+                .validate()
+                .responseData { response in
+                    switch response.result {
+                    case .success(let data): continuation.resume(returning: data)
+                    case .failure(let error): continuation.resume(throwing: error)
+                    }
+                }
+        }
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return object?["rows"] as? [[String: Any]] ?? []
+    }
+
     // MARK: - Activity Reports
     
     public func getActivityLog(limit: Int = 15) async throws -> [SnipeActivityLog] {

@@ -46,7 +46,7 @@ struct GroupsView: View {
                     Text("Device Groups")
                         .appFont(.largeTitle)
                         .fontWeight(.bold)
-                    Text("Entra ID device groups (Devices-*)")
+                    Text("Entra Groups")
                         .foregroundColor(.secondary)
                 }
                 Spacer()

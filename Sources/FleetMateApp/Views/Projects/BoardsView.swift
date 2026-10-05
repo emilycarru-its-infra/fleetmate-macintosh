@@ -4,8 +4,19 @@ import FleetMateCore
 // MARK: - View Mode
 
 enum BoardsViewMode: String, CaseIterable {
+    /// Work items assigned to me, newest change first.
+    case mine = "Mine"
+    /// The shared queries, as before.
+    case list = "Queries"
+    /// Everything loaded, newest change first.
+    case recent = "Recent"
     case board = "Board"
-    case list = "List"
+}
+
+/// Where the Board segment's columns come from.
+enum BoardSource: String, CaseIterable {
+    case devOps = "Azure DevOps"
+    case github = "GitHub Project"
 }
 
 enum GroupByOption: String, CaseIterable {
@@ -43,6 +54,7 @@ struct BoardsView: View {
     @State private var filters = FilterState<TaskFilterCategory>()
     @State private var showFilters = false
     @State private var groupBy: GroupByOption = .column
+    @AppStorage("projects.board.source") private var boardSource: BoardSource = .devOps
     @State private var showClosed = false
     @State private var selectedTask: UnifiedTask? = nil
     @State private var isSyncing = false
@@ -230,12 +242,13 @@ struct BoardsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if appState.config.isDevOpsConfigured { ProjectsWidgetsSection(metrics: appState.widgetMetrics) }
             contentArea
         }
         .onAppCommand { command in
             switch command {
             case .refresh:
-                loadTasks(); loadGhProjectInfo(); loadBoards(); loadQueries(force: true)
+                refreshAll()
             case .newItem:
                 // The toolbar's + is a menu of three item types; ⌘N takes the
                 // first one this project can actually create.
@@ -339,8 +352,8 @@ struct BoardsView: View {
         ToolbarItemGroup(placement: .navigation) {
             SegmentedPill(
                 selection: $viewMode,
-                options: [.list, .board],
-                label: { $0 == .list ? "List" : "Board" }
+                options: [.mine, .list, .recent, .board],
+                label: { $0.rawValue }
             )
             .onChange(of: appState.devOpsProjectReady) { _, ready in
                 if ready { loadTasks(); loadBoards(); loadQueries() }
@@ -350,7 +363,19 @@ struct BoardsView: View {
             // is the stored-queries view and has no use for them. PillMenu,
             // not Menu/Picker — the macOS 26 glass toolbar renders those
             // icon-only, leaving an empty pill.
-            if viewMode == .board {
+            // The Board's source: Azure DevOps work items, or the configured
+            // GitHub Projects v2 project. Offered once a GitHub provider is set up.
+            if viewMode == .board && currentGhConfig != nil {
+                PillMenu(
+                    selection: $boardSource,
+                    options: BoardSource.allCases,
+                    label: { $0.rawValue }
+                )
+                .help("Board source")
+                .onChange(of: boardSource) { selectedTask = nil }
+            }
+
+            if viewMode == .board && effectiveBoardSource == .devOps {
                 PillMenu(
                     selection: $groupBy,
                     options: GroupByOption.allCases,
@@ -429,7 +454,7 @@ struct BoardsView: View {
                 .help("Sync tasks to Planner / Markdown")
             }
 
-            Button(action: { loadTasks(); loadGhProjectInfo(); loadBoards(); loadQueries(force: true) }) {
+            Button(action: refreshAll) {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .disabled(isLoading || isLoadingGhInfo || isLoadingQueries)
@@ -469,6 +494,7 @@ struct BoardsView: View {
         switch viewMode {
         case .board: boardWithSidebar
         case .list:  listWithSidebar
+        case .mine, .recent: flatWithSidebar
         }
     }
 
@@ -503,7 +529,32 @@ struct BoardsView: View {
         }
     }
 
+    /// GitHub only when a GitHub provider is configured, whatever was stored.
+    private var effectiveBoardSource: BoardSource {
+        currentGhConfig == nil ? .devOps : boardSource
+    }
+
+    private func refreshAll() {
+        loadTasks(); loadGhProjectInfo(); loadBoards(); loadQueries(force: true)
+        if viewMode == .board && effectiveBoardSource == .github {
+            appState.projects.githubBoardRefreshRequested += 1
+        }
+    }
+
+    @ViewBuilder
     private var boardContent: some View {
+        if effectiveBoardSource == .github {
+            GitHubProjectBoardView(
+                searchText: searchText,
+                isResolvingProject: isLoadingGhInfo,
+                selectedTask: $selectedTask
+            )
+        } else {
+            devOpsBoardContent
+        }
+    }
+
+    private var devOpsBoardContent: some View {
         Group {
             if isLoading {
                 VStack {
@@ -693,6 +744,62 @@ struct BoardsView: View {
                     if showDetailSidebar {
                         taskDetailSidebar
                             .frame(width: geometry.size.width * 0.4 - 12)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Mine and Recent: one flat list, newest change first, with the same
+    /// detail sidebar as the queries view.
+    private var flatWithSidebar: some View {
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                flatList
+                    .frame(width: (selectedTask != nil && showDetailSidebar) ? geometry.size.width * 0.6 : geometry.size.width)
+                if selectedTask != nil, showDetailSidebar {
+                    Divider()
+                    taskDetailSidebar
+                        .frame(width: geometry.size.width * 0.4 - 1)
+                }
+            }
+        }
+    }
+
+    /// Work items assigned to me (the same set the Dashboard counts), or
+    /// everything loaded — filtered by the search, the filter panel and
+    /// "show closed", newest change first.
+    private var flatTasks: [UnifiedTask] {
+        var tasks = filteredTasks
+        if viewMode == .mine {
+            let mine = Set(appState.cachedWorkItems.map { String($0.id) })
+            tasks = tasks.filter { $0.provider != "azdevops" || mine.contains($0.id) }
+                .filter { $0.provider == "azdevops" || !$0.assignees.isEmpty }
+        }
+        return tasks.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private var flatList: some View {
+        let tasks = flatTasks
+        return Group {
+            if tasks.isEmpty {
+                ContentUnavailableView(
+                    viewMode == .mine ? "Nothing assigned to you" : "No recent work items",
+                    systemImage: "checkmark.circle",
+                    description: Text(viewMode == .mine
+                        ? "Work items assigned to you appear here, most recently changed first."
+                        : "Work items appear here once the queries load.")
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(tasks, id: \.compositeKey) { task in
+                            TaskListRow(task: task, isSelected: selectedTask?.compositeKey == task.compositeKey)
+                                .contentShape(Rectangle())
+                                .contextMenu { taskContextMenu(for: task) }
+                                .onTapGesture { selectedTask = task; showDetailSidebar = true }
+                            Divider().padding(.leading, 60)
+                        }
                     }
                 }
             }
@@ -1507,6 +1614,11 @@ struct BoardsView: View {
                 } else {
                     projectId = try await service.listProjects(
                         scope: scope, owner: owner, repo: ghConfig.repo, limit: 1).first?.id
+                }
+                if projectId != currentProjectId {
+                    // A different project: the board's items belong to the old one.
+                    appState.projects.githubBoardItems = []
+                    appState.projects.githubBoardLoadedAt = nil
                 }
                 currentProjectId = projectId
                 if let pid = projectId {

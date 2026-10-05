@@ -43,7 +43,7 @@ final class AppleOrgJoinTests: XCTestCase {
 
     func testIntuneOnlyRowsReadMissingForAppleColumns() throws {
         let rows = AppleOrgJoin.merge(intune: [try intune("w1", serial: "PC1", name: "PC", os: "Windows")], apple: [], servers: [])
-        XCTAssertEqual(rows[0].serviceText, DeviceListRow.missing)
+        XCTAssertEqual(rows[0].serviceText, "Intune", "a Windows device's management service is the MDM holding it")
         XCTAssertEqual(rows[0].orgStatusText, DeviceListRow.missing)
         XCTAssertEqual(rows[0].groupOrOrderText, DeviceListRow.missing)
         XCTAssertEqual(rows[0].value(for: .orgStatus), "Not in Organization")

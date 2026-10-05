@@ -647,6 +647,7 @@ enum AssetDetailPane: String {
 }
 
 struct AssetDetailSidebar: View {
+    @EnvironmentObject private var appState: AppState
     let asset: SnipeAsset
     let snipeUrl: String?
     let snipeService: SnipeService
@@ -846,6 +847,8 @@ struct AssetDetailSidebar: View {
 
                     metadataCard
 
+                    HandbookRelatedSection(knowledge: appState.knowledge, terms: handbookTerms)
+
                     // Save button
                     if hasEdits {
                         HStack {
@@ -886,6 +889,20 @@ struct AssetDetailSidebar: View {
             resetEditState()
             Task { await loadDropdownOptions() }
         }
+    }
+
+    /// Words that describe this asset to the Handbook: what it is, what runs
+    /// it, which fleet it is in.
+    private var handbookTerms: [String] {
+        let model = asset.model?.name ?? ""
+        // "MacBook Air (M1, 2020)" → "MacBook Air": the family, not the year.
+        let family = model.components(separatedBy: "(").first?.trimmingCharacters(in: .whitespaces) ?? ""
+        return [family,
+                asset.category?.name,
+                asset.customFieldByName("Platform")?.value,
+                asset.customFieldByName("Device Management Service")?.value,
+                asset.customFieldByName("Fleet")?.value]
+            .compactMap { $0 }
     }
 
     // MARK: - Custom Field Grouping

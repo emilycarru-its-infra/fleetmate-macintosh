@@ -5,6 +5,10 @@ import FleetMateCore
 @MainActor
 enum GlobalSearchRouter {
     static func open(_ hit: GlobalSearchResult, appState: AppState) {
+        if let page = hit.handbookPage {
+            appState.knowledge.openPage = page
+            return
+        }
         if let link = hit.link {
             appState.open(link.url)
             return
@@ -28,6 +32,8 @@ enum GlobalSearchRouter {
             appState.navigateToTab = .projects
         case .users, .groups:
             appState.navigateToTab = .identity
+        case .handbook:
+            break
         case .pullRequests, .issues, .commits, .pipelines:
             appState.navigateToTab = .development
         }

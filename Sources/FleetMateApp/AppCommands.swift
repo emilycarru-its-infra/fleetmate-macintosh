@@ -122,6 +122,8 @@ struct FleetMateCommands: Commands {
             Button("Find") { appState.perform(.find) }
                 .keyboardShortcut("f", modifiers: .command)
                 .disabled(!hasSearchField)
+            Button("Search Everything") { appState.globalSearchFocusRequest += 1 }
+                .keyboardShortcut("k", modifiers: .command)
         }
 
         CommandMenu("Manage") {

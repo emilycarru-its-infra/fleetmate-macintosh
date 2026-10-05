@@ -587,6 +587,17 @@ public actor GitHubProjectsService {
         return id
     }
 
+    /// The signed-in user's node ID and login — the owner of a personal project.
+    public func getViewer() async throws -> (id: String, login: String) {
+        let data = try await client.executeRaw(query: "query { viewer { id login } }", variables: [:])
+        guard let viewer = data["viewer"] as? [String: Any],
+              let id = viewer["id"] as? String,
+              let login = viewer["login"] as? String else {
+            throw GitHubGraphQLError.graphQLError("Could not read the signed-in GitHub user")
+        }
+        return (id, login)
+    }
+
     /// Gets the node ID for an owner, trying organization first then user.
     public func getOwnerId(login: String, scope: ProjectScope) async throws -> String {
         switch scope {

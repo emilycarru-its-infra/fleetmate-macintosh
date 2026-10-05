@@ -56,14 +56,9 @@ struct RecentActivityPopover: View {
     @ObservedObject var development: DevelopmentModel
     let dismiss: () -> Void
 
-    @State private var searchQuery = ""
-    @State private var searchResults: [GlobalSearchResult] = []
-    @FocusState private var searchFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            GlobalSearchField(query: $searchQuery, focused: $searchFocused)
-
             if let error = appState.errorMessage {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
@@ -73,18 +68,7 @@ struct RecentActivityPopover: View {
                 }
             }
 
-            if !searchQuery.trimmingCharacters(in: .whitespaces).isEmpty {
-                ScrollView {
-                    if searchResults.isEmpty {
-                        Text("No matches.").appFont(.callout).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        GlobalSearchResultsPanel(results: searchResults, width: 528) { hit in
-                            openSearchResult(hit)
-                        }
-                    }
-                }
-            } else {
+            Group {
                 HStack {
                     Label("Recent Activity", systemImage: tab.icon).appFont(.headline)
                     Text(tab.rawValue).appFont(.headline).foregroundStyle(.secondary)
@@ -105,18 +89,6 @@ struct RecentActivityPopover: View {
             }
         }
         .padding(16)
-        .task(id: searchQuery) {
-            let query = searchQuery.trimmingCharacters(in: .whitespaces)
-            guard query.count >= 2 || parseWorkItemId(query) != nil else {
-                searchResults = []
-                return
-            }
-            // Debounce; the task id change cancels a superseded scan.
-            try? await Task.sleep(nanoseconds: 120_000_000)
-            guard !Task.isCancelled else { return }
-            searchResults = GlobalSearchScanner.search(searchQuery, appState: appState)
-            await appendWorkItemLookup(for: query)
-        }
     }
 
     // MARK: Feeds
@@ -186,44 +158,6 @@ struct RecentActivityPopover: View {
         dismiss()
     }
 
-    /// The caches hold only the work items this user is already working on, so
-    /// an id someone was handed finds nothing. Ask Azure DevOps for it directly
-    /// and fold the answer into the results.
-    private func appendWorkItemLookup(for query: String) async {
-        guard let id = parseWorkItemId(query) else { return }
-        guard appState.config.isDevOpsConfigured, appState.devOpsService.hasValidToken else { return }
-        guard !searchResults.contains(where: { $0.workItemId == id }) else { return }
-        guard let item = try? await appState.devOpsService.getWorkItem(id: id) else { return }
-        // The field may have moved on while the fetch was in flight.
-        guard !Task.isCancelled,
-              parseWorkItemId(searchQuery.trimmingCharacters(in: .whitespaces)) == id else { return }
-        searchResults.insert(GlobalSearchScanner.row(for: item, matchLabel: "ID: AB#\(id)"), at: 0)
-    }
-
-    private func openSearchResult(_ hit: GlobalSearchResult) {
-        switch hit.category {
-        case .devices:
-            if let deviceId = hit.deviceId { appState.navigateToDeviceId = deviceId }
-            appState.navigateToTab = .devices
-        case .inventory:
-            if let assetId = hit.assetId {
-                appState.navigateToAssetId = assetId
-            } else {
-                appState.navigateToInventorySearch = hit.inventoryFilter
-            }
-            appState.navigateToTab = .inventory
-        case .tickets:
-            if let ticketId = hit.ticketId { appState.navigateToTicketId = ticketId }
-            appState.navigateToTab = .tickets
-        case .workItems:
-            if let workItemId = hit.workItemId { appState.navigateToWorkItemId = workItemId }
-            appState.navigateToTab = .projects
-        case .users, .groups:
-            appState.navigateToTab = .identity
-        }
-        searchQuery = ""
-        dismiss()
-    }
 }
 
 /// Fixed columns so rows line up: icon, name, context, status pill, time.

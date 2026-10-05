@@ -21,6 +21,8 @@ let package = Package(
         .package(url: "https://github.com/Kitura/BlueSocket.git", from: "2.0.0"),
         .package(url: "https://github.com/Alamofire/Alamofire.git", from: "5.8.0"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
+        // 1.12 added Metal shaders, which the Command Line Tools cannot compile.
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", "1.11.2"..<"1.12.0"),
     ],
     targets: [
         // Shared library with services, models, and config
@@ -50,6 +52,7 @@ let package = Package(
             dependencies: [
                 "FleetMateCore",
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             path: "Sources/FleetMateApp"
         ),

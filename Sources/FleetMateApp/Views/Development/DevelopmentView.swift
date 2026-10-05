@@ -14,9 +14,11 @@ final class DevelopmentModel: ObservableObject {
         case pullRequests = "Pulls"
         case commits = "Commits"
         case pipelines = "Pipelines"
+        case skills = "Skills"
     }
 
     @Published var segment: Segment = .pullRequests
+    @Published var selectedSkill: SkillCatalog.Entry?
 
     // Pull requests
     @Published private(set) var queue = PullRequestQueue()
@@ -810,6 +812,7 @@ private struct DevelopmentContent: View {
         case .inbox: return "Filter inbox"
         case .commits: return "Filter commits"
         case .pipelines: return "Filter runs"
+        case .skills: return "Filter skills and hooks"
         }
     }
 
@@ -845,7 +848,13 @@ private struct DevelopmentContent: View {
                 .help("Mark every notification as read")
             }
 
-            Button(action: { model.loadAll(appState: appState, force: true) }) {
+            Button(action: {
+                if model.segment == .skills {
+                    Task { await appState.knowledge.sync(token: await appState.devOpsService.currentToken()) }
+                    return
+                }
+                model.loadAll(appState: appState, force: true)
+            }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
             }
             .disabled(model.isLoadingPullRequests && model.isLoadingInbox)
@@ -864,6 +873,7 @@ private struct DevelopmentContent: View {
             case .inbox: inboxList
             case .commits: commitsList
             case .pipelines: PipelinesListView(model: model, searchText: searchText)
+            case .skills: SkillsListView(knowledge: appState.knowledge, selection: $model.selectedSkill, filter: searchText)
             }
         }
     }
@@ -1205,7 +1215,17 @@ private struct DevelopmentContent: View {
 
     @ViewBuilder
     private var detailPane: some View {
-        if model.segment == .pipelines {
+        if model.segment == .skills {
+            if let entry = model.selectedSkill {
+                SkillDetailView(entry: entry).id(entry.id)
+            } else {
+                ContentUnavailableView(
+                    "Select a skill",
+                    systemImage: "wand.and.stars",
+                    description: Text("The skills, hooks and standards every repository's agents follow, as on main.")
+                )
+            }
+        } else if model.segment == .pipelines {
             if let run = model.selectedRun {
                 PipelineRunDetailView(run: run) {
                     model.loadPipelines(appState: appState, force: true)

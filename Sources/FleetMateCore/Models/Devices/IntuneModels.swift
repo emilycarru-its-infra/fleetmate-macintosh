@@ -39,6 +39,8 @@ public struct IntuneDevice: Codable, Identifiable, Sendable {
     public let skuFamily: String?
     public let azureADRegistered: Bool?
     public let deviceRegistrationState: String?
+    /// Graph reports this as a string: "Unknown", "True" or "False".
+    public let jailBroken: String?
     
     public var id: String { _id ?? serialNumber ?? UUID().uuidString }
     
@@ -53,7 +55,7 @@ public struct IntuneDevice: Codable, Identifiable, Sendable {
         case deviceCategoryDisplayName, managementAgent, notes
         case physicalMemoryInBytes, wiFiMacAddress, ethernetMacAddress
         case imei, meid, phoneNumber, subscriberCarrier, joinType, skuFamily
-        case azureADRegistered, deviceRegistrationState
+        case azureADRegistered, deviceRegistrationState, jailBroken
     }
 }
 
@@ -64,6 +66,65 @@ public struct IntuneDeviceListResponse: Codable {
     enum CodingKeys: String, CodingKey {
         case value
         case nextLink = "@odata.nextLink"
+    }
+}
+
+// MARK: - macOS Local Administrator Password
+
+public struct MacOSLocalAdminCredential: Codable, Sendable {
+    public let adminAccountPassword: String
+    public let passwordLastRotatedDateTime: String?
+
+    public init(adminAccountPassword: String, passwordLastRotatedDateTime: String?) {
+        self.adminAccountPassword = adminAccountPassword
+        self.passwordLastRotatedDateTime = passwordLastRotatedDateTime
+    }
+}
+
+public struct MacOSLocalAdminCredentialResponse: Codable, Sendable {
+    public struct Value: Codable, Sendable {
+        public let adminAccountPassword: String?
+        public let passwordLastRotatedDateTime: String?
+    }
+
+    public let value: Value
+}
+
+public enum MacOSLAPSLookupError: Error, CustomStringConvertible, Equatable {
+    case deviceNotFound(String)
+    case ambiguousSerial(String)
+    case unsupportedPlatform(String)
+    case passwordUnavailable
+
+    public var description: String {
+        switch self {
+        case .deviceNotFound(let serialNumber):
+            return "No Intune managed device has serial number \(serialNumber)"
+        case .ambiguousSerial(let serialNumber):
+            return "More than one Intune managed device has serial number \(serialNumber)"
+        case .unsupportedPlatform(let platform):
+            return "macOS LAPS is unavailable for platform \(platform)"
+        case .passwordUnavailable:
+            return "Intune did not return a local administrator password for this Mac"
+        }
+    }
+}
+
+public enum MacOSLAPSLookup {
+    public static func resolveDevice(
+        from devices: [IntuneDevice],
+        serialNumber: String
+    ) throws -> IntuneDevice {
+        guard let device = devices.first else {
+            throw MacOSLAPSLookupError.deviceNotFound(serialNumber)
+        }
+        guard devices.count == 1 else {
+            throw MacOSLAPSLookupError.ambiguousSerial(serialNumber)
+        }
+        guard device.operatingSystem?.lowercased() == "macos" else {
+            throw MacOSLAPSLookupError.unsupportedPlatform(device.operatingSystem ?? "unknown")
+        }
+        return device
     }
 }
 
@@ -428,6 +489,8 @@ public struct WindowsAutopilotDevice: Codable, Identifiable, Sendable {
     public let managedDeviceId: String?
     public let deploymentProfileAssignmentStatus: String?
     public let deploymentProfileAssignedDateTime: String?
+    public let groupTag: String?
+    public let purchaseOrderIdentifier: String?
 }
 
 public struct WindowsAutopilotDevicesResponse: Codable {
@@ -546,6 +609,11 @@ public struct WipeOptions: Sendable, Equatable {
 
     /// The request body for `POST managedDevices/{id}/wipe`, trimmed to the keys
     /// the given platform accepts.
+    /// Intune's Autopilot Reset: a wipe that keeps the Entra join and the
+    /// enrollment and removes user data, apps and settings, returning the
+    /// device to OOBE. It is not Fresh Start (`cleanWindowsDevice`).
+    public static let autopilotReset = WipeOptions(keepEnrollmentData: true, keepUserData: false)
+
     public func requestBody(for platform: DevicePlatform) -> [String: Any] {
         var body: [String: Any] = [
             "keepEnrollmentData": keepEnrollmentData,

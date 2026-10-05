@@ -1,20 +1,46 @@
 import SwiftUI
 
-/// Settings ▸ Appearance — the app's text size control.
+/// Settings ▸ Appearance — theme and text size.
 ///
 /// macOS has no Dynamic Type for an app to inherit, so FleetMate carries its own
 /// scale. The preview below re-renders live at the chosen scale.
 struct AppearanceSettingsView: View {
     @AppStorage(AppFontScale.storageKey) private var fontScale: Double = AppFontScale.default
+    @AppStorage(AppTheme.storageKey) private var theme: AppTheme = .system
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                themeSection
                 textSizeSection
                 previewSection
             }
             .padding(20)
         }
+    }
+
+    // MARK: Theme
+
+    private var themeSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Theme").appFont(.headline)
+                    Spacer()
+                    Picker("Theme", selection: $theme) {
+                        ForEach(AppTheme.allCases) { Text($0.label).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                Text("Light or Dark keeps FleetMate in that appearance whatever macOS is set to.")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(4)
+        }
+        .onChange(of: theme) { _, newTheme in newTheme.apply() }
     }
 
     // MARK: Text size

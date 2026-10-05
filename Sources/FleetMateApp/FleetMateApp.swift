@@ -17,13 +17,19 @@ struct FleetMateApp: App {
         // the top of the View menu, promising document tabs that don't exist —
         // directly above the ⌘1–⌘6 items that do the switching.
         NSWindow.allowsAutomaticWindowTabbing = false
+
+        // Settings ▸ Appearance ▸ Theme, applied before the first window draws.
+        MainActor.assumeIsolated { AppTheme.stored.apply() }
     }
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        // One window, not a group: FleetMate is a single window, and a
+        // fleetmate:// link sent to a WindowGroup opens a new window each time.
+        Window("FleetMate", id: "main") {
+            ContentView(terminals: appState.terminals)
                 .environmentObject(appState)
                 .appFontScale(fontScale)
+                .onOpenURL { url in appState.open(url) }
                 .task {
                     await appState.preloadAllData()
                 }
@@ -52,6 +58,7 @@ enum AzeSessionState {
     case failed   // warm attempt failed; first real call will retry
 }
 
+/// Receives the Apple Event a `fleetmate://` link arrives as.
 @MainActor
 class AppState: ObservableObject {
     @Published var config: FleetMateConfig
@@ -62,6 +69,31 @@ class AppState: ObservableObject {
     
     // MARK: - Onboarding
     @Published var showOnboardingWizard = false
+
+    // MARK: - Agent terminal
+
+    /// The bottom terminal panel's sessions, shared by every tab.
+    let terminals = AgentTerminalStore()
+    /// What the visible tab has selected, written to `FLEETMATE_CONTEXT`.
+    @Published var agentSelection: AgentSelection?
+
+    /// What a new session runs: the person's choice, else the managed default,
+    /// else a login shell.
+    var agentDefaultLaunch: AgentLaunch {
+        AgentLaunch(command: UserDefaults.standard.string(forKey: AgentSettingsKey.command)
+                    ?? config.agentCommand ?? "")
+    }
+
+    /// The person's repositories, seeded from the managed default list until
+    /// they edit their own.
+    var agentRepos: [String] {
+        UserDefaults.standard.stringArray(forKey: AgentSettingsKey.repos) ?? config.repoDefaults
+    }
+
+    var agentAutoStart: Bool {
+        UserDefaults.standard.object(forKey: AgentSettingsKey.autoStart) as? Bool
+            ?? config.agentAutoStart ?? true
+    }
 
     // MARK: - Tab Navigation (set by Dashboard to switch tabs)
 
@@ -74,7 +106,7 @@ class AppState: ObservableObject {
     /// write tab state — none of them targeting Inventory. Until the jump is
     /// reproduced with this in place, the log is the only way to name the
     /// caller. Cheap enough to keep (fires only on actual changes).
-    @Published var selectedTab: AppTab = .dashboard {
+    @Published var selectedTab: AppTab = .development {
         didSet {
             guard oldValue != selectedTab else { return }
             let frames = Thread.callStackSymbols.dropFirst(2).prefix(5)
@@ -135,11 +167,52 @@ class AppState: ObservableObject {
     /// search lands on a specific asset (serial / tag / name), distinct from
     /// `navigateToFilter` which drives the status filter.
     @Published var navigateToInventorySearch: String?
+    /// Snipe-IT asset to open in the Inventory tab on arrival — the exact
+    /// deep link from Recent Activity and global search.
+    @Published var navigateToAssetId: Int?
     /// DevOps work item to open in the Projects tab on arrival.
     @Published var navigateToWorkItemId: Int?
     /// GitHub twin of navigateToWorkItemId: the issue's web URL, which is
     /// how the Projects tab identifies a GitHub task.
     @Published var navigateToGitHubIssueUrl: String?
+    /// A `fleetmate://` pull, commit or pipeline link for Development to open.
+    @Published var pendingDevelopmentLink: FleetMateLink?
+    /// Bumped by ⌘K; the toolbar search field takes focus on each change.
+    @Published var globalSearchFocusRequest = 0
+    /// Why the last `fleetmate://` link could not be opened.
+    @Published var linkError: String?
+
+    /// Route a `fleetmate://` link to the tab that shows it.
+    func open(_ url: URL) {
+        do {
+            let link = try FleetMateLink.parse(url)
+            dbg.info("Opening link \(url.absoluteString)", category: "links")
+            switch link {
+            case .workItem(let id):
+                navigateToWorkItemId = id
+                navigateToTab = .projects
+            case .gitHubIssue(let owner, let repo, let number):
+                navigateToGitHubIssueUrl = "https://github.com/\(owner)/\(repo)/issues/\(number)"
+                navigateToTab = .projects
+            case .device(let id):
+                navigateToDeviceId = id
+                navigateToTab = .devices
+            case .asset(let id):
+                navigateToAssetId = id
+                navigateToTab = .inventory
+            case .ticket(let id):
+                navigateToTicketId = id
+                navigateToTab = .tickets
+            case .user, .group:
+                navigateToTab = .identity
+            default:
+                pendingDevelopmentLink = link
+                navigateToTab = .development
+            }
+        } catch {
+            linkError = error.localizedDescription
+        }
+    }
     /// A filter to apply in a module tab on arrival — how dashboard chart
     /// wedges/bars deep-link into their section pre-filtered.
     @Published var navigateToModuleFilter: ModuleFilterLink?
@@ -191,7 +264,7 @@ class AppState: ObservableObject {
     private var isPreloadingAllData = false
     private var preloadAllDataRequested = false
     private var sharedQueriesLoadInFlight = false
-    /// Snipe activity log for the dashboard feed — cached so tab switches
+    /// Snipe activity log for the Recent Activity feed — cached so tab switches
     /// don't blank the feed while it refetches.
     @Published var cachedSnipeActivity: [SnipeActivityLog] = []
     /// Device members per group id, filled at launch right after the groups
@@ -214,9 +287,20 @@ class AppState: ObservableObject {
     /// The dashboard's task tables (DevOps work items + GitHub issues) —
     /// AppState-owned for the same tab-switch-survival reason as the PR queue.
     let dashboardTasks = DashboardTasksModel()
+    /// The numbers behind every tab's Widgets row, kept across tab switches.
+    let widgetMetrics = WidgetMetrics()
     /// Development tab: the wide PR queue, GitHub inbox and activity feed,
     /// kept across tab switches.
     let development = DevelopmentModel()
+    /// The Handbook and the shared agent skills, from FleetMate's own copies.
+    let knowledge = KnowledgeStore()
+
+    /// Begin keeping the Handbook and skills copies current. Uses the Azure
+    /// DevOps sign-in when it is ready; before that, git's own credentials.
+    func startKnowledge() {
+        knowledge.configure(config)
+        knowledge.start { [weak self] in await self?.devOpsService.currentToken() }
+    }
 
     /// Everything the Projects tab loads from Azure DevOps and GitHub.
     ///
@@ -243,6 +327,10 @@ class AppState: ObservableObject {
 
     // Services (lazy initialization)
     lazy var graphService: GraphService = GraphService(config: config)
+    /// Apple School / Business Manager for the Devices tab's Mac view.
+    let appleOrg = AppleOrgStore()
+    /// Windows Autopilot identities, matched to Intune records in Devices.
+    let autopilot = AutopilotStore()
     lazy var devOpsService: AzureDevOpsService = AzureDevOpsService(config: config)
     lazy var devOpsSsoService: DevOpsSsoService = DevOpsSsoService(tenantId: config.devopsTenantId ?? config.graphTenantId)
     lazy var tdxService: TdxService = TdxService(config: config)
@@ -502,6 +590,24 @@ class AppState: ObservableObject {
     /// Warm the aze elevation sessions (Intune → devices, Entra → identity) so
     /// the ~30s container cold start is paid once at launch rather than on the
     /// user's first action. No-op outside aze mode.
+    /// Fill the tickets cache for the Dashboard. Safe to call again: a call
+    /// made before TDX sign-in finishes fails quietly and the sign-in retries.
+    func preloadTickets() async {
+        guard config.isTdxConfigured else { return }
+        dbg.info("Preloading tickets...", category: "preload")
+        do {
+            var search = TicketSearchRequest(maxResults: 500)
+            if let groupId = config.tdxResponsibleGroupId {
+                search.responsibleGroupIds = [groupId]
+            }
+            let tickets = try await tdxService.searchTickets(search: search, maxResults: 500)
+            updateTicketsCache(tickets)
+            dbg.info("Tickets preloaded: \(tickets.count) tickets", category: "preload")
+        } catch {
+            dbg.error("Tickets preload FAILED: \(error)", category: "preload")
+        }
+    }
+
     func warmElevationSessions() async {
         guard config.graphUsesAze else { azeSessionState = .direct; return }
         azeSessionState = .warming
@@ -633,6 +739,7 @@ class AppState: ObservableObject {
 
     /// Preload all data sources concurrently in the background
     func preloadAllData() async {
+        startKnowledge()
         guard !isPreloadingAllData else {
             preloadAllDataRequested = true
             dbg.info("preloadAllData already running; queued one reconciliation", category: "preload")
@@ -687,18 +794,7 @@ class AppState: ObservableObject {
             // Preload tickets
             if config.isTdxConfigured && !isTicketsCacheValid {
                 group.addTask { @MainActor in
-                    dbg.info("Preloading tickets...", category: "preload")
-                    do {
-                        var search = TicketSearchRequest(maxResults: 500)
-                        if let groupId = self.config.tdxResponsibleGroupId {
-                            search.responsibleGroupIds = [groupId]
-                        }
-                        let tickets = try await self.tdxService.searchTickets(search: search, maxResults: 500)
-                        self.updateTicketsCache(tickets)
-                        dbg.info("Tickets preloaded: \(tickets.count) tickets", category: "preload")
-                    } catch {
-                        dbg.error("Tickets preload FAILED: \(error)", category: "preload")
-                    }
+                    await self.preloadTickets()
                 }
             }
 
@@ -1009,6 +1105,13 @@ class AppState: ObservableObject {
         tdxAuthenticatedUserName = userName
         showTdxSsoLogin = false
         authManager.update(.tdx, state: .valid(user: userName, expiry: expiry))
+
+        // Launch preloads tickets in parallel with this sign-in and usually
+        // loses the race (notAuthenticated), leaving the Dashboard at zero
+        // tickets. Load them now that the session exists.
+        if !isTicketsCacheValid {
+            Task { await preloadTickets() }
+        }
         
         // Resolve the actual TDX UID from the email — SSO returns email, not TDX UID
         if let email = userId, !email.isEmpty {

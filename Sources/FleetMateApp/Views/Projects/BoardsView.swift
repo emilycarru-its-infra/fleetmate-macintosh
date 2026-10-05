@@ -781,7 +781,18 @@ struct BoardsView: View {
 
     private var flatList: some View {
         let tasks = flatTasks
-        return Group {
+        return VStack(spacing: 0) {
+            if viewMode == .mine {
+                HandbookReminderCard(model: appState.handbookReminders)
+                    .onAppear { appState.handbookReminders.load(appState: appState) }
+            }
+            flatListBody(tasks)
+        }
+    }
+
+    @ViewBuilder
+    private func flatListBody(_ tasks: [UnifiedTask]) -> some View {
+        Group {
             if tasks.isEmpty {
                 ContentUnavailableView(
                     viewMode == .mine ? "Nothing assigned to you" : "No recent work items",

@@ -74,6 +74,8 @@ class AppState: ObservableObject {
 
     /// The bottom terminal panel's sessions, shared by every tab.
     let terminals = AgentTerminalStore()
+    /// Finished work items with no Handbook note, for the Projects reminder.
+    let handbookReminders = HandbookRemindersModel()
     /// What the visible tab has selected, written to `FLEETMATE_CONTEXT`.
     @Published var agentSelection: AgentSelection?
 

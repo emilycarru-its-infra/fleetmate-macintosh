@@ -143,6 +143,7 @@ struct ContentView: View {
                     appState.attemptSilentSnipeSso()
                 }
             }
+            .actionErrorBanner($appState.linkError, title: "Couldn't open link")
             .onChange(of: appState.navigateToTab) { _, newTab in
                 if let tab = newTab {
                     appState.selectedTab = tab

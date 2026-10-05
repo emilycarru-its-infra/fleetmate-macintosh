@@ -11,6 +11,10 @@ struct GlobalSearchResult: Identifiable, Hashable {
         case inventory = "Inventory"
         case tickets = "Tickets"
         case workItems = "Work Items"
+        case pullRequests = "Pull Requests"
+        case issues = "Issues"
+        case commits = "Commits"
+        case pipelines = "Pipeline Runs"
         case users = "Users"
         case groups = "Groups"
 
@@ -20,6 +24,10 @@ struct GlobalSearchResult: Identifiable, Hashable {
             case .inventory: return "shippingbox"
             case .tickets:   return "ticket"
             case .workItems: return "list.bullet.rectangle"
+            case .pullRequests: return "arrow.triangle.pull"
+            case .issues: return "smallcircle.filled.circle"
+            case .commits: return "point.3.connected.trianglepath.dotted"
+            case .pipelines: return "play.circle"
             case .users:     return "person"
             case .groups:    return "person.3"
             }
@@ -39,6 +47,9 @@ struct GlobalSearchResult: Identifiable, Hashable {
     var workItemId: Int?
     var inventoryFilter: String?
     var assetId: Int?
+    /// Pull requests, issues, commits and runs open through their
+    /// fleetmate:// link, the same route an outside link takes.
+    var link: FleetMateLink?
 }
 
 /// A work-item id the way people actually type it: bare digits, or carrying a
@@ -72,6 +83,10 @@ enum GlobalSearchScanner {
         results += assets(query, appState.cachedAssets)
         results += tickets(query, appState.cachedTickets)
         results += workItems(query, appState.cachedWorkItems)
+        results += pullRequests(query, appState.development.queue.pullRequests)
+        results += issues(query, appState.dashboardTasks.issues)
+        results += commits(query, appState.development.repositoryCommits)
+        results += pipelineRuns(query, appState.development.pipelineRuns)
         results += users(query, appState.cachedEntraUsers)
         results += groups(query, appState.cachedGroups)
         return results
@@ -189,6 +204,120 @@ enum GlobalSearchScanner {
             matchLabel: matchLabel,
             workItemId: item.id
         )
+    }
+
+    /// A number the way people paste it: `27391`, `#27391`, `!27391`.
+    private static func number(_ q: String) -> Int? {
+        var text = q.trimmingCharacters(in: .whitespaces)
+        if text.hasPrefix("#") || text.hasPrefix("!") { text.removeFirst() }
+        guard !text.isEmpty, text.count <= 10, text.allSatisfy(\.isNumber) else { return nil }
+        return Int(text)
+    }
+
+    private static func pullRequests(_ q: String, _ prs: [UnifiedPullRequest]) -> [GlobalSearchResult] {
+        let wanted = number(q)
+        return prs.compactMap { pr -> GlobalSearchResult? in
+            let matched: (String, String)?
+            if let wanted {
+                matched = pr.number == wanted ? ("Number", "\(pr.number)") : nil
+            } else {
+                matched = firstMatch(q, [
+                    ("Title", pr.title), ("Repository", "\(pr.container)/\(pr.repository)"),
+                    ("Author", pr.authorName), ("Branch", pr.sourceBranch),
+                ])
+            }
+            guard let (label, value) = matched else { return nil }
+            let host: FleetMateLink.Host = pr.source == .gitHub
+                ? .gitHub(owner: pr.container, repo: pr.repository)
+                : .azureDevOps(project: pr.container, repo: pr.repository)
+            return GlobalSearchResult(
+                category: .pullRequests, id: "pr-\(pr.id)",
+                title: pr.title,
+                subtitle: ["\(pr.source == .gitHub ? "#" : "!")\(pr.number)", "\(pr.container)/\(pr.repository)", pr.authorName]
+                    .joined(separator: " · "),
+                matchLabel: "\(label): \(value)",
+                link: .pullRequest(host, number: pr.number))
+        }
+        .prefix(perCategoryLimit).map { $0 }
+    }
+
+    private static func issues(_ q: String, _ issues: [GitHubIssueSummary]) -> [GlobalSearchResult] {
+        let wanted = number(q)
+        return issues.compactMap { issue -> GlobalSearchResult? in
+            let matched: (String, String)?
+            if let wanted {
+                matched = issue.number == wanted ? ("Number", "#\(issue.number)") : nil
+            } else {
+                matched = firstMatch(q, [("Title", issue.title), ("Repository", issue.repository), ("Author", issue.authorLogin)])
+            }
+            guard let (label, value) = matched else { return nil }
+            // The web URL carries the owner the summary does not.
+            let link = URL(string: issue.webUrl).flatMap { try? FleetMateLink.parseWeb($0) }
+            return GlobalSearchResult(
+                category: .issues, id: "issue-\(issue.id)",
+                title: issue.title,
+                subtitle: ["#\(issue.number)", issue.repository, issue.state].joined(separator: " · "),
+                matchLabel: "\(label): \(value)",
+                link: link)
+        }
+        .prefix(perCategoryLimit).map { $0 }
+    }
+
+    private static func commits(_ q: String, _ repos: [RepositoryCommits]) -> [GlobalSearchResult] {
+        let needle = q.trimmingCharacters(in: .whitespaces).lowercased()
+        let looksLikeSHA = needle.count >= 7 && needle.allSatisfy(\.isHexDigit)
+        var out: [GlobalSearchResult] = []
+        for repo in repos {
+            for commit in repo.commits {
+                let matched: (String, String)?
+                if looksLikeSHA {
+                    matched = commit.id.lowercased().hasPrefix(needle) ? ("SHA", String(commit.id.prefix(10))) : nil
+                } else {
+                    matched = firstMatch(q, [("Message", commit.subject), ("Author", commit.authorName)])
+                }
+                guard let (label, value) = matched else { continue }
+                let host: FleetMateLink.Host = repo.source == .gitHub
+                    ? .gitHub(owner: repo.container, repo: repo.repository)
+                    : .azureDevOps(project: repo.container, repo: repo.repository)
+                out.append(GlobalSearchResult(
+                    category: .commits, id: "commit-\(repo.id)-\(commit.id)",
+                    title: commit.subject,
+                    subtitle: [String(commit.id.prefix(7)), repo.displayName, commit.authorName ?? ""]
+                        .filter { !$0.isEmpty }.joined(separator: " · "),
+                    matchLabel: "\(label): \(value)",
+                    link: .commit(host, sha: commit.id)))
+                if out.count >= perCategoryLimit { return out }
+            }
+        }
+        return out
+    }
+
+    private static func pipelineRuns(_ q: String, _ runs: [PipelineRun]) -> [GlobalSearchResult] {
+        let wanted = number(q)
+        return runs.compactMap { run -> GlobalSearchResult? in
+            let matched: (String, String)?
+            if let wanted {
+                matched = run.runId == wanted ? ("Run", "\(run.runId)")
+                    : (run.runNumber == "\(wanted)" ? ("Run number", run.runNumber) : nil)
+            } else {
+                matched = firstMatch(q, [
+                    ("Pipeline", run.pipelineName), ("Run", run.runNumber),
+                    ("Branch", run.branch), ("Repository", run.repository),
+                ])
+            }
+            guard let (label, value) = matched else { return nil }
+            let link: FleetMateLink = run.source == .gitHub
+                ? .gitHubRun(owner: run.container, repo: run.repository ?? "", runId: run.runId)
+                : .azureDevOpsRun(project: run.container, runId: run.runId)
+            return GlobalSearchResult(
+                category: .pipelines, id: "run-\(run.id)",
+                title: "\(run.pipelineName) \(run.runNumber)",
+                subtitle: [run.status.displayName, run.container, run.branch ?? ""]
+                    .filter { !$0.isEmpty }.joined(separator: " · "),
+                matchLabel: "\(label): \(value)",
+                link: link)
+        }
+        .prefix(perCategoryLimit).map { $0 }
     }
 
     private static func users(_ q: String, _ users: [EntraUser]) -> [GlobalSearchResult] {

@@ -63,7 +63,7 @@ struct OnboardingSummaryStep: View {
                                 ForEach(wizardState.testResults) { result in
                                     HStack(spacing: 8) {
                                         Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                            .foregroundStyle(result.success ? .green : .red)
+                                            .foregroundStyle(result.success ? .green : .orange)
                                         Text(result.service).appFont(.body, weight: .medium)
                                         Spacer()
                                         Text(result.message)
@@ -201,7 +201,7 @@ struct OnboardingSummaryStep: View {
         if let result = wizardState.testResults.first(where: { $0.service == service }) {
             Spacer()
             Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .foregroundStyle(result.success ? .green : .red)
+                .foregroundStyle(result.success ? .green : .orange)
                 .appFont(.caption)
         }
     }

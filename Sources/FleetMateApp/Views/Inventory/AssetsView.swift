@@ -891,7 +891,7 @@ struct AssetDetailSidebar: View {
                             if let error = saveError {
                                 Text(error)
                                     .appFont(.caption)
-                                    .foregroundColor(.red)
+                                    .foregroundColor(.orange)
                                     .lineLimit(2)
                             }
                         }
@@ -1451,7 +1451,7 @@ struct DetailFieldRow: View {
                 if let saveError {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .appFont(.caption)
-                        .foregroundColor(.red)
+                        .foregroundColor(.orange)
                         .help(saveError)
                 }
             }
@@ -1508,7 +1508,7 @@ struct LifecycleBar: View {
                     Capsule()
                         .fill(Color.secondary.opacity(0.15))
                     Capsule()
-                        .fill(fraction >= 1 ? Color.red : Color.orange)
+                        .fill(fraction >= 1 ? Color.orange : Color.orange)
                         .frame(width: max(geo.size.width * fraction, 4))
                 }
             }
@@ -1623,7 +1623,7 @@ struct ReAllocateSheet: View {
             if let error = errorMessage {
                 Text(error)
                     .appFont(.caption)
-                    .foregroundColor(.red)
+                    .foregroundColor(.orange)
             }
 
             Spacer()

@@ -172,7 +172,7 @@ struct GitHubIssueSidebarView: View {
             if let error = actionError {
                 Text(error)
                     .appFont(.caption2)
-                    .foregroundColor(.red)
+                    .foregroundColor(.orange)
                     .lineLimit(1)
             }
 
@@ -504,7 +504,7 @@ struct GitHubIssueSidebarView: View {
                                   systemImage: detail.state == "open" ? "xmark.circle" : "arrow.counterclockwise.circle")
                         }
                         .buttonStyle(.bordered)
-                        .foregroundColor(detail.state == "open" ? .red : .green)
+                        .foregroundColor(detail.state == "open" ? .orange : .green)
 
                         // Lock / Unlock
                         Button(action: { detail.locked ? unlockIssue() : lockIssue() }) {
@@ -527,7 +527,7 @@ struct GitHubIssueSidebarView: View {
                         Label("Delete Issue", systemImage: "trash")
                     }
                     .buttonStyle(.bordered)
-                    .foregroundColor(.red)
+                    .foregroundColor(.orange)
                     .disabled(!canEdit)
                 }
                 .padding(.leading, 4)

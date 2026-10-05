@@ -668,7 +668,7 @@ struct QueryWorkItemRow: View {
         case "task":
             return ("list.clipboard.fill", .yellow)
         case "bug":
-            return ("ladybug.fill", .red)
+            return ("ladybug.fill", .orange)
         case "issue", "impediment":
             return ("exclamationmark.triangle.fill", .pink)
         default:
@@ -687,7 +687,7 @@ struct QueryWorkItemRow: View {
         case "closed", "done", "completed":
             return .green
         case "removed":
-            return .red
+            return .orange
         default:
             return .blue
         }

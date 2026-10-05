@@ -266,7 +266,7 @@ struct AzDoTaskSidebarView: View {
             if let error = actionError {
                 Text(error)
                     .appFont(.caption)
-                    .foregroundColor(.red)
+                    .foregroundColor(.orange)
                     .lineLimit(1)
             }
 
@@ -944,7 +944,7 @@ struct AzDoTaskSidebarView: View {
         case "active", "doing", "in progress", "developing": return .orange
         case "resolved", "testing": return .purple
         case "closed", "done": return .green
-        case "removed": return .red
+        case "removed": return .orange
         default: return .secondary
         }
     }
@@ -1199,7 +1199,7 @@ struct AzDoTaskSidebarView: View {
                 if let error = linkError {
                     Text(error)
                         .appFont(.caption)
-                        .foregroundColor(.red)
+                        .foregroundColor(.orange)
                 }
 
                 if isLinking {

@@ -36,6 +36,9 @@ private struct DevicesContentView: View {
     @State private var showRetireConfirmation = false
     @State private var showFreshStartConfirmation = false
     @State private var showOffboardConfirmation = false
+    @State private var showAutopilotResetConfirmation = false
+    @State private var showDeleteRecordConfirmation = false
+    @State private var showPushCimianConfirmation = false
     @State private var wipeOptions = WipeOptions()
     @State private var freshStartKeepUserData = true
     @State private var offboardPlan = OffboardPlan()
@@ -193,6 +196,9 @@ private struct DevicesContentView: View {
                     showRetireConfirmation: $showRetireConfirmation,
                     showFreshStartConfirmation: $showFreshStartConfirmation,
                     showOffboardConfirmation: $showOffboardConfirmation,
+                    showAutopilotResetConfirmation: $showAutopilotResetConfirmation,
+                    showDeleteRecordConfirmation: $showDeleteRecordConfirmation,
+                    showPushCimianConfirmation: $showPushCimianConfirmation,
                     wipeOptions: $wipeOptions,
                     freshStartKeepUserData: $freshStartKeepUserData,
                     offboardPlan: $offboardPlan,
@@ -276,6 +282,24 @@ private struct DevicesContentView: View {
                 Button("Fresh Start", role: .destructive) { performFreshStart() }
             } message: {
                 Text("This will reinstall Windows on \(windowsSelection.count) device(s)\(freshStartKeepUserData ? ", preserving user data" : ", removing user data"). Preinstalled OEM apps are removed and the device stays enrolled.")
+            }
+            .alert("Confirm Autopilot Reset", isPresented: $showAutopilotResetConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Autopilot Reset", role: .destructive) { performAutopilotReset() }
+            } message: {
+                Text("Autopilot-reset \(selectedDevices.count) device(s)? Kept: the Entra join and the Intune enrollment. Removed: user data, user accounts, apps and settings. The device returns to the out-of-box experience and re-provisions.")
+            }
+            .alert("Confirm Delete Record", isPresented: $showDeleteRecordConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete Record", role: .destructive) { performDeleteRecord() }
+            } message: {
+                Text("Delete the Intune record for \(selectedDevices.count) device(s)? This is server-side only and cannot be undone from here. A wipe still pending on a record is cancelled with it.")
+            }
+            .alert("Confirm Push Cimian Run", isPresented: $showPushCimianConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Push Cimian Run") { performPushCimian() }
+            } message: {
+                Text("Force an Intune sync on \(selectedDevices.count) device(s) so the Cimian remediation creates its trigger file on check-in.")
             }
             .alert("Confirm Offboard", isPresented: $showOffboardConfirmation) {
                 Button("Cancel", role: .cancel) { }
@@ -644,6 +668,72 @@ private struct DevicesContentView: View {
         }
     }
 
+    /// Autopilot Reset: a wipe with `keepEnrollmentData: true` and
+    /// `keepUserData: false`, so the device returns to OOBE still Entra-joined
+    /// and enrolled. Fresh Start (`cleanWindowsDevice`) is a different action.
+    private func performAutopilotReset() {
+        let targets = selectedDevices
+        guard !targets.isEmpty else { return }
+        Task {
+            isPerformingAction = true
+            actionMessage = "Autopilot-resetting \(targets.count) device(s)..."
+            defer { isPerformingAction = false }
+            do {
+                let results = try await appState.graphService.wipeDevices(targets, options: .autopilotReset)
+                let successful = results.filter { $0.success }.count
+                let failed = results.count - successful
+                actionMessage = failed == 0
+                    ? "Autopilot reset sent to \(successful) device(s)"
+                    : "Autopilot reset sent to \(successful), \(failed) failed"
+            } catch {
+                actionMessage = "Error: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func performDeleteRecord() {
+        let targets = selectedDevices
+        guard !targets.isEmpty else { return }
+        Task {
+            isPerformingAction = true
+            actionMessage = "Deleting \(targets.count) record(s)..."
+            defer { isPerformingAction = false }
+            do {
+                let results = try await appState.graphService.deleteManagedDevices(targets.map(\.id))
+                let successful = results.filter { $0.success }.count
+                let failed = results.count - successful
+                actionMessage = failed == 0
+                    ? "Deleted \(successful) record(s)"
+                    : "Deleted \(successful), \(failed) failed"
+                if successful > 0 { loadDevices() }
+            } catch {
+                actionMessage = "Error: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Cimian runs from a remediation that drops a headless trigger file;
+    /// forcing a sync is what makes the device pick it up now.
+    private func performPushCimian() {
+        let targets = selectedDevices
+        guard !targets.isEmpty else { return }
+        Task {
+            isPerformingAction = true
+            actionMessage = "Pushing Cimian run to \(targets.count) device(s)..."
+            defer { isPerformingAction = false }
+            do {
+                let results = try await appState.graphService.syncDevices(targets.map(\.id))
+                let successful = results.filter { $0.success }.count
+                let failed = results.count - successful
+                actionMessage = failed == 0
+                    ? "Cimian push initiated on \(successful) device(s) - sync forced, remediation will create trigger file on check-in"
+                    : "Push initiated on \(successful), \(failed) sync(s) failed"
+            } catch {
+                actionMessage = "Error: \(error.localizedDescription)"
+            }
+        }
+    }
+
     private func performOffboard() {
         let targets = selectedDevices
         guard !targets.isEmpty else { return }
@@ -750,6 +840,9 @@ struct DeviceActionsPanel: View {
     @Binding var showRetireConfirmation: Bool
     @Binding var showFreshStartConfirmation: Bool
     @Binding var showOffboardConfirmation: Bool
+    @Binding var showAutopilotResetConfirmation: Bool
+    @Binding var showDeleteRecordConfirmation: Bool
+    @Binding var showPushCimianConfirmation: Bool
     @Binding var wipeOptions: WipeOptions
     @Binding var freshStartKeepUserData: Bool
     @Binding var offboardPlan: OffboardPlan
@@ -777,6 +870,8 @@ struct DeviceActionsPanel: View {
     private var hasWindows: Bool { platforms.contains(.windows) }
     private var hasApple: Bool { platforms.contains(.macOS) || platforms.contains(.ios) }
     private var isMixedPlatform: Bool { platforms.count > 1 }
+    /// Every selected device is an enrolled Windows device.
+    private var allWindows: Bool { allEnrolled && platforms == [.windows] }
     private var windowsCount: Int { selectedDevices.filter { $0.platform == .windows }.count }
 
     var body: some View {
@@ -1043,6 +1138,80 @@ struct DeviceActionsPanel: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(.orange)
+                    .disabled(isPerformingAction)
+                }
+            }
+
+            Divider()
+        }
+
+        // Autopilot Reset — every selected device must be enrolled Windows
+        if allWindows {
+            ActionAccordion(
+                title: "Autopilot Reset",
+                icon: "arrow.counterclockwise.circle",
+                isExpanded: expandedSections.contains("autopilotreset"),
+                onToggle: { toggleSection("autopilotreset") }
+            ) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Return the selected devices to the out-of-box experience. Keeps the Entra join and Intune enrollment; removes user data, apps and settings.")
+                        .appFont(.caption)
+                        .foregroundColor(.secondary)
+                    Button(action: { showAutopilotResetConfirmation = true }) {
+                        Label("Autopilot Reset", systemImage: "arrow.counterclockwise.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .disabled(isPerformingAction)
+                }
+            }
+
+            Divider()
+        }
+
+        // Delete Intune Record — every selected device must have a record
+        if allEnrolled {
+            ActionAccordion(
+                title: "Delete Intune Record",
+                icon: "trash.slash",
+                isExpanded: expandedSections.contains("deleterecord"),
+                onToggle: { toggleSection("deleterecord") }
+            ) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Delete the Intune device record server-side only. Nothing is sent to the device; use for stale or duplicate records.")
+                        .appFont(.caption)
+                        .foregroundColor(.secondary)
+                    Button(action: { showDeleteRecordConfirmation = true }) {
+                        Label("Delete Record", systemImage: "trash")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .disabled(isPerformingAction)
+                }
+            }
+
+            Divider()
+        }
+
+        // Push Cimian Run — Windows only
+        if allWindows {
+            ActionAccordion(
+                title: "Push Cimian Run",
+                icon: "shippingbox",
+                isExpanded: expandedSections.contains("cimian"),
+                onToggle: { toggleSection("cimian") }
+            ) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Trigger an immediate Cimian managed software update on selected devices. Creates a .cimian.headless trigger file via Intune remediation. CimianWatcher picks it up within 10 seconds.")
+                        .appFont(.caption)
+                        .foregroundColor(.secondary)
+                    Button(action: { showPushCimianConfirmation = true }) {
+                        Label("Push Cimian Run", systemImage: "shippingbox")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
                     .disabled(isPerformingAction)
                 }
             }

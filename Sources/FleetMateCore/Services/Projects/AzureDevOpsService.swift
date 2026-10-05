@@ -64,6 +64,13 @@ public class AzureDevOpsService {
     /// that gated on `hasValidToken` alone stopped asking once it lapsed and
     /// never reached the refresh inside `request`, so the app looked signed
     /// out after sitting idle. Returns whether a valid token is now held.
+    /// The current bearer token, refreshed first if it has lapsed — for
+    /// tools outside this service, like git, that need the same sign-in.
+    public func currentToken() async -> String? {
+        guard await ensureValidToken() else { return nil }
+        return bearerToken
+    }
+
     @discardableResult
     public func ensureValidToken() async -> Bool {
         if hasValidToken { return true }
@@ -372,7 +379,9 @@ public class AzureDevOpsService {
 
     /// States that mean a work item is finished, across the Agile, Scrum,
     /// Basic and CMMI processes.
-    public static let finishedWorkItemStates = ["Closed", "Removed", "Done", "Completed"]
+    /// States that take a work item off the user's open list. Resolved counts:
+    /// the work is done and only awaits closing, so it is not something to do.
+    public static let finishedWorkItemStates = ["Closed", "Removed", "Done", "Completed", "Resolved"]
 
     /// Every open work item assigned to the signed-in user, in every project of
     /// the organization, most recently changed first. `@Me` resolves to the
@@ -1020,6 +1029,21 @@ public class AzureDevOpsService {
             path: "/_apis/git/repositories/\(encodedRepoId)/commits/\(encodedCommit)?api-version=7.0",
             forProject: project
         )
+    }
+
+    /// One pull request in the queue's unified shape, by project, repository
+    /// name and id — what a `fleetmate://pull/…` link names.
+    public func getUnifiedPullRequest(project: String, repository: String, id: Int) async throws -> UnifiedPullRequest? {
+        let pr = try await getPullRequest(repositoryId: repository, pullRequestId: id, project: project)
+        return mapPullRequest(pr, project: project, relation: .involved)
+    }
+
+    /// One pipeline run (build) by id, in the Pipelines list's shape.
+    public func getPipelineRun(project: String, buildId: Int) async throws -> PipelineRun {
+        let encodedProject = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        let build: AzdoBuild = try await request("GET", path: "/_apis/build/builds/\(buildId)?api-version=7.0",
+                                                 forProject: encodedProject)
+        return Self.mapBuild(build, project: project)
     }
 
     /// Fetch a single pull request by ID.

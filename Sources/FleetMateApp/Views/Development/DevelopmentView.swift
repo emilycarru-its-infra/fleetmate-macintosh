@@ -285,8 +285,7 @@ final class DevelopmentModel: ObservableObject {
         }
     }
 
-    // Activity sidebar
-    @Published var showActivity = true
+    // Comment activity, shown in the toolbar's Recent Activity popover.
     @Published var hideMyComments = false
     @Published var searchText = ""
 
@@ -636,19 +635,16 @@ private struct DevelopmentContent: View {
     @ObservedObject var model: DevelopmentModel
 
     private let listWidth: CGFloat = 470
-    private let activityWidth: CGFloat = 330
 
     var body: some View {
-        HStack(spacing: 0) {
-            leftPane
-                .frame(width: listWidth)
-            Divider()
-            detailPane
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if model.showActivity {
+        VStack(spacing: 0) {
+            DevelopmentWidgetsSection(model: model)
+            HStack(spacing: 0) {
+                leftPane
+                    .frame(width: listWidth)
                 Divider()
-                ActivityPane(model: model)
-                    .frame(width: activityWidth)
+                detailPane
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .searchable(text: $model.searchText, prompt: searchPrompt)
@@ -722,13 +718,6 @@ private struct DevelopmentContent: View {
                 .disabled(model.unreadCount == 0)
                 .help("Mark every notification as read")
             }
-
-            Button {
-                model.showActivity.toggle()
-            } label: {
-                Label("Activity", systemImage: model.showActivity ? "sidebar.trailing" : "sidebar.trailing")
-            }
-            .help(model.showActivity ? "Hide the comment activity sidebar" : "Show comments across all pull requests")
 
             Button(action: { model.loadAll(appState: appState, force: true) }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
@@ -1340,56 +1329,9 @@ struct InboxRow: View {
 }
 
 
-// MARK: - Activity sidebar
+// MARK: - Comment activity
 
-/// Comments and reviews across every loaded pull request, newest first.
-/// Click a row to select its pull request; the link icon opens the comment.
-struct ActivityPane: View {
-    @ObservedObject var model: DevelopmentModel
-    @EnvironmentObject private var appState: AppState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Text("Activity").appFont(.headline)
-                Spacer()
-                Toggle("Hide mine", isOn: $model.hideMyComments)
-                    .toggleStyle(.checkbox)
-                    .appFont(.caption)
-                    .help("Hide comments you wrote")
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            Divider()
-
-            let entries = model.activity(appState: appState)
-            if entries.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "bubble.left.and.bubble.right").appFont(.title2).foregroundStyle(.secondary)
-                    Text(model.isLoadingPullRequests ? "Loading…" : "No recent comments.")
-                        .appFont(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(entries) { entry in
-                            ActivityRow(
-                                entry: entry,
-                                isSelected: model.selectedPullRequest?.id == entry.pullRequest.id
-                            ) {
-                                model.selectedPullRequest = entry.pullRequest
-                            }
-                            Divider().padding(.leading, 12)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
+/// One comment in the Recent Activity popover's Development feed.
 struct ActivityRow: View {
     let entry: DevelopmentModel.ActivityEntry
     let isSelected: Bool

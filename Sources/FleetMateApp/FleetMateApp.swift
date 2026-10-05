@@ -74,7 +74,7 @@ class AppState: ObservableObject {
     /// write tab state — none of them targeting Inventory. Until the jump is
     /// reproduced with this in place, the log is the only way to name the
     /// caller. Cheap enough to keep (fires only on actual changes).
-    @Published var selectedTab: AppTab = .dashboard {
+    @Published var selectedTab: AppTab = .development {
         didSet {
             guard oldValue != selectedTab else { return }
             let frames = Thread.callStackSymbols.dropFirst(2).prefix(5)
@@ -194,7 +194,7 @@ class AppState: ObservableObject {
     private var isPreloadingAllData = false
     private var preloadAllDataRequested = false
     private var sharedQueriesLoadInFlight = false
-    /// Snipe activity log for the dashboard feed — cached so tab switches
+    /// Snipe activity log for the Recent Activity feed — cached so tab switches
     /// don't blank the feed while it refetches.
     @Published var cachedSnipeActivity: [SnipeActivityLog] = []
     /// Device members per group id, filled at launch right after the groups
@@ -217,6 +217,8 @@ class AppState: ObservableObject {
     /// The dashboard's task tables (DevOps work items + GitHub issues) —
     /// AppState-owned for the same tab-switch-survival reason as the PR queue.
     let dashboardTasks = DashboardTasksModel()
+    /// The numbers behind every tab's Widgets row, kept across tab switches.
+    let widgetMetrics = WidgetMetrics()
     /// Development tab: the wide PR queue, GitHub inbox and activity feed,
     /// kept across tab switches.
     let development = DevelopmentModel()

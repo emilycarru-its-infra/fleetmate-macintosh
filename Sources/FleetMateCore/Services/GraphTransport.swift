@@ -188,9 +188,17 @@ public struct AzeGraphTransport: GraphTransport {
         }
     }
 
+    /// Runs one `az rest` command, waiting out Graph throttling. `az rest` prints
+    /// no response headers, so the wait is always the default backoff.
     private func execute(domain: GraphDomain, command: String) async throws -> Data {
-        let (out, code) = try await session.exec(domain, command: command, ttlHours: ttlHours)
-        if code == 0 { return Data(out.utf8) }
-        throw AzeError(exitCode: code, message: out)
+        try await GraphThrottle.withRetry("az rest (\(domain.rawValue))") {
+            let (out, code) = try await session.exec(domain, command: command, ttlHours: ttlHours)
+            if code == 0 { return Data(out.utf8) }
+            if GraphThrottle.isThrottledAzRestMessage(out) {
+                let status = out.lowercased().contains("service unavailable") ? 503 : 429
+                throw GraphThrottledError(statusCode: status, retryAfter: nil, underlying: out)
+            }
+            throw AzeError(exitCode: code, message: out)
+        }
     }
 }

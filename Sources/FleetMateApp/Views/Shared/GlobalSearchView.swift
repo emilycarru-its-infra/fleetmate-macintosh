@@ -38,6 +38,7 @@ struct GlobalSearchResult: Identifiable, Hashable {
     var ticketId: Int?
     var workItemId: Int?
     var inventoryFilter: String?
+    var assetId: Int?
 }
 
 /// A work-item id the way people actually type it: bare digits, or carrying a
@@ -129,7 +130,8 @@ enum GlobalSearchScanner {
                 subtitle: [asset.model?.name, asset.assignedTo?.name ?? asset.rtdLocation?.name]
                     .compactMap { $0 }.joined(separator: " · "),
                 matchLabel: "\(label): \(value)",
-                inventoryFilter: asset.serial ?? asset.assetTag ?? asset.displayName
+                inventoryFilter: asset.serial ?? asset.assetTag ?? asset.displayName,
+                assetId: asset.id
             )
         }
         .prefix(perCategoryLimit).map { $0 }

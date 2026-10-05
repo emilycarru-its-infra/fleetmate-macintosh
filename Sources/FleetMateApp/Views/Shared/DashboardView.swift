@@ -28,6 +28,7 @@ struct ActivityItem: Identifiable {
     let tab: AppTab
     var deviceId: String?
     var ticketId: Int?
+    var assetId: Int?
     /// Who/where context: ticket requestor, work-item area, device user,
     /// asset allocation. Middle column of the feed's grid.
     var context: String?
@@ -241,8 +242,10 @@ struct DashboardView: View {
         .frame(maxHeight: .infinity)
     }
 
-    private func navigate(to tab: AppTab, deviceId: String? = nil, ticketId: Int? = nil, filter: String? = nil) {
+    private func navigate(to tab: AppTab, deviceId: String? = nil, ticketId: Int? = nil,
+                          assetId: Int? = nil, filter: String? = nil) {
         if let deviceId { appState.navigateToDeviceId = deviceId }
+        if let assetId { appState.navigateToAssetId = assetId }
         if let ticketId { appState.navigateToTicketId = ticketId }
         if let filter { appState.navigateToFilter = filter }
         appState.navigateToTab = tab
@@ -338,8 +341,12 @@ struct DashboardView: View {
         case .devices:
             navigate(to: .devices, deviceId: hit.deviceId)
         case .inventory:
-            appState.navigateToInventorySearch = hit.inventoryFilter
-            navigate(to: .inventory)
+            if let assetId = hit.assetId {
+                navigate(to: .inventory, assetId: assetId)
+            } else {
+                appState.navigateToInventorySearch = hit.inventoryFilter
+                navigate(to: .inventory)
+            }
         case .tickets:
             navigate(to: .tickets, ticketId: hit.ticketId)
         case .workItems:
@@ -628,7 +635,7 @@ struct DashboardView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(filteredActivityItems) { item in
-                                Button(action: { navigate(to: item.tab, deviceId: item.deviceId, ticketId: item.ticketId) }) {
+                                Button(action: { navigate(to: item.tab, deviceId: item.deviceId, ticketId: item.ticketId, assetId: item.assetId) }) {
                                     // Same invisible-grid treatment as the task
                                     // tables: fixed columns so rows line up.
                                     HStack(spacing: 6) {
@@ -1156,6 +1163,7 @@ struct DashboardView: View {
                 items.append(ActivityItem(icon: "shippingbox", name: name,
                                           detail: a.statusLabel?.name ?? "",
                                           time: formatRelative(date), timestamp: date, tab: .inventory,
+                                          assetId: a.id,
                                           context: a.assignedTo?.name ?? a.rtdLocation?.name))
             }
         }
@@ -1173,12 +1181,16 @@ struct DashboardView: View {
             let dateStr = entry.createdAt?.value
             let date = dateStr.flatMap { parse($0) ?? dateFmt.date(from: $0) ?? dateFmtAlt.date(from: $0) }
             if let date = date, date > inventoryCutoff {
+                // The asset leads the row — "Assets Admins update" on every
+                // line said nothing about which asset changed.
                 let action = entry.actionType ?? "activity"
                 let itemName = entry.item?.name ?? "item"
-                let admin = entry.admin?.name ?? ""
-                items.append(ActivityItem(icon: "arrow.triangle.2.circlepath", name: "\(admin) \(action)".trimmingCharacters(in: .whitespaces),
-                                          detail: itemName,
-                                          time: formatRelative(date), timestamp: date, tab: .inventory))
+                let isAsset = (entry.item?.type ?? "asset").lowercased() == "asset"
+                items.append(ActivityItem(icon: "arrow.triangle.2.circlepath", name: itemName,
+                                          detail: action,
+                                          time: formatRelative(date), timestamp: date, tab: .inventory,
+                                          assetId: isAsset ? entry.item?.id : nil,
+                                          context: entry.admin?.name))
             }
         }
 

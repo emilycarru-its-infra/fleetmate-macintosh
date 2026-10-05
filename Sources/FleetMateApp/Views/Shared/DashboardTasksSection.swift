@@ -65,6 +65,9 @@ struct DashboardTasksPane: View {
     var repoFilter: String?
 
     private let rowLimit = 20
+    /// When set, each list shows only this many rows at their natural height
+    /// (no inner scroll) — the Projects tab's widget strip uses it.
+    var compactRows: Int? = nil
 
     /// The row being read in place. Rows link out through the context menu.
     @State private var lightboxTask: UnifiedTask?
@@ -167,10 +170,22 @@ struct DashboardTasksPane: View {
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 10)
                     Spacer(minLength: 0)
+                } else if let compactRows {
+                    VStack(alignment: .leading, spacing: 0) {
+                        let rows = Array(visibleWorkItems.prefix(compactRows))
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, item in
+                            workItemRow(item)
+                            if index < rows.count - 1 { Divider() }
+                        }
+                    }
+                    .onPreferenceChange(PathColumnWidthKey.self) { width in
+                        if width > pathColumnWidth { pathColumnWidth = ceil(width) }
+                    }
                 } else {
-                    // Capped: in the dashboard's outer ScrollView the height
-                    // proposal is unbounded, so without a ceiling this card's
-                    // ideal height is all ~200 rows.
+                    // The ideal height is fixed so ~200 rows never set the
+                    // card's height inside the dashboard's unbounded
+                    // ScrollView; the max is open so the list fills the space
+                    // when the pull-request column beside it is taller.
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
                             ForEach(Array(visibleWorkItems.enumerated()), id: \.element.id) { index, item in
@@ -184,7 +199,7 @@ struct DashboardTasksPane: View {
                             if width > pathColumnWidth { pathColumnWidth = ceil(width) }
                         }
                     }
-                    .frame(maxHeight: 540)
+                    .frame(minHeight: 240, idealHeight: 540, maxHeight: .infinity)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -265,9 +280,10 @@ struct DashboardTasksPane: View {
             emptyText: model.isLoadingIssues ? "Loading…" : "No open issues",
             errorText: model.issuesError
         ) {
-            ForEach(Array(visibleIssues.prefix(rowLimit).enumerated()), id: \.element.id) { index, issue in
+            let limit = compactRows ?? rowLimit
+            ForEach(Array(visibleIssues.prefix(limit).enumerated()), id: \.element.id) { index, issue in
                 issueRow(issue)
-                if index < min(visibleIssues.count, rowLimit) - 1 { Divider() }
+                if index < min(visibleIssues.count, limit) - 1 { Divider() }
             }
         }
     }

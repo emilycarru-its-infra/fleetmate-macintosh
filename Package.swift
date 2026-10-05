@@ -24,6 +24,8 @@ let package = Package(
         // Apple School and Business Manager API client. Pinned to a revision
         // because the newest tag predates the migration and release endpoints.
         .package(url: "https://github.com/rodchristiansen/asbmutil.git", revision: "0b43dbe53d2c6e9f4b46991edf0e9bb4823b56ac"),
+        // 1.12 added Metal shaders, which the Command Line Tools cannot compile.
+        .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", "1.11.2"..<"1.12.0"),
     ],
     targets: [
         // Shared library with services, models, and config
@@ -54,6 +56,7 @@ let package = Package(
             dependencies: [
                 "FleetMateCore",
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             path: "Sources/FleetMateApp"
         ),

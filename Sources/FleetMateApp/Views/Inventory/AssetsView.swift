@@ -83,6 +83,12 @@ struct AssetsView: View {
     @State private var selectedAssetIds: Set<Int> = []
     @State private var lastClickedIndex: Int?
     @State private var showReAllocateSheet = false
+    /// Row to bring into view after a deep link selects it.
+    @State private var scrollTarget: Int?
+    /// When a deep link last opened an asset. The click that chose a search
+    /// hit can land on the table that replaces the results panel; a row tap
+    /// this soon after is that same click, not a new choice.
+    @State private var linkOpenedAt: Date = .distantPast
 
     // Column state
     @State private var columnWidths: [AssetSortField: CGFloat] = [
@@ -155,6 +161,7 @@ struct AssetsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if appState.config.isSnipeConfigured { InventoryWidgetsSection(metrics: appState.widgetMetrics) }
             // Content
             if !appState.config.isSnipeConfigured {
                 VStack {
@@ -220,7 +227,9 @@ struct AssetsView: View {
             }
             consumeInventorySearch(appState.navigateToInventorySearch)
             consumeModuleFilter()
+            consumeAssetLink()
         }
+        .onChange(of: appState.navigateToAssetId) { _, _ in consumeAssetLink() }
         .onChange(of: appState.navigateToFilter) { _, filter in
             if let filter, !filter.isEmpty {
                 filters.selectedValues[.status] = [filter]
@@ -231,8 +240,13 @@ struct AssetsView: View {
             consumeInventorySearch(text)
         }
         .onChange(of: appState.navigateToModuleFilter) { _, _ in consumeModuleFilter() }
+        .onChange(of: selectedAsset?.id) { _, _ in
+            appState.agentSelection = selectedAsset.map(AgentSelection.init(asset:))
+        }
         .onChange(of: appState.cachedAssets) { _, newAssets in
             filters.buildFromAssets(newAssets)
+            // A link that arrived before the cache loaded lands now.
+            consumeAssetLink()
         }
         .sheet(isPresented: $showReAllocateSheet) {
             if let asset = selectedAsset {
@@ -331,6 +345,7 @@ struct AssetsView: View {
                     Divider()
 
                     // Data rows — vertical scroll inside the horizontal scroll so both axes sync
+                    ScrollViewReader { proxy in
                     ScrollView(.vertical, showsIndicators: true) {
                         LazyVStack(spacing: 0) {
                             ForEach(Array(filteredAssets.enumerated()), id: \.element.id) { idx, asset in
@@ -374,6 +389,7 @@ struct AssetsView: View {
                                     selectedAsset = asset
                                 })
                                 .onTapGesture {
+                                    guard Date().timeIntervalSince(linkOpenedAt) > 0.5 else { return }
                                     selectedAssetIds = [asset.id]
                                     selectedAsset = asset
                                     lastClickedIndex = idx
@@ -381,6 +397,12 @@ struct AssetsView: View {
                                 Divider().padding(.leading, 8)
                             }
                         }
+                    }
+                    .onChange(of: scrollTarget) { _, target in
+                        guard let target else { return }
+                        withAnimation { proxy.scrollTo(target, anchor: .center) }
+                        scrollTarget = nil
+                    }
                     }
                     .frame(height: max(100, geo.size.height - 33))
                     .frame(minWidth: max(totalW, geo.size.width))
@@ -500,6 +522,36 @@ struct AssetsView: View {
         }
     }
 
+    /// Open the asset a deep link names — from Recent Activity or global
+    /// search. Search text and filters are cleared so the selected row is
+    /// actually in the table, and the table scrolls to it. When the cache is
+    /// still loading the link waits; an asset the cache lacks is fetched.
+    private func consumeAssetLink() {
+        guard let id = appState.navigateToAssetId else { return }
+        if let hit = appState.cachedAssets.first(where: { $0.id == id }) {
+            appState.navigateToAssetId = nil
+            open(hit)
+            return
+        }
+        guard !appState.cachedAssets.isEmpty else { return }
+        appState.navigateToAssetId = nil
+        Task {
+            if let fetched = try? await appState.snipeService.getAsset(id: id) {
+                open(fetched)
+            }
+        }
+    }
+
+    private func open(_ asset: SnipeAsset) {
+        searchText = ""
+        filters.clearAll()
+        selectedAsset = asset
+        selectedAssetIds = [asset.id]
+        lastClickedIndex = filteredAssets.firstIndex { $0.id == asset.id }
+        scrollTarget = asset.id
+        linkOpenedAt = Date()
+    }
+
     /// Apply a dashboard widget's deep-linked filter (a status wedge or
     /// category bar).
     private func consumeModuleFilter() {
@@ -593,7 +645,12 @@ private let hiddenFields = Set(["Username"])
 
 // MARK: - Asset Detail Sidebar
 
+enum AssetDetailPane: String {
+    case details, history
+}
+
 struct AssetDetailSidebar: View {
+    @EnvironmentObject private var appState: AppState
     let asset: SnipeAsset
     let snipeUrl: String?
     let snipeService: SnipeService
@@ -613,6 +670,10 @@ struct AssetDetailSidebar: View {
     /// Listbox custom fields' options, keyed by db column — so editing a
     /// dropdown field offers its real choices instead of a text field.
     @State private var fieldListboxOptions: [String: [String]] = [:]
+
+    /// Details or History, kept while moving between assets so a run through
+    /// several assets' histories stays on History.
+    @AppStorage("assetDetailPane") private var pane: AssetDetailPane = .details
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -640,6 +701,15 @@ struct AssetDetailSidebar: View {
 
                     Spacer()
 
+                    Picker("", selection: $pane) {
+                        Text("Details").tag(AssetDetailPane.details)
+                        Text("History").tag(AssetDetailPane.history)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .fixedSize()
+
                     if asset.assignedTo != nil || asset.statusLabel?.statusMeta == "deployable" {
                         Button(action: onReAllocate) {
                             Label("Re-Allocate", systemImage: "person.2.arrow.trianglehead.counterclockwise")
@@ -653,16 +723,20 @@ struct AssetDetailSidebar: View {
                                 NSWorkspace.shared.open(url)
                             }
                         }) {
-                            Image(systemName: "globe")
+                            Label("Open in Snipe-IT", systemImage: "globe")
+                                .labelStyle(.iconOnly)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                         .help("Open in Snipe-IT")
                     }
                     Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .foregroundColor(.secondary)
+                        Label("Close", systemImage: "xmark")
+                            .labelStyle(.iconOnly)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Close")
                 }
 
                 HStack(alignment: .top, spacing: 12) {
@@ -716,6 +790,10 @@ struct AssetDetailSidebar: View {
 
             Divider()
 
+            if pane == .history {
+                AssetHistoryView(assetId: asset.id, snipeService: snipeService)
+                    .frame(maxHeight: .infinity)
+            } else {
             // Scrollable detail, in priority order: state and people first,
             // classification and dates second, the machine itself third,
             // money fourth, everything else after.
@@ -772,6 +850,8 @@ struct AssetDetailSidebar: View {
 
                     metadataCard
 
+                    HandbookRelatedSection(knowledge: appState.knowledge, terms: handbookTerms)
+
                     // Save button
                     if hasEdits {
                         HStack {
@@ -802,6 +882,7 @@ struct AssetDetailSidebar: View {
                 }
                 .padding()
             }
+            }
         }
         .background(Color(NSColor.controlBackgroundColor))
         .task {
@@ -811,6 +892,20 @@ struct AssetDetailSidebar: View {
             resetEditState()
             Task { await loadDropdownOptions() }
         }
+    }
+
+    /// Words that describe this asset to the Handbook: what it is, what runs
+    /// it, which fleet it is in.
+    private var handbookTerms: [String] {
+        let model = asset.model?.name ?? ""
+        // "MacBook Air (M1, 2020)" → "MacBook Air": the family, not the year.
+        let family = model.components(separatedBy: "(").first?.trimmingCharacters(in: .whitespaces) ?? ""
+        return [family,
+                asset.category?.name,
+                asset.customFieldByName("Platform")?.value,
+                asset.customFieldByName("Device Management Service")?.value,
+                asset.customFieldByName("Fleet")?.value]
+            .compactMap { $0 }
     }
 
     // MARK: - Custom Field Grouping
@@ -1640,7 +1735,7 @@ struct ColumnResizeHandle: View {
             .padding(.horizontal, 4.5)
             .contentShape(Rectangle())
             .gesture(
-                DragGesture(minimumDistance: 4)
+                DragGesture(minimumDistance: 4, coordinateSpace: .global)
                     .onChanged { value in
                         if !isDragging {
                             isDragging = true

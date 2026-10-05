@@ -7,9 +7,10 @@ struct GlassTabBar: View {
     @Binding var selectedTab: AppTab
     let tabs: [AppTab]
     let availableWidth: CGFloat
-    /// A small count after a tab's name — Development's unread inbox. Shown in
-    /// orange, never red, and only when above zero.
-    var counts: [AppTab: Int] = [:]
+
+    /// Below this window width the tab names give way to icons.
+    static let compactBelow: CGFloat = 1750
+    private var compact: Bool { availableWidth < Self.compactBelow }
     @Namespace private var selectionNS
 
     var body: some View {
@@ -29,19 +30,13 @@ struct GlassTabBar: View {
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: tab.icon)
-                            .appFont(fixed: 11)
-                        Text(tab.rawValue)
-                            .appFont(fixed: 13, weight: selectedTab == tab ? .semibold : .regular)
-                            .lineLimit(1)
-                        if let count = counts[tab], count > 0 {
-                            Text(count > 99 ? "99+" : "\(count)")
-                                .appFont(fixed: 10, weight: .semibold)
-                                .monospacedDigit()
-                                .foregroundStyle(.orange)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Color.orange.opacity(0.14), in: Capsule())
-                                .help("\(count) unread")
+                            .appFont(fixed: compact && selectedTab != tab ? 13 : 11)
+                        // Narrow window: only the open tab keeps its name; the
+                        // rest show their icon, named in the tooltip.
+                        if !(compact && selectedTab != tab) {
+                            Text(tab.rawValue)
+                                .appFont(fixed: 13, weight: selectedTab == tab ? .semibold : .regular)
+                                .lineLimit(1)
                         }
                     }
                     // The principal toolbar item gets squeezed by AppKit when the
@@ -49,7 +44,7 @@ struct GlassTabBar: View {
                     // answered by truncating the labels ("Mana…"). A tab name is
                     // never worth less than its full width.
                     .fixedSize(horizontal: true, vertical: false)
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, compact && selectedTab != tab ? 10 : 14)
                     .padding(.vertical, 6)
                     .contentShape(Capsule())
                     .foregroundStyle(selectedTab == tab ? Color.primary : Color.secondary)

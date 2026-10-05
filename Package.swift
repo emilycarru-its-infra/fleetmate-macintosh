@@ -21,6 +21,9 @@ let package = Package(
         .package(url: "https://github.com/Kitura/BlueSocket.git", from: "2.0.0"),
         .package(url: "https://github.com/Alamofire/Alamofire.git", from: "5.8.0"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
+        // Apple School and Business Manager API client. Pinned to a revision
+        // because the newest tag predates the migration and release endpoints.
+        .package(url: "https://github.com/rodchristiansen/asbmutil.git", revision: "0b43dbe53d2c6e9f4b46991edf0e9bb4823b56ac"),
         // 1.12 added Metal shaders, which the Command Line Tools cannot compile.
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", "1.11.2"..<"1.12.0"),
     ],
@@ -32,6 +35,7 @@ let package = Package(
                 .product(name: "Yams", package: "Yams"),
                 .product(name: "Logging", package: "swift-log"),
                 .product(name: "Alamofire", package: "Alamofire"),
+                .product(name: "ASBMUtilCore", package: "asbmutil"),
             ],
             path: "Sources/FleetMateCore"
         ),

@@ -115,12 +115,6 @@ struct LoginCommand: AsyncParsableCommand {
             }
         }
 
-        // MunkiReport.
-        let munki = MunkiReportService(config: config)
-        if munki.isConfigured {
-            do { report.set(.munki, .ok, "\(try await munki.getDevices().count) devices") }
-            catch { report.set(.munki, .failed, error.localizedDescription.oneLine) }
-        }
 
         // TeamDynamix — credential-based; the token is minted lazily on first
         // API call, so here we report configured-but-unverified.
@@ -208,7 +202,7 @@ struct LoginCommand: AsyncParsableCommand {
 // MARK: - Report model
 
 enum LoginSystem: String, CaseIterable {
-    case azure, graph, devops, snipe, reportmate, munki, tdx
+    case azure, graph, devops, snipe, reportmate, tdx
     var label: String {
         switch self {
         case .azure: return "Azure sign-in"
@@ -216,7 +210,6 @@ enum LoginSystem: String, CaseIterable {
         case .devops: return "Azure DevOps"
         case .snipe: return "Snipe-IT"
         case .reportmate: return "ReportMate"
-        case .munki: return "MunkiReport"
         case .tdx: return "TeamDynamix"
         }
     }

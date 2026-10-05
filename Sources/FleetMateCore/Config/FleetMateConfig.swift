@@ -29,7 +29,7 @@ import Yams
 /// - TDX_BEID: TeamDynamix BEID (for admin auth)
 /// - TDX_WEB_SERVICES_KEY: TeamDynamix web services key (for admin auth)
 public struct FleetMateConfig: Codable {
-    // ReportMate API settings (replaces MunkiReport)
+    // ReportMate API settings
     public var reportMateUrl: String?
     public var reportMatePassphrase: String?
     /// When set, FleetMate authenticates to the ReportMate API with a short-lived
@@ -38,12 +38,6 @@ public struct FleetMateConfig: Codable {
     /// Unset → legacy passphrase (dormant). Production value: 3e8c1d2a-4b5f-4a6e-9c7d-0e1f2a3b4c5d.
     public var reportMateOidcAudience: String?
     
-    // Legacy MunkiReport settings (deprecated, use ReportMate)
-    public var munkiReportUrl: String?
-    var munkiReportSshHost: String?
-    var munkiReportSshUser: String?
-    var munkiReportSshKeyPath: String?
-    var munkiReportDbPath: String?
 
     // Snipe-IT settings
     public var snipeUrl: String?
@@ -189,11 +183,6 @@ public struct FleetMateConfig: Codable {
         case reportMateUrl = "reportmate_url"
         case reportMatePassphrase = "reportmate_passphrase"
         case reportMateOidcAudience = "reportmate_oidc_audience"
-        case munkiReportUrl = "munkireport_url"
-        case munkiReportSshHost = "munkireport_ssh_host"
-        case munkiReportSshUser = "munkireport_ssh_user"
-        case munkiReportSshKeyPath = "munkireport_ssh_key_path"
-        case munkiReportDbPath = "munkireport_db_path"
         case snipeUrl = "snipe_url"
         case snipeApiKey = "snipe_api_key"
         case snipeOidcAudience = "snipe_oidc_audience"
@@ -643,12 +632,6 @@ public struct FleetMateConfig: Codable {
         if let v = env["REPORTMATE_URL"] { config.reportMateUrl = v }
         if let v = env["REPORTMATE_PASSPHRASE"] { config.reportMatePassphrase = v }
 
-        // Legacy MunkiReport (deprecated)
-        if let v = env["MUNKIREPORT_URL"] { config.munkiReportUrl = v }
-        if let v = env["MUNKIREPORT_SSH_HOST"] { config.munkiReportSshHost = v }
-        if let v = env["MUNKIREPORT_SSH_USER"] { config.munkiReportSshUser = v }
-        if let v = env["MUNKIREPORT_SSH_KEY_PATH"] { config.munkiReportSshKeyPath = v }
-        if let v = env["MUNKIREPORT_DB_PATH"] { config.munkiReportDbPath = v }
 
         // Snipe-IT
         if let v = env["SNIPE_URL"] { config.snipeUrl = v }
@@ -717,7 +700,7 @@ public struct FleetMateConfig: Codable {
 
     // MARK: - Helpers
 
-    /// Check if ReportMate is configured (preferred over MunkiReport)
+    /// Check if ReportMate is configured
     public var isReportMateConfigured: Bool {
         return reportMateUrl != nil && !reportMateUrl!.isEmpty
     }
@@ -728,15 +711,7 @@ public struct FleetMateConfig: Codable {
         return manage.hasRoster(repoRoot: repoRoot)
     }
 
-    /// Check if MunkiReport is configured (legacy)
-    public var isMunkiReportConfigured: Bool {
-        return munkiReportUrl != nil
-    }
 
-    /// Check if MunkiReport SSH access is configured
-    public var isMunkiReportSshConfigured: Bool {
-        return munkiReportSshHost != nil && munkiReportSshUser != nil && munkiReportDbPath != nil
-    }
 
     /// Check if Snipe-IT is configured (OIDC bearer, API key, or SSO mode)
     public var isSnipeConfigured: Bool {

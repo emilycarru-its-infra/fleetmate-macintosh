@@ -257,11 +257,6 @@ secure_shell:
   max_concurrent_connections: 10
   port: 22
 
-# MunkiReport (macOS fleet reporting)
-munki_report:
-  enabled: false
-  hosts: []
-
 # Task Provider Settings
 tasks:
   default_provider: azdevops

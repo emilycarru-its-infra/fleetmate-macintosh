@@ -507,6 +507,24 @@ class AppState: ObservableObject {
     /// Warm the aze elevation sessions (Intune → devices, Entra → identity) so
     /// the ~30s container cold start is paid once at launch rather than on the
     /// user's first action. No-op outside aze mode.
+    /// Fill the tickets cache for the Dashboard. Safe to call again: a call
+    /// made before TDX sign-in finishes fails quietly and the sign-in retries.
+    func preloadTickets() async {
+        guard config.isTdxConfigured else { return }
+        dbg.info("Preloading tickets...", category: "preload")
+        do {
+            var search = TicketSearchRequest(maxResults: 500)
+            if let groupId = config.tdxResponsibleGroupId {
+                search.responsibleGroupIds = [groupId]
+            }
+            let tickets = try await tdxService.searchTickets(search: search, maxResults: 500)
+            updateTicketsCache(tickets)
+            dbg.info("Tickets preloaded: \(tickets.count) tickets", category: "preload")
+        } catch {
+            dbg.error("Tickets preload FAILED: \(error)", category: "preload")
+        }
+    }
+
     func warmElevationSessions() async {
         guard config.graphUsesAze else { azeSessionState = .direct; return }
         azeSessionState = .warming
@@ -692,18 +710,7 @@ class AppState: ObservableObject {
             // Preload tickets
             if config.isTdxConfigured && !isTicketsCacheValid {
                 group.addTask { @MainActor in
-                    dbg.info("Preloading tickets...", category: "preload")
-                    do {
-                        var search = TicketSearchRequest(maxResults: 500)
-                        if let groupId = self.config.tdxResponsibleGroupId {
-                            search.responsibleGroupIds = [groupId]
-                        }
-                        let tickets = try await self.tdxService.searchTickets(search: search, maxResults: 500)
-                        self.updateTicketsCache(tickets)
-                        dbg.info("Tickets preloaded: \(tickets.count) tickets", category: "preload")
-                    } catch {
-                        dbg.error("Tickets preload FAILED: \(error)", category: "preload")
-                    }
+                    await self.preloadTickets()
                 }
             }
 
@@ -1014,6 +1021,13 @@ class AppState: ObservableObject {
         tdxAuthenticatedUserName = userName
         showTdxSsoLogin = false
         authManager.update(.tdx, state: .valid(user: userName, expiry: expiry))
+
+        // Launch preloads tickets in parallel with this sign-in and usually
+        // loses the race (notAuthenticated), leaving the Dashboard at zero
+        // tickets. Load them now that the session exists.
+        if !isTicketsCacheValid {
+            Task { await preloadTickets() }
+        }
         
         // Resolve the actual TDX UID from the email — SSO returns email, not TDX UID
         if let email = userId, !email.isEmpty {

@@ -25,11 +25,15 @@ public struct GraphRequest: Sendable {
     public let url: String
     /// Raw JSON request body, if any.
     public let body: Data?
+    /// Extra request headers, such as the `ocp-client-*` pair Graph asks for
+    /// on BitLocker and LAPS reads. Never carries a token.
+    public let headers: [String: String]
 
-    public init(method: Method, url: String, body: Data? = nil) {
+    public init(method: Method, url: String, body: Data? = nil, headers: [String: String] = [:]) {
         self.method = method
         self.url = url
         self.body = body
+        self.headers = headers
     }
 }
 
@@ -55,6 +59,13 @@ public struct GraphDomainRouter: Sendable {
         // devices identity. Nested paths like /users/{id}/registeredDevices are
         // unaffected; they match on their own prefix below.
         if lower.contains("/v1.0/devices") || lower.contains("/beta/devices") {
+            return .devices
+        }
+        // Device recovery secrets — BitLocker keys and Windows LAPS passwords —
+        // are directory data, but reading them is device lifecycle, so only
+        // DevOps-Devices holds BitlockerKey.Read.All and
+        // DeviceLocalCredential.Read.All.
+        if lower.contains("/informationprotection/bitlocker/") || lower.contains("/directory/devicelocalcredentials") {
             return .devices
         }
         // Everything else we touch today (users, groups, directory devices,
@@ -141,8 +152,14 @@ public struct AzeGraphTransport: GraphTransport {
     /// `$ref`, etc.
     static func buildAzRestCommand(_ request: GraphRequest) -> String {
         var parts = ["az", "rest", "--method", request.method.rawValue, "--uri", shellSingleQuote(request.url)]
-        if let body = request.body, let json = String(data: body, encoding: .utf8) {
-            parts += ["--headers", "Content-Type=application/json", "--body", shellSingleQuote(json)]
+        var headers = request.headers.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+        let json = request.body.flatMap { String(data: $0, encoding: .utf8) }
+        if json != nil { headers.insert("Content-Type=application/json", at: 0) }
+        if !headers.isEmpty {
+            parts += ["--headers"] + headers.map(shellSingleQuote)
+        }
+        if let json {
+            parts += ["--body", shellSingleQuote(json)]
         }
         parts += ["-o", "json"]
         return parts.joined(separator: " ")
@@ -171,9 +188,17 @@ public struct AzeGraphTransport: GraphTransport {
         }
     }
 
+    /// Runs one `az rest` command, waiting out Graph throttling. `az rest` prints
+    /// no response headers, so the wait is always the default backoff.
     private func execute(domain: GraphDomain, command: String) async throws -> Data {
-        let (out, code) = try await session.exec(domain, command: command, ttlHours: ttlHours)
-        if code == 0 { return Data(out.utf8) }
-        throw AzeError(exitCode: code, message: out)
+        try await GraphThrottle.withRetry("az rest (\(domain.rawValue))") {
+            let (out, code) = try await session.exec(domain, command: command, ttlHours: ttlHours)
+            if code == 0 { return Data(out.utf8) }
+            if GraphThrottle.isThrottledAzRestMessage(out) {
+                let status = out.lowercased().contains("service unavailable") ? 503 : 429
+                throw GraphThrottledError(statusCode: status, retryAfter: nil, underlying: out)
+            }
+            throw AzeError(exitCode: code, message: out)
+        }
     }
 }

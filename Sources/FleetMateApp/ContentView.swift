@@ -20,6 +20,13 @@ struct ContentView: View {
     private static let ssoRetryInterval: TimeInterval = 60
     @State private var windowWidth: CGFloat = 1000
     @State private var showAuthPopover = false
+    @ObservedObject private var terminals: AgentTerminalStore
+    @AppStorage(AgentSettingsKey.panelHeight) private var panelHeight: Double = 280
+    @State private var panelDragStart: Double?
+
+    init(terminals: AgentTerminalStore) {
+        self.terminals = terminals
+    }
 
     private var availableTabs: [AppTab] {
         AppTab.enabledTabs(config: appState.config)
@@ -28,7 +35,15 @@ struct ContentView: View {
     private var selectedTab: AppTab { appState.selectedTab }
 
     var body: some View {
-        tabContent
+        VStack(spacing: 0) {
+            if !(terminals.isMaximized && terminals.isVisible && !terminals.sessions.isEmpty) {
+                tabContent
+                    .frame(maxHeight: .infinity)
+            }
+            if terminals.isVisible && !terminals.sessions.isEmpty {
+                terminalPanel
+            }
+        }
             .frame(minWidth: 500, minHeight: 400)
             .background(
                 GeometryReader { geo in
@@ -82,6 +97,12 @@ struct ContentView: View {
                     RecentActivityToolbarButton()
                 }
                 ToolbarItem(placement: .primaryAction) {
+                    Button(action: { terminals.toggle(defaultLaunch: appState.agentDefaultLaunch) }) {
+                        Label("Terminal", systemImage: "terminal")
+                    }
+                    .help("Show or hide the terminal (⌃`)")
+                }
+                ToolbarItem(placement: .primaryAction) {
                     Button(action: { showAuthPopover.toggle() }) {
                         ElevationShieldLabel()
                     }
@@ -112,6 +133,21 @@ struct ContentView: View {
                 ToolbarItem(placement: .primaryAction) {
                     GlobalSearchToolbarField()
                 }
+            }
+            .onAppear {
+                terminals.defaultLaunch = appState.agentDefaultLaunch
+                if appState.agentAutoStart && terminals.sessions.isEmpty {
+                    terminals.open(appState.agentDefaultLaunch, focus: false)
+                }
+                writeAgentContext()
+            }
+            .onChange(of: appState.selectedTab) { _, _ in
+                appState.agentSelection = nil
+                writeAgentContext()
+            }
+            .onChange(of: appState.agentSelection) { _, _ in writeAgentContext() }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                terminals.terminateAll()
             }
             .onAppear {
                 // Phase 1: Attempt silent SSO in the background (no UI).
@@ -188,6 +224,52 @@ struct ContentView: View {
         }
     }
 
+    private func writeAgentContext() {
+        AgentContextWriter.write(tab: appState.selectedTab.rawValue,
+                                 selection: appState.agentSelection,
+                                 to: terminals.contextPath)
+    }
+
+    /// The shared bottom terminal, with a drag handle to resize it.
+    private var terminalPanel: some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.secondary.opacity(0.25))
+                .frame(height: 1)
+                .padding(.vertical, 2)
+                .contentShape(Rectangle().inset(by: -3))
+                .onHover { inside in
+                    if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+                }
+                .gesture(
+                    // Measured in window coordinates: the handle moves with
+                    // the panel, so local coordinates made the drag jitter.
+                    DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .onChanged { value in
+                            let start = panelDragStart ?? panelHeight
+                            panelDragStart = start
+                            if terminals.isMaximized { terminals.isMaximized = false }
+                            panelHeight = min(max(start - value.translation.height, 120), 1600)
+                        }
+                        .onEnded { _ in
+                            // Dragged nearly to the top: fill the window, and
+                            // restore to the height it had before.
+                            let available = NSApp.keyWindow?.contentLayoutRect.height ?? 900
+                            if panelHeight > available * 0.85 {
+                                panelHeight = panelDragStart ?? 280
+                                terminals.isMaximized = true
+                            }
+                            panelDragStart = nil
+                        }
+                )
+            AgentTerminalPanel(store: terminals,
+                               repos: appState.agentRepos,
+                               defaultLaunch: appState.agentDefaultLaunch)
+                .frame(height: terminals.isMaximized ? nil : panelHeight)
+                .frame(maxHeight: terminals.isMaximized ? .infinity : nil)
+        }
+    }
+
     @ViewBuilder
     private var tabContent: some View {
         switch selectedTab {
@@ -204,7 +286,7 @@ struct ContentView: View {
 
 #if DEBUG
 #Preview {
-    ContentView()
+    ContentView(terminals: AgentTerminalStore())
         .environmentObject(AppState())
 }
 #endif

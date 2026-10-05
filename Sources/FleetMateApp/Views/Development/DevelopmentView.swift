@@ -24,6 +24,8 @@ final class DevelopmentModel: ObservableObject {
     @Published private(set) var pullRequestsLoadedAt: Date?
     @Published var selectedSource: PullRequestSource?
     @Published var selectedRepo: String?
+    @Published var selectedCommitRepo: String?
+    @Published var selectedPipelineRepo: String?
     @Published var onlyMine = false
     @Published var selectedPullRequest: UnifiedPullRequest?
     @Published private(set) var availableSources: Set<PullRequestSource> = []
@@ -62,6 +64,7 @@ final class DevelopmentModel: ObservableObject {
     func visibleRepositoryCommits(matching search: String) -> [RepositoryCommits] {
         var rows = repositoryCommits
         if let selectedSource { rows = rows.filter { $0.source == selectedSource } }
+        if let selectedCommitRepo { rows = rows.filter { $0.displayName == selectedCommitRepo } }
         let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
         if !needle.isEmpty {
             rows = rows.compactMap { repo in
@@ -156,6 +159,7 @@ final class DevelopmentModel: ObservableObject {
     func visiblePipelineRuns(matching search: String) -> [PipelineRun] {
         var rows = pipelineRuns
         if let selectedSource { rows = rows.filter { $0.source == selectedSource } }
+        if let selectedPipelineRepo { rows = rows.filter { Self.pipelineRepoKey($0) == selectedPipelineRepo } }
         if let pipelineStatusFilter {
             rows = rows.filter { matches($0, status: pipelineStatusFilter) }
         }
@@ -202,6 +206,25 @@ final class DevelopmentModel: ObservableObject {
             latest[key] = run
         }
         return Set(latest.values.map(\.id))
+    }
+
+    /// Repositories with commits in the current source scope, by commit count.
+    var commitRepoCounts: [(repo: String, count: Int)] {
+        let scoped = selectedSource.map { s in repositoryCommits.filter { $0.source == s } } ?? repositoryCommits
+        var counts: [String: Int] = [:]
+        for repo in scoped { counts[repo.displayName, default: 0] += repo.commits.count }
+        guard counts.count > 1 else { return [] }
+        return counts.map { ($0.key, $0.value) }.sorted { $0.1 == $1.1 ? $0.0 < $1.0 : $0.1 > $1.1 }
+    }
+
+    /// A run's repository, or its project when the run has none.
+    static func pipelineRepoKey(_ run: PipelineRun) -> String {
+        run.repository.map { "\(run.container)/\($0)" } ?? run.container
+    }
+
+    var pipelineRepoCounts: [(repo: String, count: Int)] {
+        let scoped = selectedSource.map { s in pipelineRuns.filter { $0.source == s } } ?? pipelineRuns
+        return scoped.repoCounts(Self.pipelineRepoKey)
     }
 
     func togglePipelineStatus(_ status: PipelineRunStatus) {
@@ -262,8 +285,7 @@ final class DevelopmentModel: ObservableObject {
         }
     }
 
-    // Activity sidebar
-    @Published var showActivity = true
+    // Comment activity, shown in the toolbar's Recent Activity popover.
     @Published var hideMyComments = false
     @Published var searchText = ""
 
@@ -364,6 +386,8 @@ final class DevelopmentModel: ObservableObject {
     func toggleSource(_ source: PullRequestSource) {
         selectedSource = (selectedSource == source) ? nil : source
         selectedRepo = nil
+        selectedCommitRepo = nil
+        selectedPipelineRepo = nil
     }
 
     func toggleRepo(_ repo: String) {
@@ -727,19 +751,16 @@ private struct DevelopmentContent: View {
     @ObservedObject var model: DevelopmentModel
 
     private let listWidth: CGFloat = 470
-    private let activityWidth: CGFloat = 330
 
     var body: some View {
-        HStack(spacing: 0) {
-            leftPane
-                .frame(width: listWidth)
-            Divider()
-            detailPane
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if model.showActivity {
+        VStack(spacing: 0) {
+            DevelopmentWidgetsSection(model: model)
+            HStack(spacing: 0) {
+                leftPane
+                    .frame(width: listWidth)
                 Divider()
-                ActivityPane(model: model)
-                    .frame(width: activityWidth)
+                detailPane
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .searchable(text: $model.searchText, prompt: searchPrompt)
@@ -821,13 +842,6 @@ private struct DevelopmentContent: View {
                 .disabled(model.unreadCount == 0)
                 .help("Mark every notification as read")
             }
-
-            Button {
-                model.showActivity.toggle()
-            } label: {
-                Label("Activity", systemImage: model.showActivity ? "sidebar.trailing" : "sidebar.trailing")
-            }
-            .help(model.showActivity ? "Hide the comment activity sidebar" : "Show comments across all pull requests")
 
             Button(action: { model.loadAll(appState: appState, force: true) }) {
                 Label("Refresh", systemImage: "arrow.clockwise")
@@ -914,26 +928,14 @@ private struct DevelopmentContent: View {
                     model.onlyMine.toggle()
                 }
                 .help("Only pull requests I created, review or took part in")
+                if !model.repoCounts.isEmpty {
+                    RepoFilterMenu(selection: $model.selectedRepo, counts: model.repoCounts)
+                }
                 Spacer()
                 Text("\(model.visiblePullRequests(matching: searchText).count) open")
                     .appFont(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
-            }
-            let repos = model.repoCounts
-            if !repos.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 4) {
-                        ForEach(repos, id: \.repo) { entry in
-                            chip(
-                                title: entry.repo,
-                                count: entry.count,
-                                tint: .secondary,
-                                isSelected: model.selectedRepo == entry.repo
-                            ) { model.toggleRepo(entry.repo) }
-                        }
-                    }
-                }
             }
         }
         .padding(.horizontal, 12)
@@ -1069,6 +1071,9 @@ private struct DevelopmentContent: View {
                             ) { model.toggleSource(source) }
                         }
                     }
+                }
+                if !model.commitRepoCounts.isEmpty {
+                    RepoFilterMenu(selection: $model.selectedCommitRepo, counts: model.commitRepoCounts)
                 }
                 Spacer()
                 if let at = model.commitsLoadedAt {
@@ -1448,56 +1453,9 @@ struct InboxRow: View {
 }
 
 
-// MARK: - Activity sidebar
+// MARK: - Comment activity
 
-/// Comments and reviews across every loaded pull request, newest first.
-/// Click a row to select its pull request; the link icon opens the comment.
-struct ActivityPane: View {
-    @ObservedObject var model: DevelopmentModel
-    @EnvironmentObject private var appState: AppState
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Text("Activity").appFont(.headline)
-                Spacer()
-                Toggle("Hide mine", isOn: $model.hideMyComments)
-                    .toggleStyle(.checkbox)
-                    .appFont(.caption)
-                    .help("Hide comments you wrote")
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            Divider()
-
-            let entries = model.activity(appState: appState)
-            if entries.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "bubble.left.and.bubble.right").appFont(.title2).foregroundStyle(.secondary)
-                    Text(model.isLoadingPullRequests ? "Loading…" : "No recent comments.")
-                        .appFont(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(entries) { entry in
-                            ActivityRow(
-                                entry: entry,
-                                isSelected: model.selectedPullRequest?.id == entry.pullRequest.id
-                            ) {
-                                model.selectedPullRequest = entry.pullRequest
-                            }
-                            Divider().padding(.leading, 12)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
+/// One comment in the Recent Activity popover's Development feed.
 struct ActivityRow: View {
     let entry: DevelopmentModel.ActivityEntry
     let isSelected: Bool

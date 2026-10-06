@@ -541,6 +541,18 @@ The reusable-group workflow below is proposed, not implemented as a dedicated Fl
 
 Operators should be able to select a device and an approved action, then use FleetMate to manage membership in a dedicated Entra group targeted by an Intune script or app assignment. Each group should represent one action. The operator should see the selected devices, payload version, existing assignment scope, and intended changes before submission.
 
+Proposed group names and responsibilities:
+
+| Group | Action |
+| --- | --- |
+| On Demand – ReportMate Collection | Request a fresh inventory collection |
+| On Demand – Munki Run | Trigger a managed software run |
+| On Demand – Create Local Admin | Run an explicitly approved local administrator account script |
+| On Demand – Install – [App Name] | Target one specific application or package |
+| On Demand – Repair – [Repair Name] | Run one specific repair script |
+
+These names describe proposed permanent action groups, not groups provisioned by this prototype. Start with ReportMate repeat-run validation before expanding to the other actions. Define account creation versus elevation and the reversal policy before implementing the administrator action.
+
 A request should record its own identity, target devices, action, group and assignment identifiers, payload version, creation time, and outcome. Membership alone must never be displayed as execution success. Show targeting, pending execution, reported success, verified completion, failure, expiry, and cleanup separately, according to the evidence available from each service.
 
 Start with a single-device script workflow and verify both Intune execution status and the intended result. Before enabling reusable groups, test removal and re-addition on the same device: a membership change must not be assumed to trigger another execution. A completed request must remain distinguishable from a new request for the same action.
@@ -563,6 +575,8 @@ Implementation and deployment should follow validation of these behaviors. This 
 ### Executable single device prototype
 
 [`scripts/prototypes/reportmate-on-demand`](scripts/prototypes/reportmate-on-demand) is a Python proof of concept that invokes FleetMate's existing `elevate rest` command. It creates a new temporary Entra security group and Intune shell script for one Mac per request. It does not implement reusable groups, package installation, or a FleetMate UI.
+
+**Live proof of concept tested with ReportMate:** the original helper was used on one Intune-managed Mac. A temporary Entra group targeted the ReportMate shell script; Intune reported successful execution with exit code 0, and the client log reported successful data transmission. The public copy retains that workflow with generic configuration and synthetic test fixtures. Independent server-side module timestamp verification remains pending. This test establishes the single-device temporary-group script path; permanent-group reuse, repeat execution after re-adding a device, and package installation remain untested.
 
 Prerequisites: Python 3, an authenticated FleetMate installation with the configured `devices` and `identity` elevation domains, an Intune-enrolled Mac with an Entra device object, and an installed ReportMate runner. The helper uses the operator's FleetMate configuration; it embeds no tenant, credentials, or reporting endpoint.
 

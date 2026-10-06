@@ -534,3 +534,28 @@ For issues or questions:
 - File an issue on GitHub
 - Contact IT Systems team
 - Review logs in `/var/log/fleetmate/`
+
+## Proposed on demand Intune actions
+
+Design proposal only; this workflow is not implemented as a dedicated FleetMate feature. Track implementation in [issue #169](https://github.com/emilycarru-its-infra/fleetmate-macintosh/issues/169).
+
+Operators should be able to select a device and an approved action, then use FleetMate to manage membership in a dedicated Entra group targeted by an Intune script or app assignment. Each group should represent one action. The operator should see the selected devices, payload version, existing assignment scope, and intended changes before submission.
+
+A request should record its own identity, target devices, action, group and assignment identifiers, payload version, creation time, and outcome. Membership alone must never be displayed as execution success. Show targeting, pending execution, reported success, verified completion, failure, expiry, and cleanup separately, according to the evidence available from each service.
+
+Start with a single-device script workflow and verify both Intune execution status and the intended result. Before enabling reusable groups, test removal and re-addition on the same device: a membership change must not be assumed to trigger another execution. A completed request must remain distinguishable from a new request for the same action.
+
+Package deployments need a separate validation path covering supported package type, assignment intent, platform applicability, detection, installed version, and repeat requests. An already-installed application must not be mistaken for a fresh installation. Membership removal is not an uninstall operation or proof that cached work was cancelled.
+
+Acceptance criteria for a future implementation:
+
+- Resolve each selected device to the correct managed-device and directory-device identities; reject ambiguous matches.
+- Preview the action, payload, effective assignment scope, and target devices before mutation.
+- Make submission idempotent and track outcomes independently for each target and request.
+- Verify a first script run and a second deliberate request on the same test device.
+- Verify one package installation and document subsequent membership and detection behavior.
+- Clean up only membership or temporary objects owned by the request; preserve pre-existing membership and concurrent requests.
+- Handle offline devices, timeouts, expiry, and partial failures without reporting false success.
+- Treat privileged account changes as distinct approved actions with an explicit reversal policy.
+
+Implementation and deployment should follow validation of these behaviors. This proposal does not provision groups, assign payloads, or change device membership.

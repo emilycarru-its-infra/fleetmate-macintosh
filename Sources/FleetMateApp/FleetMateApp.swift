@@ -40,6 +40,13 @@ struct FleetMateApp: App {
             FleetMateCommands(appState: appState)
         }
 
+        // What FleetMate asked each service to do: Window ▸ Activity Log (⌥⌘L).
+        Window("Activity Log", id: ActivityLogView.windowId) {
+            ActivityLogView()
+                .appFontScale(fontScale)
+        }
+        .defaultSize(width: 1000, height: 600)
+
         #if os(macOS)
         Settings {
             SettingsView()

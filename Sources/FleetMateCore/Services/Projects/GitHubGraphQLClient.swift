@@ -14,7 +14,7 @@ public actor GitHubGraphQLClient {
         self.tokenSource = GitHubTokenSource(config: config, deviceFlowPrompt: deviceFlowPrompt)
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 30
-        self.session = Session(configuration: configuration)
+        self.session = Session(configuration: configuration, activityService: "GitHub")
     }
     
     /// Authenticates with GitHub by verifying the token.

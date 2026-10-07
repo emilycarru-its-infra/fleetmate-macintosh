@@ -16,7 +16,7 @@ public actor PlannerSyncService {
     
     public init(config: FleetMateConfig) {
         self.config = config.tasks?.planner ?? PlannerSyncConfig()
-        self.session = Session(configuration: .default)
+        self.session = Session(configuration: .default, activityService: "Planner")
     }
     
     /// Authenticate using Azure CLI SSO token for MS Graph.

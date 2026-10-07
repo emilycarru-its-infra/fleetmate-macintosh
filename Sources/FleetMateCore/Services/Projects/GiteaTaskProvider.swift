@@ -29,7 +29,7 @@ public actor GiteaTaskProvider: TaskProvider {
         
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 30
-        self.session = Session(configuration: configuration)
+        self.session = Session(configuration: configuration, activityService: "Gitea")
     }
     
     public func authenticate() async throws -> Bool {

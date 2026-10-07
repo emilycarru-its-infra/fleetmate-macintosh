@@ -93,7 +93,7 @@ public actor PimService {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
 
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await session.loggedData(for: req, service: "Privileged Identity")
         guard let http = response as? HTTPURLResponse else {
             throw PimError.graph("No HTTP response from Graph")
         }

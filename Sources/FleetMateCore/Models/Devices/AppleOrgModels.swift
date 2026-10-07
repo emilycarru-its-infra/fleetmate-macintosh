@@ -195,6 +195,12 @@ public struct DeviceListRow: Identifiable, Sendable {
     /// Where a Windows device stands between Autopilot and Intune; nil for
     /// every other platform.
     public let registration: AutopilotRegistration?
+    /// A serial from a pasted or imported lookup list that no system knows;
+    /// the row exists only to say so.
+    public let lookupOnlySerial: String?
+    /// Where the systems disagree about this device, as `DeviceDiscrepancy`
+    /// labels. Filled in after the rows are joined.
+    public var discrepancies: [String] = []
 
     /// Intune rows keep the Intune ID — every MDM action is keyed on it.
     /// Organization-only rows are prefixed so they can never be mistaken
@@ -202,28 +208,46 @@ public struct DeviceListRow: Identifiable, Sendable {
     public var id: String {
         if let intune { return intune.id }
         if let apple { return Self.orgOnlyPrefix + apple.serialNumber }
+        if let lookupOnlySerial { return Self.unknownPrefix + lookupOnlySerial }
         return Self.autopilotOnlyPrefix + (autopilot?.id ?? autopilot?.serialNumber ?? "")
     }
     public static let orgOnlyPrefix = "apple-org:"
     public static let autopilotOnlyPrefix = "autopilot:"
+    public static let unknownPrefix = "unknown:"
+    /// What a looked-up serial no system knows reads as.
+    public static let notFound = "Not Found"
+
+    /// True for a looked-up serial that no system knows.
+    public var isUnknown: Bool { lookupOnlySerial != nil }
 
     public var isEnrolled: Bool { intune != nil }
-    public var serialNumber: String? { intune?.serialNumber ?? apple?.serialNumber ?? autopilot?.serialNumber }
+    public var serialNumber: String? {
+        intune?.serialNumber ?? apple?.serialNumber ?? autopilot?.serialNumber ?? lookupOnlySerial
+    }
 
     public init(intune: IntuneDevice?, apple: AppleOrgDevice?, serverName: String?, orgName: String? = nil,
-                autopilot: WindowsAutopilotDevice? = nil, registration: AutopilotRegistration? = nil) {
+                autopilot: WindowsAutopilotDevice? = nil, registration: AutopilotRegistration? = nil,
+                lookupOnlySerial: String? = nil) {
         self.intune = intune
         self.apple = apple
         self.serverName = serverName
         self.orgName = orgName
         self.autopilot = autopilot
         self.registration = registration
+        self.lookupOnlySerial = lookupOnlySerial
+    }
+
+    /// A row for a looked-up serial that no system knows.
+    public static func unknown(serial: String) -> DeviceListRow {
+        DeviceListRow(intune: nil, apple: nil, serverName: nil, lookupOnlySerial: serial)
     }
 
     /// The same row carrying its Autopilot identity and registration.
     public func with(autopilot: WindowsAutopilotDevice?, registration: AutopilotRegistration?) -> DeviceListRow {
-        DeviceListRow(intune: intune, apple: apple, serverName: serverName, orgName: orgName,
-                      autopilot: autopilot, registration: registration)
+        var row = DeviceListRow(intune: intune, apple: apple, serverName: serverName, orgName: orgName,
+                                autopilot: autopilot, registration: registration, lookupOnlySerial: lookupOnlySerial)
+        row.discrepancies = discrepancies
+        return row
     }
 
     /// Intune's operating system, or for an organization-only row the one its
@@ -302,14 +326,14 @@ public struct DeviceListRow: Identifiable, Sendable {
         }
     }
 
-    public var enrollmentLabel: String { isEnrolled ? "Enrolled" : "Not Enrolled" }
+    public var enrollmentLabel: String { isEnrolled ? "Enrolled" : isUnknown ? Self.notFound : "Not Enrolled" }
 
     // MARK: Column values — the same columns for every row, "—" when the
     // row's sources have no value.
 
     public static let missing = "—"
 
-    public var nameText: String { intune?.deviceName ?? Self.missing }
+    public var nameText: String { intune?.deviceName ?? (isUnknown ? DeviceListRow.notFound : Self.missing) }
     public var serialText: String { serialNumber ?? Self.missing }
     public var platformText: String { platformLabel ?? Self.missing }
     public var osText: String {
@@ -323,6 +347,7 @@ public struct DeviceListRow: Identifiable, Sendable {
     }
     public var ownershipText: String { intune?.managedDeviceOwnerType?.capitalized ?? Self.missing }
     public var complianceText: String {
+        if isUnknown { return Self.missing }
         guard let intune else { return "Not Enrolled" }
         return intune.complianceState?.capitalized ?? "Unknown"
     }
@@ -370,7 +395,15 @@ public struct DeviceListRow: Identifiable, Sendable {
         case .ownership: intune?.managedDeviceOwnerType ?? "Unknown"
         case .migration: migrationLabel
         case .enrollment: enrollmentLabel
+        case .discrepancy: discrepancies.first ?? DeviceDiscrepancy.none
         }
+    }
+
+    /// Every value a filter reads for this row. A device can disagree with
+    /// several systems at once, so Discrepancy answers with all of them.
+    public func values(for facet: DeviceFacet) -> [String] {
+        if facet == .discrepancy { return discrepancies.isEmpty ? [DeviceDiscrepancy.none] : discrepancies }
+        return [value(for: facet)]
     }
 
     // Sort keys. Dates sort as ISO strings; a missing value sorts first.
@@ -394,6 +427,7 @@ public enum DeviceFacet: String, CaseIterable, Identifiable, Sendable {
     case ownership = "Ownership"
     case migration = "Migration"
     case enrollment = "Enrollment"
+    case discrepancy = "Discrepancies"
 
     public var id: String { rawValue }
 

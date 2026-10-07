@@ -21,8 +21,19 @@ private struct DevicesContentView: View {
     @State private var searchText = ""
     @State private var selectedDeviceIds: Set<String> = []
     @State private var rows: [DeviceListRow] = []
+    /// The rows the list starts from: every row, or with a serial lookup
+    /// active, the listed devices plus a row for each serial nobody knows.
+    @State private var baseRows: [DeviceListRow] = []
+    @State private var serialLookupText = ""
+    @State private var serialLookup: [String] = []
     @State private var sortOrder = [KeyPathComparator(\DeviceListRow.serialText)]
-    @SceneStorage("devices.columns") private var columnCustomization: TableColumnCustomization<DeviceListRow>
+    /// Column visibility, order and widths, kept across launches. Scene
+    /// storage was lost whenever windows were not restored at launch.
+    @State private var columnCustomization = TableColumnCustomization<DeviceListRow>()
+    @AppStorage("devices.columnCustomization") private var columnCustomizationData = Data()
+    /// Where the arrangement used to be kept; read once when nothing newer is saved.
+    @SceneStorage("devices.columns") private var legacyColumnCustomization: TableColumnCustomization<DeviceListRow>
+    @State private var showSerials = false
     @State private var filters = FilterState<DeviceFilterCategory>()
     @State private var showFilters = false
     
@@ -50,7 +61,7 @@ private struct DevicesContentView: View {
     @State private var appSearchText = ""
     
     var filteredRows: [DeviceListRow] {
-        var result = rows
+        var result = baseRows
         if filters.hasActiveFilters {
             result = result.filter { filters.matches($0) }
         }
@@ -70,8 +81,36 @@ private struct DevicesContentView: View {
         return result.sorted(using: sortOrder)
     }
 
+    /// Selected rows with a record behind them. A looked-up serial no system
+    /// knows can be selected but is never an action's target.
     var selectedRows: [DeviceListRow] {
         rows.filter { selectedDeviceIds.contains($0.id) }
+    }
+
+    private var unknownLookupCount: Int { baseRows.filter(\.isUnknown).count }
+
+    private var isFiltering: Bool { filters.hasActiveFilters || !serialLookup.isEmpty }
+
+    private func clearAllFilters() {
+        filters.clearAll()
+        serialLookup = []
+        serialLookupText = ""
+    }
+
+    /// Each discrepancy check speaks only once both systems it compares
+    /// have loaded.
+    private var discrepancySources: DeviceDiscrepancy.Sources {
+        let inventory = Set(appState.cachedAssets.compactMap(\.serial).map(AppleOrgJoin.normalize).filter { !$0.isEmpty })
+        return DeviceDiscrepancy.Sources(
+            autopilotRead: autopilot.lastLoaded != nil && !autopilot.isLoading,
+            appleOrgsRead: appleOrg.hasProfile && appleOrg.lastLoaded != nil && !appleOrg.isLoading,
+            inventorySerials: inventory
+        )
+    }
+
+    private func applyLookup() {
+        baseRows = serialLookup.isEmpty ? rows : SerialList.rows(for: serialLookup, in: rows)
+        filters.buildFromRows(baseRows, hasAppleOrg: appleOrg.hasProfile, hasAutopilot: !autopilot.identities.isEmpty)
     }
 
     /// The Intune records in the selection — every Intune action is keyed on
@@ -87,8 +126,9 @@ private struct DevicesContentView: View {
             servers: appleOrg.servers,
             orgLabels: appleOrg.orgLabels
         )
-        rows = AutopilotJoin.enrich(merged, autopilot: autopilot.identities)
-        filters.buildFromRows(rows, hasAppleOrg: appleOrg.hasProfile, hasAutopilot: !autopilot.identities.isEmpty)
+        rows = DeviceDiscrepancy.annotate(AutopilotJoin.enrich(merged, autopilot: autopilot.identities),
+                                          sources: discrepancySources)
+        applyLookup()
         dbg.debug("Device rows: \(rows.count) from \(appState.cachedDevices.count) Intune, \(appleOrg.devices.count) Apple organization and \(autopilot.identities.count) Autopilot records", category: "devices")
     }
 
@@ -178,13 +218,13 @@ private struct DevicesContentView: View {
             }
             
             // Detail Panel — shown when exactly one device is selected
-            if selectedDeviceIds.count == 1, let selectedRow = selectedRows.first {
+            if selectedDeviceIds.count == 1, selectedRows.count == 1, let selectedRow = selectedRows.first {
                 DeviceDetailView(row: selectedRow)
                     .frame(minWidth: 456, idealWidth: 540, maxWidth: 660)
             }
             
             // Actions Panel — always visible when devices are selected
-            if !selectedDeviceIds.isEmpty {
+            if !selectedRows.isEmpty {
                 DeviceActionsPanel(
                     selectedRows: selectedRows,
                     appleOrg: appleOrg,
@@ -234,6 +274,20 @@ private struct DevicesContentView: View {
         .onChange(of: appleOrg.servers) { _, _ in rebuildRows() }
         .onChange(of: appleOrg.profiles) { _, _ in rebuildRows() }
         .onReceive(autopilot.$identities) { _ in DispatchQueue.main.async { rebuildRows() } }
+        .onReceive(appState.$cachedAssets) { _ in DispatchQueue.main.async { rebuildRows() } }
+        .onChange(of: serialLookup) { _, _ in applyLookup() }
+        .onAppear {
+            if let saved = try? JSONDecoder().decode(TableColumnCustomization<DeviceListRow>.self, from: columnCustomizationData) {
+                columnCustomization = saved
+            } else {
+                columnCustomization = legacyColumnCustomization
+            }
+        }
+        .onChange(of: appleOrg.isLoading) { _, _ in rebuildRows() }
+        .onChange(of: autopilot.isLoading) { _, _ in rebuildRows() }
+        .onChange(of: columnCustomization) { _, value in
+            if let data = try? JSONEncoder().encode(value) { columnCustomizationData = data }
+        }
         // Hiding a device also deselects it, so an action never reaches a
         // device that is no longer on screen.
         .onChange(of: filteredRows.map(\.id)) { _, ids in
@@ -320,7 +374,7 @@ private struct DevicesContentView: View {
             switch command {
             case .refresh:       refreshAll()
             case .toggleFilters: showFilters.toggle()
-            case .clearFilters:  filters.clearAll()
+            case .clearFilters:  clearAllFilters()
             default:             break
             }
         }
@@ -328,20 +382,29 @@ private struct DevicesContentView: View {
         .findFocusesSearchField()
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
-                if filters.hasActiveFilters {
-                    Button(action: { filters.clearAll() }) {
+                if isFiltering {
+                    Button(action: clearAllFilters) {
                         Label("Clear Filters", systemImage: "xmark.circle.fill")
                             .foregroundStyle(.yellow)
                     }
                 }
 
                 Button(action: { showFilters.toggle() }) {
-                    Label("Filters", systemImage: filters.hasActiveFilters
+                    Label("Filters", systemImage: isFiltering
                         ? "line.3.horizontal.decrease.circle.fill"
                         : "line.3.horizontal.decrease.circle")
                 }
                 .popover(isPresented: $showFilters, arrowEdge: .bottom) {
                     FilterPanelView(filters: filters)
+                }
+
+                Button(action: { showSerials.toggle() }) {
+                    Label("Serials", systemImage: serialLookup.isEmpty ? "barcode.viewfinder" : "barcode")
+                }
+                .help("Look up a typed, pasted or imported list of serial numbers")
+                .popover(isPresented: $showSerials, arrowEdge: .bottom) {
+                    SerialLookupView(text: $serialLookupText, serials: $serialLookup, unknownCount: unknownLookupCount)
+                        .frame(width: 360, height: 320)
                 }
 
                 Button(action: refreshAll) {
@@ -363,17 +426,43 @@ private struct DevicesContentView: View {
     }
 
     /// The same columns for every device, whichever systems know it; a value
-    /// a row's sources lack reads "—". The first ten show by default, the
-    /// rest from the header's context menu.
+    /// a row's sources lack reads "—". Columns only a missing source could
+    /// fill are left out, and the header's context menu shows, hides and
+    /// reorders the rest. The arrangement is kept across launches.
+    @ViewBuilder
     private var deviceTable: some View {
-        Table(filteredRows, selection: $selectedDeviceIds, sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
-            defaultColumns
-            optionalColumns
+        if #available(macOS 14.4, *) {
+            Table(filteredRows, selection: $selectedDeviceIds, sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
+                identityColumns
+                if hasIntune { intuneColumns }
+                if hasProvisioning { provisioningColumns }
+                hardwareColumns
+                if hasIntune { ownershipColumn }
+                if hasProvisioning { purchaseColumn }
+                if hasAppleOrgSource { appleOrgColumns }
+            }
+        } else {
+            // Conditional columns need macOS 14.4; earlier releases get them all.
+            Table(filteredRows, selection: $selectedDeviceIds, sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
+                identityColumns
+                intuneColumns
+                provisioningColumns
+                hardwareColumns
+                ownershipColumn
+                purchaseColumn
+                appleOrgColumns
+            }
         }
     }
 
+    // The header menu offers only columns some device fills.
+    private var hasIntune: Bool { rows.contains { $0.intune != nil } }
+    private var hasAppleOrgSource: Bool { rows.contains { $0.apple != nil } }
+    private var hasProvisioning: Bool { rows.contains { $0.apple != nil || $0.autopilot != nil } }
+
+    /// Name, serial and platform: every row has them.
     @TableColumnBuilder<DeviceListRow, KeyPathComparator<DeviceListRow>>
-    private var defaultColumns: some TableColumnContent<DeviceListRow, KeyPathComparator<DeviceListRow>> {
+    private var identityColumns: some TableColumnContent<DeviceListRow, KeyPathComparator<DeviceListRow>> {
         TableColumn("Name", value: \.nameText) { row in
             Text(row.nameText)
                 .foregroundStyle(row.intune == nil ? Color.secondary : Color.primary)
@@ -389,13 +478,19 @@ private struct DevicesContentView: View {
         }
         .width(min: 100, ideal: 130)
         .customizationID("serial")
+        // The serial is what every system shares, so it never hides.
+        .disabledCustomizationBehavior(.visibility)
 
         TableColumn("Platform", value: \.platformText) { row in
             Text(row.platformText)
         }
         .width(min: 70, ideal: 90)
         .customizationID("platform")
+    }
 
+    /// What Intune reports about an enrolled device.
+    @TableColumnBuilder<DeviceListRow, KeyPathComparator<DeviceListRow>>
+    private var intuneColumns: some TableColumnContent<DeviceListRow, KeyPathComparator<DeviceListRow>> {
         TableColumn("OS", value: \.osText) { row in
             Text(row.osText).textSelection(.enabled)
         }
@@ -420,7 +515,11 @@ private struct DevicesContentView: View {
         }
         .width(min: 100, ideal: 150)
         .customizationID("lastSync")
+    }
 
+    /// The Apple organization's or Autopilot's view of the device.
+    @TableColumnBuilder<DeviceListRow, KeyPathComparator<DeviceListRow>>
+    private var provisioningColumns: some TableColumnContent<DeviceListRow, KeyPathComparator<DeviceListRow>> {
         TableColumn("Management Service", value: \.serviceText) { row in
             Text(row.serviceText).lineLimit(1)
         }
@@ -440,8 +539,9 @@ private struct DevicesContentView: View {
         .customizationID("groupOrder")
     }
 
+    /// Hardware, from whichever record has it. Hidden until asked for.
     @TableColumnBuilder<DeviceListRow, KeyPathComparator<DeviceListRow>>
-    private var optionalColumns: some TableColumnContent<DeviceListRow, KeyPathComparator<DeviceListRow>> {
+    private var hardwareColumns: some TableColumnContent<DeviceListRow, KeyPathComparator<DeviceListRow>> {
         TableColumn("Model", value: \.modelText) { row in
             Text(row.modelText).lineLimit(1)
         }
@@ -455,27 +555,39 @@ private struct DevicesContentView: View {
         .width(min: 80, ideal: 110)
         .customizationID("manufacturer")
         .defaultVisibility(.hidden)
+    }
 
+    /// Intune's ownership record. Hidden until asked for.
+    @TableColumnBuilder<DeviceListRow, KeyPathComparator<DeviceListRow>>
+    private var ownershipColumn: some TableColumnContent<DeviceListRow, KeyPathComparator<DeviceListRow>> {
         TableColumn("Ownership", value: \.ownershipText) { row in
             Text(row.ownershipText)
         }
         .width(min: 70, ideal: 90)
         .customizationID("ownership")
         .defaultVisibility(.hidden)
+    }
 
+    /// Apple's purchase source or Autopilot's purchase order. Hidden until asked for.
+    @TableColumnBuilder<DeviceListRow, KeyPathComparator<DeviceListRow>>
+    private var purchaseColumn: some TableColumnContent<DeviceListRow, KeyPathComparator<DeviceListRow>> {
+        TableColumn("Purchase Source", value: \.purchaseSourceText) { row in
+            Text(row.purchaseSourceText)
+        }
+        .width(min: 80, ideal: 110)
+        .customizationID("purchaseSource")
+        .defaultVisibility(.hidden)
+    }
+
+    /// Only the Apple organization fills these. Hidden until asked for.
+    @TableColumnBuilder<DeviceListRow, KeyPathComparator<DeviceListRow>>
+    private var appleOrgColumns: some TableColumnContent<DeviceListRow, KeyPathComparator<DeviceListRow>> {
         TableColumn("Migration", value: \.migrationText) { row in
             Text(row.migrationText)
                 .foregroundStyle(row.apple?.migrationStatus?.uppercased() == "FAILED" ? Color.orange : Color.primary)
         }
         .width(min: 80, ideal: 100)
         .customizationID("migration")
-        .defaultVisibility(.hidden)
-
-        TableColumn("Purchase Source", value: \.purchaseSourceText) { row in
-            Text(row.purchaseSourceText)
-        }
-        .width(min: 80, ideal: 110)
-        .customizationID("purchaseSource")
         .defaultVisibility(.hidden)
 
         TableColumn("Added", value: \.addedKey) { row in

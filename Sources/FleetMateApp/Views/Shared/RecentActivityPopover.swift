@@ -272,7 +272,7 @@ enum ActivityFeedBuilder {
                                           context: a.assignedTo?.name ?? a.rtdLocation?.name))
             }
             items += snipeActivity(appState, cutoff: inventoryCutoff, parse: parse)
-        case .development, .manage, .identity:
+        case .development, .reporting, .manage, .identity:
             // Development has its own comment feed; Manage and Identity record
             // no timestamped activity yet.
             break

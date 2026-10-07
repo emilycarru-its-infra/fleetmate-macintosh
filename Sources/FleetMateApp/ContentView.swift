@@ -279,6 +279,7 @@ struct ContentView: View {
     private var tabContent: some View {
         switch selectedTab {
         case .devices:   DevicesView()
+        case .reporting: ReportingView()
         case .manage:    ManageView(manage: appState.manageState)
         case .inventory: AssetsView()
         case .tickets:   TicketsView()

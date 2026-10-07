@@ -7,6 +7,7 @@ FleetMate is a unified command-line interface for managing IT assets across mult
 ## Features
 
 - **Fleet Monitoring** - Real-time device status and error tracking via ReportMate
+- **Reporting** - The full ReportMate dashboard as a tab, taken from the ReportMate app itself (see below)
 - **Asset Management** - Complete Snipe-IT integration (assets, users, locations, checkout/checkin)
 - **Ticketing** - TeamDynamix ticket and asset management
 - **Identity & Device** - Microsoft Entra ID and Intune integration
@@ -359,6 +360,27 @@ logging:
   path: /var/log/fleetmate
   level: info
 ```
+
+## Reporting tab: a one-way feed from ReportMate
+
+The Reporting tab is not a copy of ReportMate. It is the ReportMate app's own
+dashboard, from the `ReportMateUI` library in
+[reportmate/reportmate-app-swift](https://github.com/reportmate/reportmate-app-swift),
+which stays a standalone app in its own right.
+
+- ReportMate is developed first and knows nothing about FleetMate. Changes to the
+  dashboard are made there, never here.
+- `Package.swift` pins a commit on ReportMate's `main`. Every hour
+  `.github/workflows/reportmate-sync.yml` checks for new ReportMate commits,
+  builds and tests FleetMate against them in a read-only job, then moves the pin
+  with a pull request that merges automatically.
+- FleetMate's side is only `Views/Reporting/ReportingView.swift`. It passes
+  FleetMate's ReportMate endpoint and Entra audience to the dashboard, falling
+  back to ReportMate's own saved settings, and routes
+  `fleetmate://reporting/<page>` links, which take any `reportmate://` path.
+- If a ReportMate change breaks the FleetMate build, the sync job fails and the
+  pin stays where it was. The fix is either in FleetMate's host code or, when
+  it is a genuine embedding bug, a ReportMate change that stands on its own.
 
 ## Architecture
 

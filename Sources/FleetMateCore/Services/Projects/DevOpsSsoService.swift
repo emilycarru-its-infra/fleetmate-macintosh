@@ -73,8 +73,14 @@ public class DevOpsSsoService {
         return loadRefreshTokenFromMsalCache() != nil
     }
 
+    /// The directory whose tokens Azure DevOps accepts. A refresh token from
+    /// another account in the shared az cache signs in as a different object
+    /// id, which the organization rejects as "not materialized".
+    private let configuredTenantId: String?
+
     public init(tenantId: String? = nil) {
         let tenant = tenantId ?? "organizations"
+        self.configuredTenantId = tenantId.flatMap { ["organizations", "common", ""].contains($0.lowercased()) ? nil : $0.lowercased() }
         self.authorizeUrl = "https://login.microsoftonline.com/\(tenant)/oauth2/v2.0/authorize"
         self.tokenUrl = "https://login.microsoftonline.com/\(tenant)/oauth2/v2.0/token"
 
@@ -283,6 +289,12 @@ public class DevOpsSsoService {
         }
 
         let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
+        if let expected = expectedTenantId(),
+           let issued = Self.tenantId(fromJwt: tokenResponse.access_token),
+           issued != expected {
+            dbg.warn("[DevOps SSO] Discarded a token issued by another tenant", category: "devops-sso")
+            return .failure("Token was issued by another tenant")
+        }
         let userInfo = Self.extractUserInfoFromJwt(tokenResponse.access_token)
         let expiresIn = tokenResponse.expires_in ?? 3600
 
@@ -414,7 +426,9 @@ public class DevOpsSsoService {
             return nil
         }
 
-        // Find a refresh token for our client ID
+        // Refresh tokens for our client ID, keyed by home tenant. The cache
+        // holds one per signed-in account, and its order is not stable.
+        var candidates: [(tenant: String, secret: String)] = []
         for (_, value) in refreshTokens {
             guard let entry = value as? [String: Any],
                   let clientId = entry["client_id"] as? String,
@@ -423,9 +437,49 @@ public class DevOpsSsoService {
                   !secret.isEmpty else {
                 continue
             }
-            return secret
+            let home = (entry["home_account_id"] as? String) ?? ""
+            let tenant = home.split(separator: ".").last.map { String($0).lowercased() } ?? ""
+            candidates.append((tenant, secret))
         }
-        return nil
+        if let expected = expectedTenantId() {
+            return candidates.first { $0.tenant == expected }?.secret
+        }
+        // No way to tell accounts apart: only a single account is safe.
+        return candidates.count == 1 ? candidates[0].secret : nil
+    }
+
+    /// The configured tenant, else the tenant of az's default subscription.
+    private func expectedTenantId() -> String? {
+        if let configuredTenantId { return configuredTenantId }
+        let profileUrl = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".azure")
+            .appendingPathComponent("azureProfile.json")
+        guard var data = try? Data(contentsOf: profileUrl) else { return nil }
+        // az writes this file with a UTF-8 byte-order mark.
+        if data.starts(with: [0xEF, 0xBB, 0xBF]) { data = data.dropFirst(3) }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let subscriptions = json["subscriptions"] as? [[String: Any]],
+              let current = subscriptions.first(where: { ($0["isDefault"] as? Bool) == true }),
+              let tenant = current["tenantId"] as? String else {
+            return nil
+        }
+        return tenant.lowercased()
+    }
+
+    /// The `tid` claim of an access token.
+    static func tenantId(fromJwt token: String) -> String? {
+        let parts = token.split(separator: ".")
+        guard parts.count >= 2 else { return nil }
+        var payload = String(parts[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let remainder = payload.count % 4
+        if remainder > 0 { payload += String(repeating: "=", count: 4 - remainder) }
+        guard let data = Data(base64Encoded: payload),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return (json["tid"] as? String)?.lowercased()
     }
 
     // MARK: - Encoding Helpers

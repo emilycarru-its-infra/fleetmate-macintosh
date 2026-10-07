@@ -28,6 +28,12 @@ public class AzureDevOpsService {
     private var sprintCacheExpiry: Date = .distantPast
     private var defaultTeamCache: String?
     private var identityCache: DevOpsIdentitySummary?
+    /// The project list changes rarely, yet every Development poll fans out
+    /// from it; hold it briefly and keep the last good copy through failures.
+    private var projectsCache: [DevOpsProject]?
+    private var projectsCacheExpiry: Date = .distantPast
+    private var projectsRetryAfter: Date = .distantPast
+    private var projectsFailureLogged = false
     private let cacheDuration: TimeInterval
 
     // URLSession
@@ -106,6 +112,8 @@ public class AzureDevOpsService {
     public func setBearerToken(_ token: String, expiry: Date) {
         self.bearerToken = token
         self.tokenExpiry = expiry
+        // A new token may be a different identity; let the next poll retry.
+        projectsRetryAfter = .distantPast
         dbg.info("AzDO Bearer token set, expires \(expiry)", category: "azdo-auth")
     }
 
@@ -654,18 +662,39 @@ public class AzureDevOpsService {
     // MARK: - Projects
 
     public func listProjects() async throws -> [DevOpsProject] {
+        let now = Date()
+        if let cached = projectsCache, now < projectsCacheExpiry { return cached }
+        if now < projectsRetryAfter {
+            if let cached = projectsCache { return cached }
+            throw AzDevOpsError.forbidden(message: "Project list unavailable; retrying after \(projectsRetryAfter.formatted(date: .omitted, time: .standard))")
+        }
         dbg.info("AzDO listProjects via REST API", category: "azdo")
 
         struct ProjectsResponse: Decodable {
             let value: [DevOpsProject]?
         }
 
-        let response: ProjectsResponse = try await request(
-            "GET",
-            path: "/_apis/projects?api-version=7.0",
-            orgLevel: true
-        )
-        return response.value ?? []
+        do {
+            let response: ProjectsResponse = try await request(
+                "GET",
+                path: "/_apis/projects?api-version=7.0",
+                orgLevel: true
+            )
+            let projects = response.value ?? []
+            projectsCache = projects
+            projectsCacheExpiry = now.addingTimeInterval(10 * 60)
+            projectsFailureLogged = false
+            return projects
+        } catch {
+            // Back off instead of failing again on every poll, and say so once.
+            projectsRetryAfter = now.addingTimeInterval(5 * 60)
+            if !projectsFailureLogged {
+                dbg.warn("AzDO listProjects failing; backing off 5 min and using the last good list (\(projectsCache?.count ?? 0) projects)", category: "azdo")
+                projectsFailureLogged = true
+            }
+            if let cached = projectsCache { return cached }
+            throw error
+        }
     }
 
     /// Auto-discover and set the project. Called after SSO when no project is configured.

@@ -131,7 +131,7 @@ public class TdxService {
             c.timeoutIntervalForRequest = 60
             return c
         }()
-        self.session = Session(configuration: configuration)
+        self.session = Session(configuration: configuration, activityService: "Tickets")
     }
     
     // MARK: - SSO Authentication
@@ -159,7 +159,7 @@ public class TdxService {
         for cookie in cookies {
             configuration.httpCookieStorage?.setCookie(cookie)
         }
-        self.cookieSession = Session(configuration: configuration)
+        self.cookieSession = Session(configuration: configuration, activityService: "Tickets")
     }
 
     /// Clear SSO authentication state

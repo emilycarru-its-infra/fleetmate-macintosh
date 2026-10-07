@@ -94,6 +94,7 @@ private struct FindCommandModifier: ViewModifier {
 
 struct FleetMateCommands: Commands {
     @ObservedObject var appState: AppState
+    @Environment(\.openWindow) private var openWindow
     @AppStorage(AppFontScale.storageKey) private var fontScale: Double = AppFontScale.default
 
     /// Coarser than the settings slider's 0.05 — a menu item should make a
@@ -107,6 +108,12 @@ struct FleetMateCommands: Commands {
     }
 
     var body: some Commands {
+        CommandGroup(before: .windowList) {
+            Button("Activity Log") { openWindow(id: ActivityLogView.windowId) }
+                .keyboardShortcut("l", modifiers: [.command, .option])
+            Divider()
+        }
+
         CommandGroup(replacing: .newItem) {
             Button(newItemTitle) { appState.perform(.newItem) }
                 .keyboardShortcut("n", modifiers: .command)

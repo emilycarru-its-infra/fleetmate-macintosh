@@ -22,6 +22,16 @@ final class FleetMateLinkTests: XCTestCase {
         XCTAssertEqual(try parse("fleetmate://commit/github/octo/tool/abcdef1"), .commit(.gitHub(owner: "octo", repo: "tool"), sha: "abcdef1"))
     }
 
+    func testReportingRoutes() throws {
+        XCTAssertEqual(try parse("fleetmate://reporting/device/SAMPLE1?tab=installs"),
+                       .reporting(URL(string: "reportmate://device/SAMPLE1?tab=installs")!))
+        XCTAssertEqual(try parse("fleetmate://reporting"), .reporting(URL(string: "reportmate://dashboard")!))
+        XCTAssertEqual(try parse("fleetmate://reporting/applications/usage/Visual%20Studio%20Code"),
+                       .reporting(URL(string: "reportmate://applications/usage/Visual%20Studio%20Code")!))
+        let link = try parse("fleetmate://reporting/events/failures?platform=mac")
+        XCTAssertEqual(link.url.absoluteString, "fleetmate://reporting/events/failures?platform=mac")
+    }
+
     func testOpenWebURLs() throws {
         let base = "https://azure-devops.example.com/org/Devices"
         func open(_ web: String) throws -> FleetMateLink {

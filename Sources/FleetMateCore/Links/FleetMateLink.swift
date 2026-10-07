@@ -41,6 +41,10 @@ public enum FleetMateLink: Hashable, Sendable {
     /// An Entra user or group, by object id or user principal name.
     case user(id: String)
     case group(id: String)
+    /// A page of the Reporting tab, carried as the equivalent `reportmate://`
+    /// link: `fleetmate://reporting/device/<serial>?tab=installs` opens what
+    /// `reportmate://device/<serial>?tab=installs` opens in ReportMate.
+    case reporting(URL)
 
     public static let scheme = "fleetmate"
 
@@ -72,7 +76,7 @@ public enum FleetMateLink: Hashable, Sendable {
             }
         case .azureDevOpsRun(let p, _), .azureDevOpsPipeline(let p, _): return [p]
         case .gitHubRun(let o, let r, _), .gitHubIssue(let o, let r, _): return [o, r]
-        case .workItem, .device, .asset, .ticket, .user, .group: return []
+        case .workItem, .device, .asset, .ticket, .user, .group, .reporting: return []
         }
     }
 
@@ -137,6 +141,14 @@ public enum FleetMateLink: Hashable, Sendable {
         case "asset", "ticket":
             guard parts.count == 1, let id = Int(parts[0]) else { throw bad(url, "fleetmate://\(route)/<number>") }
             return route == "asset" ? .asset(id: id) : .ticket(id: id)
+
+        case "reporting":
+            var comps = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            comps?.scheme = "reportmate"
+            comps?.host = parts.first ?? "dashboard"
+            comps?.percentEncodedPath = parts.dropFirst().map { "/" + ($0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? $0) }.joined()
+            guard let target = comps?.url else { throw bad(url, "fleetmate://reporting/<ReportMate page>") }
+            return .reporting(target)
 
         case "open":
             let target = URLComponents(url: url, resolvingAgainstBaseURL: false)?
@@ -221,6 +233,13 @@ public enum FleetMateLink: Hashable, Sendable {
         case .ticket(let id): path = "ticket/\(id)"
         case .user(let id): path = "user/\(enc(id))"
         case .group(let id): path = "group/\(enc(id))"
+        case .reporting(let target):
+            var comps = URLComponents(url: target, resolvingAgainstBaseURL: false)
+            comps?.scheme = Self.scheme
+            comps?.path = "/" + (target.host ?? "dashboard") + target.path
+            comps?.host = "reporting"
+            if let url = comps?.url { return url }
+            path = "reporting"
         }
         return URL(string: "\(Self.scheme)://\(path)")!
     }

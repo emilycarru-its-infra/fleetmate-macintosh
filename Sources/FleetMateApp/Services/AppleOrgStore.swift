@@ -170,6 +170,13 @@ final class AppleOrgStore: ObservableObject {
     /// Run an action in one organization, wait for Apple to finish it, then
     /// re-read what changed. Returns a one-line outcome for the actions panel.
     func perform(_ action: AppleOrgAction, serials: [String], in orgId: String) async -> (ok: Bool, message: String) {
+        let activity = ActivityLog.shared.begin(action.title, service: "Apple", serials: serials)
+        let outcome = await performUnlogged(action, serials: serials, in: orgId)
+        ActivityLog.shared.finish(activity, failure: outcome.ok ? nil : outcome.message)
+        return outcome
+    }
+
+    private func performUnlogged(_ action: AppleOrgAction, serials: [String], in orgId: String) async -> (ok: Bool, message: String) {
         do {
             let s = try await service(for: orgId)
             let result = try await s.perform(action, serials: serials)

@@ -50,7 +50,7 @@ public class SnipeService {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 120
 
-        self.session = Session(configuration: configuration)
+        self.session = Session(configuration: configuration, activityService: "Inventory")
     }
 
     /// Convenience initializer from config — threads the OIDC audience so every
@@ -88,7 +88,7 @@ public class SnipeService {
         configuration.httpCookieAcceptPolicy = .always
         configuration.httpShouldSetCookies = true
         configuration.httpCookieStorage = storage
-        session = Session(configuration: configuration)
+        session = Session(configuration: configuration, activityService: "Inventory")
     }
 
     public func clearSsoCookies() {
@@ -104,7 +104,7 @@ public class SnipeService {
 
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 120
-        session = Session(configuration: configuration)
+        session = Session(configuration: configuration, activityService: "Inventory")
     }
 
     /// Extract the XSRF token from cookies (Laravel expects it URL-decoded in X-XSRF-TOKEN header)

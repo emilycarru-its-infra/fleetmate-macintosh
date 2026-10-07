@@ -198,7 +198,7 @@ public class AzureDevOpsService {
 
         dbg.debug("AzDO \(method) \(url.absoluteString)", category: "azdo")
 
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await session.loggedData(for: req, service: "Azure DevOps")
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AzDevOpsError.invalidResponse
@@ -261,7 +261,7 @@ public class AzureDevOpsService {
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue("Suppress", forHTTPHeaderField: "X-TFS-FedAuthRedirect")
 
-        let (data, response) = try await session.data(for: req)
+        let (data, response) = try await session.loggedData(for: req, service: "Azure DevOps")
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AzDevOpsError.invalidResponse
         }

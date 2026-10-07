@@ -10,7 +10,7 @@ extension AppTab {
     var hasWidgets: Bool {
         switch self {
         case .development, .projects, .devices, .inventory, .tickets: true
-        case .manage, .identity: false
+        case .reporting, .manage, .identity: false
         }
     }
 

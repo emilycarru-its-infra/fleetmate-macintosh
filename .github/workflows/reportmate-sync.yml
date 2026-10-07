@@ -1,0 +1,127 @@
+# .github/workflows/reportmate-sync.yml
+#
+# The Reporting tab is the ReportMate app's own dashboard: the ReportMateUI
+# package from reportmate/reportmate-app-swift, pinned in Package.swift to a
+# commit on its main branch. ReportMate is the product and FleetMate follows it
+# one way. This workflow notices new ReportMate commits, proves FleetMate still
+# builds and passes its tests against them, and moves the pin. Nothing is ever
+# sent back to ReportMate.
+#
+# Upstream code runs only where no write access exists:
+#   check   - read-only and runs nothing from ReportMate. It compares the
+#             pinned revision with ReportMate's main head.
+#   build   - read-only token, no persisted credentials. It builds and tests
+#             against that head. Package plugins and build tools from upstream
+#             run here too, and nothing produced here is trusted later.
+#   publish - holds the write token and never builds or runs ReportMate code.
+#             It writes the head the check job saw into Package.swift itself,
+#             then opens or updates the PR and merges it.
+#
+# A pull request opened with GITHUB_TOKEN does not start other workflows, so
+# ci.yml does not run on it. The build job above is that PR's build and test.
+
+name: reportmate-sync
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: reportmate-sync
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  UPSTREAM: https://github.com/reportmate/reportmate-app-swift.git
+  BRANCH: chore/reportmate-sync
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.compare.outputs.changed }}
+      revision: ${{ steps.compare.outputs.revision }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Compare the pin with ReportMate main
+        id: compare
+        run: |
+          pinned=$(grep -oE 'reportmate-app-swift\.git", revision: "[0-9a-f]{40}"' Package.swift | grep -oE '[0-9a-f]{40}')
+          latest=$(git ls-remote "$UPSTREAM" refs/heads/main | cut -f1)
+          echo "pinned=$pinned latest=$latest"
+          echo "$pinned" | grep -Eq '^[0-9a-f]{40}$' || { echo "::error::No ReportMate revision pin in Package.swift"; exit 1; }
+          echo "$latest" | grep -Eq '^[0-9a-f]{40}$' || { echo "::error::Could not read ReportMate main"; exit 1; }
+          echo "revision=$latest" >> "$GITHUB_OUTPUT"
+          if [ "$pinned" = "$latest" ]; then echo "changed=false" >> "$GITHUB_OUTPUT"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    runs-on: macos-26
+    permissions:
+      contents: read
+    env:
+      REVISION: ${{ needs.check.outputs.revision }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Select newest Xcode 26
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+
+      - name: Move the pin to ReportMate main
+        run: |
+          sed -i '' -E "s/(reportmate-app-swift\.git\", revision: \")[0-9a-f]{40}/\1$REVISION/" Package.swift
+          grep -q "revision: \"$REVISION\"" Package.swift
+
+      - name: Build
+        run: |
+          swift build -c release --product fleetmate
+          swift build -c release --product FleetMateApp
+
+      - name: Test
+        run: swift test
+
+  publish:
+    needs: [check, build]
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      REVISION: ${{ needs.check.outputs.revision }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Move the pin, open or update the pull request, and merge it
+        run: |
+          sed -i -E "s/(reportmate-app-swift\.git\", revision: \")[0-9a-f]{40}/\1$REVISION/" Package.swift
+          if git diff --quiet -- Package.swift; then echo "Already at $REVISION"; exit 0; fi
+          [ "$(git diff --numstat | wc -l)" -eq 1 ] || { echo "::error::Unexpected changes"; exit 1; }
+          short=${REVISION:0:7}
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BRANCH"
+          git commit -am "Follow ReportMate main to $short"
+          git push --force origin "$BRANCH"
+          body="Moves the Reporting tab's ReportMate pin to reportmate/reportmate-app-swift@$REVISION.
+
+          Before this pull request opened, the reportmate-sync build job built every product and ran the test suite against that revision.
+
+          Risk: low. Only the pin changes, and reverting the commit restores the previous revision."
+          if [ "$(gh pr view "$BRANCH" --json state -q .state 2>/dev/null)" = "OPEN" ]; then
+            gh pr edit "$BRANCH" --title "Follow ReportMate main to $short" --body "$body"
+          else
+            gh pr create --base main --head "$BRANCH" --title "Follow ReportMate main to $short" --body "$body"
+          fi
+          gh pr merge "$BRANCH" --squash --delete-branch

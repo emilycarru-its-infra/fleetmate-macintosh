@@ -88,9 +88,15 @@ extension FilterState where Category == DeviceFacet {
         hiddenCategories = DeviceFacet.hidden(hasAppleOrg: hasAppleOrg, hasAutopilot: hasAutopilot)
         for facet in DeviceFacet.allCases {
             var counts: [String: Int] = [:]
-            for row in rows { counts[row.value(for: facet), default: 0] += 1 }
+            for row in rows {
+                for value in row.values(for: facet) { counts[value, default: 0] += 1 }
+            }
             availableValues[facet] = counts.keys.sorted()
             valueCounts[facet] = counts
+        }
+        // With every source in agreement there is nothing to narrow by.
+        if Set(availableValues[.discrepancy] ?? []).subtracting([DeviceDiscrepancy.none]).isEmpty {
+            hiddenCategories.insert(.discrepancy)
         }
         if hiddenCategories.contains(selectedCategory),
            let first = DeviceFacet.allCases.first(where: { !hiddenCategories.contains($0) }) {
@@ -100,7 +106,7 @@ extension FilterState where Category == DeviceFacet {
 
     func matches(_ row: DeviceListRow) -> Bool {
         for (facet, selected) in selectedValues where !selected.isEmpty && !hiddenCategories.contains(facet) {
-            if !selected.contains(row.value(for: facet)) { return false }
+            if selected.isDisjoint(with: row.values(for: facet)) { return false }
         }
         return true
     }

@@ -207,6 +207,9 @@ class AppState: ObservableObject {
                 navigateToTab = .tickets
             case .user, .group:
                 navigateToTab = .identity
+            case .reporting(let target):
+                reporting.open(target)
+                navigateToTab = .reporting
             default:
                 pendingDevelopmentLink = link
                 navigateToTab = .development
@@ -338,6 +341,8 @@ class AppState: ObservableObject {
     lazy var tdxService: TdxService = TdxService(config: config)
     lazy var snipeService: SnipeService = SnipeService(config: config)
     lazy var reportMateService: ReportMateService = ReportMateService(config: config)
+    /// The Reporting tab's dashboard, kept across tab switches.
+    lazy var reporting = ReportingHost(config: config)
 
     /// The Manage tab's state. Lives here so it survives tab switches and
     /// is reconfigured, not rebuilt, when settings change.

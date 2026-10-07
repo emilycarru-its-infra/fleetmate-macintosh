@@ -26,6 +26,10 @@ let package = Package(
         .package(url: "https://github.com/rodchristiansen/asbmutil.git", revision: "84393012164215e570ff79405c95490cc370e279"),
         // 1.12 added Metal shaders, which the Command Line Tools cannot compile.
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", "1.11.2"..<"1.12.0"),
+        // The Reporting tab is the ReportMate app's own dashboard. Pinned to a
+        // commit on ReportMate's main; reportmate-sync.yml moves this revision
+        // whenever ReportMate's main moves and FleetMate still builds and tests.
+        .package(url: "https://github.com/reportmate/reportmate-app-swift.git", revision: "52cff7a7254d79967baee6677394e73e891a8c33"),
     ],
     targets: [
         // Shared library with services, models, and config
@@ -57,6 +61,8 @@ let package = Package(
                 "FleetMateCore",
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
+                .product(name: "ReportMateUI", package: "reportmate-app-swift"),
+                .product(name: "ReportMateKit", package: "reportmate-app-swift"),
             ],
             path: "Sources/FleetMateApp"
         ),

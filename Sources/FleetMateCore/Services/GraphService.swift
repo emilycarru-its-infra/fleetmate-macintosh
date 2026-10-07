@@ -290,7 +290,8 @@ public class GraphService {
     public func syncDevices(_ deviceIds: [String]) async throws -> [BulkActionResult] {
         guard let headers = await headers() else { return [] }
 
-        return await withTaskGroup(of: BulkActionResult.self) { group in
+        return await ActivityLog.shared.perform("Sync devices", service: "Microsoft Graph", serials: ActivityLog.shared.serials(forDeviceIds: deviceIds)) {
+        await withTaskGroup(of: BulkActionResult.self) { group in
             for deviceId in deviceIds {
                 group.addTask {
                     let url = "\(self.baseUrl)/deviceManagement/managedDevices/\(deviceId)/syncDevice"
@@ -306,12 +307,14 @@ public class GraphService {
             for await result in group { results.append(result) }
             return results
         }
+        }
     }
 
     public func rebootDevices(_ deviceIds: [String]) async throws -> [BulkActionResult] {
         guard let headers = await headers() else { return [] }
 
-        return await withTaskGroup(of: BulkActionResult.self) { group in
+        return await ActivityLog.shared.perform("Restart devices", service: "Microsoft Graph", serials: ActivityLog.shared.serials(forDeviceIds: deviceIds)) {
+        await withTaskGroup(of: BulkActionResult.self) { group in
             for deviceId in deviceIds {
                 group.addTask {
                     let url = "\(self.baseUrl)/deviceManagement/managedDevices/\(deviceId)/rebootNow"
@@ -327,12 +330,14 @@ public class GraphService {
             for await result in group { results.append(result) }
             return results
         }
+        }
     }
 
     public func remoteLockDevices(_ deviceIds: [String], pin: String? = nil) async throws -> [BulkActionResult] {
         guard let headers = await headers() else { return [] }
 
-        return await withTaskGroup(of: BulkActionResult.self) { group in
+        return await ActivityLog.shared.perform("Lock devices", service: "Microsoft Graph", serials: ActivityLog.shared.serials(forDeviceIds: deviceIds)) {
+        await withTaskGroup(of: BulkActionResult.self) { group in
             for deviceId in deviceIds {
                 group.addTask {
                     let url = "\(self.baseUrl)/deviceManagement/managedDevices/\(deviceId)/remoteLock"
@@ -351,6 +356,7 @@ public class GraphService {
             var results: [BulkActionResult] = []
             for await result in group { results.append(result) }
             return results
+        }
         }
     }
 
@@ -374,7 +380,8 @@ public class GraphService {
     private func wipeDevices(_ targets: [(id: String, platform: DevicePlatform)], options: WipeOptions) async throws -> [BulkActionResult] {
         guard let headers = await headers() else { return [] }
 
-        return await withTaskGroup(of: BulkActionResult.self) { group in
+        return await ActivityLog.shared.perform("Erase devices", service: "Microsoft Graph", serials: ActivityLog.shared.serials(forDeviceIds: targets.map(\.id))) {
+        await withTaskGroup(of: BulkActionResult.self) { group in
             for target in targets {
                 group.addTask {
                     let url = "\(self.baseUrl)/deviceManagement/managedDevices/\(target.id)/wipe"
@@ -390,6 +397,7 @@ public class GraphService {
             for await result in group { results.append(result) }
             return results
         }
+        }
     }
 
     /// Retire devices — removes company data and unenrolls, leaving personal
@@ -397,7 +405,8 @@ public class GraphService {
     public func retireDevices(_ deviceIds: [String]) async throws -> [BulkActionResult] {
         guard let headers = await headers() else { return [] }
 
-        return await withTaskGroup(of: BulkActionResult.self) { group in
+        return await ActivityLog.shared.perform("Retire devices", service: "Microsoft Graph", serials: ActivityLog.shared.serials(forDeviceIds: deviceIds)) {
+        await withTaskGroup(of: BulkActionResult.self) { group in
             for deviceId in deviceIds {
                 group.addTask {
                     let url = "\(self.baseUrl)/deviceManagement/managedDevices/\(deviceId)/retire"
@@ -412,6 +421,7 @@ public class GraphService {
             var results: [BulkActionResult] = []
             for await result in group { results.append(result) }
             return results
+        }
         }
     }
 
@@ -901,7 +911,53 @@ public class GraphService {
 
     // MARK: - Private Helpers
 
+    // Every Graph request, over either transport, passes through these and is
+    // listed in the Activity Log.
+
     func fetchData(url: String, headers: HTTPHeaders, extraHeaders: [String: String] = [:]) async throws -> Data {
+        try await logged("GET", url) { try await transportFetchData(url: url, headers: headers, extraHeaders: extraHeaders) }
+    }
+
+    func fetch<T: Decodable>(url: String, headers: HTTPHeaders, extraHeaders: [String: String] = [:]) async throws -> T {
+        let value: T = try await logged("GET", url) { try await transportFetch(url: url, headers: headers, extraHeaders: extraHeaders) }
+        if let list = value as? IntuneDeviceListResponse {
+            for device in list.value { ActivityLog.shared.remember(serial: device.serialNumber, forDeviceId: device.id) }
+        }
+        return value
+    }
+
+    func postAction(url: String, body: [String: Any]? = nil, headers: HTTPHeaders) async throws {
+        try await logged("POST", url) { try await transportPostAction(url: url, body: body, headers: headers) }
+    }
+
+    func patchAction(url: String, body: [String: Any], headers: HTTPHeaders) async throws {
+        try await logged("PATCH", url) { try await transportPatchAction(url: url, body: body, headers: headers) }
+    }
+
+    func deleteAction(url: String, headers: HTTPHeaders) async throws {
+        try await logged("DELETE", url) { try await transportDeleteAction(url: url, headers: headers) }
+    }
+
+    func post<T: Decodable>(url: String, body: [String: Any], headers: HTTPHeaders) async throws -> T {
+        try await logged("POST", url) { try await transportPost(url: url, body: body, headers: headers) }
+    }
+
+    private func logged<T>(_ method: String, _ url: String, _ work: () async throws -> T) async throws -> T {
+        let started = Date()
+        do {
+            let value = try await work()
+            ActivityLog.shared.record(service: "Microsoft Graph", method: method, url: URL(string: url), status: nil,
+                                      startedAt: started, duration: Date().timeIntervalSince(started))
+            return value
+        } catch {
+            ActivityLog.shared.record(service: "Microsoft Graph", method: method, url: URL(string: url), status: nil,
+                                      startedAt: started, duration: Date().timeIntervalSince(started),
+                                      failure: ActivityLog.describe(error))
+            throw error
+        }
+    }
+
+    private func transportFetchData(url: String, headers: HTTPHeaders, extraHeaders: [String: String]) async throws -> Data {
         if useAze {
             return try await azeTransport.send(GraphRequest(method: .get, url: url, headers: extraHeaders))
         }
@@ -922,7 +978,7 @@ public class GraphService {
         }
     }
 
-    func fetch<T: Decodable>(url: String, headers: HTTPHeaders, extraHeaders: [String: String] = [:]) async throws -> T {
+    private func transportFetch<T: Decodable>(url: String, headers: HTTPHeaders, extraHeaders: [String: String]) async throws -> T {
         if useAze {
             let data = try await azeTransport.send(GraphRequest(method: .get, url: url, headers: extraHeaders))
             return try GraphService.graphDecoder.decode(T.self, from: data)
@@ -945,7 +1001,7 @@ public class GraphService {
         }
     }
 
-    func postAction(url: String, body: [String: Any]? = nil, headers: HTTPHeaders) async throws {
+    private func transportPostAction(url: String, body: [String: Any]?, headers: HTTPHeaders) async throws {
         if useAze {
             let bodyData = try body.map { try JSONSerialization.data(withJSONObject: $0) }
             _ = try await azeTransport.send(GraphRequest(method: .post, url: url, body: bodyData))
@@ -971,7 +1027,7 @@ public class GraphService {
         }
     }
 
-    func patchAction(url: String, body: [String: Any], headers: HTTPHeaders) async throws {
+    private func transportPatchAction(url: String, body: [String: Any], headers: HTTPHeaders) async throws {
         if useAze {
             let bodyData = try JSONSerialization.data(withJSONObject: body)
             _ = try await azeTransport.send(GraphRequest(method: .patch, url: url, body: bodyData))
@@ -993,7 +1049,7 @@ public class GraphService {
         }
     }
 
-    func deleteAction(url: String, headers: HTTPHeaders) async throws {
+    private func transportDeleteAction(url: String, headers: HTTPHeaders) async throws {
         if useAze {
             _ = try await azeTransport.send(GraphRequest(method: .delete, url: url))
             return
@@ -1014,7 +1070,7 @@ public class GraphService {
         }
     }
 
-    func post<T: Decodable>(url: String, body: [String: Any], headers: HTTPHeaders) async throws -> T {
+    private func transportPost<T: Decodable>(url: String, body: [String: Any], headers: HTTPHeaders) async throws -> T {
         if useAze {
             let bodyData = try JSONSerialization.data(withJSONObject: body)
             let data = try await azeTransport.send(GraphRequest(method: .post, url: url, body: bodyData))

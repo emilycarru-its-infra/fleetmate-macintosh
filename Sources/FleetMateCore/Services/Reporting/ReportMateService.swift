@@ -54,7 +54,7 @@ public class ReportMateService {
         let configuration = sessionConfiguration ?? URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 120
 
-        self.session = Session(configuration: configuration)
+        self.session = Session(configuration: configuration, activityService: "ReportMate")
     }
 
     /// Convenience initializer from config

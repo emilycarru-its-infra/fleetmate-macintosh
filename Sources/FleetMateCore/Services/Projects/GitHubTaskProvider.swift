@@ -26,7 +26,7 @@ public actor GitHubTaskProvider: TaskProvider {
         
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 30
-        self.session = Session(configuration: configuration)
+        self.session = Session(configuration: configuration, activityService: "GitHub")
     }
     
     public func authenticate() async throws -> Bool {

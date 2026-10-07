@@ -9,7 +9,9 @@ public final class DebugLogger {
 
     private let osLog = Logger(subsystem: "com.fleetmate", category: "app")
     private let logFileURL: URL
-    private let fileHandle: FileHandle?
+    private var fileHandle: FileHandle?
+    private var writesSinceCheck = 0
+    private static let rotateSize: UInt64 = 2_000_000
     private let queue = DispatchQueue(label: "com.fleetmate.debuglogger")
     private let startTime = Date()
     private let timestampFormatter: DateFormatter = {
@@ -26,20 +28,11 @@ public final class DebugLogger {
 
         logFileURL = dir.appendingPathComponent("debug.log")
 
-        // Rotate if > 2 MB
         if let attrs = try? FileManager.default.attributesOfItem(atPath: logFileURL.path),
-           let size = attrs[.size] as? UInt64, size > 2_000_000 {
-            let backup = dir.appendingPathComponent("debug.log.1")
-            try? FileManager.default.removeItem(at: backup)
-            try? FileManager.default.moveItem(at: logFileURL, to: backup)
+           let size = attrs[.size] as? UInt64, size > Self.rotateSize {
+            rotate()
         }
-
-        // Create file if needed
-        if !FileManager.default.fileExists(atPath: logFileURL.path) {
-            FileManager.default.createFile(atPath: logFileURL.path, contents: nil)
-        }
-        fileHandle = FileHandle(forWritingAtPath: logFileURL.path)
-        fileHandle?.seekToEndOfFile()
+        openLogFile()
 
         let separator = "\n" + String(repeating: "=", count: 80) + "\n"
         let header = "\(separator)FleetMate launched at \(ISO8601DateFormatter().string(from: Date()))\n\(separator)\n"
@@ -95,9 +88,44 @@ public final class DebugLogger {
     // MARK: - Internal
 
     private func write(_ text: String) {
+        writesSinceCheck += 1
+        if writesSinceCheck >= 200 {
+            writesSinceCheck = 0
+            checkLogFile()
+        }
         if let data = text.data(using: .utf8) {
             fileHandle?.write(data)
         }
+    }
+
+    private func openLogFile() {
+        if !FileManager.default.fileExists(atPath: logFileURL.path) {
+            FileManager.default.createFile(atPath: logFileURL.path, contents: nil)
+        }
+        fileHandle = FileHandle(forWritingAtPath: logFileURL.path)
+        fileHandle?.seekToEndOfFile()
+    }
+
+    private func rotate() {
+        let backup = logFileURL.deletingLastPathComponent().appendingPathComponent("debug.log.1")
+        try? FileManager.default.removeItem(at: backup)
+        try? FileManager.default.moveItem(at: logFileURL, to: backup)
+    }
+
+    /// The app and the CLI share one log, and the app runs for days. Rotate
+    /// at the size cap while running, and reopen when another process has
+    /// rotated the file away, so lines never keep landing in debug.log.1.
+    private func checkLogFile() {
+        guard let handle = fileHandle else { return }
+        var open = stat()
+        var onDisk = stat()
+        let moved = fstat(handle.fileDescriptor, &open) != 0
+            || stat(logFileURL.path, &onDisk) != 0
+            || open.st_ino != onDisk.st_ino
+        if !moved && UInt64(open.st_size) <= Self.rotateSize { return }
+        handle.closeFile()
+        if !moved { rotate() }
+        openLogFile()
     }
 
     public enum LogLevel {

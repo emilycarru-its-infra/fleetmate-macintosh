@@ -15,10 +15,13 @@
 #             run here too, and nothing produced here is trusted later.
 #   publish - holds the write token and never builds or runs ReportMate code.
 #             It writes the head the check job saw into Package.swift itself,
-#             then opens or updates the PR and merges it.
+#             opens or updates the PR, starts ci.yml on it and sets it to
+#             merge once that passes.
 #
-# A pull request opened with GITHUB_TOKEN does not start other workflows, so
-# ci.yml does not run on it. The build job above is that PR's build and test.
+# A pull request opened with GITHUB_TOKEN does not start pull_request
+# workflows, but a workflow_dispatch does run. main requires ci.yml's check,
+# so publish starts ci.yml on the branch and the pull request merges only
+# when that run passes, the same gate as every other pull request.
 
 name: reportmate-sync
 
@@ -95,6 +98,7 @@ jobs:
     if: needs.build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
+      actions: write
       contents: write
       pull-requests: write
     env:
@@ -116,7 +120,7 @@ jobs:
           git push --force origin "$BRANCH"
           body="Moves the Reporting tab's ReportMate pin to reportmate/reportmate-app-swift@$REVISION.
 
-          Before this pull request opened, the reportmate-sync build job built every product and ran the test suite against that revision.
+          Before this pull request opened, the reportmate-sync build job built every product and ran the test suite against that revision. It merges once ci.yml passes on it.
 
           Risk: low. Only the pin changes, and reverting the commit restores the previous revision."
           if [ "$(gh pr view "$BRANCH" --json state -q .state 2>/dev/null)" = "OPEN" ]; then
@@ -124,4 +128,5 @@ jobs:
           else
             gh pr create --base main --head "$BRANCH" --title "Follow ReportMate main to $short" --body "$body"
           fi
-          gh pr merge "$BRANCH" --squash --delete-branch
+          gh workflow run ci.yml --ref "$BRANCH"
+          gh pr merge "$BRANCH" --auto --squash --delete-branch

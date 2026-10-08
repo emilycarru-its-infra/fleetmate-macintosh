@@ -2,11 +2,11 @@ import XCTest
 @testable import FleetMateCore
 
 final class RemoteSessionTests: XCTestCase {
-    let launcher = RemoteSessionLauncher(sshKeyPath: "/Users/op/.ssh/id_rsa.macadmins", sshUser: "macadmins", terminalTheme: "Homebrew")
+    let launcher = RemoteSessionLauncher(sshKeyPath: "/Users/op/.ssh/id_rsa.fleetadmin", sshUser: "fleetadmin", terminalTheme: "Homebrew")
 
     func testSshCommandLineQuotesKeyAndTarget() {
         let line = launcher.sshCommandLine(address: "192.168.2.50")
-        XCTAssertEqual(line, "ssh -i '/Users/op/.ssh/id_rsa.macadmins' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=15 'macadmins@192.168.2.50'")
+        XCTAssertEqual(line, "ssh -i '/Users/op/.ssh/id_rsa.fleetadmin' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=15 'fleetadmin@192.168.2.50'")
 
         let odd = RemoteSessionLauncher(sshKeyPath: "/keys/it's mine", sshUser: "ops")
         XCTAssertTrue(odd.sshCommandLine(address: "h").contains("-i '/keys/it'\\''s mine'"))
@@ -26,7 +26,7 @@ final class RemoteSessionTests: XCTestCase {
         XCTAssertTrue(script.contains("set current settings of t to settings set \"Homebrew\""))
         XCTAssertTrue(script.contains("set custom title of t to \"SSH - LAB-02\""))
         // Shell single quotes inside the AppleScript string need no escaping; double quotes and backslashes do.
-        XCTAssertTrue(script.contains("do script \"ssh -i '/Users/op/.ssh/id_rsa.macadmins'"))
+        XCTAssertTrue(script.contains("do script \"ssh -i '/Users/op/.ssh/id_rsa.fleetadmin'"))
     }
 
     func testTerminalScriptSkipsThemeWhenNoneIsSet() {
@@ -47,13 +47,13 @@ final class RemoteSessionTests: XCTestCase {
         let url = try XCTUnwrap(launcher.screenSharingURL(address: "192.168.2.50", password: "p@ss/word:1"))
         XCTAssertEqual(url.scheme, "vnc")
         XCTAssertEqual(url.host, "192.168.2.50")
-        XCTAssertEqual(url.user, "macadmins")
+        XCTAssertEqual(url.user, "fleetadmin")
         XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.password, "p@ss/word:1")
         XCTAssertEqual(url.password, "p%40ss%2Fword:1", "URL.password keeps the percent-encoding; reserved characters are encoded")
         XCTAssertFalse(url.absoluteString.contains("p@ss/word:1"))
 
         let noPassword = try XCTUnwrap(launcher.screenSharingURL(address: "192.168.2.50", password: nil))
-        XCTAssertEqual(noPassword.absoluteString, "vnc://macadmins@192.168.2.50")
+        XCTAssertEqual(noPassword.absoluteString, "vnc://fleetadmin@192.168.2.50")
 
         let custom = RemoteSessionLauncher(sshKeyPath: "/k", sshUser: "u", screenSharingUser: "viewer")
         XCTAssertEqual(custom.screenSharingURL(address: "h", password: "")?.absoluteString, "vnc://viewer@h")
@@ -67,7 +67,7 @@ final class RemoteSessionTests: XCTestCase {
         XCTAssertEqual(l.sshUser, "lab")
         XCTAssertEqual(l.screenSharingUser, "lab")
         XCTAssertEqual(l.terminalTheme, "Ocean")
-        XCTAssertTrue(l.sshKeyPath.hasSuffix("/.ssh/id_rsa.macadmins"))
+        XCTAssertTrue(l.sshKeyPath.hasSuffix("/.ssh/id_rsa.fleetadmin"))
     }
 
     func testKeychainKeyIsPinned() {

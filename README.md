@@ -349,9 +349,9 @@ secure_shell:
 
 manage:
   enabled: true
-  roster_path: ~/Developer/Munki/deployment/enroll/computers.csv
-  ssh_key_path: ~/.ssh/id_rsa.macadmins
-  ssh_user: macadmins
+  roster_path: ~/Developer/fleet/computers.csv
+  ssh_key_path: ~/.ssh/id_rsa.fleetadmin
+  ssh_user: fleetadmin
   terminal_theme: Homebrew
   include_retired: false
   probe_concurrency: 12

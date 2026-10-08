@@ -93,18 +93,33 @@ final class ManageConfigTests: XCTestCase {
 
     func testDefaultsResolve() {
         let c = ManageConfig()
-        XCTAssertEqual(c.resolvedSshUser, "macadmins")
-        XCTAssertTrue(c.resolvedSshKeyPath.hasSuffix("/.ssh/id_rsa.macadmins"))
+        XCTAssertEqual(c.resolvedSshUser, "fleetadmin")
+        XCTAssertTrue(c.resolvedSshKeyPath.hasSuffix("/.ssh/id_rsa.fleetadmin"))
         XCTAssertFalse(c.resolvedSshKeyPath.hasPrefix("~"))
-        XCTAssertEqual(c.resolvedScreenSharingUser, "macadmins")
+        XCTAssertEqual(c.resolvedScreenSharingUser, "fleetadmin")
         XCTAssertTrue(c.resolvedCommandsPath.hasSuffix("/FleetMate/manage/commands.yaml"))
         XCTAssertEqual(c.resolvedRosterPath(repoRoot: nil), "")
-        XCTAssertEqual(c.resolvedRosterPath(repoRoot: "/repo"), "/repo/deployment/enroll/computers.csv")
+        XCTAssertEqual(c.resolvedRosterPath(repoRoot: "/repo"), "/repo/computers.csv")
+        XCTAssertFalse(c.fetchesRoster, "no roster repository is named by default")
         XCTAssertFalse(c.hasRoster(repoRoot: "/nonexistent"))
         let ssh = c.toSecureShellConfig()
-        XCTAssertEqual(ssh.defaultUsername, "macadmins")
+        XCTAssertEqual(ssh.defaultUsername, "fleetadmin")
         XCTAssertEqual(ssh.maxConcurrentConnections, 12)
         XCTAssertNil(ssh.privateKeyEnvVar, "the shared SSH env var must not override the Manage key")
+    }
+
+    func testRosterRepositoryComesFromSettings() {
+        let c = ManageConfig.applying(credentials: [
+            "manageRosterRepoProject": "Fleet",
+            "manageRosterRepo": "Enrollment",
+            "manageRosterRepoPath": "/enroll/computers.csv",
+        ], to: nil)!
+        XCTAssertTrue(c.fetchesRoster)
+        XCTAssertEqual(c.rosterSourceLabel, "Fleet/Enrollment")
+        XCTAssertEqual(c.resolvedRosterPath(repoRoot: "/repo"), "/repo/enroll/computers.csv")
+        XCTAssertEqual(c.credentialValues()["manageRosterRepo"], "Enrollment")
+        XCTAssertEqual(c.credentialValues()["manageRosterRepoPath"], "/enroll/computers.csv")
+        XCTAssertNil(ManageConfig().credentialValues()["manageRosterRepoPath"])
     }
 
     func testExplicitValuesWin() {

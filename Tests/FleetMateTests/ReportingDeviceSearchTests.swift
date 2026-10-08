@@ -12,7 +12,7 @@ final class ReportingDeviceSearchTests: XCTestCase {
         XCTAssertEqual(ReportingDeviceSearch.search("studio", in: fleet, limit: 6).map(\.field), ["Name"])
         XCTAssertEqual(ReportingDeviceSearch.search("pf3xyz", in: fleet, limit: 6).map(\.field), ["Serial"])
         XCTAssertEqual(ReportingDeviceSearch.search("sam", in: fleet, limit: 6).map(\.device.serial), ["PF3XYZ99"])
-        XCTAssertEqual(ReportingDeviceSearch.search("labmac", in: fleet, limit: 6).first?.field, "Name")
+        XCTAssertEqual(ReportingDeviceSearch.search("labmac", in: fleet, limit: 6).first?.field, "Host")
     }
 
     func testExactSerialOrAssetTagSortsFirst() {

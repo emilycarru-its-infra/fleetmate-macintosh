@@ -15,10 +15,47 @@ struct MarkdownTextView: View {
     /// A whole document (a Handbook page, a SKILL.md) rather than a comment:
     /// real heading sizes and paragraph spacing.
     var document: Bool = false
+    /// How a clicked link in a document is classified. Documents (Handbook
+    /// pages, skills) come from repositories many people edit, so every link
+    /// goes through `HandbookLinks`: the default opens only http(s) links. The
+    /// view itself opens whatever the classification allows; a caller can
+    /// choose which page opens, never which URL reaches the system.
+    var linkPolicy: ((URL) -> HandbookLinkAction)? = nil
+    /// Opens a Handbook page the policy matched.
+    var openPage: ((HandbookPage) -> Void)? = nil
+    /// For documents, the one host images may load from (the Handbook site).
+    /// Without it a document shows no remote images.
+    var imageSite: String? = nil
 
     private var theme: MarkdownUI.Theme { document ? .fleetMateDocument : .fleetMate }
 
     var body: some View {
+        if document {
+            rendered
+                .markdownImageProvider(SiteImageProvider(siteURL: imageSite))
+                .environment(\.openURL, OpenURLAction { url in follow(url) })
+        } else {
+            rendered
+        }
+    }
+
+    private func follow(_ url: URL) -> OpenURLAction.Result {
+        let action = linkPolicy?(url) ?? HandbookLinks.external(url).map(HandbookLinkAction.openInBrowser) ?? .ignore
+        switch action {
+        case .openPage(let page):
+            guard let openPage else { return .discarded }
+            openPage(page)
+            return .handled
+        case .openInBrowser(let web) where HandbookLinks.isWeb(web):
+            // Exactly the address the allow-list produced, not the one clicked.
+            return .systemAction(web)
+        default:
+            return .discarded
+        }
+    }
+
+    @ViewBuilder
+    private var rendered: some View {
         if content.isEmpty {
             Text("No content")
                 .appFont(.body)
@@ -43,6 +80,21 @@ struct MarkdownTextView: View {
     private func isHtml(_ text: String) -> Bool {
         let htmlPattern = #"<\s*(div|p|br|h[1-6]|ul|ol|li|span|a|img|table|tr|td|th|pre|code|em|strong|b|i|hr)\b"#
         return text.range(of: htmlPattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+}
+
+/// Images in a document load only over http(s) from the Handbook site's own
+/// host; anything else renders as nothing.
+private struct SiteImageProvider: ImageProvider {
+    let siteURL: String?
+
+    @ViewBuilder
+    func makeImage(url: URL?) -> some View {
+        if HandbookLinks.allowsImage(url, siteURL: siteURL) {
+            DefaultImageProvider.default.makeImage(url: url)
+        } else {
+            EmptyView()
+        }
     }
 }
 

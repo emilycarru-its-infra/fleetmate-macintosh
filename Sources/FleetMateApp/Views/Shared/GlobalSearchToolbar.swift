@@ -17,6 +17,9 @@ enum GlobalSearchRouter {
         case .devices:
             if let deviceId = hit.deviceId { appState.navigateToDeviceId = deviceId }
             appState.navigateToTab = .devices
+        case .reporting:
+            if let serial = hit.reportingSerial { appState.reporting.openDevice(serial: serial) }
+            appState.navigateToTab = .reporting
         case .inventory:
             if let assetId = hit.assetId {
                 appState.navigateToAssetId = assetId
@@ -97,6 +100,11 @@ struct GlobalSearchToolbarField: View {
         .help("Search everything (⌘K)")
         // ⌘K (Edit › Search Everything) puts the cursor here from any tab.
         .onChange(of: appState.globalSearchFocusRequest) { _, _ in focused = true }
+        // ReportMate's device list loads with the Reporting tab; start it when
+        // a search begins so its devices are findable before that tab is opened.
+        .onChange(of: focused) { _, isFocused in
+            if isFocused { Task { await appState.reporting.loadDevicesForSearch() } }
+        }
         .popover(isPresented: $showResults, arrowEdge: .bottom) {
             ScrollView {
                 if results.isEmpty {
@@ -123,6 +131,11 @@ struct GlobalSearchToolbarField: View {
             guard !Task.isCancelled else { return }
             results = GlobalSearchScanner.search(trimmed, appState: appState)
             showResults = true
+            if appState.reporting.session.devicesLoadedAt == nil {
+                await appState.reporting.loadDevicesForSearch()
+                guard !Task.isCancelled else { return }
+                results = GlobalSearchScanner.search(trimmed, appState: appState)
+            }
             if let row = await GlobalSearchRouter.workItemLookup(for: trimmed, appState: appState, existing: results),
                !Task.isCancelled {
                 results.insert(row, at: 0)

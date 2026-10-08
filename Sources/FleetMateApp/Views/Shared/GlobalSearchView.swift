@@ -8,6 +8,7 @@ import FleetMateCore
 struct GlobalSearchResult: Identifiable, Hashable {
     enum Category: String, CaseIterable {
         case devices = "Devices"
+        case reporting = "Reporting"
         case inventory = "Inventory"
         case tickets = "Tickets"
         case workItems = "Work Items"
@@ -22,6 +23,7 @@ struct GlobalSearchResult: Identifiable, Hashable {
         var icon: String {
             switch self {
             case .devices:   return "laptopcomputer"
+            case .reporting: return "chart.bar.doc.horizontal"
             case .inventory: return "shippingbox"
             case .tickets:   return "ticket"
             case .workItems: return "list.bullet.rectangle"
@@ -45,6 +47,8 @@ struct GlobalSearchResult: Identifiable, Hashable {
 
     // Navigation payloads — whichever applies to the category.
     var deviceId: String?
+    /// A ReportMate device, opened on the Reporting tab by serial.
+    var reportingSerial: String?
     var ticketId: Int?
     var workItemId: Int?
     var inventoryFilter: String?
@@ -83,6 +87,7 @@ enum GlobalSearchScanner {
 
         var results: [GlobalSearchResult] = []
         results += devices(query, appState.cachedDevices)
+        results += reportingDevices(query, appState.reporting.session.devices.map(ReportingHost.record))
         results += assets(query, appState.cachedAssets)
         results += tickets(query, appState.cachedTickets)
         results += workItems(query, appState.cachedWorkItems)
@@ -128,6 +133,19 @@ enum GlobalSearchScanner {
             )
         }
         .prefix(perCategoryLimit).map { $0 }
+    }
+
+    private static func reportingDevices(_ q: String, _ devices: [ReportingDeviceRecord]) -> [GlobalSearchResult] {
+        ReportingDeviceSearch.search(q, in: devices, limit: perCategoryLimit).map { hit in
+            GlobalSearchResult(
+                category: .reporting,
+                id: "reporting-\(hit.device.serial)",
+                title: hit.device.name,
+                subtitle: [hit.device.platform, hit.device.user].compactMap { $0 }.joined(separator: " · "),
+                matchLabel: "\(hit.field): \(hit.value)",
+                reportingSerial: hit.device.serial
+            )
+        }
     }
 
     private static func assets(_ q: String, _ assets: [SnipeAsset]) -> [GlobalSearchResult] {

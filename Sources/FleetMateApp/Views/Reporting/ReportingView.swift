@@ -42,6 +42,24 @@ final class ReportingHost {
     func openDevice(serial: String) {
         session.openDevice(serial: serial)
     }
+
+    /// Load ReportMate's device list for global search; the Reporting tab
+    /// shares the same cached copy. Does nothing without a connection.
+    func loadDevicesForSearch() async {
+        await session.loadDevices()
+    }
+
+    /// The fields global search matches on.
+    static func record(_ device: DeviceSummary) -> ReportingDeviceRecord {
+        ReportingDeviceRecord(
+            serial: device.serialNumber,
+            name: device.name,
+            hostname: device.hostname,
+            user: device.inventory.owner,
+            assetTag: device.inventory.assetTag,
+            platform: device.platform == .unknown ? nil : device.platform.displayName
+        )
+    }
 }
 
 struct ReportingView: View {

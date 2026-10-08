@@ -156,7 +156,7 @@ categories:
         command: sudo profiles status -type bootstraptoken
         trust: safe
       - label: Token & MDM summary
-        command: 'BTGEN=$(sudo profiles status -type bootstraptoken 2>/dev/null | awk -F": " "/Bootstrap Token supported on server/{print \$NF}"); BTESC=$(sudo profiles status -type bootstraptoken 2>/dev/null | awk -F": " "/escrowed to server/{print \$NF}"); URL=$(sudo profiles status -type enrollment 2>/dev/null | sed -n "s/^[[:space:]]*MDM server:[[:space:]]*//p" | head -1); if [ -z "$URL" ]; then MDM=none; elif echo "$URL" | grep -qiE "micromdm|mdm\.example"; then MDM=MicroMDM; elif echo "$URL" | grep -qiE "manage\.microsoft|intune"; then MDM=Intune; else MDM=unknown; fi; TOKENS=$(dscl . list /Users UniqueID 2>/dev/null | awk "\$2 >= 500 && \$1 !~ /^_/ {print \$1}" | while read u; do if sudo sysadminctl -secureTokenStatus "$u" 2>&1 | grep -q ENABLED; then printf "%s=Y " "$u"; else printf "%s=N " "$u"; fi; done); printf "MDM=%s | BootstrapToken supported=%s escrowed=%s | Tokens: %s" "$MDM" "${BTGEN:-?}" "${BTESC:-?}" "${TOKENS:-none }"'
+        command: 'BTGEN=$(sudo profiles status -type bootstraptoken 2>/dev/null | awk -F": " "/Bootstrap Token supported on server/{print \$NF}"); BTESC=$(sudo profiles status -type bootstraptoken 2>/dev/null | awk -F": " "/escrowed to server/{print \$NF}"); URL=$(sudo profiles status -type enrollment 2>/dev/null | sed -n "s/^[[:space:]]*MDM server:[[:space:]]*//p" | head -1); if [ -z "$URL" ]; then MDM=none; elif echo "$URL" | grep -qiE "micromdm"; then MDM=MicroMDM; elif echo "$URL" | grep -qiE "manage\.microsoft|intune"; then MDM=Intune; else MDM=unknown; fi; TOKENS=$(dscl . list /Users UniqueID 2>/dev/null | awk "\$2 >= 500 && \$1 !~ /^_/ {print \$1}" | while read u; do if sudo sysadminctl -secureTokenStatus "$u" 2>&1 | grep -q ENABLED; then printf "%s=Y " "$u"; else printf "%s=N " "$u"; fi; done); printf "MDM=%s | BootstrapToken supported=%s escrowed=%s | Tokens: %s" "$MDM" "${BTGEN:-?}" "${BTESC:-?}" "${TOKENS:-none }"'
         trust: safe
       - label: DEP enrollment check
         command: 'OUT=$(sudo profiles status -type enrollment 2>/dev/null || true); if echo "$OUT" | grep -qiE ''Enrolled via (DEP|ADE):[[:space:]]*Yes|is Enrolled via DEP:[[:space:]]*Yes|MDM enrollment:[[:space:]]*Yes''; then echo ''DEP enrolled''; elif sudo profiles show -type enrollment 2>/dev/null | grep -q ''ConfigurationURL''; then echo ''DEP enrolled''; else echo ''NOT DEP enrolled''; fi'
@@ -398,8 +398,8 @@ categories:
       - label: Errors and faults (last hour)
         command: 'sudo log show --last 1h --style compact --predicate ''messageType == error OR messageType == fault'' 2>/dev/null | tail -50'
         trust: safe
-      - label: Search package receipts (org prefix)
-        command: 'pkgutil --pkgs | grep ''^com.example'' || echo ''No matching receipts found'''
+      - label: Search package receipts (non-Apple)
+        command: 'pkgutil --pkgs | grep -v ''^com\.apple\.'' || echo ''No non-Apple receipts found'''
         trust: safe
       - label: Forget package receipt (template)
         command: 'echo ''Safety: run manually with exact identifier:''; echo ''sudo pkgutil --forget <PACKAGE_IDENTIFIER>'''

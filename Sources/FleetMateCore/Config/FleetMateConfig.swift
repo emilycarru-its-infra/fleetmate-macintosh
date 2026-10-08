@@ -35,7 +35,8 @@ public struct FleetMateConfig: Codable {
     /// When set, FleetMate authenticates to the ReportMate API with a short-lived
     /// Entra bearer token minted for this audience (app/client id or api:// URI)
     /// off the operator's `fleetmate login` session, instead of the passphrase.
-    /// Unset → legacy passphrase (dormant). Production value: 3e8c1d2a-4b5f-4a6e-9c7d-0e1f2a3b4c5d.
+    /// Unset → legacy passphrase. Deployments set it in config.yaml or the
+    /// configuration profile (reportMateOidcAudience).
     public var reportMateOidcAudience: String?
     
 
@@ -45,7 +46,7 @@ public struct FleetMateConfig: Codable {
     /// When set, FleetMate authenticates to the Snipe-IT API with an Entra bearer
     /// token minted for this audience off the operator's `fleetmate login` session
     /// instead of the shared API key. Unset → legacy API key (dormant). Lights up
-    /// once Snipe-IT's OIDC guard ships (the tracking issue) and a Snipe API app reg exists.
+    /// once Snipe-IT's OIDC guard ships and a Snipe API app registration exists.
     public var snipeOidcAudience: String?
     public var snipeAuthMethod: SnipeAuthMethod = .auto
     public var snipeSsoEnabled: Bool = true
@@ -59,26 +60,29 @@ public struct FleetMateConfig: Codable {
 
     // Azure sign-in (used by `fleetmate login`). These are public directory
     // GUIDs, not secrets, so they live in config.yaml (overridable), never
-    // secrets.yaml. Defaults below target the reference tenant/subscription.
+    // secrets.yaml or the configuration profile. Nothing org-specific is built in.
     public var azureTenantId: String?
     public var azureSubscriptionId: String?
-    public static let defaultAzureTenantId = "a0d1e2f3-0000-4000-8000-00000000c0de"
-    public static let defaultAzureSubscriptionId = "00000000-0000-0000-0000-000000000000"
+    /// Microsoft's multi-tenant authority, used until a tenant is configured.
+    public static let defaultAzureTenantId = "organizations"
     /// Tenant used for `az login`: explicit azure config, else the shared Graph
-    /// tenant, else the built-in default.
-    public var effectiveAzureTenantId: String { azureTenantId ?? graphTenantId ?? FleetMateConfig.defaultAzureTenantId }
-    /// Subscription selected after login: explicit azure config, else the built-in default.
-    public var effectiveAzureSubscriptionId: String { azureSubscriptionId ?? FleetMateConfig.defaultAzureSubscriptionId }
+    /// tenant, else the multi-tenant authority.
+    public var effectiveAzureTenantId: String {
+        [azureTenantId, graphTenantId].compactMap { $0 }.first { !$0.isEmpty } ?? FleetMateConfig.defaultAzureTenantId
+    }
+    /// Subscription selected after login, when one is configured.
+    public var effectiveAzureSubscriptionId: String? {
+        guard let id = azureSubscriptionId, !id.isEmpty else { return nil }
+        return id
+    }
 
-    // OIDC bearer audiences for ReportMate + Snipe-IT. Both APIs verify an Entra
-    // token minted from the operator's own SSO session (az account
-    // get-access-token --resource <audience>), replacing the shared ReportMate
-    // passphrase and Snipe super-key. Like the Azure GUIDs above these are public
-    // app-registration client IDs, not secrets, and are baked in as defaults so
-    // FleetMate authenticates modern-by-default on every install. Override via
-    // config to fall back to the legacy passphrase/API-key path (break-glass).
-    public static let defaultReportMateOidcAudience = "3e8c1d2a-4b5f-4a6e-9c7d-0e1f2a3b4c5d"
-    public static let defaultSnipeOidcAudience = "7c2e4a90-1b3d-4f5e-8a6c-0d9e8f7a6b5c"
+    // OIDC bearer audiences for ReportMate + Snipe-IT (reportMateOidcAudience,
+    // snipeOidcAudience). Both APIs verify an Entra token minted from the
+    // operator's own SSO session (az account get-access-token --resource
+    // <audience>), replacing the shared ReportMate passphrase and Snipe
+    // super-key. They are app-registration client IDs, not secrets, and come
+    // from config.yaml or the configuration profile; unset falls back to the
+    // legacy passphrase/API-key path.
 
     // Microsoft Graph - Devices (Intune) Service Principal
     // Used for: /deviceManagement/managedDevices
@@ -115,7 +119,7 @@ public struct FleetMateConfig: Codable {
     // TeamDynamix (TDX) settings
     public var tdxBaseUrl: String?
     public var tdxAppId: Int?  // Legacy fallback
-    public var tdxTicketingAppId: Int?  // 115 at the reference site
+    public var tdxTicketingAppId: Int?
     public var tdxAssetsAppId: Int?
     public var tdxUsername: String?
     public var tdxPassword: String?
@@ -271,17 +275,6 @@ public struct FleetMateConfig: Codable {
 
         // 5. Environment variables override everything (CI/CD)
         loadEnvironmentVariables(into: &config)
-
-        // Modern-by-default: unless explicitly overridden, ReportMate and Snipe-IT
-        // authenticate with an Entra bearer minted from the operator's SSO session,
-        // not the legacy shared passphrase/API-key. Applied last so any config,
-        // Keychain, or env override still wins.
-        if (config.reportMateOidcAudience ?? "").isEmpty {
-            config.reportMateOidcAudience = FleetMateConfig.defaultReportMateOidcAudience
-        }
-        if (config.snipeOidcAudience ?? "").isEmpty {
-            config.snipeOidcAudience = FleetMateConfig.defaultSnipeOidcAudience
-        }
 
         config.repoRoot = findRepoRoot()
         return config
@@ -551,6 +544,10 @@ public struct FleetMateConfig: Codable {
         if let v = get("snipeUrl")           { config.snipeUrl = v }
         if let v = get("snipeApiKey")        { config.snipeApiKey = v }
         if let v = get("graphTenantId")      { config.graphTenantId = v }
+        if let v = get("azureTenantId")      { config.azureTenantId = v }
+        if let v = get("azureSubscriptionId") { config.azureSubscriptionId = v }
+        if let v = get("reportMateOidcAudience") { config.reportMateOidcAudience = v }
+        if let v = get("snipeOidcAudience")  { config.snipeOidcAudience = v }
         if let v = get("graphClientId")      { config.graphClientId = v }
         if let v = get("graphClientSecret")  { config.graphClientSecret = v }
         if let v = get("devicesGraphId")     { config.devicesGraphId = v }

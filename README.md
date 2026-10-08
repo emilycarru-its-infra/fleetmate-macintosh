@@ -556,3 +556,76 @@ For issues or questions:
 - File an issue on GitHub
 - Contact IT Systems team
 - Review logs in `/var/log/fleetmate/`
+
+## Proposed on demand Intune actions
+
+The reusable-group workflow below is proposed, not implemented as a dedicated FleetMate feature. An executable single-device prototype is included below. Track implementation in [issue #169](https://github.com/emilycarru-its-infra/fleetmate-macintosh/issues/169).
+
+Operators should be able to select a device and an approved action, then use FleetMate to manage membership in a dedicated Entra group targeted by an Intune script or app assignment. Each group should represent one action. The operator should see the selected devices, payload version, existing assignment scope, and intended changes before submission.
+
+Proposed group names and responsibilities:
+
+| Group | Action |
+| --- | --- |
+| On Demand – ReportMate Collection | Request a fresh inventory collection |
+| On Demand – Munki Run | Trigger a managed software run |
+| On Demand – Create Local Admin | Run an explicitly approved local administrator account script |
+| On Demand – Install – [App Name] | Target one specific application or package |
+| On Demand – Repair – [Repair Name] | Run one specific repair script |
+
+These names describe proposed permanent action groups, not groups provisioned by this prototype. Start with ReportMate repeat-run validation before expanding to the other actions. Define account creation versus elevation and the reversal policy before implementing the administrator action.
+
+A request should record its own identity, target devices, action, group and assignment identifiers, payload version, creation time, and outcome. Membership alone must never be displayed as execution success. Show targeting, pending execution, reported success, verified completion, failure, expiry, and cleanup separately, according to the evidence available from each service.
+
+Start with a single-device script workflow and verify both Intune execution status and the intended result. Before enabling reusable groups, test removal and re-addition on the same device: a membership change must not be assumed to trigger another execution. A completed request must remain distinguishable from a new request for the same action.
+
+Package deployments need a separate validation path covering supported package type, assignment intent, platform applicability, detection, installed version, and repeat requests. An already-installed application must not be mistaken for a fresh installation. Membership removal is not an uninstall operation or proof that cached work was cancelled.
+
+Acceptance criteria for a future implementation:
+
+- Resolve each selected device to the correct managed-device and directory-device identities; reject ambiguous matches.
+- Preview the action, payload, effective assignment scope, and target devices before mutation.
+- Make submission idempotent and track outcomes independently for each target and request.
+- Verify a first script run and a second deliberate request on the same test device.
+- Verify one package installation and document subsequent membership and detection behavior.
+- Clean up only membership or temporary objects owned by the request; preserve pre-existing membership and concurrent requests.
+- Handle offline devices, timeouts, expiry, and partial failures without reporting false success.
+- Treat privileged account changes as distinct approved actions with an explicit reversal policy.
+
+Implementation and deployment should follow validation of these behaviors. This proposal does not provision groups, assign payloads, or change device membership.
+
+### Executable single device prototype
+
+[`scripts/prototypes/reportmate-on-demand`](scripts/prototypes/reportmate-on-demand) is a Python proof of concept that invokes FleetMate's existing `elevate rest` command. It creates a new temporary Entra security group and Intune shell script for one Mac per request. It does not implement reusable groups, package installation, or a FleetMate UI.
+
+**Live proof of concept tested with ReportMate:** the original helper was used on one Intune-managed Mac. A temporary Entra group targeted the ReportMate shell script; Intune reported successful execution with exit code 0, and the client log reported successful data transmission. The public copy retains that workflow with generic configuration and synthetic test fixtures. Independent server-side module timestamp verification remains pending. This test establishes the single-device temporary-group script path; permanent-group reuse, repeat execution after re-adding a device, and package installation remain untested.
+
+Prerequisites: Python 3, an authenticated FleetMate installation with the configured `devices` and `identity` elevation domains, an Intune-enrolled Mac with an Entra device object, and an installed ReportMate runner. The helper uses the operator's FleetMate configuration; it embeds no tenant, credentials, or reporting endpoint.
+
+```bash
+# Resolve the supplied serial without creating or assigning cloud objects.
+python3 scripts/prototypes/reportmate-on-demand SERIAL --dry-run
+
+# Create a temporary group and root-run script for that device.
+python3 scripts/prototypes/reportmate-on-demand SERIAL
+
+# Use the request ID printed by the previous command.
+python3 scripts/prototypes/reportmate-on-demand status REQUEST_ID
+
+# Explicitly remove the request-owned script and group after reviewing the result.
+python3 scripts/prototypes/reportmate-on-demand cleanup REQUEST_ID
+```
+
+The generated script checks the device serial, refuses expired requests, checks for an already-running runner, and records a completion marker after the runner exits successfully. Requests expire after 24 hours; expiry does not delete their cloud objects. Cleanup checks ownership and cannot recall a script already cached by a device. The process check is not an atomic lock against simultaneous requests.
+
+Status distinguishes the saved submission phase from Intune's execution result. A successful exit does not independently verify reporting-service ingestion. Request records are stored under `~/.local/state/intune-reportmate/`; `REPORTMATE_REQUEST_DIR` can override that location and `FLEETMATE_BIN` can select the executable. Records and command output contain operational device data at runtime; keep them private and out of commits or public issue attachments.
+
+Interrupted creation preserves its request record. `resume REQUEST_ID` is restricted to the pre-script phase with an existing group; it is not a command to rerun a completed or ambiguously submitted request. Inspect status and ownership before deciding to resume or clean up.
+
+Run the offline tests with synthetic fixtures:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/prototypes/tests -v
+```
+
+Tests cover ambiguous device rejection, platform checks, dry-run behavior, exact group membership, assignment and persistence, directory propagation, ownership-aware cleanup, unsafe resume refusal, and generated Bash syntax. They do not establish repeat delivery or package-install behavior in Intune.

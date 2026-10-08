@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+"""Proof of concept: queue ReportMate on one Mac through FleetMate/Intune.
+
+Standalone prototype for review; not an integrated FleetMate command.
+
+Usage: reportmate-on-demand SERIAL [--dry-run]
+       reportmate-on-demand status REQUEST_ID
+       reportmate-on-demand cleanup REQUEST_ID
+
+Requires Python 3 and FleetMate's `elevate rest` command. No app changes or SSH.
+Delivery is asynchronous and depends on Intune agent check-in.
+Requests expire after 24 hours. Cleanup removes cloud objects, but cannot recall
+a script already cached on a Mac. Status reports Intune execution, not API receipt.
+"""
+
+import argparse
+import base64
+import datetime as dt
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import time
+from urllib.parse import urlencode, urlparse
+import uuid
+
+GRAPH = "https://graph.microsoft.com"
+SCRIPTS = f"{GRAPH}/beta/deviceManagement/deviceShellScripts"
+PREFIX = "ReportMate On Demand - "
+OWNER = "intune-reportmate-on-demand/v1"
+STATE = Path(os.environ.get("REPORTMATE_REQUEST_DIR", "~/.local/state/intune-reportmate")).expanduser()
+
+
+class Error(Exception):
+    pass
+
+
+def graph(domain, method, url, body=None):
+    if urlparse(url).scheme != "https" or urlparse(url).netloc != "graph.microsoft.com":
+        raise Error("Refusing a Graph URL on an unexpected host.")
+    executable = os.environ.get("FLEETMATE_BIN", "fleetmate")
+    if not shutil.which(executable):
+        raise Error("FleetMate is not installed; its elevate rest command is required.")
+    command = [executable, "elevate", "rest", domain, method, url]
+    if body is not None:
+        command += ["--body", json.dumps(body)]
+    result = subprocess.run(command, text=True, capture_output=True)
+    if result.returncode:
+        raise Error(f"FleetMate {method.upper()} {url} failed:\n{result.stderr.strip()}")
+    try:
+        return json.loads(result.stdout) if result.stdout.strip() else {}
+    except ValueError as exc:
+        raise Error("FleetMate returned non-JSON output; no operation was retried.") from exc
+
+
+def collection(domain, url):
+    rows = []
+    while url:
+        response = graph(domain, "get", url)
+        rows.extend(response.get("value", []))
+        url = response.get("@odata.nextLink")
+    return rows
+
+
+def query(path, **params):
+    return GRAPH + path + "?" + urlencode(params)
+
+
+def one(rows, label):
+    if len(rows) != 1:
+        raise Error(f"Expected exactly one {label}; found {len(rows)}. Resolve duplicates before retrying.")
+    return rows[0]
+
+
+def guid(value):
+    try:
+        return str(uuid.UUID(value))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise Error(f"Invalid object/request ID: {value!r}") from exc
+
+
+def resolve(serial):
+    rows = collection("devices", query("/beta/deviceManagement/managedDevices", **{
+        "$filter": f"serialNumber eq '{serial}'",
+        "$select": "id,deviceName,serialNumber,operatingSystem,azureADDeviceId",
+    }))
+    device = one(rows, "Intune device")
+    if device.get("serialNumber", "").upper() != serial or device.get("operatingSystem", "").lower() != "macos":
+        raise Error("The matched device is not the requested Mac.")
+    guid(device["id"])
+    entra_id = guid(device.get("azureADDeviceId"))
+    if entra_id == str(uuid.UUID(int=0)):
+        raise Error("Device has no Entra registration for group targeting.")
+    directory = one(collection("identity", query("/v1.0/devices", **{
+        "$filter": f"deviceId eq '{entra_id}'", "$select": "id,deviceId",
+    })), "Entra device")
+    device["objectId"] = guid(directory["id"])
+    return device
+
+
+def save(record):
+    STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+    target = STATE / (guid(record["requestId"]) + ".json")
+    temporary = target.with_suffix(".tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w") as stream:
+        json.dump(record, stream, indent=2)
+        stream.write("\n")
+    temporary.replace(target)
+
+
+def load(request_id):
+    path = STATE / (guid(request_id) + ".json")
+    if not path.exists():
+        raise Error(f"No local request record: {path}")
+    record = json.loads(path.read_text())
+    if record.get("owner") != OWNER or record.get("requestId") != guid(request_id):
+        raise Error("Request ownership does not match.")
+    return record
+
+
+def payload(serial, request_id, expires):
+    # Values are validated/generated locally, never arbitrary shell input.
+    return f'''#!/bin/bash
+set -euo pipefail
+[[ "$(id -u)" == 0 ]] || {{ echo "Root required" >&2; exit 1; }}
+serial=$(/usr/sbin/ioreg -rd1 -c IOPlatformExpertDevice | /usr/bin/awk -F '"' '/IOPlatformSerialNumber/ {{print $(NF-1)}}')
+[[ "$serial" == "{serial}" ]] || {{ echo "Serial mismatch; refusing collection" >&2; exit 1; }}
+state="/var/db/reportmate-on-demand"
+/bin/mkdir -p "$state"
+/bin/chmod 700 "$state"
+marker="$state/{request_id}.done"
+[[ ! -f "$marker" ]] || {{ echo "Request already completed"; exit 0; }}
+[[ $(/bin/date +%s) -lt {expires} ]] || {{ echo "Request expired" >&2; exit 1; }}
+if /usr/bin/pgrep -x managedreportsrunner >/dev/null; then
+    echo "ReportMate is already running; let it finish before requesting another collection" >&2
+    exit 1
+fi
+for runner in /usr/local/reportmate/managedreportsrunner /usr/local/bin/managedreportsrunner \\
+    "/Applications/Utilities/Managed Reports Runner.app/Contents/MacOS/managedreportsrunner"; do
+    if [[ -x "$runner" ]]; then
+        "$runner" --force -vv
+        /usr/bin/touch "$marker"
+        echo "ReportMate collection completed: {request_id}"
+        exit 0
+    fi
+done
+echo "ReportMate runner is not installed" >&2
+exit 1
+'''
+
+
+def wait_for_members(record):
+    url = GRAPH + "/v1.0/groups/" + guid(record["groupId"]) + "/members?$select=id"
+    for attempt in range(6):
+        try:
+            members = collection("identity", url)
+        except Error as exc:
+            if "Request_ResourceNotFound" not in str(exc) or attempt == 5:
+                raise
+            members = []
+        if [m["id"] for m in members] == [record["device"]["objectId"]]:
+            return
+        if members:
+            raise Error("Group membership is not exactly the target device; not assigning.")
+        if attempt < 5:
+            print("Waiting for directory group propagation...", flush=True)
+            time.sleep(5)
+    raise Error("Group membership has not propagated; no script was assigned.")
+
+
+def finish_request(record):
+    if record.get("scriptId") or record.get("phase") != "creating":
+        raise Error("Cannot safely resume this phase; inspect the existing request before retrying.")
+    owned(record, "identity", GRAPH + "/v1.0/groups/" + guid(record["groupId"]))
+    if time.time() >= record["expires"]:
+        raise Error("Request expired; it cannot be resumed.")
+    wait_for_members(record)
+    description = f"{OWNER}; request={record['requestId']}"
+    # Persist before creating: a lost response must not lead to blind recreation.
+    record["phase"] = "creating_script"
+    save(record)
+    script = graph("devices", "post", SCRIPTS, {
+        "@odata.type": "#microsoft.graph.deviceShellScript",
+        "displayName": record["name"], "description": description,
+        "fileName": "reportmate-on-demand.sh", "runAsAccount": "system",
+        "retryCount": 0, "blockExecutionNotifications": True,
+        "scriptContent": base64.b64encode(payload(record["device"]["serialNumber"], record["requestId"], record["expires"]).encode()).decode(),
+    })
+    record["scriptId"] = guid(script["id"])
+    record["phase"] = "assigning"
+    save(record)
+    graph("devices", "post", SCRIPTS + "/" + record["scriptId"] + "/assign", {
+        "deviceManagementScriptAssignments": [{
+            "@odata.type": "#microsoft.graph.deviceManagementScriptAssignment",
+            "target": {"@odata.type": "#microsoft.graph.groupAssignmentTarget", "groupId": record["groupId"]},
+        }],
+    })
+    record["phase"] = "queued"
+    save(record)
+
+
+def queue(serial, dry_run):
+    serial = serial.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9]{4,32}", serial):
+        raise Error("Supply one alphanumeric Mac serial number.")
+    device = resolve(serial)
+    print(f"Target: {device.get('deviceName')} ({serial})", flush=True)
+    if dry_run:
+        print("Dry run: resolved one Mac and its Entra object. No script or group created.")
+        return
+    request_id = str(uuid.uuid4())
+    name = PREFIX + request_id
+    record = {
+        "owner": OWNER, "requestId": request_id, "name": name, "device": device,
+        "createdAt": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "expires": int(time.time()) + 86400, "phase": "creating",
+    }
+    save(record)
+    print(f"Request: {request_id}", flush=True)
+    description = f"{OWNER}; request={request_id}"
+    try:
+        group = graph("identity", "post", GRAPH + "/v1.0/groups", {
+            "displayName": name, "description": description,
+            "mailEnabled": False, "securityEnabled": True, "groupTypes": [],
+            "mailNickname": "reportmate-" + request_id,
+            "members@odata.bind": [GRAPH + "/v1.0/directoryObjects/" + device["objectId"]],
+        })
+        record["groupId"] = guid(group["id"])
+        save(record)
+        finish_request(record)
+    except (Error, OSError, KeyError):
+        print(f"Request incomplete; inspect status or cleanup {request_id}. Objects are preserved because assignment may have reached Intune.", file=sys.stderr)
+        raise
+    print("Queued as root. Delivery waits for Intune agent check-in.")
+    print("Request expires in 24 hours. MDM Sync does not force script execution.")
+    print(f"Check:   reportmate-on-demand status {request_id}")
+    print(f"Remove:  reportmate-on-demand cleanup {request_id}")
+
+
+def owned(record, domain, url):
+    resource = graph(domain, "get", url)
+    expected = f"{OWNER}; request={record['requestId']}"
+    if resource.get("description") != expected or resource.get("displayName") != record["name"]:
+        raise Error("Cloud object ownership differs; refusing to use or delete it.")
+    return resource
+
+
+def status(record):
+    print(f"Request {record['requestId']}: local submission phase={record['phase']}")
+    if not record.get("scriptId"):
+        print("No script ID recorded. Request did not reach script creation.")
+        return
+    url = SCRIPTS + "/" + guid(record["scriptId"])
+    owned(record, "devices", url)
+    rows = collection("devices", url + "/deviceRunStates?$expand=managedDevice")
+    rows = [row for row in rows if (row.get("managedDevice") or {}).get("id") == record["device"]["id"]]
+    if not rows:
+        print("No execution result for this Mac yet. Queued does not mean running.")
+    for row in rows:
+        print(json.dumps({key: row.get(key) for key in (
+            "runState", "lastStateUpdateDateTime", "errorCode", "errorDescription", "resultMessage",
+        )}, indent=2))
+    print("Intune success reports script exit status; verify new module timestamps in ReportMate.")
+
+
+def cleanup(record):
+    for key, domain, base in (("scriptId", "devices", SCRIPTS), ("groupId", "identity", GRAPH + "/v1.0/groups")):
+        # Discover by unique request name too: a create may succeed even if its
+        # response is lost. Absent objects are already cleaned, not fatal errors.
+        condition = "displayName eq '" + record["name"].replace("'", "''") + "'"
+        if record.get(key):
+            condition += " or id eq '" + guid(record[key]) + "'"
+        resources = collection(domain, base + "?" + urlencode({
+            "$filter": condition, "$select": "id,displayName,description",
+        }))
+        for resource in resources:
+            url = base + "/" + guid(resource["id"])
+            owned(record, domain, url)
+            graph(domain, "delete", url)
+        record.pop(key, None)
+        save(record)
+    record["phase"] = "cleaned"
+    save(record)
+    print("Owned script/group removed. A cached script may still execute until its expiry.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("target", help="Mac serial number, status, cleanup, or resume")
+    parser.add_argument("request_id", nargs="?")
+    parser.add_argument("--dry-run", action="store_true", help="Resolve the target without creating or assigning anything")
+    args = parser.parse_args()
+    try:
+        if args.target in ("status", "cleanup", "resume"):
+            if not args.request_id or args.dry_run:
+                parser.error("status/cleanup/resume requires a request ID and does not accept --dry-run")
+            record = load(args.request_id)
+            if args.target == "resume":
+                finish_request(record)
+                print(f"Queued request {record['requestId']}; waiting for Intune agent check-in.")
+            else:
+                (status if args.target == "status" else cleanup)(record)
+        else:
+            if args.request_id:
+                parser.error("Supply exactly one device serial")
+            queue(args.target, args.dry_run)
+    except (Error, OSError, KeyError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

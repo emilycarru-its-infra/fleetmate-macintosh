@@ -18,7 +18,8 @@ struct AutopilotCommand: AsyncParsableCommand {
             AutopilotGetSubcommand.self,
             AutopilotDeleteSubcommand.self,
             AutopilotAssignUserSubcommand.self,
-            AutopilotUnassignUserSubcommand.self
+            AutopilotUnassignUserSubcommand.self,
+            AutopilotPruneAssignmentsSubcommand.self
         ],
         defaultSubcommand: AutopilotListSubcommand.self
     )
@@ -212,6 +213,114 @@ struct AutopilotUnassignUserSubcommand: AsyncParsableCommand {
         let autopilotId = try await resolveAutopilotId(service, identifier)
         try await service.unassignAutopilotUser(autopilotId: autopilotId)
         print("Removed the assigned user from \(identifier)".green)
+    }
+}
+
+// MARK: - Prune assignments to deleted groups
+
+struct AutopilotPruneAssignmentsSubcommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "prune-assignments",
+        abstract: "Find, and with --confirm remove, Autopilot and ESP assignments to deleted groups",
+        discussion: """
+        A deployment profile or Enrollment Status Page assigned to a group \
+        that no longer exists makes assignment fail for devices that are \
+        otherwise grouped correctly. This reads every Autopilot deployment \
+        profile and ESP, resolves each target group, and reports the rows \
+        whose group is gone. It is a dry run unless --confirm is given.
+
+        A group counts as gone only when two reads, --recheck-delay seconds \
+        apart, both return HTTP 404 and the group is not in the directory's \
+        deleted items. A soft-deleted group can still be restored, and a \
+        throttled or failed read proves nothing, so neither is pruned. \
+        --confirm deletes only the assignment rows; it never touches a group.
+        """
+    )
+
+    @Flag(help: "Delete the assignment rows whose group is confirmed deleted")
+    var confirm: Bool = false
+
+    @Option(help: "Seconds to wait before re-reading a group that returned 404")
+    var recheckDelay: Double = 10
+
+    @Option(help: "Refuse to delete when more rows than this would go")
+    var maxDeletes: Int = 10
+
+    @Flag(name: .shortAndLong, help: "Output the plan as JSON")
+    var json: Bool = false
+
+    func run() async throws {
+        let service = try autopilotServiceOrExit()
+        let plan = try await service.planEnrollmentAssignmentPrune(recheckDelay: max(0, recheckDelay))
+        let prunable = plan.prunable
+
+        if json {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            print(String(data: try encoder.encode(plan), encoding: .utf8) ?? "{}")
+        } else {
+            printPrunePlan(plan)
+        }
+
+        guard confirm else {
+            if !prunable.isEmpty && !json {
+                print("Dry run — nothing was deleted. Re-run with --confirm to remove the \(prunable.count) row(s) above.".cyan)
+            }
+            return
+        }
+        guard !prunable.isEmpty else { return }
+        guard prunable.count <= maxDeletes else {
+            report("Refusing to delete \(prunable.count) rows, more than --max-deletes \(maxDeletes). Check the list, then raise the limit if it is right.".red)
+            throw ExitCode.failure
+        }
+
+        var failed = 0
+        for row in prunable {
+            do {
+                try await service.deleteEnrollmentAssignment(row)
+                report("Removed ".green + "\(row.source.label) \"\(row.configurationName)\" → group \(row.groupId)")
+            } catch {
+                failed += 1
+                report("Failed ".red + "\(row.source.label) \"\(row.configurationName)\" → group \(row.groupId): \(error.localizedDescription)")
+            }
+        }
+        if failed > 0 { throw ExitCode.failure }
+    }
+
+    /// With --json, stdout carries only the plan, so a caller can parse it;
+    /// the outcome of each deletion goes to stderr instead.
+    private func report(_ line: String) {
+        if json {
+            FileHandle.standardError.write(Data((line + "\n").utf8))
+        } else {
+            print(line)
+        }
+    }
+}
+
+private func printPrunePlan(_ plan: AssignmentPrunePlan) {
+    let goneCount = plan.prunable.count
+    let heldCount = plan.held.count
+    print("\n" + "Enrollment assignments".bold
+        + " — \(plan.rows.count) group-targeted rows, \(plan.verdicts.count) groups\n")
+    if goneCount == 0 && heldCount == 0 {
+        print("Every target group resolves.".green + "\n")
+        return
+    }
+
+    let header = "Verdict".col(12) + " " + "Type".col(22) + " " + "Configuration".col(32) + " " + "Group".col(38)
+    print(header.underline)
+    for row in plan.prunable + plan.held {
+        let verdict = plan.verdict(for: row)
+        let tag = verdict.isPrunable ? "deleted".col(12).red
+            : (verdict == .softDeleted ? "restorable" : "unresolved").col(12).yellow
+        let group = row.groupId + (row.isExclusion ? " (exclusion)" : "")
+        print(tag + " " + row.source.label.col(22) + " " + row.configurationName.col(32) + " " + group.col(38))
+        if case .unresolved(let reason) = verdict { print("             " + reason.dim) }
+    }
+    print("")
+    if heldCount > 0 {
+        print("\(heldCount) row(s) are left alone: their group is restorable or could not be confirmed gone.".yellow)
     }
 }
 

@@ -898,6 +898,9 @@ public struct FleetMateConfig: Codable {
         set("sshKeyPath", config.secureShell?.privateKeyPath)
         set("sshDefaultUsername", config.secureShell?.defaultUsername)
         set("sshKeyVaultName", config.secureShell?.keyVaultName)
+        set("handbookRepoUrl", config.handbookRepoUrl)
+        set("handbookSiteUrl", config.handbookSiteUrl)
+        set("agentsHubRepoUrl", config.agentsHubRepoUrl)
         if let manage = config.manage {
             for (key, value) in manage.credentialValues() { creds[key] = value }
         }

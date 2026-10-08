@@ -314,6 +314,14 @@ class AppState: ObservableObject {
         knowledge.start { [weak self] in await self?.devOpsService.currentToken() }
     }
 
+    /// After a config save: start over only when the repositories changed.
+    private func restartKnowledgeIfChanged(from old: FleetMateConfig) {
+        guard old.handbookRepoUrl != config.handbookRepoUrl
+            || old.handbookSiteUrl != config.handbookSiteUrl
+            || old.agentsHubRepoUrl != config.agentsHubRepoUrl else { return }
+        knowledge.restart(config) { [weak self] in await self?.devOpsService.currentToken() }
+    }
+
     /// Everything the Projects tab loads from Azure DevOps and GitHub.
     ///
     /// Same reasoning as `pullRequestQueue` above: BoardsView kept all of this in
@@ -425,7 +433,9 @@ class AppState: ObservableObject {
 
     func reloadConfig() {
         do {
+            let previous = config
             config = try FleetMateConfig.load()
+            restartKnowledgeIfChanged(from: previous)
             
             // Check if secrets are configured
             secretsConfigured = config.isGraphConfigured ||

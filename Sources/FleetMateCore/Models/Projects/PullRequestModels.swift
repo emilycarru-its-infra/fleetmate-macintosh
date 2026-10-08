@@ -269,6 +269,14 @@ public struct PullRequestQueue: Sendable {
         self.errors = errors
     }
 
+    /// Whether a provider (or, with no source, any provider) failed this load.
+    /// Its count is unknown then, so a tile should read "--" rather than a 0
+    /// that looks like nothing open. Being signed out on purpose is dropped
+    /// from `errors` before this is asked.
+    public func failed(_ source: PullRequestSource? = nil) -> Bool {
+        errors.contains { source == nil || $0.source == source }
+    }
+
     public func section(_ relation: PullRequestRelation) -> [UnifiedPullRequest] {
         pullRequests
             .filter { $0.relations.contains(relation) }

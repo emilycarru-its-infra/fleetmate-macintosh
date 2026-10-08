@@ -11,7 +11,7 @@
 # BootstrapMate / ReportMate are consumed: every tool comes from a release
 # download, never a private submodule clone or a secret baked into CI.
 #
-# Triggered by pushing a v* tag (e.g. v1.2.0) or manually via workflow_dispatch
+# Triggered by pushing a vYYYY.MM.DD.HHMM tag (e.g. v2026.10.07.1530) or manually via workflow_dispatch
 # (which produces a timestamped, non-release build artifact).
 
 name: release
@@ -46,6 +46,7 @@ jobs:
           if [ "$REF_TYPE" = "tag" ]; then
             VERSION="${REF_NAME#v}"
             TAG="$REF_NAME"
+            echo "$VERSION" | grep -Eq '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{4}$' || { echo "::error::Tag $TAG is not vYYYY.MM.DD.HHMM"; exit 1; }
           else
             VERSION="$(date '+%Y.%m.%d.%H%M')"
             TAG=""

@@ -50,6 +50,9 @@ public enum CliSignIn {
 
         // Best-effort: some identities have no subscription, which doesn't make
         // the sign-in itself a failure.
+        guard let subscription else {
+            return Outcome(succeeded: true, message: "Signed in to tenant \(tenant.prefix(8))…")
+        }
         let select = await run(az, ["account", "set", "--subscription", subscription, "--only-show-errors"])
         if select.code != 0 {
             return Outcome(succeeded: true, message: "Signed in — subscription not set: \(select.stderr.firstLine)")

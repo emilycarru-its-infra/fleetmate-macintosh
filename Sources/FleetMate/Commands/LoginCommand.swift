@@ -57,7 +57,9 @@ struct LoginCommand: AsyncParsableCommand {
                 }
             }
             // Best-effort subscription selection (some identities have none).
-            _ = LoginCommand.sh(az, ["account", "set", "--subscription", config.effectiveAzureSubscriptionId, "--only-show-errors"])
+            if let subscription = config.effectiveAzureSubscriptionId {
+                _ = LoginCommand.sh(az, ["account", "set", "--subscription", subscription, "--only-show-errors"])
+            }
         }
 
         // Azure account status (post-login / --check).

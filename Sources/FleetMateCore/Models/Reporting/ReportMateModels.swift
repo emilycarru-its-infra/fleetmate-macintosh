@@ -701,10 +701,11 @@ public struct ReportMateNetworkDevice: Decodable, Sendable {
 
     public var isMac: Bool { operatingSystem == "macOS" }
 
-    /// The best private LAN IPv4 for this device. Priority: wired on the
-    /// staff and curriculum subnets, then wireless on the wireless subnet,
-    /// then any other private 10.x address with wired preferred.
-    public func bestIP() -> String? {
+    /// The best LAN IPv4 for this device. Priority: wired on a preferred
+    /// wired subnet, then wireless on a preferred wireless subnet, then any
+    /// address on a fleet subnet with wired first. Which subnets those are is
+    /// the site's own setting (`FleetSubnets`), never built in.
+    public func bestIP(_ subnets: FleetSubnets = FleetSubnets()) -> String? {
         let interfaces = (raw?.interfaces ?? []).filter(\.isUsableNetworkInterface)
         func ipv4s(_ predicate: (ReportMateNetworkInterface) -> Bool) -> [String] {
             interfaces.filter(predicate).flatMap(\.ipv4Addresses)
@@ -712,11 +713,39 @@ public struct ReportMateNetworkDevice: Decodable, Sendable {
         let wired = ipv4s { $0.normalizedType == "ethernet" }
         let wireless = ipv4s { $0.normalizedType == "wifi" || $0.normalizedType == "wireless" }
 
-        if let ip = wired.first(where: { $0.hasPrefix("192.168.") || $0.hasPrefix("172.16.") }) { return ip }
-        if let ip = wireless.first(where: { $0.hasPrefix("172.17.") }) { return ip }
-        if let ip = (wired + wireless).first(where: { $0.hasPrefix("10.") }) { return ip }
+        if let ip = wired.first(where: subnets.isPreferredWired) { return ip }
+        if let ip = wireless.first(where: subnets.isPreferredWireless) { return ip }
+        if let ip = (wired + wireless).first(where: subnets.isFleet) { return ip }
         return nil
     }
+}
+
+/// Which subnets a device's address is chosen from, as address prefixes
+/// ("10.20."). Set per site through the `fleetWiredSubnets`,
+/// `fleetWirelessSubnets` and `fleetSubnets` settings; with none set, any
+/// 10.x address counts and no subnet is preferred.
+public struct FleetSubnets: Sendable, Equatable {
+    public var wired: [String]
+    public var wireless: [String]
+    public var fleet: [String]
+
+    public init(wired: [String] = [], wireless: [String] = [], fleet: [String] = ["10."]) {
+        self.wired = wired
+        self.wireless = wireless
+        self.fleet = fleet.isEmpty ? ["10."] : fleet
+    }
+
+    /// Prefixes from a setting: separated by commas, spaces or new lines.
+    public static func parse(_ value: String?) -> [String] {
+        (value ?? "")
+            .split(whereSeparator: { $0 == "," || $0.isWhitespace })
+            .map(String.init)
+            .filter { !$0.isEmpty }
+    }
+
+    func isPreferredWired(_ ip: String) -> Bool { wired.contains { ip.hasPrefix($0) } }
+    func isPreferredWireless(_ ip: String) -> Bool { wireless.contains { ip.hasPrefix($0) } }
+    func isFleet(_ ip: String) -> Bool { (fleet + wired + wireless).contains { ip.hasPrefix($0) } }
 }
 
 public struct ReportMateNetworkRaw: Decodable, Sendable {

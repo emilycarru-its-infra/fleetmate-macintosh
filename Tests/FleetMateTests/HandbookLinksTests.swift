@@ -48,8 +48,8 @@ final class HandbookLinksTests: XCTestCase {
 
     func testSiteAddressesNeverLeaveTheSite() {
         for sitePath in ["javascript:alert(1)", "//evil.example/x/", "/a:b/"] {
-            let page = HandbookPage(path: page.path, title: page.title, sections: page.sections, sitePath: sitePath,
-                                headings: [], body: "", lastModified: nil, lastModifiedBy: nil)
+            let page = HandbookPage(path: from.path, title: from.title, sections: from.sections, sitePath: sitePath,
+                                    headings: [], body: "", lastModified: nil, lastModifiedBy: nil)
             let url = HandbookLinks.pageURL(siteURL: site, page: page)
             XCTAssertTrue(url == nil || (url?.host == "handbook.example.org" && url?.scheme == "https"), sitePath)
         }
@@ -64,5 +64,42 @@ final class HandbookLinksTests: XCTestCase {
         XCTAssertFalse(HandbookLinks.allowsImage(URL(string: "https://tracker.example.com/p.gif"), siteURL: site))
         XCTAssertFalse(HandbookLinks.allowsImage(URL(string: "file:///etc/hosts"), siteURL: site))
         XCTAssertFalse(HandbookLinks.allowsImage(URL(string: "https://handbook.example.org/a.png"), siteURL: nil))
+    }
+
+    func testUserInfoMixedCaseAndLookalikeHosts() {
+        // A user name before "@" hides the real host: refused outright.
+        XCTAssertEqual(classify("https://handbook.example.org@evil.example/x"), .ignore)
+        XCTAssertEqual(classify("http://user:pass@learn.example.com/"), .ignore)
+        XCTAssertNil(HandbookLinks.external(URL(string: "https://a:b@learn.example.com/")!))
+        // Scheme case doesn't matter; the address opened is the parsed one.
+        XCTAssertEqual(classify("HTTPS://learn.example.com/x"), .openInBrowser(URL(string: "HTTPS://learn.example.com/x")!))
+        // A lookalike or suffixed host is another site, never a Handbook page.
+        guard case .openInBrowser(let url) = classify("https://handbook.example.org.evil.example/devices/wifi/") else {
+            return XCTFail("expected the browser")
+        }
+        XCTAssertEqual(url.host, "handbook.example.org.evil.example")
+        if let idn = URL(string: "https://h\u{0430}ndbook.example.org/devices/wifi/") {
+            XCTAssertNotEqual(classify(idn.absoluteString), .openPage(index.pages[1]))
+        }
+    }
+
+    func testRelativeLinksNeverResolveOffTheSite() {
+        for link in ["//evil.example/devices/wifi/", "\\\\evil.example\\share", "https:evil.example", "/\\evil.example/"] {
+            let action = classify(link)
+            if case .openInBrowser(let url) = action {
+                XCTAssertEqual(url.host, "handbook.example.org", link)
+            } else if case .openPage = action {
+                XCTFail("\(link) opened a page")
+            }
+        }
+    }
+
+    func testImagesNeedTheSitesExactSchemeHostAndPort() {
+        XCTAssertFalse(HandbookLinks.allowsImage(URL(string: "https://handbook.example.org.evil.example/a.png"), siteURL: site))
+        XCTAssertFalse(HandbookLinks.allowsImage(URL(string: "https://evil.example/handbook.example.org/a.png"), siteURL: site))
+        XCTAssertFalse(HandbookLinks.allowsImage(URL(string: "http://handbook.example.org/a.png"), siteURL: site))
+        XCTAssertFalse(HandbookLinks.allowsImage(URL(string: "https://handbook.example.org:8443/a.png"), siteURL: site))
+        XCTAssertFalse(HandbookLinks.allowsImage(URL(string: "https://x@handbook.example.org/a.png"), siteURL: site))
+        XCTAssertTrue(HandbookLinks.allowsImage(URL(string: "HTTPS://Handbook.Example.org/a.png"), siteURL: site))
     }
 }

@@ -16,9 +16,12 @@ public enum HandbookLinks {
     /// Stands in for the site when no address is configured, so relative links still resolve to pages.
     static let placeholderSite = URL(string: "https://handbook.invalid/")!
 
+    /// An absolute http(s) address with a host and no user name or password
+    /// in it ("https://site@elsewhere/" names elsewhere, not site).
     public static func isWeb(_ url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else { return false }
-        return !(url.host ?? "").isEmpty
+        guard let host = url.host, !host.isEmpty else { return false }
+        return url.user == nil && url.password == nil
     }
 
     /// The configured site as an absolute http(s) root ending in "/", or nil.
@@ -75,8 +78,11 @@ public enum HandbookLinks {
 
     /// Images in Handbook and skill text load only over http(s) from the site's own host.
     public static func allowsImage(_ url: URL?, siteURL: String?) -> Bool {
-        guard let url, isWeb(url), let host = siteRoot(siteURL)?.host?.lowercased() else { return false }
-        return url.host?.lowercased() == host
+        guard let url, isWeb(url), let root = siteRoot(siteURL) else { return false }
+        // The exact scheme and host of the site, compared as parsed parts, never as text.
+        return url.scheme?.lowercased() == root.scheme?.lowercased()
+            && url.host?.lowercased() == root.host?.lowercased()
+            && url.port == root.port
     }
 }
 

@@ -77,4 +77,42 @@ final class ActivityLogTests: XCTestCase {
         for n in 0..<5 { log.finish(log.begin("Action \(n)", service: "Inventory"), failure: nil) }
         XCTAssertEqual(log.snapshot.map(\.title), ["Action 2", "Action 3", "Action 4"])
     }
+
+    func testPathsDropEmailsAndTokensWhenRecorded() {
+        let log = ActivityLog(capacity: 10)
+        let token = "sk" + String(repeating: "a1B2c3D4", count: 5)
+        log.record(service: "Microsoft Graph", method: "GET",
+                   url: URL(string: "https://graph.microsoft.com/v1.0/users/someone@example.org/keys/\(token)/devices"),
+                   status: 200, startedAt: Date(), duration: 0.1, actionId: nil)
+        let path = log.snapshot[0].requests[0].path
+        XCTAssertEqual(path, "/v1.0/users/[email]/keys/[token]/devices")
+    }
+
+    func testKeepsDeviceIdsInPaths() {
+        XCTAssertEqual(ActivityLog.sanitizePath("/managedDevices/0b4f2c1e-9a7d-4e21-8c3b-5f6a7d8e9f01/wipe"),
+                       "/managedDevices/0b4f2c1e-9a7d-4e21-8c3b-5f6a7d8e9f01/wipe")
+    }
+
+    func testFailureTextLosesUrlsBodiesAndLength() {
+        let text = ActivityLog.sanitizeFailure("Request to https://inventory.example.org/api?key=abc failed for someone@example.org\n{\"error\": \"body\"}")
+        XCTAssertEqual(text, "Request to [url] failed for [email]")
+        XCTAssertLessThanOrEqual(ActivityLog.sanitizeFailure(String(repeating: "x ", count: 200)).count, 120)
+        XCTAssertEqual(ActivityLog.sanitizeFailure("bad eyJhbGciOi.eyJzdWIiOi.c2lnbmF0dXJl here"), "bad [token] here")
+    }
+
+    func testQueryYieldsOnlySerials() {
+        let url = URL(string: "https://example.org/api/hardware?serial=TESTSERIAL0001&token=abcdef123456&user=someone")
+        XCTAssertEqual(ActivityMasker.serialsInQuery(url), ["TESTSERIAL0001"])
+    }
+
+    func testExportMasksTitlesAndFailures() {
+        let log = ActivityLog(capacity: 10)
+        let id = log.begin("Look up TESTSERIAL0001", service: "Inventory")
+        log.finish(id, failure: "Denied for TESTSERIAL0001 at a4:83:e7:12:34:56")
+        let text = ActivityMasker.export(log.snapshot)
+        XCTAssertFalse(text.contains("TESTSERIAL0001"))
+        XCTAssertFalse(text.contains("a4:83"))
+        XCTAssertTrue(text.contains("Look up SERIAL-1"))
+        XCTAssertTrue(text.contains("MAC-1"))
+    }
 }

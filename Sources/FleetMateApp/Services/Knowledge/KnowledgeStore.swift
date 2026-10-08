@@ -117,8 +117,9 @@ final class KnowledgeStore: ObservableObject {
 
     /// The published page, when the site address is configured.
     func siteURL(for page: HandbookPage) -> URL? {
-        guard let siteURL, var base = URL(string: siteURL) else { return nil }
-        for part in page.sitePath.split(separator: "/") { base.appendPathComponent(String(part)) }
-        return base
+        HandbookLinks.pageURL(siteURL: siteURL, page: page)
     }
+
+    /// The configured site address, for the link and image allow-lists.
+    var siteAddress: String? { siteURL }
 }

@@ -713,3 +713,25 @@ public struct TdxAsset: Codable, Identifiable, Sendable {
         case location = "LocationName"
     }
 }
+
+extension CreateTicketRequest {
+    /// A new ticket to sit above `child`, carrying the child's type, form,
+    /// account, service, priority, requestor and owners so it lands in the
+    /// same queue. TDX has no "create parent" route: the caller creates this
+    /// ticket, then sets it as the child's parent.
+    public static func parent(of child: TdxTicket, title: String) -> CreateTicketRequest {
+        CreateTicketRequest(
+            typeId: child.typeId ?? 0,
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+            description: child.id.map { "Parent of ticket \($0)." },
+            formId: child.formId,
+            accountId: child.accountId,
+            priorityId: child.priorityId,
+            sourceId: child.sourceId,
+            serviceId: child.serviceId,
+            requestorUid: child.requestorUid,
+            responsibleUid: child.responsibleUid,
+            responsibleGroupId: child.responsibleGroupId
+        )
+    }
+}

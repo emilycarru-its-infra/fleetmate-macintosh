@@ -307,7 +307,7 @@ fleetmate intune device EXAMPLE1 --json | jq .
 | `REPORTMATE_PASSPHRASE` | ReportMate authentication token | `your-token` |
 | `SNIPE_URL` | Snipe-IT base URL | `https://snipe.example.edu` |
 | `SNIPE_API_KEY` | Snipe-IT API key | `your-api-key` |
-| `TDX_BASE_URL` | TeamDynamix API endpoint | `https://servicedesk.emilycarru.ca/TDWebApi` |
+| `TDX_BASE_URL` | TeamDynamix API endpoint | `https://yourorg.teamdynamix.com/TDWebApi` |
 | `TDX_APP_ID` | TeamDynamix application ID | `116` |
 | `TDX_BEID` | TeamDynamix BEID | `your-beid` |
 | `TDX_WEB_SERVICES_KEY` | TeamDynamix web services key | `your-key` |
@@ -338,7 +338,7 @@ snipe:
   api_key: your-api-key
 
 tdx:
-  base_url: https://servicedesk.emilycarru.ca/TDWebApi
+  base_url: https://yourorg.teamdynamix.com/TDWebApi
   app_id: 116
   beid: your-beid
   web_services_key: your-key
@@ -458,7 +458,7 @@ If you see error 487 "unregistered host name":
 fleetmate configure list
 
 # Update if incorrect
-fleetmate configure set tdx-base-url "https://servicedesk.emilycarru.ca/TDWebApi"
+fleetmate configure set tdx-base-url "https://yourorg.teamdynamix.com/TDWebApi"
 fleetmate configure set tdx-app-id "116"
 ```
 

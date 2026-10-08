@@ -71,8 +71,8 @@ Token stored in app state for subsequent API calls (23h expiry)
 | **Identity Provider** | Microsoft Entra ID (Azure AD) | Entra-specific login.microsoftonline.com URLs |
 | **SP Software** | Shibboleth 3.x | Shibboleth-specific URL patterns (`/Shibboleth.sso/`) |
 | **SAML Endpoint** | `/Shibboleth.sso/SAML2/POST` | Shibboleth-specific |
-| **Service Provider** | servicedesk.emilycarru.ca | Institution-specific domain |
-| **TDX Tenant** | `d22686a0-c1be-48e0-8f91-5bdd033f7dad` | Institution-specific |
+| **Service Provider** | servicedesk.example.edu | Institution-specific domain |
+| **TDX Tenant** | `00000000-0000-0000-0000-000000000000` | Institution-specific |
 | **BEID/WebServicesKey** | Configured per-institution | Institution-specific |
 
 ### What's generic / reusable
@@ -114,7 +114,7 @@ FleetMate integrates with macOS Platform SSO via Enterprise SSO Extension:
 
 **Cross-Origin POST Fix (Fallback):**
 
-**Problem:** Apple's WKWebView silently strips HTTP POST bodies on cross-origin form submissions. The SAML flow requires Entra ID (login.microsoftonline.com) POST the SAMLResponse to Shibboleth SP (servicedesk.emilycarru.ca/Shibboleth.sso/SAML2/POST) — a cross-origin POST. WKWebView drops the body, Shibboleth receives an empty POST, and the flow dies silently.
+**Problem:** Apple's WKWebView silently strips HTTP POST bodies on cross-origin form submissions. The SAML flow requires Entra ID (login.microsoftonline.com) POST the SAMLResponse to Shibboleth SP (servicedesk.example.edu/Shibboleth.sso/SAML2/POST) — a cross-origin POST. WKWebView drops the body, Shibboleth receives an empty POST, and the flow dies silently.
 
 **Solution:** JavaScript form submission interceptor:
 
@@ -277,7 +277,7 @@ If UPN is detected but auto-fill doesn't work:
 ### SSO URL not triggering redirect
 
 If the WebView shows the TDX page without redirecting to the IdP:
-1. Verify `TDX_BASE_URL` is set correctly (e.g., `https://servicedesk.emilycarru.ca/TDWebApi`)
+1. Verify `TDX_BASE_URL` is set correctly (e.g., `https://servicedesk.example.edu/TDWebApi`)
 2. The SSO entry URL should be `{root}/TDWorkManagement/` (not `/api/auth/loginsso`)
 3. Check that SSO is enabled for the TDX instance
 
@@ -289,7 +289,7 @@ If the WebView shows the TDX page without redirecting to the IdP:
 
 | Setting | Description | Example |
 |---------|-------------|---------|
-| `TDX_BASE_URL` | TDX API base URL | `https://servicedesk.emilycarru.ca/TDWebApi` |
+| `TDX_BASE_URL` | TDX API base URL | `https://servicedesk.example.edu/TDWebApi` |
 | `TDX_APP_ID` | TDX application ID | `631` |
 
 ### Optional (for API auth fallback)

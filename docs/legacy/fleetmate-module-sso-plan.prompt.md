@@ -27,24 +27,24 @@ All secrets are fetched by `scripts/setup-secrets.sh` (macOS) / `scripts/setup-s
 
 | Secret | YAML Key | Env Var | Key Vault | Module |
 |--------|----------|---------|-----------|--------|
-| Snipe URL | `snipe_url` | `SNIPE_URL` | `assets-inventory-creds` | Inventory |
-| Snipe API Key | `snipe_api_key` | `SNIPE_API_KEY` | `assets-inventory-creds` | Inventory |
-| Tenant ID | `graph_tenant_id` | `GRAPH_TENANT_ID` | `assets-inventory-creds` | Devices, Identity |
-| Devices SP Client ID | `devices_graph_id` | `GRAPH_CLIENT_ID` | `entra-devops-secrets` | Devices |
-| Devices SP Client Secret | `devices_graph_secret` | `GRAPH_CLIENT_SECRET` | `entra-devops-secrets` | Devices |
-| Systems SP Client ID | `systems_graph_id` | — | `entra-devops-secrets` | Identity |
-| Systems SP Client Secret | `systems_graph_secret` | — | `entra-devops-secrets` | Identity |
-| DevOps Org | `devops_organization` | `DEVOPS_ORGANIZATION` | `cimian-repo-secrets` | Projects (DevOps) |
-| DevOps Project | `devops_project` | `DEVOPS_PROJECT` | `cimian-repo-secrets` | Projects (DevOps) |
-| TDX Username | `tdx_username` | `TDX_USERNAME` | `assets-inventory-creds` | Tickets (fallback) |
-| TDX Password | `tdx_password` | `TDX_PASSWORD` | `assets-inventory-creds` | Tickets (fallback) |
-| TDX BEID | `tdx_beid` | `TDX_BEID` | `assets-inventory-creds` | Tickets (admin) |
-| TDX Web Services Key | `tdx_web_services_key` | `TDX_WEB_SERVICES_KEY` | `assets-inventory-creds` | Tickets (admin) |
-| ReportMate URL | `reportmate_url` | `REPORTMATE_URL` | `cimian-repo-secrets` | Reporting |
-| ReportMate Passphrase | `reportmate_passphrase` | `REPORTMATE_PASSPHRASE` | `cimian-repo-secrets` | Reporting |
+| Snipe URL | `snipe_url` | `SNIPE_URL` | inventory vault | Inventory |
+| Snipe API Key | `snipe_api_key` | `SNIPE_API_KEY` | inventory vault | Inventory |
+| Tenant ID | `graph_tenant_id` | `GRAPH_TENANT_ID` | inventory vault | Devices, Identity |
+| Devices SP Client ID | `devices_graph_id` | `GRAPH_CLIENT_ID` | devops vault | Devices |
+| Devices SP Client Secret | `devices_graph_secret` | `GRAPH_CLIENT_SECRET` | devops vault | Devices |
+| Systems SP Client ID | `systems_graph_id` | — | devops vault | Identity |
+| Systems SP Client Secret | `systems_graph_secret` | — | devops vault | Identity |
+| DevOps Org | `devops_organization` | `DEVOPS_ORGANIZATION` | packaging vault | Projects (DevOps) |
+| DevOps Project | `devops_project` | `DEVOPS_PROJECT` | packaging vault | Projects (DevOps) |
+| TDX Username | `tdx_username` | `TDX_USERNAME` | inventory vault | Tickets (fallback) |
+| TDX Password | `tdx_password` | `TDX_PASSWORD` | inventory vault | Tickets (fallback) |
+| TDX BEID | `tdx_beid` | `TDX_BEID` | inventory vault | Tickets (admin) |
+| TDX Web Services Key | `tdx_web_services_key` | `TDX_WEB_SERVICES_KEY` | inventory vault | Tickets (admin) |
+| ReportMate URL | `reportmate_url` | `REPORTMATE_URL` | packaging vault | Reporting |
+| ReportMate Passphrase | `reportmate_passphrase` | `REPORTMATE_PASSPHRASE` | packaging vault | Reporting |
 
 **NOT in any Key Vault** (must be set manually or are hardcoded in the setup script):
-- `tdx_base_url` → hardcoded to `https://servicedesk.emilycarru.ca/TDWebApi` in setup script
+- `tdx_base_url` → hardcoded to `https://servicedesk.example.edu/TDWebApi` in setup script
 - `tdx_app_id` → hardcoded to `116` in setup script
 - `tdx_ticketing_app_id`, `tdx_assets_app_id` → not set anywhere by setup scripts
 

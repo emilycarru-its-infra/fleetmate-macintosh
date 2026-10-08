@@ -8,7 +8,7 @@ public class SnipeService {
     public let apiKey: String
     /// When set, authenticate with an Entra bearer token for this audience
     /// (SSO / az model) instead of the shared Snipe API key. Dormant until
-    /// Snipe-IT's OIDC guard ships (ADO #3721). See FleetMateConfig.
+    /// Snipe-IT's OIDC guard ships. See FleetMateConfig.
     public let oidcAudience: String?
 
     private var session: Session

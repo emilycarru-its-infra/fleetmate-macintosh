@@ -11,6 +11,9 @@
 #   - Azure CLI installed (brew install azure-cli)
 #   - Access to the Azure subscription and Key Vault
 #   - Membership in the DevOps resources owners group (or Key Vault RBAC)
+#   - FLEETMATE_TENANT_ID, FLEETMATE_SUBSCRIPTION_ID and the three
+#     FLEETMATE_*_KEY_VAULT names exported for your organization; optionally
+#     TDX_BASE_URL and TDX_APP_ID
 #
 # Security:
 #   - Secrets are stored in macOS Keychain, not plain text files
@@ -22,11 +25,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Azure Key Vault Configuration
-KEY_VAULT_NAME="assets-inventory-creds"
-CIMIAN_KEY_VAULT_NAME="cimian-repo-secrets"
-ENTRA_KEY_VAULT_NAME="entra-devops-secrets"
-SUBSCRIPTION_ID="59d35012-b593-4b2f-bd50-28e666ed12f7"
-TENANT_ID="d22686a0-c1be-48e0-8f91-5bdd033f7dad"
+# Organization-specific; set these in the environment before running.
+KEY_VAULT_NAME="${FLEETMATE_INVENTORY_KEY_VAULT:-}"
+CIMIAN_KEY_VAULT_NAME="${FLEETMATE_PACKAGING_KEY_VAULT:-}"
+ENTRA_KEY_VAULT_NAME="${FLEETMATE_DEVOPS_KEY_VAULT:-}"
+SUBSCRIPTION_ID="${FLEETMATE_SUBSCRIPTION_ID:-}"
+TENANT_ID="${FLEETMATE_TENANT_ID:-}"
+TDX_BASE_URL="${TDX_BASE_URL:-https://yourorg.teamdynamix.com/TDWebApi}"
+TDX_APP_ID="${TDX_APP_ID:-0}"
+
+for required in KEY_VAULT_NAME CIMIAN_KEY_VAULT_NAME ENTRA_KEY_VAULT_NAME SUBSCRIPTION_ID TENANT_ID; do
+    if [ -z "${!required}" ]; then
+        echo "❌ $required is not set. Export the FLEETMATE_* variables for your organization first."
+        exit 1
+    fi
+done
 
 # Config file (non-sensitive settings only)
 CONFIG_DIR="$HOME/.fleetmate"
@@ -138,8 +151,8 @@ DEVOPS_PROJECT=$(get_secret "$CIMIAN_KEY_VAULT_NAME" "AzureDevOpsProject")
 echo ""
 
 # Set defaults for missing values
-REPORTMATE_URL="${REPORTMATE_URL:-https://reportmate-functions-api.blackdune-79551938.canadacentral.azurecontainerapps.io}"
-DEVOPS_ORG="${DEVOPS_ORG:-ecuad}"
+REPORTMATE_URL="${REPORTMATE_URL:-}"
+DEVOPS_ORG="${DEVOPS_ORG:-}"
 DEVOPS_PROJECT="${DEVOPS_PROJECT:-DevOps}"
 
 # Validate required secrets. Snipe + ReportMate no longer need a shared
@@ -182,8 +195,8 @@ devops_organization: "${DEVOPS_ORG:-}"
 devops_project: "${DEVOPS_PROJECT:-}"
 
 # TeamDynamix
-tdx_base_url: "https://servicedesk.emilycarru.ca/TDWebApi"
-tdx_app_id: 116
+tdx_base_url: "${TDX_BASE_URL}"
+tdx_app_id: ${TDX_APP_ID}
 tdx_username: "${TDX_USERNAME:-}"
 tdx_password: "${TDX_PASSWORD:-}"
 tdx_beid: "${TDX_BEID:-}"
@@ -233,8 +246,8 @@ snipe:
 # TeamDynamix (TDX) Ticketing
 # Credentials: Keychain -> ca.ecuad.macadmin.fleetmate -> TdxUsername, TdxPassword, TdxBeid, TdxWebServicesKey
 tdx:
-  base_url: https://servicedesk.emilycarru.ca/TDWebApi
-  app_id: 116
+  base_url: ${TDX_BASE_URL}
+  app_id: ${TDX_APP_ID}
   enabled: true
 
 # Azure DevOps (Work Items)

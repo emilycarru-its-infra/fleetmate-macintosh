@@ -179,6 +179,8 @@ public struct FleetMateConfig: Codable {
     public var handbookSiteUrl: String?
     /// Clone URL of the repository holding the shared agent skills and hooks.
     public var agentsHubRepoUrl: String?
+    /// The subnets fleet addresses are chosen from (see `FleetSubnets`).
+    public var fleetSubnets = FleetSubnets()
     
     /// Default initializer
     public init() {}
@@ -591,6 +593,12 @@ public struct FleetMateConfig: Codable {
         if let v = get("handbookRepoUrl") { config.handbookRepoUrl = v }
         if let v = get("handbookSiteUrl") { config.handbookSiteUrl = v }
         if let v = get("agentsHubRepoUrl") { config.agentsHubRepoUrl = v }
+        if get("fleetWiredSubnets") != nil || get("fleetWirelessSubnets") != nil || get("fleetSubnets") != nil {
+            config.fleetSubnets = FleetSubnets(
+                wired: FleetSubnets.parse(get("fleetWiredSubnets")),
+                wireless: FleetSubnets.parse(get("fleetWirelessSubnets")),
+                fleet: FleetSubnets.parse(get("fleetSubnets")))
+        }
     }
 
     /// Legacy Keychain loader — used when credentials.json doesn't exist yet

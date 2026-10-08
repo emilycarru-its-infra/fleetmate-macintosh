@@ -15,10 +15,32 @@ struct MarkdownTextView: View {
     /// A whole document (a Handbook page, a SKILL.md) rather than a comment:
     /// real heading sizes and paragraph spacing.
     var document: Bool = false
+    /// Where a clicked link goes. Documents (Handbook pages, skills) come from
+    /// repositories many people edit, so without a handler they open only
+    /// http(s) links, in the browser; file:, custom app schemes and the rest
+    /// are dropped (see `HandbookLinks`).
+    var onLink: ((URL) -> OpenURLAction.Result)? = nil
+    /// For documents, the one host images may load from (the Handbook site).
+    /// Without it a document shows no remote images.
+    var imageSite: String? = nil
 
     private var theme: MarkdownUI.Theme { document ? .fleetMateDocument : .fleetMate }
 
     var body: some View {
+        if document {
+            rendered
+                .markdownImageProvider(SiteImageProvider(siteURL: imageSite))
+                .environment(\.openURL, OpenURLAction { url in
+                    if let onLink { return onLink(url) }
+                    return HandbookLinks.external(url) != nil ? .systemAction : .discarded
+                })
+        } else {
+            rendered
+        }
+    }
+
+    @ViewBuilder
+    private var rendered: some View {
         if content.isEmpty {
             Text("No content")
                 .appFont(.body)
@@ -43,6 +65,21 @@ struct MarkdownTextView: View {
     private func isHtml(_ text: String) -> Bool {
         let htmlPattern = #"<\s*(div|p|br|h[1-6]|ul|ol|li|span|a|img|table|tr|td|th|pre|code|em|strong|b|i|hr)\b"#
         return text.range(of: htmlPattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+}
+
+/// Images in a document load only over http(s) from the Handbook site's own
+/// host; anything else renders as nothing.
+private struct SiteImageProvider: ImageProvider {
+    let siteURL: String?
+
+    @ViewBuilder
+    func makeImage(url: URL?) -> some View {
+        if HandbookLinks.allowsImage(url, siteURL: siteURL) {
+            DefaultImageProvider.default.makeImage(url: url)
+        } else {
+            EmptyView()
+        }
     }
 }
 

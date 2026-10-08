@@ -11,6 +11,9 @@ struct AgentSettingsView: View {
     @State private var repos: [String] = []
     @State private var newRepo = ""
     @State private var hasOwnCommand = false
+    @State private var handbookRepo = ""
+    @State private var handbookSite = ""
+    @State private var skillsRepo = ""
 
     private var presetCommands: [String] { AgentLaunch.presets.map(\.command) }
 
@@ -75,9 +78,27 @@ struct AgentSettingsView: View {
                 Text("Offered under New Session › Open in repository. Starts from your organization's list; your edits are yours alone.")
                     .appFont(.caption).foregroundStyle(.secondary)
             }
+
+            Section {
+                TextField("Handbook repository", text: $handbookRepo, prompt: Text("Git clone URL"))
+                TextField("Handbook site", text: $handbookSite, prompt: Text("Address of the published Handbook"))
+                TextField("Skills repository", text: $skillsRepo, prompt: Text("Git clone URL of the shared skills"))
+                HStack {
+                    Spacer()
+                    Button("Save", action: saveKnowledge).disabled(!knowledgeChanged)
+                }
+            } header: {
+                Text("Handbook and Skills")
+            } footer: {
+                Text("The Handbook reader, its search results and cards, and the shared skills appear once these are set. A value from your organization's profile takes precedence.")
+                    .appFont(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .onAppear {
+            handbookRepo = appState.config.handbookRepoUrl ?? ""
+            handbookSite = appState.config.handbookSiteUrl ?? ""
+            skillsRepo = appState.config.agentsHubRepoUrl ?? ""
             repos = appState.agentRepos
             hasOwnCommand = UserDefaults.standard.string(forKey: AgentSettingsKey.command) != nil
             if !hasOwnCommand { command = appState.config.agentCommand ?? "" }
@@ -118,5 +139,24 @@ struct AgentSettingsView: View {
 
     private func save() {
         UserDefaults.standard.set(repos, forKey: AgentSettingsKey.repos)
+    }
+
+    private func trimmed(_ value: String) -> String? {
+        let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return v.isEmpty ? nil : v
+    }
+
+    private var knowledgeChanged: Bool {
+        trimmed(handbookRepo) != appState.config.handbookRepoUrl
+            || trimmed(handbookSite) != appState.config.handbookSiteUrl
+            || trimmed(skillsRepo) != appState.config.agentsHubRepoUrl
+    }
+
+    private func saveKnowledge() {
+        var c = appState.config
+        c.handbookRepoUrl = trimmed(handbookRepo)
+        c.handbookSiteUrl = trimmed(handbookSite)
+        c.agentsHubRepoUrl = trimmed(skillsRepo)
+        appState.saveConfig(c)
     }
 }

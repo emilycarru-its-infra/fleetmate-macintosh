@@ -97,9 +97,9 @@ struct FleetMateCommands: Commands {
     @Environment(\.openWindow) private var openWindow
     @AppStorage(AppFontScale.storageKey) private var fontScale: Double = AppFontScale.default
 
-    /// Coarser than the settings slider's 0.05 — a menu item should make a
-    /// visible difference in one press.
-    private let zoomStep = 0.1
+    /// The settings slider's own step, so the menu and the slider always land
+    /// on the same values.
+    private let zoomStep = AppFontScale.step
 
     private var selectedTab: AppTab { appState.selectedTab }
 
@@ -265,7 +265,7 @@ struct FleetMateCommands: Commands {
     }
 
     private func setScale(_ value: Double) {
-        fontScale = AppFontScale.clamp(value)
+        fontScale = AppFontScale.clamp((value / AppFontScale.step).rounded() * AppFontScale.step)
     }
 }
 

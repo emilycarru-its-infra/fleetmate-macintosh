@@ -47,6 +47,15 @@ final class KnowledgeStore: ObservableObject {
         siteURL = config.handbookSiteUrl
     }
 
+    /// Pick up changed repositories (Settings › Agent): stop the current
+    /// loop, point at the new ones and start again.
+    func restart(_ config: FleetMateConfig, token: @escaping () async -> String?) {
+        loop?.cancel()
+        loop = nil
+        configure(config)
+        start(token: token)
+    }
+
     /// Show what is already on disk at once, then keep it current.
     func start(token: @escaping () async -> String?) {
         guard loop == nil else { return }

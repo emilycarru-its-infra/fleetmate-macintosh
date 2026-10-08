@@ -19,7 +19,7 @@ struct HandbookReaderView: View {
                         .appFont(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if let url = knowledge.siteURL(for: page) {
+                if let url = knowledge.siteURL(for: page), HandbookLinks.isWeb(url) {
                     Button { NSWorkspace.shared.open(url) } label: {
                         Label("Open on Site", systemImage: "safari")
                     }
@@ -41,7 +41,11 @@ struct HandbookReaderView: View {
                         Text("Updated \(modified)\(page.lastModifiedBy.map { " by \($0)" } ?? "")")
                             .appFont(.caption).foregroundStyle(.secondary)
                     }
-                    MarkdownTextView(content: page.body, document: true)
+                    MarkdownTextView(content: page.body, document: true,
+                                     linkPolicy: { HandbookLinks.classify($0, from: page, index: knowledge.handbook,
+                                                                          siteURL: knowledge.siteAddress) },
+                                     openPage: { knowledge.openPage = $0 },
+                                     imageSite: knowledge.siteAddress)
                         .frame(maxWidth: 900, alignment: .leading)
                 }
                 .padding(20)

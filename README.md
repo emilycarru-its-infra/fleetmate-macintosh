@@ -349,7 +349,7 @@ secure_shell:
 
 manage:
   enabled: true
-  roster_path: ~/fleet/roster/computers.csv
+  roster_path: ~/Developer/fleet/computers.csv
   ssh_key_path: ~/.ssh/id_rsa.fleetadmin
   ssh_user: fleetadmin
   terminal_theme: Homebrew

@@ -115,7 +115,9 @@ final class RosterLoaderTests: XCTestCase {
     /// The real roster, when it is on this machine: every in-service row
     /// with a hostname must land in a section or be explicitly outside them.
     func testRealRosterLoadsWhenPresent() throws {
-        let path = NSString(string: "~/fleet/roster/computers.csv").expandingTildeInPath
+        let configured = ProcessInfo.processInfo.environment["FLEETMATE_TEST_ROSTER"] ?? ""
+        try XCTSkipIf(configured.isEmpty, "set FLEETMATE_TEST_ROSTER to a roster CSV to run this")
+        let path = NSString(string: configured).expandingTildeInPath
         try XCTSkipUnless(FileManager.default.fileExists(atPath: path), "roster not on this machine")
         let roster = try RosterLoader().load(path: path)
         XCTAssertFalse(roster.labs.isEmpty)

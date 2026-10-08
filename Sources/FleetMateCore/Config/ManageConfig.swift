@@ -9,15 +9,16 @@ import Foundation
 public struct ManageConfig: Codable, Equatable, Sendable {
     /// The operator switched the module on. Off hides the tab even when a roster exists.
     public var enabled: Bool = false
-    /// Path to the enrollment roster CSV (computers.csv). Empty means the Munki repo default.
-    /// Only a fallback: the roster is fetched from Azure DevOps first (see rosterRepo).
+    /// Path to the enrollment roster CSV. Empty means rosterRepoPath inside
+    /// the local repo root. Only a fallback when a roster repository is set.
     public var rosterPath: String = ""
     /// Azure DevOps project and repository the roster is fetched from at
-    /// load, so a stale local checkout never shows a stale sidebar. Empty
-    /// rosterRepo turns the fetch off and the local file is used alone.
-    public var rosterRepoProject: String = "Devices"
-    public var rosterRepo: String = "Munki"
-    public var rosterRepoPath: String = "/roster/computers.csv"
+    /// load, so a stale local checkout never shows a stale sidebar. Both
+    /// empty (the default) turns the fetch off and the local file is used alone.
+    public var rosterRepoProject: String = ""
+    public var rosterRepo: String = ""
+    /// The roster's path inside that repository, and inside the local repo root.
+    public var rosterRepoPath: String = ManageConfig.defaultRosterRepoPath
     /// Path to the YAML command library. Empty means the per-user default.
     public var commandsPath: String = ""
     /// Private key for fleet SSH. Empty means `~/.ssh/id_rsa.fleetadmin`.
@@ -37,7 +38,7 @@ public struct ManageConfig: Codable, Equatable, Sendable {
 
     public static let defaultSshUser = "fleetadmin"
     public static let defaultSshKeyPath = "~/.ssh/id_rsa.fleetadmin"
-    public static let defaultRosterRelativePath = "deployment/enroll/computers.csv"
+    public static let defaultRosterRepoPath = "/computers.csv"
     /// Where the roster fetched from Azure DevOps is kept between launches.
     public static let rosterCachePath = "~/.fleetmate/cache/computers.csv"
 
@@ -68,12 +69,18 @@ public struct ManageConfig: Codable, Equatable, Sendable {
 
     // MARK: - Resolved values
 
-    /// The roster path in use: the configured one, else the Munki repo's enrollment CSV.
+    /// The roster's path relative to a repository root.
+    public var rosterRelativePath: String {
+        let trimmed = rosterRepoPath.trimmingCharacters(in: CharacterSet(charactersIn: "/ "))
+        return trimmed.isEmpty ? String(Self.defaultRosterRepoPath.dropFirst()) : trimmed
+    }
+
+    /// The roster path in use: the configured one, else rosterRepoPath inside the repo root.
     public func resolvedRosterPath(repoRoot: String?) -> String {
         let trimmed = rosterPath.trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty { return Self.expandHome(trimmed) }
         guard let repoRoot, !repoRoot.isEmpty else { return "" }
-        return (Self.expandHome(repoRoot) as NSString).appendingPathComponent(Self.defaultRosterRelativePath)
+        return (Self.expandHome(repoRoot) as NSString).appendingPathComponent(rosterRelativePath)
     }
 
     public var resolvedCommandsPath: String {
@@ -152,7 +159,8 @@ public struct ManageConfig: Codable, Equatable, Sendable {
 
     /// Flat keys in the per-user credentials JSON.
     static let credentialKeys = [
-        "manageEnabled", "manageRosterPath", "manageCommandsPath", "manageSshKeyPath", "manageSshUser",
+        "manageEnabled", "manageRosterPath", "manageRosterRepoProject", "manageRosterRepo",
+        "manageRosterRepoPath", "manageCommandsPath", "manageSshKeyPath", "manageSshUser",
         "manageTerminalTheme", "manageScreenSharingUser", "manageIncludeRetired",
         "manageIncludeProvisioning", "manageProbeConcurrency",
     ]
@@ -161,6 +169,9 @@ public struct ManageConfig: Codable, Equatable, Sendable {
         var out: [String: String] = [:]
         out["manageEnabled"] = enabled ? "true" : "false"
         if !rosterPath.isEmpty { out["manageRosterPath"] = rosterPath }
+        if !rosterRepoProject.isEmpty { out["manageRosterRepoProject"] = rosterRepoProject }
+        if !rosterRepo.isEmpty { out["manageRosterRepo"] = rosterRepo }
+        if rosterRepoPath != Self.defaultRosterRepoPath { out["manageRosterRepoPath"] = rosterRepoPath }
         if !commandsPath.isEmpty { out["manageCommandsPath"] = commandsPath }
         if !sshKeyPath.isEmpty { out["manageSshKeyPath"] = sshKeyPath }
         if !sshUser.isEmpty { out["manageSshUser"] = sshUser }
@@ -178,6 +189,9 @@ public struct ManageConfig: Codable, Equatable, Sendable {
         var c = base ?? ManageConfig()
         if let v = credentials["manageEnabled"] { c.enabled = v == "true" }
         if let v = credentials["manageRosterPath"] { c.rosterPath = v }
+        if let v = credentials["manageRosterRepoProject"] { c.rosterRepoProject = v }
+        if let v = credentials["manageRosterRepo"] { c.rosterRepo = v }
+        if let v = credentials["manageRosterRepoPath"] { c.rosterRepoPath = v }
         if let v = credentials["manageCommandsPath"] { c.commandsPath = v }
         if let v = credentials["manageSshKeyPath"] { c.sshKeyPath = v }
         if let v = credentials["manageSshUser"] { c.sshUser = v }

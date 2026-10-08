@@ -104,7 +104,7 @@ public final class ActivityLog: @unchecked Sendable {
 
     @discardableResult
     public func begin(_ title: String, service: String, serials: [String] = []) -> UUID {
-        let action = ActivityAction(id: UUID(), title: title, service: service, startedAt: Date(),
+        let action = ActivityAction(id: UUID(), title: Self.sanitizeFailure(title), service: service, startedAt: Date(),
                                     finishedAt: nil, failure: nil, serials: serials, requests: [], isBackground: false)
         append(action)
         return action.id
@@ -114,7 +114,7 @@ public final class ActivityLog: @unchecked Sendable {
         lock.lock()
         if let i = actions.firstIndex(where: { $0.id == id }) {
             actions[i].finishedAt = Date()
-            actions[i].failure = failure
+            actions[i].failure = failure.map(Self.sanitizeFailure)
         }
         lock.unlock()
         notify()
@@ -183,22 +183,72 @@ public final class ActivityLog: @unchecked Sendable {
     private func makeRequest(method: String, url: URL?, status: Int?, startedAt: Date,
                              duration: TimeInterval, failure: String?) -> ActivityRequest {
         let host = url?.host ?? ""
-        let path = url?.path ?? ""
+        let rawPath = url?.path ?? ""
         var serials = ActivityMasker.serialsInQuery(url)
         lock.lock()
-        for segment in path.split(separator: "/") {
+        for segment in rawPath.split(separator: "/") {
             if let serial = deviceSerials[segment.lowercased()], !serials.contains(serial) { serials.append(serial) }
         }
         lock.unlock()
+        let path = Self.sanitizePath(rawPath)
         return ActivityRequest(id: UUID(), startedAt: startedAt, method: method.uppercased(), host: host,
-                               path: path, status: status, duration: duration, failure: failure, serials: serials)
+                               path: path, status: status, duration: duration, failure: failure.map(Self.sanitizeFailure), serials: serials)
     }
 
+    /// A short reason for a failure: the HTTP status when there is one,
+    /// otherwise the error's message with URLs removed. Never a response body.
     static func describe(_ error: Error) -> String {
         if let af = error as? AFError, let code = af.responseCode { return "HTTP \(code)" }
         if let throttled = error as? GraphThrottledError { return "HTTP \(throttled.statusCode)" }
-        let text = (error as NSError).localizedDescription
-        return String(text.prefix(160))
+        if let url = error as? URLError { return "Network error \(url.code.rawValue)" }
+        return sanitizeFailure((error as NSError).localizedDescription)
+    }
+
+    private static let urlPattern = try! NSRegularExpression(pattern: #"[A-Za-z][A-Za-z0-9+.-]*://\S+"#)
+    private static let emailPattern = try! NSRegularExpression(pattern: #"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#)
+    private static let jwtPattern = try! NSRegularExpression(pattern: #"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)?"#)
+    private static let guidPattern = try! NSRegularExpression(pattern: #"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"#)
+
+    /// Failure text fit to keep: one line, URLs, emails and tokens removed,
+    /// at most 120 characters.
+    public static func sanitizeFailure(_ text: String) -> String {
+        var result = text.components(separatedBy: .newlines).first ?? ""
+        result = replacing(urlPattern, in: result, with: "[url]")
+        result = replacing(jwtPattern, in: result, with: "[token]")
+        result = replacing(emailPattern, in: result, with: "[email]")
+        result = result.split(separator: " ").map { isTokenLike(String($0)) ? "[token]" : String($0) }.joined(separator: " ")
+        return result.count > 120 ? String(result.prefix(119)) + "…" : result
+    }
+
+    /// A path fit to keep: emails and anything that looks like a key or token
+    /// are replaced where they are recorded, not only on export.
+    public static func sanitizePath(_ path: String) -> String {
+        let decoded = path.removingPercentEncoding ?? path
+        return decoded.split(separator: "/", omittingEmptySubsequences: false).map { segment -> String in
+            let text = String(segment)
+            if text.isEmpty { return text }
+            if matches(emailPattern, text) { return "[email]" }
+            if matches(jwtPattern, text) || isTokenLike(text) { return "[token]" }
+            return text
+        }.joined(separator: "/")
+    }
+
+    /// 32 or more characters of key-like alphabet with letters and digits
+    /// mixed: an API key, a signature or an opaque token. A GUID is a device
+    /// or object id, not a secret, and is kept.
+    static func isTokenLike(_ text: String) -> Bool {
+        guard text.count >= 32, !matches(guidPattern, text) else { return false }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_.~+/="))
+        guard text.unicodeScalars.allSatisfy(allowed.contains) else { return false }
+        return text.contains(where: \.isLetter) && text.contains(where: \.isNumber)
+    }
+
+    private static func matches(_ regex: NSRegularExpression, _ text: String) -> Bool {
+        regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+    }
+
+    private static func replacing(_ regex: NSRegularExpression, in text: String, with template: String) -> String {
+        regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: template)
     }
 }
 

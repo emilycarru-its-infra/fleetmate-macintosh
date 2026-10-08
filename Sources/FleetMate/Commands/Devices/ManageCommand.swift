@@ -11,7 +11,7 @@ struct ManageCommand: AsyncParsableCommand {
         abstract: "Lab operations over SSH: rooms, scans, fleet commands, the command library",
         discussion: """
             Reads the enrollment roster the Manage tab uses (the manage block in
-            ~/.fleetmate/config.yaml, or the Munki repo's deployment/enroll/computers.csv),
+            ~/.fleetmate/config.yaml, or computers.csv in the repo root),
             resolves machines through ReportMate and mDNS, and runs commands over the
             fleet SSH key.
             """,

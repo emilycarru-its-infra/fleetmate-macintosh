@@ -154,7 +154,7 @@ final class SecureShellClassificationTests: XCTestCase {
     func testExitCodesAndStderrClassify() {
         XCTAssertEqual(SecureShellService.classify(exitCode: 0, stderr: ""), .success)
         XCTAssertEqual(SecureShellService.classify(exitCode: 1, stderr: "no such file"), .commandFailed)
-        XCTAssertEqual(SecureShellService.classify(exitCode: 255, stderr: "macadmins@192.168.2.50: Permission denied (publickey)."), .authFailed)
+        XCTAssertEqual(SecureShellService.classify(exitCode: 255, stderr: "fleetadmin@192.168.2.50: Permission denied (publickey)."), .authFailed)
         XCTAssertEqual(SecureShellService.classify(exitCode: 255, stderr: "ssh: connect to host 192.168.2.50 port 22: Operation timed out"), .unreachable)
         XCTAssertEqual(SecureShellService.classify(exitCode: 255, stderr: "ssh: connect to host 192.168.2.50 port 22: Connection refused"), .unreachable)
         XCTAssertEqual(SecureShellService.classify(exitCode: 255, stderr: "ssh: Could not resolve hostname foo.local: nodename nor servname provided"), .unreachable)

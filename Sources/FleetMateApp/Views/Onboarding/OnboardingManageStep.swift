@@ -35,7 +35,7 @@ struct OnboardingManageStep: View {
             Form {
                 Section {
                     PathPickerRow(label: "Roster (computers.csv)", value: $wizardState.manageRosterPath,
-                                  placeholder: appState.config.repoRoot.map { "\($0)/\(ManageConfig.defaultRosterRelativePath)" } ?? "Choose computers.csv",
+                                  placeholder: appState.config.repoRoot.map { "\($0)/\(ManageConfig().rosterRelativePath)" } ?? "Choose computers.csv",
                                   buttonLabel: "Choose CSV…")
                     HStack(spacing: 6) {
                         Image(systemName: rosterExists ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
@@ -49,7 +49,7 @@ struct OnboardingManageStep: View {
                 } header: {
                     Text("Roster")
                 } footer: {
-                    Text("The Munki repo's deployment/enroll/computers.csv when the repo root is known; any file with the same columns otherwise.")
+                    Text("computers.csv in the repo root when it is known; any file with the same columns otherwise.")
                         .appFont(.caption)
                         .foregroundStyle(.secondary)
                 }

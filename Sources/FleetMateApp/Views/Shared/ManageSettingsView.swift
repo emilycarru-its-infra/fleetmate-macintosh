@@ -48,7 +48,7 @@ struct ManageSettingsView: View {
                         .lineLimit(2)
                 }
                 PathPickerRow(label: "Roster (computers.csv)", value: $draft.rosterPath,
-                              placeholder: appState.config.repoRoot.map { "\($0)/\(ManageConfig.defaultRosterRelativePath)" } ?? "Choose computers.csv",
+                              placeholder: appState.config.repoRoot.map { "\($0)/\(draft.rosterRelativePath)" } ?? "Choose computers.csv",
                               buttonLabel: "Choose CSV…")
                 HStack(spacing: 6) {
                     Image(systemName: rosterExists ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")

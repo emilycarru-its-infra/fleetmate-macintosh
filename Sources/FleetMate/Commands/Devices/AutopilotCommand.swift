@@ -270,7 +270,7 @@ struct AutopilotPruneAssignmentsSubcommand: AsyncParsableCommand {
         }
         guard !prunable.isEmpty else { return }
         guard prunable.count <= maxDeletes else {
-            print("Refusing to delete \(prunable.count) rows, more than --max-deletes \(maxDeletes). Check the list, then raise the limit if it is right.".red)
+            report("Refusing to delete \(prunable.count) rows, more than --max-deletes \(maxDeletes). Check the list, then raise the limit if it is right.".red)
             throw ExitCode.failure
         }
 
@@ -278,13 +278,23 @@ struct AutopilotPruneAssignmentsSubcommand: AsyncParsableCommand {
         for row in prunable {
             do {
                 try await service.deleteEnrollmentAssignment(row)
-                print("Removed ".green + "\(row.source.label) \"\(row.configurationName)\" → group \(row.groupId)")
+                report("Removed ".green + "\(row.source.label) \"\(row.configurationName)\" → group \(row.groupId)")
             } catch {
                 failed += 1
-                print("Failed ".red + "\(row.source.label) \"\(row.configurationName)\" → group \(row.groupId): \(error.localizedDescription)")
+                report("Failed ".red + "\(row.source.label) \"\(row.configurationName)\" → group \(row.groupId): \(error.localizedDescription)")
             }
         }
         if failed > 0 { throw ExitCode.failure }
+    }
+
+    /// With --json, stdout carries only the plan, so a caller can parse it;
+    /// the outcome of each deletion goes to stderr instead.
+    private func report(_ line: String) {
+        if json {
+            FileHandle.standardError.write(Data((line + "\n").utf8))
+        } else {
+            print(line)
+        }
     }
 }
 

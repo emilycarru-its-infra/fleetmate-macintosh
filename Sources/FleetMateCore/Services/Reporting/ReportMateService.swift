@@ -65,7 +65,11 @@ public class ReportMateService {
             oidcAudience: config.reportMateOidcAudience,
             cacheMinutes: config.cacheMinutes
         )
+        fleetSubnets = config.fleetSubnets
     }
+
+    /// Which subnets `getNetworkAddressMap` picks each Mac's address from.
+    public var fleetSubnets = FleetSubnets()
 
     /// True when configured to use Entra bearer (SSO) auth rather than the passphrase.
     public var usesOidc: Bool { oidcAudience != nil }
@@ -312,7 +316,7 @@ public class ReportMateService {
             http: "\(baseUrl)/api/v1/network?limit=\(limit)") ?? []
         var map: [String: String] = [:]
         for device in devices where device.isMac {
-            if let ip = device.bestIP() { map[device.serialNumber] = ip }
+            if let ip = device.bestIP(fleetSubnets) { map[device.serialNumber] = ip }
         }
         return map
     }

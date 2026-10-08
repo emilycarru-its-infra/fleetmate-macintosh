@@ -261,10 +261,26 @@ final class ReportMateNetworkAddressTests: XCTestCase {
         ]
         """
         let devices = try JSONDecoder().decode([ReportMateNetworkDevice].self, from: Data(json.utf8))
-        XCTAssertEqual(devices.first { $0.serialNumber == "S1" }?.bestIP(), "192.168.2.50")
-        XCTAssertEqual(devices.first { $0.serialNumber == "S2" }?.bestIP(), "172.17.4.5", "down wired interface is ignored")
-        XCTAssertEqual(devices.first { $0.serialNumber == "S3" }?.bestIP(), "10.20.1.2", "wired wins among other private addresses")
-        XCTAssertNil(devices.first { $0.serialNumber == "S4" }?.bestIP(), "non-10.x addresses are not fleet addresses")
+        // Example subnets: the site's own come from settings, never from code.
+        let subnets = FleetSubnets(wired: ["192.168.2."], wireless: ["172.17."], fleet: ["10."])
+        XCTAssertEqual(devices.first { $0.serialNumber == "S1" }?.bestIP(subnets), "192.168.2.50")
+        XCTAssertEqual(devices.first { $0.serialNumber == "S2" }?.bestIP(subnets), "172.17.4.5", "down wired interface is ignored")
+        XCTAssertEqual(devices.first { $0.serialNumber == "S3" }?.bestIP(subnets), "10.20.1.2", "wired wins among other fleet addresses")
+        XCTAssertNil(devices.first { $0.serialNumber == "S4" }?.bestIP(subnets), "addresses off the fleet subnets are not fleet addresses")
         XCTAssertFalse(devices.first { $0.serialNumber == "W1" }!.isMac)
+    }
+}
+
+final class FleetSubnetsTests: XCTestCase {
+    func testWithNoSettingsAny10AddressCountsAndNoneIsPreferred() {
+        let s = FleetSubnets()
+        XCTAssertEqual(s.fleet, ["10."])
+        XCTAssertTrue(s.wired.isEmpty)
+        XCTAssertTrue(s.wireless.isEmpty)
+    }
+
+    func testSettingsParseCommasSpacesAndLines() {
+        XCTAssertEqual(FleetSubnets.parse("10.1., 10.2.\n10.3. "), ["10.1.", "10.2.", "10.3."])
+        XCTAssertEqual(FleetSubnets.parse(nil), [])
     }
 }

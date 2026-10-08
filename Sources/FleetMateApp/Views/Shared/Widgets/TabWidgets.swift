@@ -234,7 +234,8 @@ struct DevelopmentWidgetsSection: View {
             WidgetKPIColumn(kpis: [
                 KPI(title: "Unread in Inbox", value: "\(model.unreadCount)", icon: "tray",
                     color: .blue, loading: model.isLoadingInbox && model.notifications.isEmpty, tab: .development),
-                KPI(title: "Review Requested", value: "\(count(.assignedToMe))", icon: "person.crop.circle.badge.checkmark",
+                KPI(title: "Review Requested",
+                    value: model.queue.failed() ? "--" : "\(count(.assignedToMe))", icon: "person.crop.circle.badge.checkmark",
                     color: .purple, loading: prLoading, tab: .development),
             ]) { kpi in
                 if kpi.title == "Unread in Inbox" {
@@ -246,7 +247,8 @@ struct DevelopmentWidgetsSection: View {
             }
 
             WidgetKPIColumn(kpis: PullRequestSource.allCases.map { source in
-                KPI(title: "\(source.shortName) Pull Requests", value: "\(model.count(for: source))",
+                KPI(title: "\(source.shortName) Pull Requests",
+                    value: model.queue.failed(source) ? "--" : "\(model.count(for: source))",
                     icon: source.symbolName, color: source == .gitHub ? .indigo : .blue,
                     loading: prLoading, tab: .development)
             }) { kpi in

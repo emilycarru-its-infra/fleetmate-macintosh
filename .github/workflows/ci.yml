@@ -20,10 +20,15 @@ on:
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
+  # Every pull request runs, docs-only ones included: main requires this
+  # check, and a check that never starts would hold the pull request forever.
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
+  # reportmate-sync starts this run on its branch, because a pull request it
+  # opens with GITHUB_TOKEN does not trigger pull_request workflows.
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -31,10 +36,13 @@ concurrency:
 
 jobs:
   build:
+    name: Build and test
     runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Select newest Xcode 26 (provides the macOS 26 SDK + actool Liquid Glass icons)
         run: sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"

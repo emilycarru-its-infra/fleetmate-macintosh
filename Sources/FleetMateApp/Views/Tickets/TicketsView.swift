@@ -205,6 +205,8 @@ struct TicketsView: View {
     @State private var showSetParentSheet = false
     @State private var parentTicketIdText = ""
     @State private var isSettingParent = false
+    @State private var showCreateParentSheet = false
+    @State private var newParentTitle = ""
     @State private var isSaving = false
     @State private var hasEdits = false
     @State private var isEditingDescription = false
@@ -1243,19 +1245,15 @@ struct TicketsView: View {
                 .controlSize(.small)
                 .help("Set parent ticket")
 
-                Button(action: { createParentTicket(for: ticket) }) {
+                Button(action: {
+                    newParentTitle = ticket.title ?? ""
+                    showCreateParentSheet = true
+                }) {
                     Label("Create Parent", systemImage: "plus.rectangle.on.rectangle")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .help("Create parent ticket")
-
-                Button(action: { /* TODO: merge into */ }) {
-                    Label("Merge Into", systemImage: "arrow.triangle.merge")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Merge into another ticket")
 
                 Button(action: {
                     loadTicketDetail(ticketId: ticket.id ?? 0)
@@ -1572,6 +1570,9 @@ struct TicketsView: View {
         .padding(.vertical, 4)
         .sheet(isPresented: $showSetParentSheet) {
             setParentSheet(ticket: ticket)
+        }
+        .sheet(isPresented: $showCreateParentSheet) {
+            createParentSheet(ticket: ticket)
         }
     }
 
@@ -2307,9 +2308,66 @@ struct TicketsView: View {
         }
     }
 
+    // MARK: - Create Parent Sheet
+
+    private func createParentSheet(ticket: TdxTicket) -> some View {
+        VStack(spacing: 16) {
+            Text("Create Parent Ticket")
+                .appFont(.headline)
+            Text("A new ticket with this one's type, account, requestor and owners, set as its parent.")
+                .appFont(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(width: 320)
+            TextField("Parent title", text: $newParentTitle)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 320)
+            HStack(spacing: 12) {
+                Button("Cancel") {
+                    showCreateParentSheet = false
+                    newParentTitle = ""
+                }
+                Button("Create Parent") {
+                    createParentTicket(for: ticket)
+                }
+                .disabled(newParentTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSettingParent)
+                .keyboardShortcut(.defaultAction)
+            }
+            if isSettingParent {
+                ProgressView()
+                    .controlSize(.small)
+            }
+        }
+        .padding(24)
+    }
+
+    /// TDX has no route that creates a parent: create the ticket, then make it
+    /// this one's parent the same way Set Parent does.
     private func createParentTicket(for ticket: TdxTicket) {
-        // TODO: Implement create parent ticket — creates a new ticket and sets it as parent
-        saveErrorMessage = "Create Parent is not yet implemented."
+        guard let ticketId = ticket.id else { return }
+        let request = CreateTicketRequest.parent(of: ticket, title: newParentTitle)
+        Task {
+            isSettingParent = true
+            defer { isSettingParent = false }
+            do {
+                guard let parent = try await appState.tdxService.createTicket(request: request),
+                      let parentId = parent.id else {
+                    saveErrorMessage = "Failed to create the parent ticket."
+                    return
+                }
+                let updateRequest = TicketUpdateRequest(from: ticket, parentId: parentId)
+                guard let updated = try await appState.tdxService.updateTicket(id: ticketId, request: updateRequest) else {
+                    saveErrorMessage = "Created ticket \(parentId), but could not set it as the parent."
+                    return
+                }
+                detailedTicket = updated
+                populateEditFields(from: updated)
+                showCreateParentSheet = false
+                newParentTitle = ""
+            } catch {
+                saveErrorMessage = "Create parent failed: \(error.localizedDescription)"
+            }
+        }
     }
 
     private func addComment(ticket: TdxTicket) async {

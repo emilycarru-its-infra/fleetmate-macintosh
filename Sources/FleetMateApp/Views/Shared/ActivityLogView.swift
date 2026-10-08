@@ -80,7 +80,7 @@ struct ActivityLogView: View {
                 TableColumn("Requests") { Text("\($0.requests.count)").monospacedDigit() }
                     .width(min: 60, ideal: 70, max: 90)
                 TableColumn("Result") { action in
-                    Text(action.result).foregroundStyle(action.result == "OK" ? Color.secondary : Color.orange)
+                    Text(action.result).foregroundStyle(["OK", "Running"].contains(action.result) ? Color.secondary : Color.orange)
                 }
                 .width(min: 80, ideal: 120)
             }

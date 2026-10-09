@@ -793,7 +793,12 @@ private struct DevelopmentContent: View {
         .onChange(of: appState.devOpsSsoAuthenticated) { _, ready in
             if ready { model.loadPullRequests(appState: appState, force: true) }
         }
-        .onAppear(perform: consumeLink)
+        .onAppear {
+            // The model outlives the tab, so an inbox read to zero on an
+            // earlier visit would otherwise still be the open segment.
+            if model.segment == .inbox, model.unreadCount == 0 { model.segment = .pullRequests }
+            consumeLink()
+        }
         .onChange(of: appState.pendingDevelopmentLink) { _, _ in consumeLink() }
         .actionErrorBanner($model.actionError)
     }

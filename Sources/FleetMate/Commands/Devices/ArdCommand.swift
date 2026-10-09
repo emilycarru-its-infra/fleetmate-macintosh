@@ -868,7 +868,7 @@ struct ArdPrintingCommand: AsyncParsableCommand {
         abstract: "Printer management scripts",
         subcommands: [
             ArdPrintingListSubcommand.self,
-            ArdPrintingRemoveEcuSubcommand.self,
+            ArdPrintingRemovePrefixSubcommand.self,
         ],
         defaultSubcommand: ArdPrintingListSubcommand.self
     )
@@ -882,12 +882,24 @@ struct ArdPrintingListSubcommand: AsyncParsableCommand {
     }
 }
 
-struct ArdPrintingRemoveEcuSubcommand: AsyncParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "remove-site", abstract: "Remove all SITE_ printers")
+struct ArdPrintingRemovePrefixSubcommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "remove-prefix",
+        abstract: "Remove every printer whose queue name starts with a prefix"
+    )
+    @Argument(help: "Queue-name prefix, e.g. SITE_ (letters, digits, '_' and '-' only)")
+    var prefix: String
     @OptionGroup var targeting: ArdTargetOptions
+
+    func validate() throws {
+        guard !prefix.isEmpty, prefix.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-") }) else {
+            throw ValidationError("The prefix may contain only letters, digits, '_' and '-'.")
+        }
+    }
+
     func run() async throws {
         try await ArdRunner.run(
-            script: "lpstat -p | cut -d' ' -f2 | grep SITE_ | xargs -n1 sudo lpadmin -x",
+            script: "lpstat -p | cut -d' ' -f2 | grep '^\(prefix)' | xargs -n1 sudo lpadmin -x",
             targeting: targeting
         )
     }

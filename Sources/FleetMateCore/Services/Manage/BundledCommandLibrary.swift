@@ -322,9 +322,6 @@ categories:
       - label: Cancel all print jobs
         command: cancel -a -
         trust: caution
-      - label: Remove site printers
-        command: 'lpstat -p | cut -d'' '' -f2 | grep SITE_ | xargs -n1 sudo lpadmin -x && echo ''site printers removed'''
-        trust: destructive
   - name: Diagnostics
     commands:
       - label: Auth daemon processes (trustd, ctkd, coreauthd)

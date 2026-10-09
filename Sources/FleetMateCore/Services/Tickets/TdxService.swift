@@ -742,8 +742,8 @@ public class TdxService {
             return statusCache
         }
 
-        // Must be the ticketing app, not `tdxAppId` — that is the Assets app at
-        // the site, and asking it for ticket statuses is a 400.
+        // Must be the ticketing app, not `tdxAppId` — that is usually the Assets
+        // app, and asking it for ticket statuses is a 400.
         let url = config.tdxTicketsUrl("statuses")
 
         let statuses: [TdxStatusItem] = try await withCheckedThrowingContinuation { continuation in

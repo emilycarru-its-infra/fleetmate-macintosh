@@ -37,9 +37,9 @@ final class FleetMateLinkTests: XCTestCase {
         func open(_ web: String) throws -> FleetMateLink {
             try parse("fleetmate://open?url=" + web.addingPercentEncoding(withAllowedCharacters: .alphanumerics)!)
         }
-        XCTAssertEqual(try open("\(base)/_git/Munki/pullrequest/27391"),
+        XCTAssertEqual(try open("\(base)/_git/Fleet/pullrequest/27391"),
                        .pullRequest(.azureDevOps(project: "Platform", repo: "Fleet"), number: 27391))
-        XCTAssertEqual(try open("\(base)/_git/Cimian/commit/0a1b2c3d4e5f6a7b"),
+        XCTAssertEqual(try open("\(base)/_git/Agent/commit/0a1b2c3d4e5f6a7b"),
                        .commit(.azureDevOps(project: "Platform", repo: "Agent"), sha: "0a1b2c3d4e5f6a7b"))
         XCTAssertEqual(try open("\(base)/_build/results?buildId=4242&view=results"),
                        .azureDevOpsRun(project: "Platform", runId: 4242))

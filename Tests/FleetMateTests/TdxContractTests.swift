@@ -379,7 +379,7 @@ final class TdxContractTests: XCTestCase {
     }
 
     func testTicketReferenceDataUsesTheTicketingAppNotTheAssetsApp() async throws {
-        // `tdxAppId` is the Assets app at the reference site; asking it for ticket statuses or
+        // `tdxAppId` is usually the Assets app; asking it for ticket statuses or
         // priorities is a 400, which left both pickers silently empty.
         var config = FleetMateConfig()
         config.tdxBaseUrl = "https://tdx.example.edu/TDWebApi"

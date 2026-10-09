@@ -394,7 +394,7 @@ struct SidebarRoomRow: View {
     let icon: String
     let isSelected: Bool
 
-    /// Area, room, and size: "Foundation · R303 · 30 machines".
+    /// Area, room, and size: "Design · R303 · 30 machines".
     private var subtitle: String {
         var parts: [String] = []
         if let area = room.displayName, !area.isEmpty { parts.append(area) }

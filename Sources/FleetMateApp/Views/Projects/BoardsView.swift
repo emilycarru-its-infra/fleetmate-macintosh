@@ -261,8 +261,7 @@ struct BoardsView: View {
                 break
             }
         }
-        .searchable(text: $searchText, prompt: "Search tasks or AB# id...")
-        .findFocusesSearchField()
+        .tabSearch(text: $searchText, prompt: "Search tasks or AB# id...")
         .task(id: searchText) { await resolveDirectWorkItemHit() }
         .toolbar { projectsToolbar }
         .task {

@@ -188,6 +188,11 @@ class AppState: ObservableObject {
     @Published var pendingDevelopmentLink: FleetMateLink?
     /// Bumped by ⌘K; the toolbar search field takes focus on each change.
     @Published var globalSearchFocusRequest = 0
+    /// Bumped by ⌘F; the toolbar search field takes focus filtering the tab.
+    @Published var tabSearchFocusRequest = 0
+    /// The open tab's list filter, which the toolbar search field drives.
+    @Published var tabSearch: TabSearchRegistration?
+    @Published var tabSearchText = ""
     /// Why the last `fleetmate://` link could not be opened.
     @Published var linkError: String?
 

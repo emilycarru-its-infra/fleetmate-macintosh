@@ -45,8 +45,7 @@ struct ManageView: View {
                     .frame(minWidth: 300, idealWidth: 340, maxWidth: 420)
             }
         }
-        .searchable(text: $searchText, prompt: "Search hostnames, people, serials, asset tags")
-        .findFocusesSearchField()
+        .tabSearch(text: $searchText, prompt: "Search hostnames, people, serials, asset tags")
         .onAppCommand { command in
             switch command {
             case .refresh:

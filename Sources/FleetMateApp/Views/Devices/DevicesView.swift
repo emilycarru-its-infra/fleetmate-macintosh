@@ -378,8 +378,7 @@ private struct DevicesContentView: View {
             default:             break
             }
         }
-        .searchable(text: $searchText, prompt: "Search devices...")
-        .findFocusesSearchField()
+        .tabSearch(text: $searchText, prompt: "Search devices...")
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 if isFiltering {

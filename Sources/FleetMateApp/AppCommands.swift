@@ -51,43 +51,6 @@ extension View {
     func onAppCommand(_ handler: @escaping (AppCommand) -> Void) -> some View {
         modifier(AppCommandReceiver(handler: handler))
     }
-
-    /// Point ⌘F at this view's search field. Apply it *after* `.searchable`.
-    func findFocusesSearchField() -> some View {
-        modifier(FindCommandModifier())
-    }
-}
-
-/// Routes the Find command to the `.searchable` field above it.
-///
-/// `.searchFocused` is the only supported way to move focus into a SwiftUI
-/// search field, and it needs macOS 15. On 14 — still the deployment floor —
-/// this falls back to AppKit, which only lands if SwiftUI happened to render a
-/// real `NSSearchField`; on 26 it does not, so 15+ is the path that matters.
-private struct FindCommandModifier: ViewModifier {
-    @EnvironmentObject var appState: AppState
-    @FocusState private var searchFocused: Bool
-
-    func body(content: Content) -> some View {
-        focusable(content)
-            .onChange(of: appState.pendingCommand) { _, request in
-                guard request?.command == .find else { return }
-                if #available(macOS 15.0, *) {
-                    searchFocused = true
-                } else {
-                    focusSearchFieldViaAppKit()
-                }
-            }
-    }
-
-    @ViewBuilder
-    private func focusable(_ content: Content) -> some View {
-        if #available(macOS 15.0, *) {
-            content.searchFocused($searchFocused)
-        } else {
-            content
-        }
-    }
 }
 
 // MARK: - Menus
@@ -126,7 +89,7 @@ struct FleetMateCommands: Commands {
         CommandGroup(after: .pasteboard) {
             Divider()
 
-            Button("Find") { appState.perform(.find) }
+            Button("Find") { appState.tabSearchFocusRequest += 1 }
                 .keyboardShortcut("f", modifiers: .command)
                 .disabled(!hasSearchField)
             Button("Search Everything") { appState.globalSearchFocusRequest += 1 }
@@ -267,30 +230,4 @@ struct FleetMateCommands: Commands {
     private func setScale(_ value: Double) {
         fontScale = AppFontScale.clamp((value / AppFontScale.step).rounded() * AppFontScale.step)
     }
-}
-
-// MARK: - Find
-
-/// macOS 14 fallback for Find. See `FindCommandModifier`.
-@MainActor
-private func focusSearchFieldViaAppKit() {
-    guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
-
-    if let item = window.toolbar?.items.compactMap({ $0 as? NSSearchToolbarItem }).first {
-        item.beginSearchInteraction()
-        return
-    }
-
-    let root = window.contentView?.superview ?? window.contentView
-    if let root, let field = firstSearchField(in: root) {
-        window.makeFirstResponder(field)
-    }
-}
-
-private func firstSearchField(in view: NSView) -> NSSearchField? {
-    if let field = view as? NSSearchField { return field }
-    for subview in view.subviews {
-        if let found = firstSearchField(in: subview) { return found }
-    }
-    return nil
 }

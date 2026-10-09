@@ -278,8 +278,31 @@ public struct FleetMateConfig: Codable {
         // 5. Environment variables override everything (CI/CD)
         loadEnvironmentVariables(into: &config)
 
+        // 6. TicketsMate runs Tickets alone, whatever the files, profile or
+        // environment configure for the other modules.
+        if AppEdition.current.isTicketsOnly { config.limitToTickets() }
+
         config.repoRoot = findRepoRoot()
         return config
+    }
+
+    /// Clears every module but Tickets, so nothing else is loaded, signed in
+    /// to or listed.
+    mutating func limitToTickets() {
+        graphTenantId = nil
+        graphClientId = nil
+        graphClientSecret = nil
+        devicesGraphId = nil
+        devicesGraphSecret = nil
+        systemsGraphId = nil
+        systemsGraphSecret = nil
+        snipeUrl = nil
+        snipeApiKey = nil
+        snipeSsoEnabled = false
+        snipeOidcAudience = nil
+        devopsOrganization = nil
+        tasks = nil
+        manage = nil
     }
     
     /// Load secrets from a `secrets.yaml` (created by scripts/setup-secrets.sh).
@@ -732,6 +755,8 @@ public struct FleetMateConfig: Codable {
     /// to opt out. In aze mode no local Graph credentials are required — the
     /// domain identity authenticates inside the session.
     public var graphUsesAze: Bool {
+        // TicketsMate has no Graph module to route.
+        if AppEdition.current.isTicketsOnly { return false }
         return (ProcessInfo.processInfo.environment["FLEETMATE_GRAPH_TRANSPORT"]?.lowercased() ?? "aze") != "direct"
     }
 

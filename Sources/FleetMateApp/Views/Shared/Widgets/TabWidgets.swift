@@ -122,43 +122,136 @@ struct InventoryWidgetsSection: View {
 
 struct TicketsWidgetsSection: View {
     @EnvironmentObject var appState: AppState
-    @ObservedObject var metrics: WidgetMetrics
+    /// The tickets the list is showing, after its filters and search, so
+    /// every figure here matches the rows below it.
+    let tickets: [TdxTicket]
+    var isLoading = false
 
     var body: some View {
+        let stats = TicketStats(tickets: tickets)
         WidgetsSection(tab: .tickets) {
-            let loading = metrics.isLoading(.tickets) && metrics.openTicketCount == 0
-            WidgetKPIColumn(kpis: [
-                KPI(title: "Open Tickets", value: "\(metrics.openTicketCount)", icon: "ticket",
-                    color: .purple, loading: loading, tab: .tickets),
-                KPI(title: "SLA Violated", value: "\(metrics.slaViolatedCount)", icon: "clock.badge.exclamationmark",
-                    color: .orange, loading: loading, tab: .tickets),
-            ]) { _ in }
+            TicketKPIGrid(stats: stats, loading: isLoading && tickets.isEmpty)
+                .widgetSpan(2)
 
-            WidgetCard(title: "Ticket Status", isLoading: metrics.isLoading(.tickets)) {
-                if metrics.ticketStatusSlices.isEmpty {
-                    if metrics.isLoading(.tickets) { SkeletonChartCard() } else { WidgetEmptyState("No ticket data") }
+            WidgetCard(title: "By Status", isLoading: isLoading) {
+                if stats.byStatus.isEmpty {
+                    emptyState
                 } else {
-                    DonutWidget(slices: metrics.ticketStatusSlices, size: 130) { label in
-                        appState.openWidgetFilter(tab: .tickets, category: "Status", label: label)
-                    }
+                    DonutWidget(slices: stats.byStatus.map {
+                        ChartSlice(label: $0.label, value: $0.value, color: ticketStatusColor($0.label))
+                    }, size: 110) { filter("Status", $0) }
                 }
             }
 
-            WidgetCard(title: "Tickets by Priority", isLoading: metrics.isLoading(.tickets)) {
-                if metrics.ticketPriorityBars.isEmpty {
-                    if metrics.isLoading(.tickets) { SkeletonChartCard() } else { WidgetEmptyState("No ticket data") }
-                } else {
-                    HorizontalBarList(bars: metrics.ticketPriorityBars) { label in
-                        appState.openWidgetFilter(tab: .tickets, category: "Priority", label: label)
-                    }
-                }
+            barCard("By Priority", stats.byPriority, category: "Priority") { ticketPriorityColor($0) }
+            barCard("By Age", stats.byAge, category: nil) { ticketAgeColor($0) }
+            barCard("By Responsible", stats.byResponsible, category: "Responsible") {
+                $0 == TicketStats.unassigned ? .gray : .teal
             }
-        }
-        .task { await metrics.load(.tickets, appState: appState) }
-        .onChange(of: appState.cachedTickets.count) { _, _ in
-            Task { await metrics.load(.tickets, appState: appState, force: true) }
+            barCard("By Group", stats.byGroup, category: "Group") {
+                $0 == TicketStats.unassigned ? .gray : .indigo
+            }
         }
     }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        if isLoading { SkeletonChartCard() } else { WidgetEmptyState("No tickets match") }
+    }
+
+    private func barCard(_ title: String, _ counts: [TicketStats.Count], category: String?,
+                         color: @escaping (String) -> Color) -> some View {
+        WidgetCard(title: title, isLoading: isLoading) {
+            if counts.isEmpty {
+                emptyState
+            } else {
+                HorizontalBarList(
+                    bars: counts.map { ChartBar(label: $0.label, value: $0.value, color: color($0.label)) },
+                    onSelect: category.map { category in { label in filter(category, label) } }
+                )
+            }
+        }
+    }
+
+    /// Narrows the list to the clicked value. Unassigned has no filter value,
+    /// so it is not a link.
+    private func filter(_ category: String, _ label: String) {
+        guard label != TicketStats.unassigned else { return }
+        appState.openWidgetFilter(tab: .tickets, category: category, label: label)
+    }
+}
+
+/// Six small figures in a 3 × 2 grid, so they take one card's height instead
+/// of a column of full-width tiles.
+private struct TicketKPIGrid: View {
+    let stats: TicketStats
+    let loading: Bool
+
+    var body: some View {
+        let tiles: [(String, Int, String, Color)] = [
+            ("Showing", stats.total, "list.bullet", .secondary),
+            ("Open", stats.open, "ticket", .purple),
+            ("On Hold", stats.onHold, "pause.circle", .yellow),
+            ("Unassigned", stats.unassigned, "person.crop.circle.badge.questionmark", .teal),
+            ("SLA Violated", stats.slaViolated, "clock.badge.exclamationmark", .orange),
+            ("Over \(TicketStats.agingDays) days", stats.aging, "hourglass", .indigo),
+        ]
+        Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+            ForEach(0..<2, id: \.self) { row in
+                GridRow {
+                    ForEach(0..<3, id: \.self) { col in
+                        let t = tiles[row * 3 + col]
+                        tile(title: t.0, value: t.1, icon: t.2, color: t.3)
+                    }
+                }
+            }
+        }
+    }
+
+    private func tile(title: String, value: Int, icon: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .appFont(.body)
+                .foregroundStyle(color)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 1) {
+                if loading {
+                    SkeletonView(width: 36, height: 18, cornerRadius: 4)
+                } else {
+                    Text(value, format: .number).appFont(.title3, weight: .bold).monospacedDigit()
+                }
+                Text(title).appFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.15)))
+    }
+}
+
+/// Status colours shared by the board columns and the status donut. No red.
+func ticketStatusColor(_ name: String) -> Color {
+    let n = name.lowercased()
+    if n.contains("new") || n.contains("open") { return .blue }
+    if n.contains("progress") { return .orange }
+    if n.contains("hold") || n.contains("pending") || n.contains("waiting") { return .yellow }
+    if n.contains("resolved") || n.contains("completed") { return .green }
+    if n.contains("closed") { return .gray }
+    if n.contains("cancel") { return .orange }
+    return .secondary
+}
+
+/// Keyed by name so a missing priority never shifts the others' colours. No
+/// red: High is orange.
+func ticketPriorityColor(_ name: String) -> Color {
+    ["Low": .green, "Medium": .blue, "High": .orange, "Emergency": .purple][name] ?? .gray
+}
+
+func ticketAgeColor(_ bucket: String) -> Color {
+    ["Today": .green, "1–7 days": .blue, "8–30 days": .orange, "Over 30 days": .purple][bucket] ?? .gray
 }
 
 // MARK: - Projects

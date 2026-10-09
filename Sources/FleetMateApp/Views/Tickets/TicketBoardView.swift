@@ -190,14 +190,7 @@ struct TicketBoardView: View {
     }
 
     private func statusColor(for name: String) -> Color {
-        let n = name.lowercased()
-        if n.contains("new") || n.contains("open") { return .blue }
-        if n.contains("progress") { return .orange }
-        if n.contains("hold") || n.contains("pending") || n.contains("waiting") { return .yellow }
-        if n.contains("resolved") || n.contains("completed") { return .green }
-        if n.contains("closed") { return .gray }
-        if n.contains("cancel") { return .orange }
-        return .secondary
+        ticketStatusColor(name)
     }
 }
 

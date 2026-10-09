@@ -113,6 +113,8 @@ enum AcademicTerm: String, CaseIterable {
 struct TicketsView: View {
     @EnvironmentObject var appState: AppState
     @State private var isLoading = false
+    /// Share of the width the ticket detail takes when it opens.
+    @State private var detailFraction = 0.5
     @State private var searchText = ""
     @State private var sortField: TicketSortField = .modified
     @State private var sortAscending = false
@@ -589,7 +591,7 @@ struct TicketsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // No header — everything in toolbar
-            if appState.config.isTdxConfigured { TicketsWidgetsSection(metrics: appState.widgetMetrics) }
+            if appState.config.isTdxConfigured { TicketsWidgetsSection(tickets: filteredTickets, isLoading: isLoading) }
             contentSection
         }
         .onChange(of: selectedTicketIds) { _, newIds in
@@ -787,35 +789,27 @@ struct TicketsView: View {
         }
     }
 
-    // MARK: - Table + Detail (60/40)
+    // MARK: - Table + Detail (50/50)
 
     private var ticketsTableView: some View {
-        // HSplitView sizes and clips each pane natively (and is user-resizable),
-        // so neither the list nor the detail content can spill past its pane.
-        HSplitView {
+        DetailSplitView(fraction: $detailFraction, showsDetail: selectedTicket != nil) {
             ticketTableContent
-                .frame(minWidth: 380)
-            if selectedTicket != nil {
-                detailSidebarView
-                    .frame(minWidth: 440, idealWidth: 900, maxWidth: 1100)
-                    .background(Color(nsColor: .windowBackgroundColor))
-            }
+        } trailing: {
+            detailSidebarView
+                .background(Color(nsColor: .windowBackgroundColor))
         }
     }
 
     // MARK: - Board + Detail
 
     private var ticketsBoardView: some View {
-        // HSplitView clips the board's greedy horizontal ScrollView to its pane
-        // and the detail to its own, so neither spills past the divider.
-        HSplitView {
+        // Each pane is clipped, so the board's greedy horizontal ScrollView
+        // and the detail never spill past the divider.
+        DetailSplitView(fraction: $detailFraction, showsDetail: selectedTicket != nil) {
             ticketBoardContent
-                .frame(minWidth: 380)
-            if selectedTicket != nil {
-                detailSidebarView
-                    .frame(minWidth: 440, idealWidth: 900, maxWidth: 1100)
-                    .background(Color(nsColor: .windowBackgroundColor))
-            }
+        } trailing: {
+            detailSidebarView
+                .background(Color(nsColor: .windowBackgroundColor))
         }
     }
 

@@ -121,34 +121,42 @@ struct InventoryWidgetsSection: View {
 // MARK: - Tickets
 
 struct TicketsWidgetsSection: View {
-    @EnvironmentObject var appState: AppState
-    /// The tickets the list is showing, after its filters and search, so
-    /// every figure here matches the rows below it.
-    let tickets: [TdxTicket]
+    /// The tickets the list would show with every filter applied except the
+    /// given category's (nil: every filter). Each breakdown counts with its
+    /// own category left out, so its other values stay on screen and can be
+    /// added to the selection — clicking widgets mixes and matches filters.
+    let tickets: (TicketFilterCategory?) -> [TdxTicket]
+    let selected: [TicketFilterCategory: Set<String>]
+    let onToggle: (TicketFilterCategory, String) -> Void
     var isLoading = false
 
     var body: some View {
-        let stats = TicketStats(tickets: tickets)
-        WidgetsSection(tab: .tickets) {
-            TicketKPIGrid(stats: stats, loading: isLoading && tickets.isEmpty)
+        let shown = tickets(nil)
+        let stats = TicketStats(tickets: shown)
+        WidgetsSection(tab: .tickets, equalHeights: true) {
+            TicketKPIGrid(stats: stats, loading: isLoading && shown.isEmpty)
                 .widgetSpan(2)
 
+            let byStatus = TicketStats(tickets: tickets(.status)).byStatus
             WidgetCard(title: "By Status", isLoading: isLoading) {
-                if stats.byStatus.isEmpty {
+                if byStatus.isEmpty {
                     emptyState
                 } else {
-                    DonutWidget(slices: stats.byStatus.map {
-                        ChartSlice(label: $0.label, value: $0.value, color: ticketStatusColor($0.label))
-                    }, size: 110) { filter("Status", $0) }
+                    DonutWidget(slices: byStatus.map {
+                        ChartSlice(label: $0.label, value: $0.value,
+                                   color: shade(ticketStatusColor($0.label), $0.label, in: .status))
+                    }, size: 110) { onToggle(.status, $0) }
                 }
             }
 
-            barCard("By Priority", stats.byPriority, category: "Priority") { ticketPriorityColor($0) }
+            barCard("By Priority", TicketStats(tickets: tickets(.priority)).byPriority, category: .priority) {
+                ticketPriorityColor($0)
+            }
             barCard("By Age", stats.byAge, category: nil) { ticketAgeColor($0) }
-            barCard("By Responsible", stats.byResponsible, category: "Responsible") {
+            barCard("By Responsible", TicketStats(tickets: tickets(.responsible)).byResponsible, category: .responsible) {
                 $0 == TicketStats.unassigned ? .gray : .teal
             }
-            barCard("By Group", stats.byGroup, category: "Group") {
+            barCard("By Group", TicketStats(tickets: tickets(.group)).byGroup, category: .group) {
                 $0 == TicketStats.unassigned ? .gray : .indigo
             }
         }
@@ -159,25 +167,34 @@ struct TicketsWidgetsSection: View {
         if isLoading { SkeletonChartCard() } else { WidgetEmptyState("No tickets match") }
     }
 
-    private func barCard(_ title: String, _ counts: [TicketStats.Count], category: String?,
+    /// Values outside an active selection fade, so the chart shows what is
+    /// picked and what else could be.
+    private func shade(_ color: Color, _ label: String, in category: TicketFilterCategory?) -> Color {
+        guard let category, let picked = selected[category], !picked.isEmpty else { return color }
+        return picked.contains(label) ? color : color.opacity(0.3)
+    }
+
+    private func barCard(_ title: String, _ counts: [TicketStats.Count], category: TicketFilterCategory?,
                          color: @escaping (String) -> Color) -> some View {
         WidgetCard(title: title, isLoading: isLoading) {
             if counts.isEmpty {
                 emptyState
             } else {
                 HorizontalBarList(
-                    bars: counts.map { ChartBar(label: $0.label, value: $0.value, color: color($0.label)) },
-                    onSelect: category.map { category in { label in filter(category, label) } }
+                    bars: counts.map {
+                        ChartBar(label: $0.label, value: $0.value, color: shade(color($0.label), $0.label, in: category))
+                    },
+                    onSelect: category.map { category in { label in toggle(category, label) } }
                 )
             }
         }
     }
 
-    /// Narrows the list to the clicked value. Unassigned has no filter value,
-    /// so it is not a link.
-    private func filter(_ category: String, _ label: String) {
-        guard label != TicketStats.unassigned else { return }
-        appState.openWidgetFilter(tab: .tickets, category: category, label: label)
+    /// A ticket with no group has no Group value to filter on; an unassigned
+    /// one does ("Unassigned" under Responsible).
+    private func toggle(_ category: TicketFilterCategory, _ label: String) {
+        guard !(category == .group && label == TicketStats.unassigned) else { return }
+        onToggle(category, label)
     }
 }
 
@@ -226,7 +243,7 @@ private struct TicketKPIGrid: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.15)))
     }

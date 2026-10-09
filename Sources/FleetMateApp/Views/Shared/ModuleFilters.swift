@@ -54,7 +54,14 @@ extension FilterState where Category == TicketFilterCategory {
     }
 
     func matches(_ ticket: TdxTicket) -> Bool {
-        for (category, selected) in selectedValues where !selected.isEmpty {
+        matches(ticket, ignoring: nil)
+    }
+
+    /// Matches every selection except `ignored`'s, so a widget can count the
+    /// values of its own category with the other filters applied and its own
+    /// values can still be added to.
+    func matches(_ ticket: TdxTicket, ignoring ignored: TicketFilterCategory?) -> Bool {
+        for (category, selected) in selectedValues where !selected.isEmpty && category != ignored {
             let value: String?
             switch category {
             case .status:         value = ticket.statusName

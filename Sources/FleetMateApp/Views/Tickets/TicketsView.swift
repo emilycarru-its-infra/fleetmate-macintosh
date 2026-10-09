@@ -115,6 +115,8 @@ struct TicketsView: View {
     @State private var isLoading = false
     /// Share of the width the ticket detail takes when it opens.
     @State private var detailFraction = 0.5
+    /// Narrows the list to tickets the signed-in person is responsible for.
+    @AppStorage("tickets.assignedToMe") private var assignedToMe = false
     @State private var searchText = ""
     @State private var sortField: TicketSortField = .modified
     @State private var sortAscending = false
@@ -380,6 +382,13 @@ struct TicketsView: View {
     }
 
     var filteredTickets: [TdxTicket] {
+        sortedTickets(ticketsMatching(ignoring: nil))
+    }
+
+    /// The list's tickets with every filter applied except `ignored`'s
+    /// selections. The widgets count each category this way; see
+    /// TicketsWidgetsSection.
+    func ticketsMatching(ignoring ignored: TicketFilterCategory?) -> [TdxTicket] {
         var result = tickets
         let known = Set(result.compactMap(\.id))
         result += requestorHits.filter { hit in hit.id.map { !known.contains($0) } ?? false }
@@ -392,9 +401,17 @@ struct TicketsView: View {
             }
         }
 
+        // Assigned to Me: the signed-in TDX person is the responsible one.
+        if assignedToMe, let me = appState.tdxMe {
+            result = result.filter { ticket in
+                if let uid = me.uid, let responsible = ticket.responsibleUid { return uid == responsible }
+                return me.fullName != nil && ticket.responsibleFullName == me.fullName
+            }
+        }
+
         // Filter panel selections
         if filters.hasActiveFilters {
-            result = result.filter { filters.matches($0) }
+            result = result.filter { filters.matches($0, ignoring: ignored) }
         }
 
         // Text search
@@ -407,7 +424,11 @@ struct TicketsView: View {
             }
         }
 
-        return result.sorted { a, b in
+        return result
+    }
+
+    private func sortedTickets(_ result: [TdxTicket]) -> [TdxTicket] {
+        result.sorted { a, b in
             switch sortField {
             case .id:
                 let aId = a.id ?? 0
@@ -591,7 +612,14 @@ struct TicketsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // No header — everything in toolbar
-            if appState.config.isTdxConfigured { TicketsWidgetsSection(tickets: filteredTickets, isLoading: isLoading) }
+            if appState.config.isTdxConfigured {
+                TicketsWidgetsSection(
+                    tickets: { ticketsMatching(ignoring: $0) },
+                    selected: filters.selectedValues,
+                    onToggle: { filters.toggle(value: $1, in: $0) },
+                    isLoading: isLoading
+                )
+            }
             contentSection
         }
         .onChange(of: selectedTicketIds) { _, newIds in
@@ -690,6 +718,16 @@ struct TicketsView: View {
                             .foregroundStyle(.yellow)
                     }
                 }
+
+                Toggle(isOn: $assignedToMe) {
+                    Label("Assigned to Me", systemImage: assignedToMe ? "person.crop.circle.fill" : "person.crop.circle")
+                        .labelStyle(.titleAndIcon)
+                }
+                .toggleStyle(.button)
+                .disabled(appState.tdxMe == nil)
+                .help(appState.tdxMe == nil
+                      ? "Waiting to identify you in TeamDynamix"
+                      : "Show only tickets you are responsible for")
 
                 Button(action: { showFilters.toggle() }) {
                     Label("Filters", systemImage: filters.hasActiveFilters

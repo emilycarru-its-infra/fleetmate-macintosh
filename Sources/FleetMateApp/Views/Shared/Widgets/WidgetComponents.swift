@@ -23,12 +23,16 @@ extension AppTab {
 /// own layout. State is kept per tab.
 struct WidgetsSection<Content: View>: View {
     let tab: AppTab
+    /// Stretches every card in a row to the row's tallest, so a row reads as
+    /// one band instead of cards of ragged heights.
+    var equalHeights = false
     @ViewBuilder var content: Content
 
     @AppStorage private var collapsed: Bool
 
-    init(tab: AppTab, @ViewBuilder content: () -> Content) {
+    init(tab: AppTab, equalHeights: Bool = false, @ViewBuilder content: () -> Content) {
         self.tab = tab
+        self.equalHeights = equalHeights
         self.content = content()
         _collapsed = AppStorage(wrappedValue: false, tab.widgetsCollapsedKey)
     }
@@ -36,7 +40,7 @@ struct WidgetsSection<Content: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             if !collapsed {
-                WidgetRowLayout(spacing: 12, minUnitWidth: 240) {
+                WidgetRowLayout(spacing: 12, minUnitWidth: 240, equalHeights: equalHeights) {
                     content
                 }
                 .padding(.horizontal, 16)
@@ -91,8 +95,10 @@ extension View {
 struct WidgetRowLayout: Layout {
     var spacing: CGFloat = 12
     var minUnitWidth: CGFloat = 240
+    /// Offer every card its row's tallest height (see WidgetsSection).
+    var equalHeights = false
 
-    private struct Placement { var index: Int; var x: CGFloat; var y: CGFloat; var width: CGFloat }
+    private struct Placement { var index: Int; var x: CGFloat; var y: CGFloat; var width: CGFloat; var rowHeight: CGFloat = 0 }
 
     private func arrange(width: CGFloat, subviews: Subviews) -> (placements: [Placement], height: CGFloat) {
         guard !subviews.isEmpty else { return ([], 0) }
@@ -117,6 +123,7 @@ struct WidgetRowLayout: Layout {
             let unitWidth = (width - spacing * CGFloat(row.count - 1)) / CGFloat(units)
             var x: CGFloat = 0
             var rowHeight: CGFloat = 0
+            let rowStart = placements.count
             for i in row {
                 let w = unitWidth * CGFloat(min(spans[i], unitsPerRow))
                 let h = subviews[i].sizeThatFits(ProposedViewSize(width: w, height: nil)).height
@@ -124,6 +131,7 @@ struct WidgetRowLayout: Layout {
                 rowHeight = max(rowHeight, h)
                 x += w + spacing
             }
+            for k in rowStart..<placements.count { placements[k].rowHeight = rowHeight }
             y += rowHeight + spacing
         }
         return (placements, max(0, y - spacing))
@@ -138,7 +146,7 @@ struct WidgetRowLayout: Layout {
         for p in arrange(width: bounds.width, subviews: subviews).placements {
             subviews[p.index].place(at: CGPoint(x: bounds.minX + p.x, y: bounds.minY + p.y),
                                     anchor: .topLeading,
-                                    proposal: ProposedViewSize(width: p.width, height: nil))
+                                    proposal: ProposedViewSize(width: p.width, height: equalHeights ? p.rowHeight : nil))
         }
     }
 }

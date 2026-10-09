@@ -14,6 +14,11 @@ final class AppEditionTests: XCTestCase {
         XCTAssertTrue(AppEdition.ticketsMate.supportPath("config.yaml").hasSuffix("/.ticketsmate/config.yaml"))
     }
 
+    func testTicketsMateLogsApartFromFleetMate() {
+        XCTAssertEqual(AppEdition.fleetMate.logDirectory, "~/.fleetmate")
+        XCTAssertEqual(AppEdition.ticketsMate.logDirectory, "~/Library/Logs/TicketsMate")
+    }
+
     func testFleetMateKeepsItsDomainWhateverTheBundle() {
         XCTAssertEqual(AppEdition.fleetMate.preferencesDomain(bundleIdentifier: nil), AppEdition.fleetMateDomain)
         XCTAssertEqual(AppEdition.fleetMate.preferencesDomain(bundleIdentifier: "example.other"), AppEdition.fleetMateDomain)

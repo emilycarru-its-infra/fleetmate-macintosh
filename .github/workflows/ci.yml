@@ -52,6 +52,14 @@ jobs:
           swift build -c release --product fleetmate
           swift build -c release --product FleetMateApp
 
+      # Assemble both app bundles, so a break in the TicketsMate edition's
+      # Info.plist or icon fails here rather than at release time.
+      - name: Assemble FleetMate and TicketsMate apps
+        run: |
+          make release-app
+          make release-app EDITION=ticketsmate
+          /usr/libexec/PlistBuddy -c "Print :FleetMateEdition" .build/app/TicketsMate.app/Contents/Info.plist
+
       # The test target was never built by CI, so a test could not fail here --
       # it was not compiled, let alone run. Tests that nothing executes are
       # worse than no tests: they read as coverage.

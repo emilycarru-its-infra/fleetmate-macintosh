@@ -25,7 +25,7 @@ struct FleetMateApp: App {
     var body: some Scene {
         // One window, not a group: FleetMate is a single window, and a
         // fleetmate:// link sent to a WindowGroup opens a new window each time.
-        Window("FleetMate", id: "main") {
+        Window(AppEdition.current.displayName, id: "main") {
             ContentView(terminals: appState.terminals)
                 .environmentObject(appState)
                 .appFontScale(fontScale)
@@ -100,7 +100,9 @@ class AppState: ObservableObject {
     }
 
     var agentAutoStart: Bool {
-        UserDefaults.standard.object(forKey: AgentSettingsKey.autoStart) as? Bool
+        // TicketsMate has no terminal.
+        if AppEdition.current.isTicketsOnly { return false }
+        return UserDefaults.standard.object(forKey: AgentSettingsKey.autoStart) as? Bool
             ?? config.agentAutoStart ?? true
     }
 
@@ -115,7 +117,7 @@ class AppState: ObservableObject {
     /// write tab state — none of them targeting Inventory. Until the jump is
     /// reproduced with this in place, the log is the only way to name the
     /// caller. Cheap enough to keep (fires only on actual changes).
-    @Published var selectedTab: AppTab = .development {
+    @Published var selectedTab: AppTab = AppTab.launchTab() {
         didSet {
             guard oldValue != selectedTab else { return }
             let frames = Thread.callStackSymbols.dropFirst(2).prefix(5)

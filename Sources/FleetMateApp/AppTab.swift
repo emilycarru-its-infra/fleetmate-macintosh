@@ -31,8 +31,21 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    /// The tabs this edition carries at all. TicketsMate is the Tickets tab
+    /// alone.
+    static func editionTabs(_ edition: AppEdition = .current) -> [AppTab] {
+        edition.isTicketsOnly ? [.tickets] : allCases
+    }
+
+    /// Where the app opens, and where it falls back when the open tab loses
+    /// its configuration.
+    static func launchTab(_ edition: AppEdition = .current) -> AppTab {
+        edition.isTicketsOnly ? .tickets : .development
+    }
+
     func isEnabled(config: FleetMateConfig) -> Bool {
-        switch self {
+        guard Self.editionTabs().contains(self) else { return false }
+        return switch self {
         case .devices:   config.isGraphConfigured
         // ReportMate falls back to its own saved settings, so the tab is always on.
         case .reporting: true
@@ -47,6 +60,6 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
     }
 
     static func enabledTabs(config: FleetMateConfig) -> [AppTab] {
-        allCases.filter { $0.isEnabled(config: config) }
+        editionTabs().filter { $0.isEnabled(config: config) }
     }
 }

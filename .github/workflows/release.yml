@@ -1,6 +1,7 @@
 # .github/workflows/release.yml
 #
-# Build & publish the FleetMate macOS app + CLI as a GitHub Release.
+# Build & publish the FleetMate macOS app + CLI as a GitHub Release, plus
+# TicketsMate, the Tickets-only edition bundled from the same binary.
 #
 # IMPORTANT: The artifacts produced here are UNSIGNED and un-notarized on
 # purpose. No Apple signing certs or notarization secrets live in this repo.
@@ -80,6 +81,8 @@ jobs:
           # only compile + assemble; they never invoke codesign.
           make release VERSION="$VERSION"
           make release-app VERSION="$VERSION"
+          # TicketsMate is the same binary bundled as the Tickets-only edition.
+          make release-app EDITION=ticketsmate VERSION="$VERSION"
 
       - name: Stage release artifacts
         id: stage
@@ -90,6 +93,7 @@ jobs:
           mkdir -p out
           # App: ditto keeps the .app structure + resource forks inside the zip.
           ditto -c -k --keepParent .build/app/FleetMate.app "out/FleetMate-App-$VERSION.zip"
+          ditto -c -k --keepParent .build/app/TicketsMate.app "out/TicketsMate-App-$VERSION.zip"
           # CLI: raw Mach-O binary, resolved via SPM's release bin path.
           cp "$(swift build -c release --show-bin-path)/fleetmate" "out/fleetmate-$VERSION"
           echo "Staged artifacts:"

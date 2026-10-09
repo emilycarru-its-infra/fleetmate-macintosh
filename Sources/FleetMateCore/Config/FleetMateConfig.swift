@@ -241,7 +241,7 @@ public struct FleetMateConfig: Codable {
         case repoRoot = "repo_root"
     }
 
-    static let configPath = "~/.fleetmate/config.yaml"
+    static var configPath: String { "\(AppEdition.current.supportDirectory)/config.yaml" }
 
     /// Load configuration.
     ///
@@ -267,7 +267,7 @@ public struct FleetMateConfig: Codable {
         // 2. Credentials from ~/.fleetmate/secrets.yaml (written by
         // scripts/setup-secrets.sh), alongside config.yaml. Keychain still
         // overrides below where present.
-        loadFromSecretsFile(at: "~/.fleetmate/secrets.yaml", into: &config)
+        loadFromSecretsFile(at: "\(AppEdition.current.supportDirectory)/secrets.yaml", into: &config)
 
         // 3. Credentials from Keychain (overrides any credentials that happened to be in the file)
         loadFromKeychain(into: &config)
@@ -503,7 +503,7 @@ public struct FleetMateConfig: Codable {
     }
 
     /// Preference domain a configuration profile sets FleetMate up through.
-    public static let managedPreferencesDomain = "ca.ecuad.macadmin.fleetmate"
+    public static var managedPreferencesDomain: String { AppEdition.current.preferencesDomain }
 
     /// Settings pushed by a configuration profile, keyed exactly like
     /// credentials.json (`devopsBaseUrl`, `tdxBaseUrl`, `manageEnabled`, …).
@@ -861,7 +861,7 @@ public struct FleetMateConfig: Codable {
     /// Write all credential fields to the macOS Keychain.
     /// Called directly by the Settings UI — no files involved.
     /// Path for the credentials JSON file (alongside config.yaml)
-    private static let credentialsPath = "~/.fleetmate/credentials.json"
+    private static var credentialsPath: String { "\(AppEdition.current.supportDirectory)/credentials.json" }
 
     public static func saveToKeychain(_ config: FleetMateConfig) throws {
         // Save credentials as a JSON file — more reliable than per-key Keychain entries

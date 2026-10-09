@@ -90,7 +90,7 @@ struct ActivityLogView: View {
                 .frame(minHeight: 140)
         }
         .safeAreaInset(edge: .bottom) {
-            Text("Kept in memory only and cleared when FleetMate quits. Headers, query strings and request bodies are never recorded.")
+            Text("Kept in memory only and cleared when \(AppEdition.current.displayName) quits. Headers, query strings and request bodies are never recorded.")
                 .appFont(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)

@@ -1,4 +1,5 @@
 import SwiftUI
+import FleetMateCore
 
 struct OnboardingWelcomeStep: View {
     @EnvironmentObject var appState: AppState
@@ -9,14 +10,14 @@ struct OnboardingWelcomeStep: View {
         VStack(spacing: 24) {
             Spacer()
 
-            Image(systemName: "laptopcomputer.and.iphone")
+            Image(systemName: AppEdition.current.isTicketsOnly ? "ticket" : "laptopcomputer.and.iphone")
                 .font(.system(size: 56))
                 .foregroundStyle(.tint)
 
             VStack(spacing: 8) {
-                Text("Welcome to FleetMate")
+                Text("Welcome to \(AppEdition.current.displayName)")
                     .appFont(.title, weight: .bold)
-                Text("Unified fleet management for macOS")
+                Text(AppEdition.current.isTicketsOnly ? "Service desk tickets for macOS" : "Unified fleet management for macOS")
                     .appFont(.title3)
                     .foregroundStyle(.secondary)
             }

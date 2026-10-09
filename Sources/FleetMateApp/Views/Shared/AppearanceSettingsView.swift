@@ -1,4 +1,5 @@
 import SwiftUI
+import FleetMateCore
 
 /// Settings ▸ Appearance — theme and text size.
 ///
@@ -33,7 +34,7 @@ struct AppearanceSettingsView: View {
                     .labelsHidden()
                     .fixedSize()
                 }
-                Text("Light or Dark keeps FleetMate in that appearance whatever macOS is set to.")
+                Text("Light or Dark keeps \(AppEdition.current.displayName) in that appearance whatever macOS is set to.")
                     .appFont(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -72,7 +73,7 @@ struct AppearanceSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text("Scales every text style in FleetMate. macOS has no system-wide Dynamic Type setting for apps to follow, so this is FleetMate's own control.")
+                Text("Scales every text style in \(AppEdition.current.displayName). macOS has no system-wide Dynamic Type setting for apps to follow, so this is \(AppEdition.current.displayName)'s own control.")
                     .appFont(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

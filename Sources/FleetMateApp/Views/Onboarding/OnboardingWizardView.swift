@@ -62,7 +62,8 @@ class OnboardingWizardState: ObservableObject {
     // Module toggles
     @Published var enableGraph = false
     @Published var enableSnipe = false
-    @Published var enableTdx = false
+    // TicketsMate connects Tickets and nothing else.
+    @Published var enableTdx = AppEdition.current.isTicketsOnly
     @Published var enableDevOps = false
     @Published var enableManage = false
 
@@ -108,6 +109,7 @@ class OnboardingWizardState: ObservableObject {
 
     // Dynamic step list based on enabled modules
     var steps: [OnboardingStep] {
+        if AppEdition.current.isTicketsOnly { return [.welcome, .tdx, .summary] }
         var s: [OnboardingStep] = [.welcome, .moduleSelection]
         if enableGraph  { s.append(.graph) }
         if enableSnipe  { s.append(.snipe) }

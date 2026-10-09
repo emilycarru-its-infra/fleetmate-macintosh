@@ -3,14 +3,19 @@ import FleetMateCore
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
-    @AppStorage("settings.selectedTab") private var selectedTabIndex: Int = 0
+    /// TicketsMate has no General tab, so it opens on Authentication.
+    @AppStorage("settings.selectedTab") private var selectedTabIndex: Int = AppEdition.current.isTicketsOnly ? 1 : 0
+    private let ticketsOnly = AppEdition.current.isTicketsOnly
 
     var body: some View {
         TabView(selection: $selectedTabIndex) {
-            GeneralSettingsTab()
-                .environmentObject(appState)
-                .tabItem { Label("General", systemImage: "gear") }
-                .tag(0)
+            // General switches modules on and off; TicketsMate has one.
+            if !ticketsOnly {
+                GeneralSettingsTab()
+                    .environmentObject(appState)
+                    .tabItem { Label("General", systemImage: "gear") }
+                    .tag(0)
+            }
 
             AuthSettingsView()
                 .environmentObject(appState)
@@ -21,17 +26,19 @@ struct SettingsView: View {
                 .tabItem { Label("Appearance", systemImage: "circle.lefthalf.filled") }
                 .tag(2)
 
-            ManageSettingsView()
-                .environmentObject(appState)
-                .tabItem { Label("Manage", systemImage: "wrench.and.screwdriver") }
-                .tag(3)
+            if !ticketsOnly {
+                ManageSettingsView()
+                    .environmentObject(appState)
+                    .tabItem { Label("Manage", systemImage: "wrench.and.screwdriver") }
+                    .tag(3)
 
-            AppleOrgSettingsView()
-                .environmentObject(appState)
-                .tabItem { Label("Apple", systemImage: "apple.logo") }
-            AgentSettingsView()
-                .environmentObject(appState)
-                .tabItem { Label("Agent", systemImage: "terminal") }
+                AppleOrgSettingsView()
+                    .environmentObject(appState)
+                    .tabItem { Label("Apple", systemImage: "apple.logo") }
+                AgentSettingsView()
+                    .environmentObject(appState)
+                    .tabItem { Label("Agent", systemImage: "terminal") }
+            }
             AboutSettingsView()
                 .tabItem { Label("About", systemImage: "info.circle") }
                 .tag(4)

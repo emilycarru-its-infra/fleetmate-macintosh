@@ -22,8 +22,7 @@ public final class DebugLogger {
     }()
 
     private init() {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".fleetmate")
+        let dir = URL(fileURLWithPath: AppEdition.current.supportPath(""))
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         logFileURL = dir.appendingPathComponent("debug.log")
@@ -35,7 +34,7 @@ public final class DebugLogger {
         openLogFile()
 
         let separator = "\n" + String(repeating: "=", count: 80) + "\n"
-        let header = "\(separator)FleetMate launched at \(ISO8601DateFormatter().string(from: Date()))\n\(separator)\n"
+        let header = "\(separator)\(AppEdition.current.displayName) launched at \(ISO8601DateFormatter().string(from: Date()))\n\(separator)\n"
         write(header)
     }
 

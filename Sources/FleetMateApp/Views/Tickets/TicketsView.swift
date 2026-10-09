@@ -1197,6 +1197,20 @@ struct TicketsView: View {
     private func detailHeader(ticket: TdxTicket) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
+                // Collapse the detail pane; the chevron points the way it goes.
+                Button {
+                    selectedTicketIds = []
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .appFont(.body, weight: .semibold)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.escape, modifiers: [])
+                .help("Close the ticket (Esc)")
+
                 // Ticket number - click to copy
                 Button(action: {
                     let ticketNum = "\(ticket.id ?? 0)"

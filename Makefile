@@ -65,7 +65,7 @@ endef
 EDITION ?= fleetmate
 ifeq ($(EDITION),ticketsmate)
 APP_DISPLAY_NAME := TicketsMate
-TICKETSMATE_BUNDLE_ID ?= ca.ecuad.ticketsmate
+TICKETSMATE_BUNDLE_ID ?= ca.ecuad.macadmin.ticketsmate
 APP_ICON_SOURCE := Sources/FleetMateApp/Assets/TicketsMate.icon
 APP_ICON_PNG := Sources/FleetMateApp/Assets/TicketsMate.png
 else ifeq ($(EDITION),fleetmate)

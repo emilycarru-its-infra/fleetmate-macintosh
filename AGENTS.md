@@ -101,7 +101,7 @@ Both targets compile with the Command Line Tools alone; no Xcode is needed. The 
 
 ## TicketsMate edition
 
-TicketsMate is the same app limited to the Tickets tab. Add `EDITION=ticketsmate` to any app target (`make release-app EDITION=ticketsmate`) to bundle it as `.build/app/TicketsMate.app`. The bundle's `FleetMateEdition` Info.plist key selects the edition at run time (`Sources/FleetMateCore/Shared/AppEdition.swift`); TicketsMate keeps its own settings in `~/.ticketsmate` and its own preference domain. Every change lands here, and the release workflow publishes `TicketsMate-App-<version>.zip` beside FleetMate on each tag.
+TicketsMate is the same app limited to the Tickets tab. Add `EDITION=ticketsmate` to any app target (`make release-app EDITION=ticketsmate`) to bundle it as `.build/app/TicketsMate.app`. The bundle's `FleetMateEdition` Info.plist key selects the edition at run time (`Sources/FleetMateCore/Shared/AppEdition.swift`); TicketsMate keeps its own settings in `~/.ticketsmate`, its log in `~/Library/Logs/TicketsMate`, and its own preference domain. Every change lands here, and the release workflow publishes `TicketsMate-App-<version>.zip` beside FleetMate on each tag.
 
 ## Key Conventions
 

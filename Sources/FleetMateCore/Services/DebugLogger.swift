@@ -22,7 +22,7 @@ public final class DebugLogger {
     }()
 
     private init() {
-        let dir = URL(fileURLWithPath: AppEdition.current.supportPath(""))
+        let dir = URL(fileURLWithPath: NSString(string: AppEdition.current.logDirectory).expandingTildeInPath)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
         logFileURL = dir.appendingPathComponent("debug.log")

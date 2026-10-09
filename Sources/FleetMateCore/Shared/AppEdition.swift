@@ -51,6 +51,15 @@ public enum AppEdition: String, Sendable {
 
     static let fleetMateDomain = "ca.ecuad.macadmin.fleetmate"
 
+    /// Folder debug.log is written to. TicketsMate keeps its logs apart from
+    /// FleetMate's, in the standard per-user Logs folder.
+    public var logDirectory: String {
+        switch self {
+        case .fleetMate: supportDirectory
+        case .ticketsMate: "~/Library/Logs/TicketsMate"
+        }
+    }
+
     /// Expands `name` inside this edition's support folder.
     public func supportPath(_ name: String) -> String {
         NSString(string: "\(supportDirectory)/\(name)").expandingTildeInPath

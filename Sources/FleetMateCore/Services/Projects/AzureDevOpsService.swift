@@ -1814,6 +1814,10 @@ public class AzureDevOpsService {
     /// which pushes `getMyPullRequests` onto its client-side matching fallback.
     public func currentIdentity() async -> DevOpsIdentitySummary {
         if let cached = identityCache { return cached }
+        // With no organization there is nothing to ask; TicketsMate never has one.
+        guard config.isDevOpsConfigured else {
+            return DevOpsIdentitySummary(id: nil, displayName: nil, account: nil)
+        }
         do {
             let data = try await getConnectionData()
             let identity = data.authorizedUser ?? data.authenticatedUser

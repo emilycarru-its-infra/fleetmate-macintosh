@@ -113,6 +113,10 @@ enum AcademicTerm: String, CaseIterable {
 struct TicketsView: View {
     @EnvironmentObject var appState: AppState
     @State private var isLoading = false
+    /// Share of the width the ticket detail takes when it opens.
+    @State private var detailFraction = 0.5
+    /// Narrows the list to tickets the signed-in person is responsible for.
+    @AppStorage("tickets.assignedToMe") private var assignedToMe = false
     @State private var searchText = ""
     @State private var sortField: TicketSortField = .modified
     @State private var sortAscending = false
@@ -378,6 +382,13 @@ struct TicketsView: View {
     }
 
     var filteredTickets: [TdxTicket] {
+        sortedTickets(ticketsMatching(ignoring: nil))
+    }
+
+    /// The list's tickets with every filter applied except `ignored`'s
+    /// selections. The widgets count each category this way; see
+    /// TicketsWidgetsSection.
+    func ticketsMatching(ignoring ignored: TicketFilterCategory?) -> [TdxTicket] {
         var result = tickets
         let known = Set(result.compactMap(\.id))
         result += requestorHits.filter { hit in hit.id.map { !known.contains($0) } ?? false }
@@ -390,9 +401,17 @@ struct TicketsView: View {
             }
         }
 
+        // Assigned to Me: the signed-in TDX person is the responsible one.
+        if assignedToMe, let me = appState.tdxMe {
+            result = result.filter { ticket in
+                if let uid = me.uid, let responsible = ticket.responsibleUid { return uid == responsible }
+                return me.fullName != nil && ticket.responsibleFullName == me.fullName
+            }
+        }
+
         // Filter panel selections
         if filters.hasActiveFilters {
-            result = result.filter { filters.matches($0) }
+            result = result.filter { filters.matches($0, ignoring: ignored) }
         }
 
         // Text search
@@ -405,7 +424,11 @@ struct TicketsView: View {
             }
         }
 
-        return result.sorted { a, b in
+        return result
+    }
+
+    private func sortedTickets(_ result: [TdxTicket]) -> [TdxTicket] {
+        result.sorted { a, b in
             switch sortField {
             case .id:
                 let aId = a.id ?? 0
@@ -589,7 +612,13 @@ struct TicketsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // No header — everything in toolbar
-            if appState.config.isTdxConfigured { TicketsWidgetsSection(metrics: appState.widgetMetrics) }
+            if appState.config.isTdxConfigured {
+                TicketsWidgetsSection(
+                    tickets: { ticketsMatching(ignoring: $0) },
+                    filters: filters,
+                    isLoading: isLoading
+                )
+            }
             contentSection
         }
         .onChange(of: selectedTicketIds) { _, newIds in
@@ -689,6 +718,16 @@ struct TicketsView: View {
                     }
                 }
 
+                Toggle(isOn: $assignedToMe) {
+                    Label("Assigned to Me", systemImage: assignedToMe ? "person.crop.circle.fill" : "person.crop.circle")
+                        .labelStyle(.titleAndIcon)
+                }
+                .toggleStyle(.button)
+                .disabled(appState.tdxMe == nil)
+                .help(appState.tdxMe == nil
+                      ? "Waiting to identify you in TeamDynamix"
+                      : "Show only tickets you are responsible for")
+
                 Button(action: { showFilters.toggle() }) {
                     Label("Filters", systemImage: filters.hasActiveFilters
                         ? "line.3.horizontal.decrease.circle.fill"
@@ -787,35 +826,27 @@ struct TicketsView: View {
         }
     }
 
-    // MARK: - Table + Detail (60/40)
+    // MARK: - Table + Detail (50/50)
 
     private var ticketsTableView: some View {
-        // HSplitView sizes and clips each pane natively (and is user-resizable),
-        // so neither the list nor the detail content can spill past its pane.
-        HSplitView {
+        DetailSplitView(fraction: $detailFraction, showsDetail: selectedTicket != nil) {
             ticketTableContent
-                .frame(minWidth: 380)
-            if selectedTicket != nil {
-                detailSidebarView
-                    .frame(minWidth: 440, idealWidth: 900, maxWidth: 1100)
-                    .background(Color(nsColor: .windowBackgroundColor))
-            }
+        } trailing: {
+            detailSidebarView
+                .background(Color(nsColor: .windowBackgroundColor))
         }
     }
 
     // MARK: - Board + Detail
 
     private var ticketsBoardView: some View {
-        // HSplitView clips the board's greedy horizontal ScrollView to its pane
-        // and the detail to its own, so neither spills past the divider.
-        HSplitView {
+        // Each pane is clipped, so the board's greedy horizontal ScrollView
+        // and the detail never spill past the divider.
+        DetailSplitView(fraction: $detailFraction, showsDetail: selectedTicket != nil) {
             ticketBoardContent
-                .frame(minWidth: 380)
-            if selectedTicket != nil {
-                detailSidebarView
-                    .frame(minWidth: 440, idealWidth: 900, maxWidth: 1100)
-                    .background(Color(nsColor: .windowBackgroundColor))
-            }
+        } trailing: {
+            detailSidebarView
+                .background(Color(nsColor: .windowBackgroundColor))
         }
     }
 
@@ -1165,6 +1196,20 @@ struct TicketsView: View {
     private func detailHeader(ticket: TdxTicket) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
+                // Collapse the detail pane; the chevron points the way it goes.
+                Button {
+                    selectedTicketIds = []
+                } label: {
+                    Image(systemName: "chevron.right")
+                        .appFont(.body, weight: .semibold)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.escape, modifiers: [])
+                .help("Close the ticket (Esc)")
+
                 // Ticket number - click to copy
                 Button(action: {
                     let ticketNum = "\(ticket.id ?? 0)"

@@ -25,6 +25,8 @@ enum TicketFilterCategory: String, FilterCategoryProtocol {
     case priority = "Priority"
     case group = "Group"
     case responsible = "Responsible"
+    case age = "Age"
+    case sla = "SLA"
     case form = "Form"
     case classification = "Classification"
     case type = "Type"
@@ -39,7 +41,12 @@ extension FilterState where Category == TicketFilterCategory {
         }
         availableValues[.status] = extract { $0.statusName }
         availableValues[.priority] = extract { $0.priorityName }
-        availableValues[.group] = extract { $0.responsibleGroupName }
+        var groups = extract { $0.responsibleGroupName }
+        if tickets.contains(where: { $0.responsibleGroupName?.isEmpty != false }) {
+            groups.append("Unassigned")
+        }
+        availableValues[.group] = groups
+        availableValues[.sla] = ["Violated", "Within SLA"]
         // Unassigned is a real state to filter on, not the absence of one —
         // it's how you find the tickets nobody has picked up yet.
         var responsibles = extract { $0.responsibleFullName }
@@ -47,6 +54,8 @@ extension FilterState where Category == TicketFilterCategory {
             responsibles.append("Unassigned")
         }
         availableValues[.responsible] = responsibles
+        let ages = Set(tickets.map(TicketStats.ageBucket(for:)))
+        availableValues[.age] = TicketStats.ageBuckets.map(\.label).filter(ages.contains)
         availableValues[.form] = extract { $0.formName }
         availableValues[.classification] = extract { $0.classificationName }
         availableValues[.type] = extract { $0.typeName }
@@ -66,10 +75,14 @@ extension FilterState where Category == TicketFilterCategory {
             switch category {
             case .status:         value = ticket.statusName
             case .priority:       value = ticket.priorityName
-            case .group:          value = ticket.responsibleGroupName
+            case .group:
+                value = ticket.responsibleGroupName?.isEmpty == false
+                    ? ticket.responsibleGroupName : "Unassigned"
+            case .sla:            value = ticket.slaViolated == true ? "Violated" : "Within SLA"
             case .responsible:
                 value = ticket.responsibleFullName?.isEmpty == false
                     ? ticket.responsibleFullName : "Unassigned"
+            case .age:            value = TicketStats.ageBucket(for: ticket)
             case .form:           value = ticket.formName
             case .classification: value = ticket.classificationName
             case .type:           value = ticket.typeName

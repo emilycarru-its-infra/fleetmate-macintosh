@@ -8,8 +8,8 @@ public struct TicketStats: Equatable, Sendable {
         public let value: Int
     }
 
-    /// Tickets older than this many days count as aging.
-    public static let agingDays = 14
+    /// Tickets older than this many days count as aging: the oldest age band.
+    public static let agingDays = 30
     /// Responsible people and groups beyond this many are left off the bars.
     public static let topCount = 6
     public static let unassigned = "Unassigned"
@@ -43,16 +43,24 @@ public struct TicketStats: Equatable, Sendable {
         byPriority = Self.counts(active) { $0.priorityName ?? "None" }
             .sorted { (Self.priorityOrder[$0.label] ?? 99, $0.label) < (Self.priorityOrder[$1.label] ?? 99, $1.label) }
 
-        let buckets: [(String, ClosedRange<Int>)] = [
-            ("Today", 0...0), ("1–7 days", 1...7), ("8–30 days", 8...30), ("Over 30 days", 31...Int.max),
-        ]
-        byAge = buckets.compactMap { label, range in
-            let n = active.filter { range.contains($0.ageInDays ?? 0) }.count
+        byAge = Self.ageBuckets.compactMap { label, _ in
+            let n = active.filter { Self.ageBucket(for: $0) == label }.count
             return n > 0 ? Count(label: label, value: n) : nil
         }
 
         byResponsible = Self.top(Self.counts(active) { Self.isBlank($0.responsibleFullName) ? Self.unassigned : $0.responsibleFullName! })
         byGroup = Self.top(Self.counts(active) { Self.isBlank($0.responsibleGroupName) ? Self.unassigned : $0.responsibleGroupName! })
+    }
+
+    /// Age bands, youngest first. The labels double as filter values.
+    public static let ageBuckets: [(label: String, days: ClosedRange<Int>)] = [
+        ("Today", 0...0), ("1–7 days", 1...7), ("8–30 days", 8...30), ("Over 30 days", 31...Int.max),
+    ]
+
+    /// The age band a ticket falls in.
+    public static func ageBucket(for ticket: TdxTicket) -> String {
+        let days = max(ticket.ageInDays ?? 0, 0)
+        return ageBuckets.first { $0.days.contains(days) }?.label ?? ageBuckets[0].label
     }
 
     private static func isClosed(_ t: TdxTicket) -> Bool {

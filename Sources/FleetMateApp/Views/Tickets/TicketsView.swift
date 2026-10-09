@@ -615,8 +615,7 @@ struct TicketsView: View {
             if appState.config.isTdxConfigured {
                 TicketsWidgetsSection(
                     tickets: { ticketsMatching(ignoring: $0) },
-                    selected: filters.selectedValues,
-                    onToggle: { filters.toggle(value: $1, in: $0) },
+                    filters: filters,
                     isLoading: isLoading
                 )
             }

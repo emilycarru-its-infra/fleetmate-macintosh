@@ -23,7 +23,7 @@ final class TicketStatsTests: XCTestCase {
         XCTAssertEqual(stats.onHold, 1)
         XCTAssertEqual(stats.unassigned, 1)
         XCTAssertEqual(stats.slaViolated, 1)
-        XCTAssertEqual(stats.aging, 2)
+        XCTAssertEqual(stats.aging, 1)
         XCTAssertEqual(stats.byPriority.map(\.label), ["Low", "Medium", "High"])
         XCTAssertEqual(stats.byResponsible.first, .init(label: "A", value: 2))
         XCTAssertTrue(stats.byResponsible.contains(.init(label: TicketStats.unassigned, value: 1)))

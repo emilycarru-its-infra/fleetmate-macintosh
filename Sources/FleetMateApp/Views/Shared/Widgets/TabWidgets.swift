@@ -126,15 +126,18 @@ struct TicketsWidgetsSection: View {
     /// own category left out, so its other values stay on screen and can be
     /// added to the selection — clicking widgets mixes and matches filters.
     let tickets: (TicketFilterCategory?) -> [TdxTicket]
-    let selected: [TicketFilterCategory: Set<String>]
-    let onToggle: (TicketFilterCategory, String) -> Void
+    /// The list's own filters: every widget reads and changes them, so the
+    /// filter panel, the list and the widgets always agree.
+    let filters: FilterState<TicketFilterCategory>
     var isLoading = false
+
+    private var selected: [TicketFilterCategory: Set<String>] { filters.selectedValues }
 
     var body: some View {
         let shown = tickets(nil)
         let stats = TicketStats(tickets: shown)
         WidgetsSection(tab: .tickets, equalHeights: true) {
-            TicketKPIGrid(stats: stats, loading: isLoading && shown.isEmpty)
+            TicketKPIGrid(stats: stats, loading: isLoading && shown.isEmpty, tiles: kpiTiles(openStatuses: openStatuses))
                 .widgetSpan(2)
 
             let byStatus = TicketStats(tickets: tickets(.status)).byStatus
@@ -145,14 +148,14 @@ struct TicketsWidgetsSection: View {
                     DonutWidget(slices: byStatus.map {
                         ChartSlice(label: $0.label, value: $0.value,
                                    color: shade(ticketStatusColor($0.label), $0.label, in: .status))
-                    }, size: 110) { onToggle(.status, $0) }
+                    }, size: 110) { toggle(.status, $0) }
                 }
             }
 
             barCard("By Priority", TicketStats(tickets: tickets(.priority)).byPriority, category: .priority) {
                 ticketPriorityColor($0)
             }
-            barCard("By Age", stats.byAge, category: nil) { ticketAgeColor($0) }
+            barCard("By Age", TicketStats(tickets: tickets(.age)).byAge, category: .age) { ticketAgeColor($0) }
             barCard("By Responsible", TicketStats(tickets: tickets(.responsible)).byResponsible, category: .responsible) {
                 $0 == TicketStats.unassigned ? .gray : .teal
             }
@@ -190,62 +193,108 @@ struct TicketsWidgetsSection: View {
         }
     }
 
-    /// A ticket with no group has no Group value to filter on; an unassigned
-    /// one does ("Unassigned" under Responsible).
     private func toggle(_ category: TicketFilterCategory, _ label: String) {
-        guard !(category == .group && label == TicketStats.unassigned) else { return }
-        onToggle(category, label)
+        filters.toggle(value: label, in: category)
+    }
+
+    /// Statuses that count as open (everything shown but On Hold), for the
+    /// Open tile.
+    private var openStatuses: Set<String> {
+        Set(TicketStats(tickets: tickets(.status)).byStatus.map(\.label)).subtracting([Self.onHold])
+    }
+
+    private static let onHold = "On Hold"
+
+    /// The figures double as filters: each tile toggles the selection it
+    /// counts, and lights up while that selection is on.
+    private func kpiTiles(openStatuses: Set<String>) -> [TicketKPITile] {
+        func single(_ category: TicketFilterCategory, _ value: String) -> (Bool, () -> Void) {
+            (selected[category]?.contains(value) ?? false, { toggle(category, value) })
+        }
+        let openOn = !openStatuses.isEmpty && selected[.status] == openStatuses
+        let onHold = single(.status, Self.onHold)
+        let unassigned = single(.responsible, TicketStats.unassigned)
+        let sla = single(.sla, "Violated")
+        let aging = single(.age, TicketStats.ageBuckets.last!.label)
+        return [
+            TicketKPITile(title: "Showing", value: TicketStats(tickets: tickets(nil)).total, icon: "list.bullet",
+                          color: .secondary, isOn: false, help: "Clear every filter") { filters.clearAll() },
+            TicketKPITile(title: "Open", value: TicketStats(tickets: tickets(nil)).open, icon: "ticket",
+                          color: .purple, isOn: openOn, help: "Show open tickets") {
+                filters.selectedValues[.status] = openOn ? [] : openStatuses
+            },
+            TicketKPITile(title: "On Hold", value: TicketStats(tickets: tickets(nil)).onHold, icon: "pause.circle",
+                          color: .yellow, isOn: onHold.0, help: "Show tickets on hold", action: onHold.1),
+            TicketKPITile(title: "Unassigned", value: TicketStats(tickets: tickets(nil)).unassigned,
+                          icon: "person.crop.circle.badge.questionmark", color: .teal, isOn: unassigned.0,
+                          help: "Show tickets nobody is responsible for", action: unassigned.1),
+            TicketKPITile(title: "SLA Violated", value: TicketStats(tickets: tickets(nil)).slaViolated,
+                          icon: "clock.badge.exclamationmark", color: .orange, isOn: sla.0,
+                          help: "Show tickets past their SLA", action: sla.1),
+            TicketKPITile(title: "Over \(TicketStats.agingDays) days", value: TicketStats(tickets: tickets(nil)).aging,
+                          icon: "hourglass", color: .indigo, isOn: aging.0,
+                          help: "Show tickets older than \(TicketStats.agingDays) days", action: aging.1),
+        ]
     }
 }
 
+struct TicketKPITile {
+    let title: String
+    let value: Int
+    let icon: String
+    let color: Color
+    let isOn: Bool
+    let help: String
+    let action: () -> Void
+}
+
 /// Six small figures in a 3 × 2 grid, so they take one card's height instead
-/// of a column of full-width tiles.
+/// of a column of full-width tiles. Each is a button.
 private struct TicketKPIGrid: View {
     let stats: TicketStats
     let loading: Bool
+    let tiles: [TicketKPITile]
 
     var body: some View {
-        let tiles: [(String, Int, String, Color)] = [
-            ("Showing", stats.total, "list.bullet", .secondary),
-            ("Open", stats.open, "ticket", .purple),
-            ("On Hold", stats.onHold, "pause.circle", .yellow),
-            ("Unassigned", stats.unassigned, "person.crop.circle.badge.questionmark", .teal),
-            ("SLA Violated", stats.slaViolated, "clock.badge.exclamationmark", .orange),
-            ("Over \(TicketStats.agingDays) days", stats.aging, "hourglass", .indigo),
-        ]
         Grid(horizontalSpacing: 8, verticalSpacing: 8) {
             ForEach(0..<2, id: \.self) { row in
                 GridRow {
                     ForEach(0..<3, id: \.self) { col in
-                        let t = tiles[row * 3 + col]
-                        tile(title: t.0, value: t.1, icon: t.2, color: t.3)
+                        tile(tiles[row * 3 + col])
                     }
                 }
             }
         }
     }
 
-    private func tile(title: String, value: Int, icon: String, color: Color) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .appFont(.body)
-                .foregroundStyle(color)
-                .frame(width: 20)
-            VStack(alignment: .leading, spacing: 1) {
-                if loading {
-                    SkeletonView(width: 36, height: 18, cornerRadius: 4)
-                } else {
-                    Text(value, format: .number).appFont(.title3, weight: .bold).monospacedDigit()
+    private func tile(_ t: TicketKPITile) -> some View {
+        Button(action: t.action) {
+            HStack(spacing: 8) {
+                Image(systemName: t.icon)
+                    .appFont(.body)
+                    .foregroundStyle(t.color)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 1) {
+                    if loading {
+                        SkeletonView(width: 36, height: 18, cornerRadius: 4)
+                    } else {
+                        Text(t.value, format: .number).appFont(.title3, weight: .bold).monospacedDigit()
+                    }
+                    Text(t.title).appFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
-                Text(title).appFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .background(t.isOn ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10)
+                .stroke(t.isOn ? Color.accentColor : Color.secondary.opacity(0.15), lineWidth: t.isOn ? 1.5 : 1))
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.15)))
+        .buttonStyle(.plain)
+        .help(t.help)
     }
 }
 

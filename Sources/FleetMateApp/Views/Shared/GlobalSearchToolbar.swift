@@ -53,28 +53,42 @@ enum GlobalSearchRouter {
     }
 }
 
-/// Search everything, from the toolbar of every tab: devices, assets,
-/// tickets, work items, pull requests, issues, commits, pipeline runs, users
-/// and groups. ⌘K focuses it; results drop down beneath it.
+/// The window's one search field. On a tab with a list it filters that list
+/// (⌘F); it also searches everything — devices, assets, tickets, work items,
+/// pull requests, issues, commits, pipeline runs, users and groups — with
+/// results dropping down beneath it (⌘K). The chip on its left shows and
+/// switches which of the two it is doing.
 struct GlobalSearchToolbarField: View {
     @EnvironmentObject var appState: AppState
     @State private var query = ""
     @State private var results: [GlobalSearchResult] = []
     @State private var showResults = false
+    /// Searching everything rather than filtering the tab's list.
+    @State private var everything = false
     @FocusState private var focused: Bool
+
+    private var tabSearch: TabSearchRegistration? { appState.tabSearch }
+    private var searchingEverything: Bool { everything || tabSearch == nil }
+
+    private var text: Binding<String> {
+        searchingEverything ? $query : $appState.tabSearchText
+    }
 
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(focused ? Color.accentColor : .secondary)
                 .onTapGesture { focused = true }
-            TextField("", text: $query, prompt: Text("Search everything").foregroundStyle(.secondary))
+            if let tabSearch {
+                scopeChip(tabSearch)
+            }
+            TextField("", text: text, prompt: Text(searchingEverything ? "Search everything" : tabSearch?.prompt ?? "").foregroundStyle(.secondary))
                 .textFieldStyle(.plain)
                 .focused($focused)
-                .onSubmit { if let first = results.first { open(first) } }
+                .onSubmit(submit)
                 .onExitCommand { clear() }
-            if query.isEmpty {
-                Text("⌘K")
+            if text.wrappedValue.isEmpty {
+                Text(searchingEverything ? "⌘K" : "⌘F")
                     .appFont(fixed: 10, weight: .medium)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 5)
@@ -89,7 +103,7 @@ struct GlobalSearchToolbarField: View {
         }
         .appFont(.body)
         .padding(.horizontal, 10)
-        .frame(width: 260, height: 28)
+        .frame(width: 300, height: 28)
         .contentShape(Rectangle())
         .onTapGesture { focused = true }
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
@@ -97,9 +111,23 @@ struct GlobalSearchToolbarField: View {
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(focused ? Color.accentColor : Color.secondary.opacity(0.35), lineWidth: focused ? 1.5 : 1)
         )
-        .help("Search everything (⌘K)")
+        .help(searchingEverything ? "Search everything (⌘K)" : "Filter this tab (⌘F) · search everything (⌘K)")
         // ⌘K (Edit › Search Everything) puts the cursor here from any tab.
-        .onChange(of: appState.globalSearchFocusRequest) { _, _ in focused = true }
+        .onChange(of: appState.globalSearchFocusRequest) { _, _ in
+            everything = true
+            focused = true
+        }
+        // ⌘F (Edit › Find) filters the tab, where it has a list to filter.
+        .onChange(of: appState.tabSearchFocusRequest) { _, _ in
+            everything = false
+            focused = true
+        }
+        // A new tab starts out filtering its own list.
+        .onChange(of: appState.selectedTab) { _, _ in
+            everything = false
+            query = ""
+            showResults = false
+        }
         // ReportMate's device list loads with the Reporting tab; start it when
         // a search begins so its devices are findable before that tab is opened.
         .onChange(of: focused) { _, isFocused in
@@ -119,9 +147,9 @@ struct GlobalSearchToolbarField: View {
             .frame(width: 576)
             .frame(maxHeight: 620)
         }
-        .task(id: query) {
+        .task(id: searchingEverything ? query : "") {
             let trimmed = query.trimmingCharacters(in: .whitespaces)
-            guard trimmed.count >= 2 || parseWorkItemId(trimmed) != nil else {
+            guard searchingEverything, trimmed.count >= 2 || parseWorkItemId(trimmed) != nil else {
                 results = []
                 showResults = false
                 return
@@ -143,15 +171,52 @@ struct GlobalSearchToolbarField: View {
         }
     }
 
+    /// Names what the field is searching; clicking it switches between the
+    /// tab's list and everything, carrying the typed text across.
+    private func scopeChip(_ tabSearch: TabSearchRegistration) -> some View {
+        Button {
+            if everything {
+                appState.tabSearchText = query
+                query = ""
+            } else {
+                query = appState.tabSearchText
+                appState.tabSearchText = ""
+            }
+            everything.toggle()
+            focused = true
+        } label: {
+            Text(everything ? "All" : tabSearch.tab.rawValue)
+                .appFont(fixed: 11, weight: .medium)
+                .foregroundStyle(Color.accentColor)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .help(everything ? "Searching everything — click to filter \(tabSearch.tab.rawValue)" : "Filtering \(tabSearch.tab.rawValue) — click to search everything")
+    }
+
+    private func submit() {
+        if searchingEverything {
+            if let first = results.first { open(first) }
+        } else {
+            tabSearch?.onSubmit?()
+        }
+    }
+
     private func open(_ hit: GlobalSearchResult) {
         GlobalSearchRouter.open(hit, appState: appState)
         clear()
     }
 
     private func clear() {
-        query = ""
-        results = []
-        showResults = false
+        if searchingEverything {
+            query = ""
+            results = []
+            showResults = false
+        } else {
+            appState.tabSearchText = ""
+        }
         focused = false
     }
 }

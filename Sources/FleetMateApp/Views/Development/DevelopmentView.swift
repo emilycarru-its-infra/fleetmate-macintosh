@@ -766,6 +766,9 @@ private struct DevelopmentContent: View {
             }
         }
         .toolbar { developmentToolbar }
+        // Filters the list in view by title, repository, author, branch or
+        // number, from the toolbar's one search field.
+        .tabSearch(text: $model.searchText, prompt: searchPrompt)
         .task {
             model.loadAll(appState: appState)
             // Inbox freshness matters more than anywhere else in the app:
@@ -793,7 +796,12 @@ private struct DevelopmentContent: View {
         .onChange(of: appState.devOpsSsoAuthenticated) { _, ready in
             if ready { model.loadPullRequests(appState: appState, force: true) }
         }
-        .onAppear(perform: consumeLink)
+        .onAppear {
+            // The model outlives the tab, so an inbox read to zero on an
+            // earlier visit would otherwise still be the open segment.
+            if model.segment == .inbox, model.unreadCount == 0 { model.segment = .pullRequests }
+            consumeLink()
+        }
         .onChange(of: appState.pendingDevelopmentLink) { _, _ in consumeLink() }
         .actionErrorBanner($model.actionError)
     }
@@ -869,8 +877,6 @@ private struct DevelopmentContent: View {
 
     private var leftPane: some View {
         VStack(alignment: .leading, spacing: 0) {
-            listFilter
-            Divider()
             switch model.segment {
             case .pullRequests: pullRequestList
             case .inbox: inboxList
@@ -879,27 +885,6 @@ private struct DevelopmentContent: View {
             case .skills: SkillsListView(knowledge: appState.knowledge, selection: $model.selectedSkill, filter: searchText)
             }
         }
-    }
-
-    /// Filters the list in view — pull requests, inbox, commits or runs — by
-    /// title, repository, author, branch or number. It sits on the list it
-    /// filters; the toolbar's field searches everything.
-    private var listFilter: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "line.3.horizontal.decrease").foregroundStyle(.secondary)
-            TextField(searchPrompt, text: $model.searchText)
-                .textFieldStyle(.plain)
-                .onExitCommand { model.searchText = "" }
-            if !model.searchText.isEmpty {
-                Button { model.searchText = "" } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .appFont(.callout)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
     }
 
     // MARK: Pull requests

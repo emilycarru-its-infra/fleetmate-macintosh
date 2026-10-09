@@ -75,18 +75,6 @@ struct ContentView: View {
                 // The authentication shield belongs to the window, not to the
                 // Dashboard: auth is what breaks any tab, so it has to be
                 // checkable from whichever tab is showing the breakage.
-                //
-                // A tab's `.searchable` field is a toolbar item AppKit places
-                // last of its own accord, so no placement of ours lands to the
-                // right of it — the shield ended up stranded mid-toolbar. On
-                // macOS 26 the search field can be positioned explicitly, so
-                // claim it here and declare the shield after it.
-                // The tab's own filter field sits on the left with the tab's
-                // controls, so search-everything can be the last item on the
-                // right.
-                if #available(macOS 26.0, *) {
-                    DefaultToolbarItem(kind: .search, placement: .navigation)
-                }
                 // Push every trailing control to the window's right edge.
                 // Without it they sat right after the centred tab bar, leaving
                 // the right of the toolbar empty and search short of the edge.

@@ -133,8 +133,7 @@ struct GroupsContentView: View {
         .onAppCommand { command in
             if command == .refresh { loadDeviceGroups() }
         }
-        .searchable(text: $searchText, prompt: "Filter groups…")
-        .findFocusesSearchField()
+        .tabSearch(text: $searchText, prompt: "Filter groups…")
         .toolbar {
             // The count is passive text — keep it out of the glass entirely,
             // or macOS 26 fuses it and the refresh button into one odd capsule.
@@ -262,11 +261,9 @@ struct UsersContentView: View {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        // Entra is queried on submit rather than per keystroke, so the field
-        // keeps its Return-to-search behaviour now that it lives in the toolbar.
-        .searchable(text: $searchText, prompt: "Search users…")
-        .findFocusesSearchField()
-        .onSubmit(of: .search) { searchUser() }
+        // Entra is queried on submit rather than per keystroke, so the
+        // toolbar field hands Return to this tab.
+        .tabSearch(text: $searchText, prompt: "Search users…", onSubmit: { searchUser() })
         // Editing the text invalidates the last Entra search, dropping back to
         // the live filter over the preloaded roster.
         .onChange(of: searchText) { _, _ in searchResults = [] }

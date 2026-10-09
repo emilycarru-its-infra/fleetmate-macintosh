@@ -285,8 +285,7 @@ struct AssetsView: View {
             default:             break
             }
         }
-        .searchable(text: $searchText, prompt: "Search assets...")
-        .findFocusesSearchField()
+        .tabSearch(text: $searchText, prompt: "Search assets...")
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 if filters.hasActiveFilters {

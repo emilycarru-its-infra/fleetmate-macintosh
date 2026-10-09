@@ -238,7 +238,7 @@ struct DevelopmentWidgetsSection: View {
                     value: model.queue.failed() ? "--" : "\(count(.assignedToMe))", icon: "person.crop.circle.badge.checkmark",
                     color: .purple, loading: prLoading, tab: .development),
             ]) { kpi in
-                if kpi.title == "Unread in Inbox" {
+                if kpi.title == "Unread in Inbox", model.unreadCount > 0 {
                     model.segment = .inbox
                 } else {
                     model.selectedSource = nil

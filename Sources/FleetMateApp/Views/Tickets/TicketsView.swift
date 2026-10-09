@@ -648,13 +648,12 @@ struct TicketsView: View {
                 resetToCurrentTerm()
             case .showListView:  viewMode = .table
             case .showBoardView: viewMode = .board
-            case .find:          break  // handled by findFocusesSearchField()
+            case .find:          break  // the toolbar search field takes it
             case .scan, .selectOnline: break
             }
         }
-        .searchable(text: $searchText, prompt: "Search tickets or requestor...")
+        .tabSearch(text: $searchText, prompt: "Search tickets or requestor...")
         .task(id: searchText) { await resolveRequestorHits() }
-        .findFocusesSearchField()
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 ViewModePill(selection: $viewMode)

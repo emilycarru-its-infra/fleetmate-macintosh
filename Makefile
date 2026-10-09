@@ -58,12 +58,28 @@ rm -f "$$_out"
 endef
 
 # App Configuration
+# EDITION picks which app the one FleetMateApp binary is bundled as.
+# `make release-app EDITION=ticketsmate` builds TicketsMate: the Tickets tab
+# alone, under its own name, bundle id and icon, flagged by the
+# FleetMateEdition key in its Info.plist (see AppEdition.swift).
+EDITION ?= fleetmate
+ifeq ($(EDITION),ticketsmate)
+APP_DISPLAY_NAME := TicketsMate
+TICKETSMATE_BUNDLE_ID ?= ca.ecuad.ticketsmate
+APP_ICON_SOURCE := Sources/FleetMateApp/Assets/TicketsMate.icon
+APP_ICON_PNG := Sources/FleetMateApp/Assets/TicketsMate.png
+else ifeq ($(EDITION),fleetmate)
+APP_DISPLAY_NAME := FleetMate
+APP_ICON_SOURCE := build/resources/FleetMate.icon
+APP_ICON_PNG := Sources/FleetMateApp/Assets/AppIcon.icon/Assets/FleetMate.png
+else
+$(error EDITION must be fleetmate or ticketsmate, not '$(EDITION)')
+endif
 APP_PRODUCT_NAME := FleetMateApp
-APP_BUNDLE_NAME := FleetMate.app
-APP_BUNDLE_EXECUTABLE := FleetMate
+APP_BUNDLE_NAME := $(APP_DISPLAY_NAME).app
+APP_BUNDLE_EXECUTABLE := $(APP_DISPLAY_NAME)
 APP_INFO_PLIST := Sources/FleetMateApp/Info.plist
 APP_ENTITLEMENTS := Sources/FleetMateApp/FleetMateApp.entitlements
-APP_ICON_PNG := Sources/FleetMateApp/Assets/AppIcon.icon/Assets/FleetMate.png
 APP_DIR := $(BUILD_DIR)/app
 APP_BUNDLE := $(APP_DIR)/$(APP_BUNDLE_NAME)
 
@@ -111,6 +127,7 @@ help:
 	@echo "  $(YELLOW)sign-app$(NC)         - Sign the .app bundle"
 	@echo "  $(YELLOW)notarize-app$(NC)     - Notarize the signed .app bundle"
 	@echo "  $(YELLOW)app-dmg$(NC)          - Create DMG with the signed .app"
+	@echo "  Add $(YELLOW)EDITION=ticketsmate$(NC) to any app target to build TicketsMate instead"
 	@echo ""
 	@echo "$(GREEN)Full workflows:$(NC)"
 	@echo "  $(YELLOW)make release-signed$(NC)     - Build, sign, and notarize CLI"
@@ -219,6 +236,18 @@ release-app:
 	mkdir -p "$(APP_BUNDLE)/Contents/Resources"; \
 	cp "$$REAL_BIN_PATH" "$(APP_BUNDLE)/Contents/MacOS/$(APP_BUNDLE_EXECUTABLE)"; \
 	cp "$(APP_INFO_PLIST)" "$(APP_BUNDLE)/Contents/Info.plist"; \
+	if [ "$(EDITION)" = "ticketsmate" ]; then \
+		/usr/libexec/PlistBuddy \
+			-c "Set :CFBundleIdentifier $(TICKETSMATE_BUNDLE_ID)" \
+			-c "Set :CFBundleName $(APP_DISPLAY_NAME)" \
+			-c "Set :CFBundleExecutable $(APP_BUNDLE_EXECUTABLE)" \
+			-c "Set :CFBundleIconFile $(APP_DISPLAY_NAME)" \
+			-c "Set :CFBundleIconName $(APP_DISPLAY_NAME)" \
+			-c "Add :FleetMateEdition string TicketsMate" \
+			-c "Delete :CFBundleURLTypes" \
+			"$(APP_BUNDLE)/Contents/Info.plist"; \
+		echo "$(GREEN)✓ Info.plist set up for $(APP_DISPLAY_NAME)$(NC)"; \
+	fi; \
 	echo "$(BLUE)Generating .icns from icon PNG...$(NC)"; \
 	ICONSET_DIR=$$(mktemp -d)/AppIcon.iconset; \
 	mkdir -p "$$ICONSET_DIR"; \
@@ -232,32 +261,32 @@ release-app:
 	sips -z 512 512   "$(APP_ICON_PNG)" --out "$$ICONSET_DIR/icon_256x256@2x.png" > /dev/null 2>&1; \
 	sips -z 512 512   "$(APP_ICON_PNG)" --out "$$ICONSET_DIR/icon_512x512.png"    > /dev/null 2>&1; \
 	sips -z 1024 1024 "$(APP_ICON_PNG)" --out "$$ICONSET_DIR/icon_512x512@2x.png" > /dev/null 2>&1; \
-	if [ -d "build/resources/FleetMate.icon" ]; then \
+	if [ -d "$(APP_ICON_SOURCE)" ]; then \
 		echo "$(BLUE)Compiling .icon with actool (Liquid Glass + dark mode)...$(NC)"; \
 		ACTOOL_OUT=$$(mktemp -d); \
 		xcrun actool \
 			--compile "$$ACTOOL_OUT" \
 			--platform macosx \
 			--minimum-deployment-target 14.0 \
-			--app-icon "FleetMate" \
+			--app-icon "$(APP_DISPLAY_NAME)" \
 			--output-partial-info-plist "$$ACTOOL_OUT/partial-info.plist" \
 			--warnings --errors \
-			"build/resources/FleetMate.icon" 2>&1 || true; \
+			"$(APP_ICON_SOURCE)" 2>&1 || true; \
 		if [ -f "$$ACTOOL_OUT/Assets.car" ]; then \
 			cp "$$ACTOOL_OUT/Assets.car" "$(APP_BUNDLE)/Contents/Resources/Assets.car"; \
 			echo "$(GREEN)✓ Icon compiled: Assets.car (Liquid Glass)$(NC)"; \
 		fi; \
-		if [ -f "$$ACTOOL_OUT/FleetMate.icns" ]; then \
-			cp "$$ACTOOL_OUT/FleetMate.icns" "$(APP_BUNDLE)/Contents/Resources/FleetMate.icns"; \
-			echo "$(GREEN)✓ Icon compiled: FleetMate.icns (legacy fallback)$(NC)"; \
+		if [ -f "$$ACTOOL_OUT/$(APP_DISPLAY_NAME).icns" ]; then \
+			cp "$$ACTOOL_OUT/$(APP_DISPLAY_NAME).icns" "$(APP_BUNDLE)/Contents/Resources/$(APP_DISPLAY_NAME).icns"; \
+			echo "$(GREEN)✓ Icon compiled: $(APP_DISPLAY_NAME).icns (legacy fallback)$(NC)"; \
 		else \
-			iconutil -c icns "$$ICONSET_DIR" -o "$(APP_BUNDLE)/Contents/Resources/FleetMate.icns"; \
-			echo "$(GREEN)✓ Icon generated: FleetMate.icns (from PNG)$(NC)"; \
+			iconutil -c icns "$$ICONSET_DIR" -o "$(APP_BUNDLE)/Contents/Resources/$(APP_DISPLAY_NAME).icns"; \
+			echo "$(GREEN)✓ Icon generated: $(APP_DISPLAY_NAME).icns (from PNG)$(NC)"; \
 		fi; \
 		rm -rf "$$ACTOOL_OUT"; \
 	else \
-		iconutil -c icns "$$ICONSET_DIR" -o "$(APP_BUNDLE)/Contents/Resources/FleetMate.icns"; \
-		echo "$(GREEN)✓ Icon generated: FleetMate.icns (from PNG)$(NC)"; \
+		iconutil -c icns "$$ICONSET_DIR" -o "$(APP_BUNDLE)/Contents/Resources/$(APP_DISPLAY_NAME).icns"; \
+		echo "$(GREEN)✓ Icon generated: $(APP_DISPLAY_NAME).icns (from PNG)$(NC)"; \
 	fi; \
 	rm -rf "$$(dirname $$ICONSET_DIR)"
 	@echo "$(GREEN)✓ App bundle assembled: $(APP_BUNDLE)$(NC)"
@@ -300,12 +329,12 @@ notarize-app: sign-app
 		exit 1; \
 	fi
 	@set -e; echo "Creating notarization archive..."; \
-	ditto -c -k --keepParent "$(APP_BUNDLE)" "$(BUILD_DIR)/$(PRODUCT_NAME)-App-notarize.zip"; \
+	ditto -c -k --keepParent "$(APP_BUNDLE)" "$(BUILD_DIR)/$(APP_DISPLAY_NAME)-App-notarize.zip"; \
 	echo "Submitting to Apple notary service..."; \
-	$(call notarize-and-check,$(BUILD_DIR)/$(PRODUCT_NAME)-App-notarize.zip); \
+	$(call notarize-and-check,$(BUILD_DIR)/$(APP_DISPLAY_NAME)-App-notarize.zip); \
 	echo "Stapling notarization ticket..."; \
 	xcrun stapler staple "$(APP_BUNDLE)"; \
-	rm -f "$(BUILD_DIR)/$(PRODUCT_NAME)-App-notarize.zip"
+	rm -f "$(BUILD_DIR)/$(APP_DISPLAY_NAME)-App-notarize.zip"
 	@echo "$(GREEN)✓ App bundle notarized successfully$(NC)"
 
 # Build, sign, and notarize the .app

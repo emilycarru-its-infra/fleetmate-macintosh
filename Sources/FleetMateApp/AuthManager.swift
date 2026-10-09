@@ -33,10 +33,18 @@ class AuthManager: ObservableObject {
             systems[.snipe] = AuthSystemStatus(systemId: .snipe, state: .configured)
         }
 
-        // Tickets — TDX
-        if config.isTdxConfigured {
-            systems[.tdx] = AuthSystemStatus(systemId: .tdx, state: .configured)
+        // Tickets — TDX. TicketsMate always lists it, unconfigured or not, so
+        // its one system can be set up from this panel.
+        let ticketsOnly = AppEdition.current.isTicketsOnly
+        if config.isTdxConfigured || ticketsOnly {
+            systems[.tdx] = AuthSystemStatus(
+                systemId: .tdx,
+                state: config.isTdxConfigured ? .configured : .notConfigured
+            )
         }
+
+        // TicketsMate carries none of the Projects systems below.
+        guard !ticketsOnly else { return }
 
         // Projects — DevOps and GitHub are always listed, even before they are
         // configured. Gating them on their own config made the panel unusable:

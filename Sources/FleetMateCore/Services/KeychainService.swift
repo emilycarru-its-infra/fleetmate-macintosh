@@ -8,7 +8,7 @@ public class KeychainService {
     
     /// The service name used for all FleetMate keychain items.
     /// Must match the service name in scripts/setup-secrets.sh
-    public static let serviceName = "ca.ecuad.macadmin.fleetmate"
+    public static var serviceName: String { AppEdition.current.preferencesDomain }
     
     /// Keychain keys for all FleetMate credentials
     public enum Key: String, CaseIterable {

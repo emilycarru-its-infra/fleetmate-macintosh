@@ -69,8 +69,11 @@ struct ContentView: View {
                     .help("Forward (⌘])")
                     .disabled(!appState.canGoForward)
                 }
-                ToolbarItem(placement: .principal) {
-                    GlassTabBar(selectedTab: $appState.selectedTab, tabs: availableTabs, availableWidth: windowWidth)
+                // A single tab needs no tab bar.
+                if availableTabs.count > 1 {
+                    ToolbarItem(placement: .principal) {
+                        GlassTabBar(selectedTab: $appState.selectedTab, tabs: availableTabs, availableWidth: windowWidth)
+                    }
                 }
                 // The authentication shield belongs to the window, not to the
                 // Dashboard: auth is what breaks any tab, so it has to be
@@ -89,11 +92,13 @@ struct ContentView: View {
                 ToolbarItem(placement: .primaryAction) {
                     RecentActivityToolbarButton()
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    Button(action: { terminals.toggle(defaultLaunch: appState.agentDefaultLaunch) }) {
-                        Label("Terminal", systemImage: "terminal")
+                if !AppEdition.current.isTicketsOnly {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button(action: { terminals.toggle(defaultLaunch: appState.agentDefaultLaunch) }) {
+                            Label("Terminal", systemImage: "terminal")
+                        }
+                        .help("Show or hide the terminal (⌃`)")
                     }
-                    .help("Show or hide the terminal (⌃`)")
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: { showAuthPopover.toggle() }) {
@@ -213,7 +218,7 @@ struct ContentView: View {
 
     private func validateSelectedTab() {
         if !selectedTab.isEnabled(config: appState.config) {
-            appState.selectedTab = .development
+            appState.selectedTab = AppTab.launchTab()
         }
     }
 

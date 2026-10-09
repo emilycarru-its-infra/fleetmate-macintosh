@@ -96,13 +96,15 @@ struct FleetMateCommands: Commands {
                 .keyboardShortcut("k", modifiers: .command)
         }
 
-        CommandMenu("Manage") {
-            Button("Scan Room") { appState.perform(.scan) }
-                .keyboardShortcut("s", modifiers: [.command, .shift])
-                .disabled(selectedTab != .manage)
-            Button("Select All Online") { appState.perform(.selectOnline) }
-                .keyboardShortcut("a", modifiers: [.command, .shift])
-                .disabled(selectedTab != .manage)
+        if !AppEdition.current.isTicketsOnly {
+            CommandMenu("Manage") {
+                Button("Scan Room") { appState.perform(.scan) }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+                    .disabled(selectedTab != .manage)
+                Button("Select All Online") { appState.perform(.selectOnline) }
+                    .keyboardShortcut("a", modifiers: [.command, .shift])
+                    .disabled(selectedTab != .manage)
+            }
         }
 
         CommandGroup(before: .toolbar) {
@@ -115,7 +117,7 @@ struct FleetMateCommands: Commands {
 
             Divider()
 
-            ForEach(Array(AppTab.allCases.enumerated()), id: \.element.id) { index, tab in
+            ForEach(Array(AppTab.editionTabs().enumerated()), id: \.element.id) { index, tab in
                 Button(tab.rawValue) { appState.selectedTab = tab }
                     .keyboardShortcut(tabShortcut(index), modifiers: .command)
                     .disabled(!tab.isEnabled(config: appState.config))
@@ -153,21 +155,23 @@ struct FleetMateCommands: Commands {
 
             Divider()
 
-            Button("Toggle Terminal") {
-                appState.terminals.toggle(defaultLaunch: appState.agentDefaultLaunch)
-            }
-            .keyboardShortcut("`", modifiers: .control)
-            Button("New Terminal Tab") { appState.terminals.open(appState.agentDefaultLaunch) }
-                .keyboardShortcut("t", modifiers: .command)
-            Button("Terminal Full Window") {
-                let terminals = appState.terminals
-                if terminals.sessions.isEmpty { terminals.open(appState.agentDefaultLaunch) }
-                terminals.isVisible = true
-                terminals.isMaximized.toggle()
-            }
-            .keyboardShortcut(.return, modifiers: [.command, .shift])
+            if !AppEdition.current.isTicketsOnly {
+                Button("Toggle Terminal") {
+                    appState.terminals.toggle(defaultLaunch: appState.agentDefaultLaunch)
+                }
+                .keyboardShortcut("`", modifiers: .control)
+                Button("New Terminal Tab") { appState.terminals.open(appState.agentDefaultLaunch) }
+                    .keyboardShortcut("t", modifiers: .command)
+                Button("Terminal Full Window") {
+                    let terminals = appState.terminals
+                    if terminals.sessions.isEmpty { terminals.open(appState.agentDefaultLaunch) }
+                    terminals.isVisible = true
+                    terminals.isMaximized.toggle()
+                }
+                .keyboardShortcut(.return, modifiers: [.command, .shift])
 
-            Divider()
+                Divider()
+            }
 
             Button("Zoom In") { setScale(fontScale + zoomStep) }
                 .keyboardShortcut("+", modifiers: .command)

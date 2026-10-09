@@ -99,6 +99,10 @@ make release-app && open .build/app/FleetMate.app
 
 Both targets compile with the Command Line Tools alone; no Xcode is needed. The Makefile builds against the macOS 26 SDK when only the Command Line Tools are installed, because the 27 beta tools default to the macOS 27 SDK and carry no SwiftUI macro plugins. `#Preview` blocks stay inside `#if DEBUG` for the same reason: release builds never expand the Previews macro. `swift test` still needs XCTest, which the Command Line Tools do not ship, so the suite runs in CI.
 
+## TicketsMate edition
+
+TicketsMate is the same app limited to the Tickets tab. Add `EDITION=ticketsmate` to any app target (`make release-app EDITION=ticketsmate`) to bundle it as `.build/app/TicketsMate.app`. The bundle's `FleetMateEdition` Info.plist key selects the edition at run time (`Sources/FleetMateCore/Shared/AppEdition.swift`); TicketsMate keeps its own settings in `~/.ticketsmate` and its own preference domain. Every change lands here, and the release workflow publishes `TicketsMate-App-<version>.zip` beside FleetMate on each tag.
+
 ## Key Conventions
 
 - **No interactive SSO popups** — All web auth must be silent/headless. Never show browser login sheets to the user. If silent SSO fails, mark auth as failed.

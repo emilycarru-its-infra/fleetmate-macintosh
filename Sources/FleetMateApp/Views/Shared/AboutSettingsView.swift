@@ -1,4 +1,5 @@
 import SwiftUI
+import FleetMateCore
 
 /// Settings ▸ About — what build this is and where to report a problem.
 struct AboutSettingsView: View {
@@ -31,7 +32,7 @@ struct AboutSettingsView: View {
                         .resizable()
                         .frame(width: 64, height: 64)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("FleetMate").appFont(.title2, weight: .semibold)
+                        Text(AppEdition.current.displayName).appFont(.title2, weight: .semibold)
                         Text("Version \(version) (\(build))")
                             .appFont(.callout)
                             .foregroundStyle(.secondary)

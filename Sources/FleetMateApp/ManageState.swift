@@ -23,7 +23,7 @@ final class ManageState: ObservableObject {
     @Published private(set) var isLoadingRoster = false
     @Published private(set) var rosterPath = ""
     /// Where the current roster came from, for the footer and Settings:
-    /// "Devices/Munki · fetched 14:32" or "local file (fetch failed: …)".
+    /// "Platform/Fleet · fetched 14:32" or "local file (fetch failed: …)".
     @Published private(set) var rosterSource = ""
     private var isRefreshingRoster = false
 

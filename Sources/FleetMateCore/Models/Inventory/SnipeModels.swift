@@ -85,7 +85,7 @@ public struct SnipeAsset: Codable, Identifiable, Hashable, Sendable {
     public let supplier: SnipeModelRef?
     public let byod: Bool?
     public let requestable: Bool?
-    /// Native column on the ECU fork (F2 lease migration).
+    /// Native column on the Snipe-IT fork (F2 lease migration).
     public let decommissionDate: SnipeDateRef?
     /// Formatted currency string from the transformer, e.g. "$2,711.00".
     public let purchaseCost: String?
@@ -445,7 +445,7 @@ public struct SnipeCustomField: Codable, Sendable {
     /// Snipe element type: "text", "listbox", "checkbox", "radio", "textarea".
     public let element: String?
     /// Slug of the fork's field group ("inventory", "specs", "management",
-    /// "networking", "procurement", "identity"). Sent by the ECU Snipe-IT fork
+    /// "networking", "procurement", "identity"). Sent by the Snipe-IT fork
     /// once its AssetsTransformer exposes it; nil from stock Snipe-IT, in which
     /// case the client falls back to its mirrored copy of the seeded taxonomy.
     public let fieldGroup: String?

@@ -617,7 +617,7 @@ struct AssetFieldGroup {
     let fields: [String]
 }
 
-/// The six groups the ECU Snipe-IT fork seeds, in its render order
+/// The six groups the Snipe-IT fork seeds, in its render order
 /// (`database/migrations/2026_06_18_120000_seed_asset_field_groups.php`).
 /// The server's `field_group` slug on each custom field wins when present, so
 /// admin re-grouping flows through without an app update; this mirror only
@@ -775,7 +775,7 @@ struct AssetDetailSidebar: View {
                         if asset.assignedTo?.name != nil || asset.location?.name != nil {
                             HStack(spacing: 14) {
                                 // An asset checked out to a room is not
-                                // "assigned to a person named D4315" — when the
+                                // "assigned to a person named R404" — when the
                                 // assignee IS a location, the person line would
                                 // duplicate the pin line verbatim.
                                 let assignedToLocation = asset.assignedTo?.type == "location"

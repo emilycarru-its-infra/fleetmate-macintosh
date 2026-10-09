@@ -182,10 +182,10 @@ SSH-based remote command execution:
 ```bash
 # Execute single command
 fleetmate ssh exec ASSET-000 "hostname"
-fleetmate ssh exec REMOTE-24 "sudo managedsoftwareupdate --checkonly"
+fleetmate ssh exec LAB-24 "sudo managedsoftwareupdate --checkonly"
 
 # Batch execution
-fleetmate ssh batch ASSET-000 REMOTE-24 STUDIO-10 --command "uptime"
+fleetmate ssh batch ASSET-000 LAB-24 STUDIO-10 --command "uptime"
 
 # Test connectivity
 fleetmate ssh test ASSET-000

@@ -64,7 +64,7 @@ struct GroupsContentView: View {
     private var groupDevices: [String: [EntraDevice]] { appState.cachedGroupDevices }
 
     /// Matches on group name OR member device name — the member cache is warm
-    /// from the launch preload, so searching "ALLAGUO" surfaces every group
+    /// from the launch preload, so searching "LABUSERS" surfaces every group
     /// that Mac belongs to.
     var filteredGroups: [EntraGroup] {
         if searchText.isEmpty { return groups }

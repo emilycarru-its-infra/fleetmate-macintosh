@@ -9,12 +9,12 @@ final class RosterLoaderTests: XCTestCase {
     C02AAA,Curriculum,Foundation,R101,A001,Shared,Active,R101-01,,Macintosh,Foundation Studio,R101-01
     C02AAB,Curriculum,Foundation,R101,A002,Shared,Active,R101-02,,Macintosh,Foundation Studio,R101-02
     C02AAC,Curriculum,Illustration,R202,A003,Shared,Active,R202-01,,Macintosh,,R202-01
-    C02AAD,Curriculum,Podium,R101,A004,Shared,Active,R101-Podium,,Macintosh,Podiums and Smart Rooms,R101-POD
-    C02KIO,Kiosk,Library,L100,A005,Shared,Active,Library Kiosk 1,,Macintosh,Library Public Computers,LIB-KIOSK-1
+    C02AAD,Curriculum,Podium,R101,A004,Shared,Active,R101-Podium,,Macintosh,Lecture Podiums,R101-POD
+    C02KIO,Kiosk,Library,L100,A005,Shared,Active,Library Kiosk 1,,Macintosh,Public Kiosks,LIB-KIOSK-1
     C02STF,Staff,IT,,A006,Assigned,Active (Legacy),Ada Byron,abyron,Macintosh,,AdaByron
     C02STG,Staff,Library,,A007,Assigned,Active,Grace Hopper,ghopper,Macintosh,,GraceHopper
-    C02FAC,Faculty,Instructor,,A008,Assigned,Active,"Turing, Alan",aturing,Macintosh,Faculty Laptop Program,AlanTuringLaptop
-    C02FAD,Faculty,Instructor,,A009,Assigned,Active,Edith Clarke,eclarke,Macintosh,Faculty Laptop Program,
+    C02FAC,Faculty,Instructor,,A008,Assigned,Active,"Turing, Alan",aturing,Macintosh,Laptop Loans,AlanTuringLaptop
+    C02FAD,Faculty,Instructor,,A009,Assigned,Active,Edith Clarke,eclarke,Macintosh,Laptop Loans,
     C02OLD,Staff,IT,,A010,Assigned,Returned Lease End,Old Mac,,Macintosh,,OldMac
     C02PRV,Provisioning,Unallocated,,A011,Assigned,Purchased,Mary Jackson,,Macintosh,,
     """

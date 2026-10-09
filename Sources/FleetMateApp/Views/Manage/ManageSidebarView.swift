@@ -313,7 +313,7 @@ struct ManageSidebarView: View {
 // MARK: - Row order
 
 /// The user's row order for each sidebar section, stored as JSON
-/// {"labs": ["Illustration Lab", ...]}. Rooms not in the list keep the
+/// {"labs": ["Print Lab", ...]}. Rooms not in the list keep the
 /// roster's order after the ones that are, so new labs show up at the end
 /// instead of vanishing.
 struct SidebarRowOrder {
@@ -394,7 +394,7 @@ struct SidebarRoomRow: View {
     let icon: String
     let isSelected: Bool
 
-    /// Area, room, and size: "Foundation · D3370 · 30 machines".
+    /// Area, room, and size: "Design · R303 · 30 machines".
     private var subtitle: String {
         var parts: [String] = []
         if let area = room.displayName, !area.isEmpty { parts.append(area) }

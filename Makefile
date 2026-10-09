@@ -343,7 +343,7 @@ package: sign
 	@# Build the package
 	pkgbuild --root "$(BUILD_DIR)/pkg/root" \
 		--scripts "$(BUILD_DIR)/pkg/scripts" \
-		--identifier "ca.ecuad.its.fleetmate" \
+		--identifier "$(BUNDLE_ID)" \
 		--version "$(VERSION)" \
 		--install-location "/" \
 		"$(BUILD_DIR)/$(BINARY_NAME)-unsigned.pkg"

@@ -10,7 +10,7 @@ final class ScanLabImportTests: XCTestCase {
     override func setUpWithError() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("scanlab-import-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        suiteName = "ca.ecuad.scanlab.tests.\(UUID().uuidString)"
+        suiteName = "fleetmate.scanlab.tests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)
         store = ManageStateStore(root: root)
     }

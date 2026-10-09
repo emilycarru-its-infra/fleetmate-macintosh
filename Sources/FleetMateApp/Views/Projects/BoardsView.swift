@@ -644,7 +644,7 @@ struct BoardsView: View {
                 func columnForTask(_ task: UnifiedTask) -> String {
                     // The item's own System.BoardColumn field is the
                     // authority — a state can legally map to several columns
-                    // (ECU's Initiatives boards carry a leftover Resolved
+                    // (some Initiatives boards carry a leftover Resolved
                     // column whose Initiative mapping is also "New"), and a
                     // state-first lookup buckets every New item into
                     // whichever column happened to be inserted last.

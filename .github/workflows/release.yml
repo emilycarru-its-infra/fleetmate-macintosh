@@ -4,9 +4,9 @@
 #
 # IMPORTANT: The artifacts produced here are UNSIGNED and un-notarized on
 # purpose. No Apple signing certs or notarization secrets live in this repo.
-# The unsigned FleetMate.app + fleetmate CLI are fetched by the ECU
-# "Munki - Mgmt Tools Bootstrap" Azure DevOps pipeline (munki-bootstrap-mgmt),
-# which deep-signs + notarizes them downstream with the ECU Developer ID and
+# The unsigned FleetMate.app + fleetmate CLI are fetched by a downstream
+# packaging pipeline,
+# which deep-signs + notarizes them downstream with the deploying organization's Developer ID and
 # packages the app into the Munki bootstrap set. This mirrors how MunkiTools /
 # BootstrapMate / ReportMate are consumed: every tool comes from a release
 # download, never a private submodule clone or a secret baked into CI.

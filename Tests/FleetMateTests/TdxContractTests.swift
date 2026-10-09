@@ -6,7 +6,7 @@ import XCTest
 /// The failures these guard against are the ones that look fine in the UI: a
 /// button wired to a URL that 404s, a payload in the wrong shape, a flag that
 /// TDX only reads from the query string. Each expectation below was checked
-/// against the live ECU TeamDynamix instance before being written down — if one
+/// against a live TeamDynamix instance before being written down — if one
 /// starts failing, the app changed, not the test's guess.
 final class TdxContractTests: XCTestCase {
 
@@ -310,7 +310,7 @@ final class TdxContractTests: XCTestCase {
 
         let service = makeService()
         let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJyb2QifQ.signature"
-        service.setSsoToken(jwt, expiry: Date().addingTimeInterval(3600), userName: "Rod")
+        service.setSsoToken(jwt, expiry: Date().addingTimeInterval(3600), userName: "Ada")
         XCTAssertTrue(service.hasUserJwt)
         XCTAssertTrue(service.actingIdentityIsUser)
 
@@ -379,7 +379,7 @@ final class TdxContractTests: XCTestCase {
     }
 
     func testTicketReferenceDataUsesTheTicketingAppNotTheAssetsApp() async throws {
-        // `tdxAppId` is the Assets app at ECU; asking it for ticket statuses or
+        // `tdxAppId` is usually the Assets app; asking it for ticket statuses or
         // priorities is a 400, which left both pickers silently empty.
         var config = FleetMateConfig()
         config.tdxBaseUrl = "https://tdx.example.edu/TDWebApi"

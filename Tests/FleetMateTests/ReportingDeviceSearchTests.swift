@@ -3,9 +3,9 @@ import XCTest
 
 final class ReportingDeviceSearchTests: XCTestCase {
     private let fleet = [
-        ReportingDeviceRecord(serial: "C02ABC123", name: "Lab-Mac-01", hostname: "labmac01", user: "Alex Doe", assetTag: "A1001"),
+        ReportingDeviceRecord(serial: "C02ABC123", name: "Lab-Mac-01", hostname: "labmac01", user: "Alex Doe", assetTag: "AT1001"),
         ReportingDeviceRecord(serial: "PF3XYZ99", name: "Studio-PC", user: "Sam Roe", assetTag: "A1002", platform: "Windows"),
-        ReportingDeviceRecord(serial: "A1001X", name: "Spare"),
+        ReportingDeviceRecord(serial: "AT1001-X", name: "Spare"),
     ]
 
     func testMatchesNameSerialUserAndAssetTag() {
@@ -16,8 +16,8 @@ final class ReportingDeviceSearchTests: XCTestCase {
     }
 
     func testExactSerialOrAssetTagSortsFirst() {
-        let hits = ReportingDeviceSearch.search("A1001", in: fleet, limit: 6)
-        XCTAssertEqual(hits.map(\.device.serial), ["C02ABC123", "A1001X"])
+        let hits = ReportingDeviceSearch.search("AT1001", in: fleet, limit: 6)
+        XCTAssertEqual(hits.map(\.device.serial), ["C02ABC123", "AT1001-X"])
         XCTAssertEqual(hits.first?.field, "Asset tag")
     }
 

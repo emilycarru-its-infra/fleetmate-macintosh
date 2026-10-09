@@ -46,10 +46,10 @@ final class DirectoryAuditFilterTests: XCTestCase {
         // Whoever is investigating usually has the name, not the id -- the id
         // died with the object.
         let filter = DirectoryAuditQuery.filter(
-            target: "Devices-Shared-Kiosk-Signage-A2003", activity: nil, days: 0, now: now)
+            target: "Devices-Shared-Kiosk-Signage-R201", activity: nil, days: 0, now: now)
         XCTAssertEqual(
             filter,
-            "targetResources/any(t: t/displayName eq 'Devices-Shared-Kiosk-Signage-A2003')")
+            "targetResources/any(t: t/displayName eq 'Devices-Shared-Kiosk-Signage-R201')")
     }
 
     func testClausesCombineWithAnd() {

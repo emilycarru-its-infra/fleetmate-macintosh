@@ -47,7 +47,7 @@ final class HtmlToMarkdownTests: XCTestCase {
     }
 
     func testTableBecomesAMarkdownTable() {
-        // Reduced from work item 3943's "Target split", which flattened into
+        // Reduced from a real ticket's "Target split", which flattened into
         // one line per cell in the old renderer.
         let html = """
         <table>

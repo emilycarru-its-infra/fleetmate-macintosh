@@ -156,7 +156,7 @@ Cookie: (session cookies from SAML flow)
 
 | Claim | Description | Example |
 |-------|-------------|---------|
-| `given_name` | User's first name | Rod |
+| `given_name` | User's first name | Ada |
 | `name` | Full display name | adoe@example.edu |
 | `unique_name` | Unique identifier | adoe@example.edu |
 | `email` | Email address | adoe@example.edu |

@@ -6,9 +6,9 @@
 #
 # No signing, no notarization, no secrets: the FleetMate binaries read their
 # credentials at runtime from ~/.config/fleetmate, so nothing sensitive is
-# needed to compile. Signing happens downstream in the ECU Azure DevOps
-# "Munki - Mgmt Tools Bootstrap" pipeline (munki-bootstrap-mgmt), which pulls
-# the GitHub Release produced by release.yml and signs it with the ECU
+# needed to compile. Signing happens downstream in a separate packaging
+# pipeline, which pulls
+# the GitHub Release produced by release.yml and signs it with the deploying organization's
 # Developer ID.
 
 name: ci

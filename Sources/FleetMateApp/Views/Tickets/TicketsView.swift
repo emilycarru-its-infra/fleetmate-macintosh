@@ -663,6 +663,11 @@ struct TicketsView: View {
             applyMeMode()
             filters.buildFromTickets(newTickets)
         }
+        // Assigned to Me is a work queue, read as a list: turning it on from
+        // the board switches back to List.
+        .onChange(of: assignedToMe) { _, isOn in
+            if isOn { viewMode = .table }
+        }
         .onAppear {
             applyMeMode()
             if !tickets.isEmpty { filters.buildFromTickets(tickets) }
@@ -1283,32 +1288,13 @@ struct TicketsView: View {
                         .help("Saved")
                 }
 
-                Button(action: { showSetParentSheet = true }) {
-                    Label("Set Parent", systemImage: "arrow.up.doc")
+                // Every ticket action sits on the number row, so the field
+                // grid below holds only fields. Labels drop to icons when the
+                // detail pane is too narrow for them.
+                ViewThatFits(in: .horizontal) {
+                    ticketActions(ticket: ticket, iconOnly: false)
+                    ticketActions(ticket: ticket, iconOnly: true)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Set parent ticket")
-
-                Button(action: {
-                    newParentTitle = ticket.title ?? ""
-                    showCreateParentSheet = true
-                }) {
-                    Label("Create Parent", systemImage: "plus.rectangle.on.rectangle")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Create parent ticket")
-
-                Button(action: {
-                    loadTicketDetail(ticketId: ticket.id ?? 0)
-                    loadTicketFeed(ticketId: ticket.id ?? 0)
-                }) {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Refresh ticket")
             }
 
             // Editable title
@@ -1338,191 +1324,141 @@ struct TicketsView: View {
                 .background(Color.orange.opacity(0.1))
                 .cornerRadius(6)
             }
-
-            // Adaptive grid so these wrap to the pane width instead of forcing
-            // the row wider than the detail pane (which spilled off both edges).
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 260), spacing: 8, alignment: .leading)],
-                      alignment: .leading, spacing: 8) {
-                // Status
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Status")
-                        .appFont(.caption2)
-                        .foregroundColor(.secondary)
-                    Picker("", selection: Binding(
-                        get: { editStatusId ?? ticket.statusId ?? 0 },
-                        set: { editStatusId = $0; hasEdits = true }
-                    )) {
-                        ForEach(statusIdOptions, id: \.id) { option in
-                            Text(option.name).tag(option.id)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                // Priority
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Priority")
-                        .appFont(.caption2)
-                        .foregroundColor(.secondary)
-                    Picker("", selection: Binding(
-                        get: { editPriorityId ?? ticket.priorityId ?? 0 },
-                        set: { editPriorityId = $0; hasEdits = true }
-                    )) {
-                        ForEach(priorityIdOptions, id: \.id) { option in
-                            Text(option.name).tag(option.id)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                // Classification
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Classification")
-                        .appFont(.caption2)
-                        .foregroundColor(.secondary)
-                    Picker("", selection: Binding(
-                        get: { editClassification ?? ticket.classification ?? 0 },
-                        set: { editClassification = $0; trackEdits(ticket: ticket) }
-                    )) {
-                        Text("None").tag(0)
-                        ForEach(classificationIdOptions, id: \.id) { option in
-                            Text(option.name).tag(option.id)
-                        }
-                        if let cid = ticket.classification, let cname = ticket.classificationName,
-                           !classificationIdOptions.contains(where: { $0.id == cid }) {
-                            Text(cname).tag(cid)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                // Form
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Form")
-                        .appFont(.caption2)
-                        .foregroundColor(.secondary)
-                    Picker("", selection: Binding(
-                        get: { editFormId ?? ticket.formId ?? 0 },
-                        set: { editFormId = $0; trackEdits(ticket: ticket) }
-                    )) {
-                        Text("None").tag(0)
-                        ForEach(formIdOptions, id: \.id) { option in
-                            Text(option.name).tag(option.id)
-                        }
-                        if let fid = ticket.formId, let fname = ticket.formName,
-                           !formIdOptions.contains(where: { $0.id == fid }) {
-                            Text(fname).tag(fid)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
         }
         .padding(.bottom, 8)
+    }
+
+    /// Assign to me, Reassign, Unassign, Set Parent, Create Parent and Refresh,
+    /// in the order they appear on the ticket number row.
+    private func ticketActions(ticket: TdxTicket, iconOnly: Bool) -> some View {
+        HStack(spacing: 6) {
+            // Resolved from the signed-in Azure identity, not from the TDX
+            // session — the Web API always authenticates as the service
+            // account, so gating this on TDX SSO hid it permanently.
+            Button(action: {
+                guard let me = appState.tdxMe, let myUid = me.uid else { return }
+                editResponsibleUid = myUid
+                editResponsibleName = me.fullName ?? ""
+                isReassigning = false
+                trackEdits(ticket: ticket)
+            }) {
+                Label("Assign to me", systemImage: "person.fill")
+            }
+            .disabled(appState.tdxMe?.uid == nil || editResponsibleUid == appState.tdxMe?.uid)
+            .help("Make yourself the responsible person")
+
+            Button(action: {
+                isReassigning.toggle()
+                responsibleSearchText = ""
+                responsibleSearchResults = []
+            }) {
+                Label("Reassign", systemImage: "person.2.fill")
+            }
+            .help("Choose a different responsible person")
+
+            Button(action: {
+                editResponsibleUid = nil
+                editResponsibleName = ""
+                isReassigning = false
+                trackEdits(ticket: ticket)
+            }) {
+                Label("Unassign", systemImage: "person.fill.xmark")
+            }
+            .disabled(editResponsibleUid == nil)
+            .help("Clear the responsible person")
+
+            Button(action: { showSetParentSheet = true }) {
+                Label("Set Parent", systemImage: "arrow.up.doc")
+            }
+            .help("Set parent ticket")
+
+            Button(action: {
+                newParentTitle = ticket.title ?? ""
+                showCreateParentSheet = true
+            }) {
+                Label("Create Parent", systemImage: "plus.rectangle.on.rectangle")
+            }
+            .help("Create parent ticket")
+
+            Button(action: {
+                loadTicketDetail(ticketId: ticket.id ?? 0)
+                loadTicketFeed(ticketId: ticket.id ?? 0)
+            }) {
+                Label("Refresh", systemImage: "arrow.clockwise")
+            }
+            .help("Refresh ticket")
+        }
+        .labelStyle(AdaptiveLabelStyle(iconOnly: iconOnly))
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .fixedSize()
     }
 
     // MARK: - Detail Fields
 
     private func detailFields(ticket: TdxTicket) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Two-column grid: left = editable fields, right = metadata
+            // Two columns: left = the ticket's own editable fields, right = the
+            // people on it and its timestamps.
             HStack(alignment: .top, spacing: 16) {
                 // LEFT COLUMN — editable fields
                 VStack(alignment: .leading, spacing: 10) {
-                    // Responsible + ... menu
-                    fieldRow(label: "Responsible") {
-                        HStack(spacing: 4) {
-                            Menu {
-                                // Resolved from the signed-in Azure identity, not
-                                // from the TDX session — the Web API always
-                                // authenticates as the service account, so
-                                // gating this on TDX SSO hid it permanently.
-                                if let me = appState.tdxMe, let myUid = me.uid {
-                                    Button(action: {
-                                        editResponsibleUid = myUid
-                                        editResponsibleName = me.fullName ?? ""
-                                        isReassigning = false
-                                        trackEdits(ticket: ticket)
-                                    }) {
-                                        Label("Assign to me", systemImage: "person.fill")
-                                    }
-                                    .disabled(editResponsibleUid == myUid)
-                                }
-                                Button(action: {
-                                    isReassigning = true
-                                    responsibleSearchText = ""
-                                    responsibleSearchResults = []
-                                }) {
-                                    Label("Reassign", systemImage: "person.2.fill")
-                                }
-                                Button(action: {
-                                    editResponsibleUid = nil
-                                    editResponsibleName = ""
-                                    isReassigning = false
-                                    trackEdits(ticket: ticket)
-                                }) {
-                                    Label("Unassign", systemImage: "person.fill.xmark")
-                                }
-                            } label: {
-                                Image(systemName: "chevron.down")
-                                    .appFont(.caption)
+                    fieldRow(label: "Status") {
+                        Picker("", selection: Binding(
+                            get: { editStatusId ?? ticket.statusId ?? 0 },
+                            set: { editStatusId = $0; hasEdits = true }
+                        )) {
+                            ForEach(statusIdOptions, id: \.id) { option in
+                                Text(option.name).tag(option.id)
                             }
-                            .menuStyle(.borderedButton)
-                            .controlSize(.small)
-                            Text(editResponsibleName.isEmpty ? "-" : editResponsibleName)
-                                .appFont(.body)
-                                .lineLimit(1)
-                            Spacer()
                         }
-                    }
-                    // Search field — only shown when reassigning
-                    if isReassigning {
-                        VStack(alignment: .leading, spacing: 4) {
-                            personSearchField(
-                                searchText: $responsibleSearchText,
-                                searchResults: $responsibleSearchResults,
-                                isSearching: $isSearchingResponsible,
-                                showResults: $showResponsibleResults,
-                                onSelect: { person in
-                                    editResponsibleUid = person.uid
-                                    editResponsibleName = person.fullName ?? ""
-                                    responsibleSearchText = ""
-                                    showResponsibleResults = false
-                                    isReassigning = false
-                                    trackEdits(ticket: ticket)
-                                }
-                            )
-                            Toggle("Notify new responsible", isOn: $notifyNewResponsible)
-                                .toggleStyle(.checkbox)
-                                .appFont(.caption)
-                        }
-                        .padding(.leading, 104)
+                        .labelsHidden()
                     }
 
-                    // Group picker (below Responsible)
-                    if !groupIdOptions.isEmpty {
-                        fieldRow(label: "Group") {
-                            Picker("", selection: Binding(
-                                get: { editResponsibleGroupId ?? ticket.responsibleGroupId ?? 0 },
-                                set: { editResponsibleGroupId = $0; trackEdits(ticket: ticket) }
-                            )) {
-                                Text("None").tag(0)
-                                ForEach(groupIdOptions, id: \.id) { option in
-                                    Text(option.name).tag(option.id)
-                                }
-                                if let gid = ticket.responsibleGroupId, let gname = ticket.responsibleGroupName,
-                                   !groupIdOptions.contains(where: { $0.id == gid }) {
-                                    Text(gname).tag(gid)
-                                }
+                    fieldRow(label: "Priority") {
+                        Picker("", selection: Binding(
+                            get: { editPriorityId ?? ticket.priorityId ?? 0 },
+                            set: { editPriorityId = $0; hasEdits = true }
+                        )) {
+                            ForEach(priorityIdOptions, id: \.id) { option in
+                                Text(option.name).tag(option.id)
                             }
-                            .labelsHidden()
                         }
-                    } else {
-                        DetailRow(label: "Group", value: ticket.responsibleGroupName ?? "-")
+                        .labelsHidden()
+                    }
+
+                    fieldRow(label: "Classification") {
+                        Picker("", selection: Binding(
+                            get: { editClassification ?? ticket.classification ?? 0 },
+                            set: { editClassification = $0; trackEdits(ticket: ticket) }
+                        )) {
+                            Text("None").tag(0)
+                            ForEach(classificationIdOptions, id: \.id) { option in
+                                Text(option.name).tag(option.id)
+                            }
+                            if let cid = ticket.classification, let cname = ticket.classificationName,
+                               !classificationIdOptions.contains(where: { $0.id == cid }) {
+                                Text(cname).tag(cid)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+
+                    fieldRow(label: "Form") {
+                        Picker("", selection: Binding(
+                            get: { editFormId ?? ticket.formId ?? 0 },
+                            set: { editFormId = $0; trackEdits(ticket: ticket) }
+                        )) {
+                            Text("None").tag(0)
+                            ForEach(formIdOptions, id: \.id) { option in
+                                Text(option.name).tag(option.id)
+                            }
+                            if let fid = ticket.formId, let fname = ticket.formName,
+                               !formIdOptions.contains(where: { $0.id == fid }) {
+                                Text(fname).tag(fid)
+                            }
+                        }
+                        .labelsHidden()
                     }
 
                     // Service picker
@@ -1563,7 +1499,7 @@ struct TicketsView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                // RIGHT COLUMN — requestor + metadata
+                // RIGHT COLUMN — people and timestamps
                 VStack(alignment: .leading, spacing: 10) {
                     // Requestor — with inline search on demand
                     fieldRow(label: "Requestor") {
@@ -1605,12 +1541,59 @@ struct TicketsView: View {
                     }
 
                     DetailRow(label: "Email", value: ticket.requestorEmail ?? "-")
+
+                    if !groupIdOptions.isEmpty {
+                        fieldRow(label: "Group") {
+                            Picker("", selection: Binding(
+                                get: { editResponsibleGroupId ?? ticket.responsibleGroupId ?? 0 },
+                                set: { editResponsibleGroupId = $0; trackEdits(ticket: ticket) }
+                            )) {
+                                Text("None").tag(0)
+                                ForEach(groupIdOptions, id: \.id) { option in
+                                    Text(option.name).tag(option.id)
+                                }
+                                if let gid = ticket.responsibleGroupId, let gname = ticket.responsibleGroupName,
+                                   !groupIdOptions.contains(where: { $0.id == gid }) {
+                                    Text(gname).tag(gid)
+                                }
+                            }
+                            .labelsHidden()
+                        }
+                    } else {
+                        DetailRow(label: "Group", value: ticket.responsibleGroupName ?? "-")
+                    }
+
+                    // Responsible — Assign to me / Reassign / Unassign live on
+                    // the ticket number row; Reassign opens the search here.
+                    DetailRow(label: "Responsible", value: editResponsibleName.isEmpty ? "-" : editResponsibleName)
+                    if isReassigning {
+                        VStack(alignment: .leading, spacing: 4) {
+                            personSearchField(
+                                searchText: $responsibleSearchText,
+                                searchResults: $responsibleSearchResults,
+                                isSearching: $isSearchingResponsible,
+                                showResults: $showResponsibleResults,
+                                onSelect: { person in
+                                    editResponsibleUid = person.uid
+                                    editResponsibleName = person.fullName ?? ""
+                                    responsibleSearchText = ""
+                                    showResponsibleResults = false
+                                    isReassigning = false
+                                    trackEdits(ticket: ticket)
+                                }
+                            )
+                            Toggle("Notify new responsible", isOn: $notifyNewResponsible)
+                                .toggleStyle(.checkbox)
+                                .appFont(.caption)
+                        }
+                        .padding(.leading, 104)
+                    }
+
                     DetailRow(label: "Created", value: formatDateString(ticket.createdDate))
                     DetailRow(label: "Modified", value: formatDateString(ticket.modifiedDate))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-
         }
         .padding(.vertical, 4)
         .sheet(isPresented: $showSetParentSheet) {

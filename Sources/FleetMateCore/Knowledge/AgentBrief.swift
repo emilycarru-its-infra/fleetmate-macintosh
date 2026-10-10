@@ -372,9 +372,8 @@ public struct AgentBriefStore: Sendable {
             if v.succeeded { version = v.stdout.trimmingCharacters(in: .whitespacesAndNewlines) }
         }
         let markdown = AgentBrief.markdown(dump: dump, cliPath: cliPath, cliVersion: version)
-        try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? markdown.write(toFile: briefPath, atomically: true, encoding: .utf8)
-        try? AgentBrief.tomlString(markdown).write(toFile: codexValuePath, atomically: true, encoding: .utf8)
+        try? PrivateFile.write(markdown, to: briefPath)
+        try? PrivateFile.write(AgentBrief.tomlString(markdown), to: codexValuePath)
         // Only remember a full reference, so a CLI that failed once is retried.
         if dump != nil { try? stamp.write(toFile: stampPath, atomically: true, encoding: .utf8) }
         return briefPath

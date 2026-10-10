@@ -43,7 +43,8 @@ enum AgentContextWriter {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(payload) else { return }
-        try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        // Owner-only, like the briefs beside it.
+        try? PrivateFile.write(data, to: path)
     }
 }
 

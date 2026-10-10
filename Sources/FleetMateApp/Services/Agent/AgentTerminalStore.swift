@@ -310,7 +310,8 @@ final class AgentTerminalStore: ObservableObject {
     init() {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("FleetMate", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Owner-only: the brief and selection files describe the person's work.
+        try? PrivateFile.ensureDirectory(dir.path)
         contextPath = dir.appendingPathComponent("agent-context.json").path
         brief = AgentBriefStore(directory: dir)
         // Generate ahead of the first session; open() checks again.

@@ -61,7 +61,8 @@ extension AppState {
                 if let repo = development.repos.selected {
                     var fields: [String: String] = [:]
                     fields["path"] = repo.local?.path
-                    fields["remote"] = repo.local?.remoteUrl ?? repo.catalog?.cloneUrl
+                    fields["remote"] = (repo.local?.remoteUrl ?? repo.catalog?.cloneUrl)
+                        .map(AgentWhereabouts.redactRemote)
                     fields["defaultBranch"] = repo.defaultBranch
                     selection = .init(kind: "repository", id: repo.key.id, title: repo.key.displayName,
                                       fields: fields.compactMapValues { $0 })
@@ -96,24 +97,24 @@ extension AppState {
         }
     }
 
-    /// Every configured system and whether it is signed in. Failure detail
-    /// stays out: an agent needs to know a sign-in is missing, not why.
+    /// Every configured system and whether it is signed in. Account names,
+    /// failure detail and anything token-like stay out: an agent needs to
+    /// know a sign-in is missing, not whose it is or why.
     func agentBackends() -> [AgentWhereabouts.Backend] {
         authManager.systems.values
             .sorted { $0.systemId.displayName < $1.systemId.displayName }
             .compactMap { status in
                 let state: String
-                var user = status.user
                 switch status.state {
                 case .notConfigured: return nil
-                case .valid(let u, _): state = "signed in"; user = u ?? user
+                case .valid: state = "signed in"
                 case .configured: state = "configured, not yet checked"
                 case .authenticating: state = "signing in"
                 case .expired: state = "sign-in expired"
                 case .failed: state = "not signed in"
-                case .servicePrincipal(let name): state = "service principal"; user = name
+                case .servicePrincipal: state = "signed in as a service principal"
                 }
-                return AgentWhereabouts.Backend(system: status.systemId.displayName, state: state, user: user)
+                return AgentWhereabouts.Backend(system: status.systemId.displayName, state: state)
             }
     }
 }

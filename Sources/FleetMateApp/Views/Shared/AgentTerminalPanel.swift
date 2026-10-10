@@ -165,7 +165,7 @@ struct AgentTerminalPanel: View {
         Menu {
             Button("New \(defaultLaunch.label)") { store.open(defaultLaunch) }
             Divider()
-            ForEach(AgentLaunch.presets, id: \.command) { preset in
+            ForEach(AgentLaunch.installedPresets, id: \.command) { preset in
                 Button(preset.label) { store.open(AgentLaunch(command: preset.command)) }
             }
             if !repos.isEmpty {

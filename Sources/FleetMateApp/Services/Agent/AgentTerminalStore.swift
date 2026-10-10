@@ -22,6 +22,22 @@ struct AgentLaunch: Hashable {
         ("Codex (remote)", "codex-remote"),
     ]
 
+    /// The presets whose command is installed on this Mac, so a person
+    /// without the remote wrappers (or without an agent) is not offered them.
+    /// Shell is always there.
+    static var installedPresets: [(label: String, command: String)] {
+        presets.filter { $0.command.isEmpty || isInstalled($0.command) }
+    }
+
+    /// Whether `command`'s program is in one of the folders a login shell
+    /// puts on PATH. The app's own PATH lacks them, so look directly.
+    static func isInstalled(_ command: String) -> Bool {
+        guard let program = command.split(separator: " ").first.map(String.init) else { return true }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let folders = ["\(home)/.local/bin", "\(home)/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
+        return folders.contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(program)") }
+    }
+
     var label: String {
         let base = Self.presets.first { $0.command == command }?.label
             ?? command.split(separator: " ").first.map(String.init) ?? "Shell"

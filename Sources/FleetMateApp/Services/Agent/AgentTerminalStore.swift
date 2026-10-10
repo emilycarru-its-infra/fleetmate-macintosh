@@ -57,11 +57,14 @@ struct AgentLaunch: Hashable {
 /// iTerm do, ahead of the app's menus.
 enum TerminalShortcut {
     case newSession, closeSession, split, clear, next, previous, select(Int), maximize
+    /// ⌃` hides the terminal even while it has the keyboard.
+    case togglePanel
 
     init?(_ event: NSEvent) {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
         switch (flags, key) {
+        case (.control, "`"): self = .togglePanel
         case (.command, "t"): self = .newSession
         case (.command, "w"): self = .closeSession
         case (.command, "d"): self = .split
@@ -72,7 +75,9 @@ enum TerminalShortcut {
         case (.command, _) where Int(key).map({ (1...9).contains($0) }) == true:
             self = .select(Int(key)! - 1)
         default:
-            if event.keyCode == 48, flags.contains(.control) { // Tab
+            if event.keyCode == 50, flags == .control { // ` on any layout's key
+                self = .togglePanel
+            } else if event.keyCode == 48, flags.contains(.control) { // Tab
                 self = flags.contains(.shift) ? .previous : .next
             } else {
                 return nil
@@ -158,14 +163,14 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
     /// `cliUpdatesManaged` is true when FleetMate keeps the agent CLIs
     /// current, so they skip their own update checks.
     init(id: UUID, launch: AgentLaunch, directory start: String, contextPath: String,
-         briefPath: String, codexValuePath: String, cliUpdatesManaged: Bool) {
+         briefPath: String, codexValuePath: String, cliUpdatesManaged: Bool, fontSize: CGFloat) {
         self.id = id
         self.launch = launch
         self.directory = start
         self.view = FleetMateTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 240))
         super.init()
         view.processDelegate = self
-        view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        view.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         view.nativeBackgroundColor = .textBackgroundColor
         view.nativeForegroundColor = .textColor
         view.onOutput = { [weak self] in
@@ -288,7 +293,14 @@ final class AgentTerminalStore: ObservableObject {
     @Published var selectedId: AgentTerminalSession.ID? { didSet { updateShown() } }
     /// The session shown in the right-hand pane when split.
     @Published var splitId: AgentTerminalSession.ID? { didSet { updateShown() } }
-    @Published var isVisible = false { didSet { updateShown(); if !isVisible { isMaximized = false } } }
+    @Published var isVisible = false {
+        willSet { if newValue && !isVisible { rememberContentFocus() } }
+        didSet {
+            updateShown()
+            if !isVisible { isMaximized = false }
+            if oldValue && !isVisible { returnFocusToContent() }
+        }
+    }
     /// The terminal takes the whole window, the tab hidden behind it.
     @Published var isMaximized = false
     /// What ⌘T opens. Kept current by the window from the person's settings.
@@ -322,6 +334,12 @@ final class AgentTerminalStore: ObservableObject {
             try? FileManager.default.removeItem(at: brief.sessionDirectory)
         }
         updater.start()
+        // Follow the app's text size as it changes (Settings, View › Zoom).
+        appliedFontSize = fontSize
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.applyFont() }
+            .store(in: &subscriptions)
     }
 
     /// The folder a session opens in when nothing better is known: the
@@ -358,7 +376,7 @@ final class AgentTerminalStore: ObservableObject {
         if managed, AgentLaunch.isAgent(launch.command) { updater.updateIfStale() }
         let session = AgentTerminalSession(id: id, launch: launch, directory: directory, contextPath: contextPath,
                                            briefPath: paths.briefPath, codexValuePath: paths.codexValuePath,
-                                           cliUpdatesManaged: managed)
+                                           cliUpdatesManaged: managed, fontSize: fontSize)
         session.wantsFocus = focus
         session.view.onShortcut = { [weak self] shortcut in
             Task { @MainActor in self?.handle(shortcut, from: id) }
@@ -403,6 +421,95 @@ final class AgentTerminalStore: ObservableObject {
         isVisible = true
     }
 
+    /// Whether the panel is on screen (the strip shows otherwise).
+    var isShowing: Bool { isVisible && !sessions.isEmpty }
+
+    /// Show the panel, starting a session if there is none, and give the
+    /// terminal the keyboard.
+    func show(defaultLaunch: AgentLaunch) {
+        if sessions.isEmpty {
+            open(defaultLaunch)
+        } else {
+            isVisible = true
+            selected?.wantsFocus = true
+        }
+    }
+
+    /// Hide the panel into the strip; the keyboard goes back to the content.
+    func hide() {
+        isVisible = false
+    }
+
+    /// What had the keyboard when the panel opened, to hand it back on close.
+    private weak var contentResponder: NSResponder?
+
+    private func rememberContentFocus() {
+        guard let responder = (NSApp.keyWindow ?? NSApp.mainWindow)?.firstResponder,
+              !(responder is FleetMateTerminalView) else { return }
+        contentResponder = responder
+    }
+
+    /// If a terminal has the keyboard, hand it back to whatever had it
+    /// before the panel opened, else to the window, so typing never goes to
+    /// a hidden pane.
+    private func returnFocusToContent() {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow,
+              window.firstResponder is FleetMateTerminalView else { return }
+        if let previous = contentResponder, (previous as? NSView)?.window === window {
+            window.makeFirstResponder(previous)
+        } else {
+            window.makeFirstResponder(nil)
+        }
+    }
+
+    // MARK: Text size
+
+    /// The terminal's text follows the app's text size (Settings ›
+    /// Appearance, View › Zoom), plus the terminal's own ⌘+ / ⌘- steps.
+    static let baseFontSize: CGFloat = 12
+    static let fontSizeRange: ClosedRange<CGFloat> = 8...36
+    /// Points added to the scaled base by View › Zoom while a terminal has
+    /// the keyboard.
+    @Published private(set) var fontOffset: CGFloat =
+        CGFloat(UserDefaults.standard.double(forKey: AgentSettingsKey.fontOffset)) {
+        didSet {
+            UserDefaults.standard.set(Double(fontOffset), forKey: AgentSettingsKey.fontOffset)
+            applyFont()
+        }
+    }
+
+    /// The size every session draws at now.
+    var fontSize: CGFloat {
+        let scale = UserDefaults.standard.object(forKey: AppFontScale.storageKey) as? Double ?? AppFontScale.default
+        let base = (Self.baseFontSize * CGFloat(AppFontScale.clamp(scale))).rounded()
+        return min(max(base + fontOffset, Self.fontSizeRange.lowerBound), Self.fontSizeRange.upperBound)
+    }
+
+    /// Whether a terminal session has the keyboard in the key window.
+    var hasKeyboardFocus: Bool {
+        isShowing && NSApp.keyWindow?.firstResponder is FleetMateTerminalView
+    }
+
+    func adjustFont(by points: CGFloat) {
+        let target = fontSize + points
+        guard Self.fontSizeRange.contains(target) else { return }
+        fontOffset += points
+    }
+
+    func resetFont() { fontOffset = 0 }
+
+    private var appliedFontSize: CGFloat = 0
+
+    /// Redraw every session at `fontSize`. SwiftTerm re-lays out the grid
+    /// and tells the program the new size; nothing restarts.
+    func applyFont() {
+        let size = fontSize
+        guard size != appliedFontSize else { return }
+        appliedFontSize = size
+        let font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        for session in sessions { session.view.font = font }
+    }
+
     func toggle(defaultLaunch: AgentLaunch) {
         if sessions.isEmpty {
             open(defaultLaunch)
@@ -434,6 +541,8 @@ final class AgentTerminalStore: ObservableObject {
         case .previous: cycle(by: -1)
         case .select(let n): if sessions.indices.contains(n) { select(sessions[n].id) }
         case .maximize: isMaximized.toggle()
+        case .togglePanel: hide()
+
         }
     }
 
@@ -451,6 +560,8 @@ enum AgentSettingsKey {
     static let autoStart = "agentAutoStart"
     static let repos = "agentRepos"
     static let panelHeight = "agentPanelHeight"
+    /// Points the terminal's text is above or below the app's text size.
+    static let fontOffset = "agentTerminalFontOffset"
     /// Keep codex and claude at their latest versions. Default on.
     static let keepClisCurrent = "agentKeepClisCurrent"
 }

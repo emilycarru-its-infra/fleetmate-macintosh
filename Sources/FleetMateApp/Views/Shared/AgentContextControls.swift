@@ -24,11 +24,15 @@ enum AgentContextPasteboard {
 }
 
 extension AppState {
-    /// Paste the blocks into the active agent session's input, opening the
-    /// terminal (and a session, when there is none) first. Never presses Return.
+    /// Paste the blocks into a running agent's input, opening the terminal
+    /// (and an agent session, when none is running) first. Never presses
+    /// Return. With no agent CLI installed the blocks are copied instead.
     func sendToAgent(_ contexts: [AgentContext]) {
         guard !contexts.isEmpty else { return }
-        terminals.insert(AgentContextRenderer.render(contexts) + "\n", launch: agentDefaultLaunch)
+        if !terminals.insert(AgentContextRenderer.render(contexts), launch: agentDefaultLaunch) {
+            AgentContextPasteboard.write(contexts)
+            NSSound.beep()
+        }
     }
 }
 

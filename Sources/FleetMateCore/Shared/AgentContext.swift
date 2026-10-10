@@ -100,20 +100,21 @@ public enum AgentContextRenderer {
     public static func render(_ context: AgentContext) -> String {
         var lines: [String] = []
         lines.append("### \(context.kind.label): \(oneLine(context.title, limit: maxValueLength))")
-        var origin = context.source
+        var origin = oneLine(context.source, limit: maxValueLength)
         if let project = context.project { origin += " · \(oneLine(project, limit: maxValueLength))" }
         lines.append("- Source: \(origin)")
         for field in context.fields {
             lines.append("- \(field.label): \(oneLine(field.value, limit: maxValueLength))")
         }
-        if let url = context.url { lines.append("- URL: <\(oneLine(url, limit: 1000))>") }
+        if let url = context.url { lines.append("- URL: <\(safeURL(url))>") }
 
         if let query = context.queryText {
-            var text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            var text = AgentContextSanitizer.clean(query, keepNewlines: true)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             if text.count > maxQueryLength { text = String(text.prefix(maxQueryLength)) + "\n…" }
             let fence = fenceFor(text)
             lines.append("")
-            lines.append("\(fence)\(context.queryLanguage ?? "")")
+            lines.append("\(fence)\(oneLine(context.queryLanguage ?? "", limit: 20).filter { $0.isLetter || $0.isNumber })")
             lines.append(text)
             lines.append(fence)
         }
@@ -121,11 +122,13 @@ public enum AgentContextRenderer {
         if !context.commands.isEmpty {
             lines.append("")
             lines.append("FleetMate CLI:")
-            lines.append("```sh")
-            for command in context.commands {
-                lines.append("\(command.line)  # \(command.purpose)")
+            let commandLines = context.commands.map {
+                "\(oneLine($0.line, limit: 1000))  # \(oneLine($0.purpose, limit: maxValueLength))"
             }
-            lines.append("```")
+            let fence = fenceFor(commandLines.joined(separator: "\n"))
+            lines.append("\(fence)sh")
+            lines.append(contentsOf: commandLines)
+            lines.append(fence)
         }
         lines.append("")
         lines.append(dataNote)
@@ -137,13 +140,24 @@ public enum AgentContextRenderer {
         contexts.map(render).joined(separator: "\n\n")
     }
 
-    /// Collapse whitespace and newlines, and cap the length.
+    /// Strip control characters and escape sequences, collapse whitespace and
+    /// newlines, and cap the length.
     static func oneLine(_ value: String, limit: Int) -> String {
-        let flat = value.split(whereSeparator: { $0.isNewline || $0 == "\t" })
+        let flat = AgentContextSanitizer.clean(value, keepNewlines: true).split(whereSeparator: { $0.isNewline || $0 == "\t" })
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .joined(separator: " ")
         return flat.count > limit ? String(flat.prefix(limit)) + "…" : flat
+    }
+
+    /// A link with anything that could end the `<…>` autolink or the line
+    /// percent-encoded.
+    static func safeURL(_ value: String) -> String {
+        let flat = oneLine(value, limit: 1000)
+        var allowed = CharacterSet.urlFragmentAllowed
+        allowed.insert(charactersIn: "#%")
+        allowed.remove(charactersIn: "<> ")
+        return flat.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
     }
 
     /// A fence longer than any backtick run inside the text, so record text
@@ -161,7 +175,7 @@ public enum AgentContextRenderer {
 /// Builds `fleetmate` command lines with arguments quoted for zsh and bash.
 public enum FleetMateCommandLine {
     public static func make(_ words: String...) -> String {
-        (["fleetmate"] + words.map(quote)).joined(separator: " ")
+        (["fleetmate"] + words.map { quote(AgentContextSanitizer.clean($0, keepNewlines: false)) }).joined(separator: " ")
     }
 
     /// Plain words stay bare; anything else is single-quoted.
@@ -169,5 +183,91 @@ public enum FleetMateCommandLine {
         let safe = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./:@=+,%")
         if !word.isEmpty, word.unicodeScalars.allSatisfy({ safe.contains($0) }) { return word }
         return "'" + word.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+}
+
+/// Removes what could drive a terminal or a shell from text that came from
+/// records anyone can type into: escape sequences (CSI, OSC and the rest),
+/// C0 and C1 control characters and DEL. Tabs survive; newlines survive only
+/// when asked, and a carriage return never does.
+public enum AgentContextSanitizer {
+    public static func clean(_ text: String, keepNewlines: Bool) -> String {
+        let input = Array(text.unicodeScalars)
+        var out = String.UnicodeScalarView()
+        let newline: Unicode.Scalar = keepNewlines ? "\n" : " "
+        var i = 0
+        while i < input.count {
+            let value = input[i].value
+            i += 1
+            switch value {
+            case 0x1B:
+                i = skipEscape(input, from: i)
+            case 0x9B:
+                i = skipCSI(input, from: i)
+            case 0x90, 0x98, 0x9D, 0x9E, 0x9F:
+                i = skipString(input, from: i)
+            case 0x0D:
+                // CR LF and a lone CR both become one line break.
+                if i < input.count, input[i].value == 0x0A { i += 1 }
+                out.append(newline)
+            case 0x0A:
+                out.append(newline)
+            case 0x09:
+                out.append(input[i - 1])
+            case 0x00...0x1F, 0x7F...0x9F:
+                continue
+            default:
+                out.append(input[i - 1])
+            }
+        }
+        return String(out)
+    }
+
+    /// Text for a bracketed paste: cleaned, keeping newlines, so neither an
+    /// end-of-paste marker nor a carriage return can end the paste early or
+    /// submit it.
+    public static func pastePayload(_ text: String) -> String {
+        clean(text, keepNewlines: true)
+    }
+
+    /// After ESC: a CSI (`[`), a string (`]`, `P`, `X`, `^`, `_`) ended by
+    /// BEL or ST, or a single character after any intermediates.
+    private static func skipEscape(_ input: [Unicode.Scalar], from start: Int) -> Int {
+        guard start < input.count else { return start }
+        switch input[start] {
+        case "[": return skipCSI(input, from: start + 1)
+        case "]", "P", "X", "^", "_": return skipString(input, from: start + 1)
+        default:
+            var i = start
+            while i < input.count, (0x20...0x2F).contains(input[i].value) { i += 1 }
+            return min(i + 1, input.count)
+        }
+    }
+
+    /// Parameters and intermediates up to the final byte (0x40–0x7E).
+    private static func skipCSI(_ input: [Unicode.Scalar], from start: Int) -> Int {
+        var i = start
+        while i < input.count {
+            let value = input[i].value
+            i += 1
+            if (0x40...0x7E).contains(value) { return i }
+            if value < 0x20 { return i }
+        }
+        return i
+    }
+
+    /// Up to BEL, ESC \\ or the C1 string terminator.
+    private static func skipString(_ input: [Unicode.Scalar], from start: Int) -> Int {
+        var i = start
+        while i < input.count {
+            let value = input[i].value
+            i += 1
+            if value == 0x07 || value == 0x9C { return i }
+            if value == 0x1B {
+                if i < input.count, input[i] == "\\" { i += 1 }
+                return i
+            }
+        }
+        return i
     }
 }

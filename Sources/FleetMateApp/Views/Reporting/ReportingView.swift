@@ -12,7 +12,10 @@ final class ReportingHost {
     let session: ReportMateSession
 
     init(config: FleetMateConfig) {
-        session = ReportMateSession(configuration: Self.configuration(from: config))
+        // FleetMate's window already has the one search field, and its toolbar
+        // leaves room for a single row: the dashboard draws no search of its own
+        // and puts its controls and section tabs on one line.
+        session = ReportMateSession(configuration: Self.configuration(from: config), chrome: .hostProvided)
     }
 
     /// FleetMate's ReportMate connection: the same endpoint and Entra audience
@@ -78,8 +81,18 @@ final class ReportingHost {
 
 struct ReportingView: View {
     @EnvironmentObject var appState: AppState
+    @State private var searchText = ""
 
     var body: some View {
-        ReportMateDashboard(session: appState.reporting.session)
+        let session = appState.reporting.session
+        ReportMateDashboard(session: session)
+            // The toolbar field filters ReportMate's devices (⌘F) and Return opens
+            // the best match; ⌘K still searches everything, Reporting included.
+            .tabSearch(text: $searchText, prompt: "Search devices by name, serial, asset or hostname", onSubmit: {
+                session.openBestDeviceMatch()
+            })
+            .onChange(of: searchText, initial: true) { _, query in
+                session.deviceSearch = query
+            }
     }
 }

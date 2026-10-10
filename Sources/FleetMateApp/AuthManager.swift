@@ -247,6 +247,12 @@ class AuthManager: ObservableObject {
     }
 
     private func probeTdx(tdxService: TdxService) async {
+        // A refused sign-in keeps its reason; a probe would only replace it
+        // with a generic "not signed in".
+        if let reason = tdxService.refusedSsoReason {
+            update(.tdx, state: .failed(message: reason))
+            return
+        }
         update(.tdx, state: .authenticating)
         do {
             let search = TicketSearchRequest(maxResults: 1)

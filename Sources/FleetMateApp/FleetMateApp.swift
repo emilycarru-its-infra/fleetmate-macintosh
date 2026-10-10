@@ -1023,6 +1023,9 @@ class AppState: ObservableObject {
                     userId: result.userEmail,
                     userName: result.userName
                 )
+            } else if let result = viewModel.authResult, result.isWrongAccount {
+                // Final: the headless browser would reach the same account.
+                self.rejectTdxSsoWrongAccount(result)
             } else {
                 dbg.warn("[SSO Phase 1] Silent SSO FAILED — will attempt headless WKWebView (Phase 1.5)", category: "tdx-sso")
                 // Phase 1.5: Try headless WKWebView SSO before falling back to interactive sheet
@@ -1082,6 +1085,10 @@ class AppState: ObservableObject {
                             userId: result.userEmail,
                             userName: result.userName
                         )
+                        return
+                    }
+                    if result.isWrongAccount {
+                        self.rejectTdxSsoWrongAccount(result)
                         return
                     }
                     break
@@ -1165,6 +1172,22 @@ class AppState: ObservableObject {
         }
     }
     
+    /// Refuse a TDX session that belongs to someone other than the signed-in
+    /// user. Its token is never stored, any earlier session is cleared, and
+    /// the service account is shut off too, so nothing is attributed to the
+    /// wrong person. There is no other route: no interactive window either.
+    func rejectTdxSsoWrongAccount(_ result: TdxSsoResult) {
+        let reason = result.error ?? "TDX session belongs to a different account"
+        dbg.error("[SSO] \(reason) — sign-in refused", category: "tdx-sso")
+        tdxService.refuseSso(reason: reason)
+        tdxSsoAuthenticated = false
+        tdxAuthenticatedUserName = nil
+        tdxMe = nil
+        showTdxSsoLogin = false
+        authManager.update(.tdx, state: .failed(message: reason))
+        invalidateTicketsCache()
+    }
+
     /// Handle SSO authentication failure or cancellation
     func handleTdxSsoFailure(_ error: String?) {
         showTdxSsoLogin = false

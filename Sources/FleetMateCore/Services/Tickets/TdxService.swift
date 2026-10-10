@@ -34,6 +34,11 @@ public class TdxService {
     private var ssoCookies: [HTTPCookie]?
     private var cookieSession: Session?
 
+    /// Why the last SSO sign-in was refused, when it reached someone else's
+    /// account. While set, no credential is offered at all — not the service
+    /// account either — until a sign-in as the right person succeeds.
+    public private(set) var refusedSsoReason: String?
+
     // Reference data caches
     private var statusCache: [Int: String] = [:]
     private var typeCache: [Int: String] = [:]
@@ -142,12 +147,14 @@ public class TdxService {
         self.ssoTokenExpiry = expiry
         self.ssoUserId = userId
         self.ssoUserName = userName
+        self.refusedSsoReason = nil
     }
 
     /// Set SSO cookies for cookie-based auth (when JWT is unavailable)
     public func setSsoCookies(_ cookies: [HTTPCookie], userName: String? = nil) {
         self.ssoCookies = cookies
         self.ssoUserName = userName
+        self.refusedSsoReason = nil
         self.ssoTokenExpiry = Date().addingTimeInterval(23 * 60 * 60) // 23h
         self.ssoToken = "cookie-auth" // marker so SSO appears valid
 
@@ -172,10 +179,23 @@ public class TdxService {
         self.cookieSession = nil
     }
 
+    /// Refuse SSO because the session belongs to a different account: drop
+    /// every held credential and stop offering any, service account included.
+    public func refuseSso(reason: String) {
+        clearSsoToken()
+        cachedToken = nil
+        tokenExpiry = .distantPast
+        refusedSsoReason = reason
+    }
+
     // MARK: - Authentication
 
     private func getAccessToken() async throws -> String? {
         let authMethod = config.tdxAuthMethod
+        if let reason = refusedSsoReason {
+            dbg.warn("TDX sign-in refused, no credential offered: \(reason)", category: "tdx-auth")
+            return nil
+        }
         dbg.debug("TDX getAccessToken (method=\(authMethod), ssoValid=\(ssoToken != nil && Date() < ssoTokenExpiry))", category: "tdx-auth")
         
         // Prefer the signed-in operator's own session whenever we hold one,

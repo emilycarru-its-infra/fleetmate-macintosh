@@ -130,7 +130,7 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         return directory.hasPrefix(home) ? "~" + directory.dropFirst(home.count) : directory
     }
 
-    init(launch: AgentLaunch, contextPath: String) {
+    init(launch: AgentLaunch, contextPath: String, brief: AgentBriefStore) {
         self.launch = launch
         let start = launch.directory.map { ($0 as NSString).expandingTildeInPath }
             ?? FileManager.default.homeDirectoryForCurrentUser.path
@@ -150,7 +150,7 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
                 self.activity = .attention
             }
         }
-        startProcess(contextPath: contextPath, directory: start)
+        startProcess(contextPath: contextPath, brief: brief, directory: start)
         // Follow the shell's directory and let a busy session settle back to
         // idle once output stops.
         poll = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
@@ -158,13 +158,16 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         }
     }
 
-    private func startProcess(contextPath: String, directory: String) {
+    private func startProcess(contextPath: String, brief: AgentBriefStore, directory: String) {
         let shell = ProcessInfo.processInfo.environment["SHELL"].flatMap { $0.isEmpty ? nil : $0 } ?? "/bin/zsh"
         var args = ["-l"]
         let command = launch.command.trimmingCharacters(in: .whitespaces)
         if !command.isEmpty {
+            // Claude Code and Codex are handed the FleetMate brief on their
+            // command line; anything else finds it through the environment.
+            var line = AgentBrief.launchLine(command, briefPath: brief.briefPath,
+                                             codexValuePath: brief.codexValuePath)
             // The remote wrappers take the folder to open as their argument.
-            var line = command
             if let dir = launch.directory, command.hasSuffix("-remote") {
                 line += " " + Self.quote(dir)
             }
@@ -179,7 +182,9 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         env["LANG"] = env["LANG"] ?? "en_US.UTF-8"
         env["TERM_PROGRAM"] = "FleetMate"
         // How an agent sees what the person is looking at in FleetMate.
-        env["FLEETMATE_CONTEXT"] = contextPath
+        env[AgentBrief.contextVariable] = contextPath
+        // What FleetMate is and every `fleetmate` command, for any agent.
+        env[AgentBrief.briefVariable] = brief.briefPath
         let environment = env.map { "\($0.key)=\($0.value)" }
 
         view.startProcess(executable: shell, args: args, environment: environment,
@@ -255,12 +260,19 @@ final class AgentTerminalStore: ObservableObject {
     var defaultLaunch: AgentLaunch = .shell
 
     let contextPath: String
+    /// The agent brief beside the context file, regenerated when the
+    /// installed `fleetmate` CLI changes.
+    let brief: AgentBriefStore
 
     init() {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("FleetMate", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         contextPath = dir.appendingPathComponent("agent-context.json").path
+        brief = AgentBriefStore(directory: dir)
+        // Generate ahead of the first session; open() checks again.
+        let brief = brief
+        Task.detached(priority: .utility) { brief.refresh() }
     }
 
     var selected: AgentTerminalSession? { sessions.first { $0.id == selectedId } }
@@ -271,7 +283,10 @@ final class AgentTerminalStore: ObservableObject {
     /// half the window.
     @discardableResult
     func open(_ launch: AgentLaunch, focus: Bool = true, show: Bool = true) -> AgentTerminalSession {
-        let session = AgentTerminalSession(launch: launch, contextPath: contextPath)
+        // A stat when the brief is current; a regeneration only after the
+        // CLI was installed or updated.
+        brief.refresh()
+        let session = AgentTerminalSession(launch: launch, contextPath: contextPath, brief: brief)
         session.wantsFocus = focus
         let id = session.id
         session.view.onShortcut = { [weak self] shortcut in

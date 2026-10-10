@@ -224,7 +224,7 @@ extension AppState {
     /// the filter for the destination tab, and go. Works within the current
     /// tab too: the tab's onChange of `navigateToModuleFilter` picks it up.
     func openWidgetFilter(tab: AppTab, category: String?, label: String) {
-        let value = label.components(separatedBy: " (").first ?? label
+        let value = WidgetFilterMatch.filterValue(label)
         if let category {
             navigateToModuleFilter = ModuleFilterLink(tab: tab, category: category, value: value)
         }

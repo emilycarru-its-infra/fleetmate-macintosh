@@ -278,7 +278,8 @@ struct DashboardTasksPane: View {
             mark: PullRequestSource.gitHub.brandMark,
             count: visibleIssues.count,
             emptyText: model.isLoadingIssues ? "Loading…" : "No open issues",
-            errorText: model.issuesError
+            errorText: model.issuesError,
+            isLoading: model.isLoadingIssues
         ) {
             let limit = compactRows ?? rowLimit
             ForEach(Array(visibleIssues.prefix(limit).enumerated()), id: \.element.id) { index, issue in
@@ -332,6 +333,7 @@ struct DashboardTasksPane: View {
         count: Int,
         emptyText: String,
         errorText: String? = nil,
+        isLoading: Bool = false,
         @ViewBuilder content: () -> Content
     ) -> some View {
         GroupBox {
@@ -345,6 +347,9 @@ struct DashboardTasksPane: View {
                         .background(Color.secondary.opacity(0.15))
                         .clipShape(Capsule())
                         .foregroundStyle(.secondary)
+                    // A spinner beside the title while the list loads, as
+                    // the widget cards show.
+                    if isLoading { ProgressView().controlSize(.mini).padding(.leading, 2) }
                     Spacer()
                 }
                 .padding(.vertical, 6)

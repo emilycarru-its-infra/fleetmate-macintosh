@@ -176,6 +176,8 @@ struct GitHubIssueSidebarView: View {
                     .lineLimit(1)
             }
 
+            AgentContextButton(.workItem(task))
+
             if let onOpenInProjects {
                 Button(action: onOpenInProjects) {
                     Image(systemName: AppTab.projects.icon)

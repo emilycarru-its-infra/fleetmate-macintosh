@@ -176,7 +176,10 @@ struct PipelineRunRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+        .agentContextDrag { .pipelineRun(run) }
         .contextMenu {
+            AgentContextMenuItems(.pipelineRun(run))
+            Divider()
             Button("Open in Browser") {
                 if let url = URL(string: run.webUrl) { NSWorkspace.shared.open(url) }
             }
@@ -273,6 +276,7 @@ struct PipelineRunDetailView: View {
             }
             .disabled(isLoading)
             .help("Reload the log")
+            AgentContextButton(.pipelineRun(run))
             Button {
                 if let url = URL(string: run.webUrl) { NSWorkspace.shared.open(url) }
             } label: {

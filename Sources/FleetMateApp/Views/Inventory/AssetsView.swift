@@ -428,6 +428,12 @@ struct AssetsView: View {
                                     selectedAsset = asset
                                     lastClickedIndex = idx
                                 }
+                                .contextMenu {
+                                    let targets = selectedAssetIds.contains(asset.id)
+                                        ? filteredAssets.filter { selectedAssetIds.contains($0.id) } : [asset]
+                                    AgentContextMenuItems(targets.map { AgentContext.asset($0, webBase: appState.config.snipeUrl) })
+                                }
+                                .agentContextDrag { .asset(asset, webBase: appState.config.snipeUrl) }
                                 Divider().padding(.leading, 8)
                             }
                         }
@@ -750,6 +756,8 @@ struct AssetDetailSidebar: View {
                     .labelsHidden()
                     .controlSize(.small)
                     .fixedSize()
+
+                    AgentContextButton(.asset(asset, webBase: snipeUrl))
 
                     if asset.assignedTo != nil || asset.statusLabel?.statusMeta == "deployable" {
                         Button(action: onReAllocate) {

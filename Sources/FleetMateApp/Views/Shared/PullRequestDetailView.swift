@@ -184,6 +184,7 @@ struct PullRequestDetailView: View {
                 .appFont(.caption)
                 .foregroundStyle(.secondary)
 
+            AgentContextButton(.pullRequest(pullRequest))
             Button {
                 if let url = URL(string: pullRequest.webUrl) { NSWorkspace.shared.open(url) }
             } label: {

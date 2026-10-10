@@ -32,7 +32,8 @@ public extension AzureDevOpsService {
                         id: child.id,
                         name: child.name ?? "Untitled query",
                         folderPath: folderPath,
-                        queryType: child.resolvedQueryType
+                        queryType: child.resolvedQueryType,
+                        wiql: child.wiql
                     ))
                 } else {
                     let nested = folderPath.isEmpty

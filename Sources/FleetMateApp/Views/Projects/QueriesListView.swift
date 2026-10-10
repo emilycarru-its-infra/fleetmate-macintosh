@@ -123,6 +123,8 @@ struct QueriesListView<MenuContent: View>: View {
     @Binding var collapsedQueryIds: Set<String>
     @Binding var selectedTask: UnifiedTask?
     let onOpenQuery: (AdoSharedQuery) -> Void
+    /// The block "Copy for Agent" hands over for a query and its row count.
+    let queryContext: (AdoSharedQuery, Int) -> AgentContext
     @ViewBuilder var contextMenuBuilder: (UnifiedTask) -> MenuContent
 
     // Persisted, user-resizable widths. Stored flat on the view so writes
@@ -170,6 +172,9 @@ struct QueriesListView<MenuContent: View>: View {
         collapsedQueryIds: Binding<Set<String>>,
         selectedTask: Binding<UnifiedTask?>,
         onOpenQuery: @escaping (AdoSharedQuery) -> Void,
+        queryContext: @escaping (AdoSharedQuery, Int) -> AgentContext = {
+            AgentContext.query($0, project: nil, url: nil, resultCount: $1)
+        },
         @ViewBuilder contextMenuBuilder: @escaping (UnifiedTask) -> MenuContent
     ) {
         self.sections = sections
@@ -184,6 +189,7 @@ struct QueriesListView<MenuContent: View>: View {
         self._collapsedQueryIds = collapsedQueryIds
         self._selectedTask = selectedTask
         self.onOpenQuery = onOpenQuery
+        self.queryContext = queryContext
         self.contextMenuBuilder = contextMenuBuilder
     }
 
@@ -503,6 +509,7 @@ struct QueriesListView<MenuContent: View>: View {
                         )
                         .contentShape(Rectangle())
                         .contextMenu { contextMenuBuilder(row.task) }
+                        .agentContextDrag { .workItem(row.task) }
                         .onTapGesture { selectedTask = row.task }
                     }
                     if run.truncated {
@@ -546,6 +553,14 @@ struct QueriesListView<MenuContent: View>: View {
                 .foregroundColor(.secondary)
             Spacer()
             Button {
+                AgentContextPasteboard.write([queryContext(run.query, run.rows.count)])
+            } label: {
+                Image(systemName: ContentView.agentSymbol)
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Copy for Agent: the query, its WIQL and the fleetmate command that runs it")
+            Button {
                 onOpenQuery(run.query)
             } label: {
                 Image(systemName: "arrow.up.right.square")
@@ -558,6 +573,16 @@ struct QueriesListView<MenuContent: View>: View {
         .padding(.vertical, 7)
         .background(Color.primary.opacity(0.03))
         .contentShape(Rectangle())
+        .contextMenu {
+            AgentContextMenuItems(queryContext(run.query, run.rows.count))
+            Divider()
+            Button("Open in Azure DevOps") { onOpenQuery(run.query) }
+            Button("Copy Query ID") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(run.query.id, forType: .string)
+            }
+        }
+        .agentContextDrag { queryContext(run.query, run.rows.count) }
         .onTapGesture {
             if collapsed {
                 collapsedQueryIds.remove(run.id)

@@ -114,10 +114,13 @@ struct ReposListView: View {
         RepoListRow(record: record, status: model.statuses[record.id], isFetching: model.isFetching.contains(record.id), showScope: showScope)
             .tag(record.id)
             .contextMenu { rowMenu(record) }
+            .agentContextDrag { .repository(record) }
     }
 
     @ViewBuilder
     private func rowMenu(_ record: RepoRecord) -> some View {
+        AgentContextMenuItems(.repository(record))
+        Divider()
         if let path = record.local?.path {
             Button("Fetch") { Task { await model.fetch([record.id]) } }
             Divider()
@@ -348,6 +351,7 @@ struct RepoFilesPane: View {
                             model.open(row.node.path)
                         }
                     }
+                    .modifier(FileAgentContext(path: row.node.path, record: model.selected))
                 }
             }
             .padding(.vertical, 4)
@@ -433,6 +437,22 @@ private struct FileTreeRow: View {
     }
 }
 
+/// A file row's "Copy for Agent" and drag, once its repository is known.
+private struct FileAgentContext: ViewModifier {
+    let path: String
+    let record: RepoRecord?
+
+    func body(content: Content) -> some View {
+        if let record {
+            content
+                .contextMenu { AgentContextMenuItems(.file(path: path, in: record)) }
+                .agentContextDrag { .file(path: path, in: record) }
+        } else {
+            content
+        }
+    }
+}
+
 // MARK: Editor
 
 /// The Files panel's right side: the open file in FleetMate's editor.
@@ -466,6 +486,7 @@ struct RepoEditorPane: View {
                 if model.isDirty { Text("Edited").foregroundStyle(.secondary) }
                 if document.isReadOnly { Text("Read only").foregroundStyle(.secondary) }
                 Spacer()
+                AgentContextButton(model.selected.map { AgentContext.file(path: document.path, in: $0) })
                 Button("Revert") { confirmRevert = true }
                     .disabled(!model.isDirty)
                 Button("Close") { model.closeEditor() }

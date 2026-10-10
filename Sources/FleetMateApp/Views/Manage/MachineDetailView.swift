@@ -41,6 +41,8 @@ struct MachineDetailView: View {
                 Text(computer.displayName)
                     .appFont(.title3, weight: .semibold)
                     .textSelection(.enabled)
+                Spacer()
+                AgentContextButton(.manageTarget(computer, address: manage.ipFor(computer)))
             }
             if !computer.allocation.isEmpty, computer.allocation != computer.displayName {
                 Text(computer.allocation).appFont(.subheadline).foregroundStyle(.secondary)

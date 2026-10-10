@@ -22,6 +22,8 @@ struct GiteaIssueSidebarView: View {
 
                 Spacer()
 
+                AgentContextButton(.workItem(task))
+
                 if let url = task.externalUrl, let urlObj = URL(string: url) {
                     Link(destination: urlObj) {
                         Image(systemName: "arrow.up.right.square")

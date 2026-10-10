@@ -111,6 +111,48 @@ final class FleetMateTerminalView: LocalProcessTerminalView {
         feed(text: "\u{1b}[2J\u{1b}[3J\u{1b}[H")
         send([0x0c])
     }
+
+    /// Whether the program in the terminal takes pasted text as one block
+    /// (Claude Code, Codex and zsh all do once they are drawn).
+    var acceptsBracketedPaste: Bool { getTerminal().bracketedPasteMode }
+
+    /// Type `text` into the program's input as a paste, without Return. With
+    /// bracketed paste the newlines stay in the text; without it each newline
+    /// would run a line, so they become spaces.
+    func pasteText(_ text: String) {
+        if acceptsBracketedPaste {
+            send(txt: "\u{1b}[200~" + text + "\u{1b}[201~")
+        } else {
+            send(txt: text.replacingOccurrences(of: "\r\n", with: " ").replacingOccurrences(of: "\n", with: " "))
+        }
+    }
+
+    // MARK: Drop
+
+    /// Text dropped on the terminal is pasted; files arrive as quoted paths,
+    /// the way Terminal does it.
+    static let droppedTypes: [NSPasteboard.PasteboardType] = [.fileURL, .URL, .string]
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        sender.draggingPasteboard.availableType(from: Self.droppedTypes) == nil ? [] : .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        draggingEntered(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pasteboard = sender.draggingPasteboard
+        if let text = pasteboard.string(forType: .string), !text.isEmpty {
+            pasteText(text)
+        } else if let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL], !urls.isEmpty {
+            pasteText(urls.map { $0.isFileURL ? AgentTerminalSession.quote($0.path) : $0.absoluteString }.joined(separator: " ") + " ")
+        } else {
+            return false
+        }
+        window?.makeFirstResponder(self)
+        return true
+    }
 }
 
 /// One terminal: a pseudo-terminal running the session's command, with the
@@ -177,6 +219,7 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
                 self.activity = .attention
             }
         }
+        view.registerForDraggedTypes(FleetMateTerminalView.droppedTypes)
         startProcess(contextPath: contextPath, briefPath: briefPath, codexValuePath: codexValuePath,
                      cliUpdatesManaged: cliUpdatesManaged, directory: start)
         // Follow the shell's directory and let a busy session settle back to
@@ -247,6 +290,22 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         return withUnsafePointer(to: &info.pvi_cdir.vip_path) {
             $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
         }
+    }
+
+    /// Paste `text` once the program is ready for it: an agent that has just
+    /// started turns bracketed paste on when its prompt is drawn, and output
+    /// has settled. Gives up waiting after `timeout` and pastes anyway.
+    func pasteWhenReady(_ text: String, timeout: TimeInterval = 20) {
+        let deadline = Date().addingTimeInterval(timeout)
+        func attempt() {
+            let settled = Date().timeIntervalSince(lastOutput) > 0.8
+            if (view.acceptsBracketedPaste && settled) || Date() > deadline || activity == .exited {
+                view.pasteText(text)
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { attempt() }
+        }
+        attempt()
     }
 
     func terminate() {
@@ -409,6 +468,19 @@ final class AgentTerminalStore: ObservableObject {
         } else {
             isVisible.toggle()
             if isVisible { selected?.wantsFocus = true }
+        }
+    }
+
+    /// Put `text` into the active session's input without pressing Return,
+    /// showing the panel and focusing the session. With no live session, start
+    /// one with `launch` and paste once its prompt is ready.
+    func insert(_ text: String, launch: AgentLaunch? = nil) {
+        if let session = selected, session.activity != .exited {
+            select(session.id)
+            session.view.pasteText(text)
+        } else {
+            let session = open(launch ?? defaultLaunch)
+            session.pasteWhenReady(text)
         }
     }
 

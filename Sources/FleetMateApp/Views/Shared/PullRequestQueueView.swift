@@ -608,7 +608,10 @@ struct PullRequestRow: View {
             PullRequestDetailView(pullRequest: pullRequest, onActionCompleted: onActionCompleted)
                 .environmentObject(appState)
         }
+        .agentContextDrag { .pullRequest(pullRequest) }
         .contextMenu {
+            AgentContextMenuItems(.pullRequest(pullRequest))
+            Divider()
             Button("Open in Browser") { open() }
             Button("Copy Link") {
                 NSPasteboard.general.clearContents()

@@ -347,6 +347,7 @@ struct MachineRow: View {
         .opacity(isOnline || manage.isScanning ? 1.0 : 0.5)
         .onTapGesture { manage.toggleSelected(computer) }
         .contextMenu { contextMenu }
+        .agentContextDrag { .manageTarget(computer, address: manage.ipFor(computer)) }
     }
 
     // MARK: - Pieces
@@ -446,6 +447,8 @@ struct MachineRow: View {
     @ViewBuilder
     private var contextMenu: some View {
         let selected = manage.selectedComputerIDs.contains(computer.id) ? manage.selectedComputers : [computer]
+        AgentContextMenuItems(selected.map { AgentContext.manageTarget($0, address: manage.ipFor($0)) })
+        Divider()
         Button("Copy Hostname") { ManageClipboard.copy(computer.displayName) }
         Button("Copy IP Address") { ManageClipboard.copy(manage.ipFor(computer) ?? "") }
             .disabled(manage.ipFor(computer) == nil)

@@ -1347,7 +1347,10 @@ struct CodePullRequestRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+        .agentContextDrag { .pullRequest(pullRequest) }
         .contextMenu {
+            AgentContextMenuItems(.pullRequest(pullRequest))
+            Divider()
             Button("Open in Browser") {
                 if let url = URL(string: pullRequest.webUrl) { NSWorkspace.shared.open(url) }
             }
@@ -1621,7 +1624,10 @@ struct CommitRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+        .agentContextDrag { .commit(commit, in: repository) }
         .contextMenu {
+            AgentContextMenuItems(.commit(commit, in: repository))
+            Divider()
             Button("Open in Browser") {
                 if let url = commit.url.flatMap(URL.init) { NSWorkspace.shared.open(url) }
             }
@@ -1705,6 +1711,7 @@ struct CommitDetailView: View {
                 }
             }
             .help("Copy the full SHA")
+            AgentContextButton(.commit(commit, in: selection.repository))
             Button {
                 guard let url = commit.url else { return }
                 NSPasteboard.general.clearContents()

@@ -214,6 +214,9 @@ private struct DevicesContentView: View {
                     }
                 } else {
                     deviceTable
+                        .contextMenu(forSelectionType: String.self) { ids in
+                            AgentContextMenuItems(rows.filter { ids.contains($0.id) }.map(AgentContext.device))
+                        }
                 }
             }
             
@@ -431,7 +434,7 @@ private struct DevicesContentView: View {
     @ViewBuilder
     private var deviceTable: some View {
         if #available(macOS 14.4, *) {
-            Table(filteredRows, selection: $selectedDeviceIds, sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
+            Table(of: DeviceListRow.self, selection: $selectedDeviceIds, sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
                 identityColumns
                 if hasIntune { intuneColumns }
                 if hasProvisioning { provisioningColumns }
@@ -439,10 +442,12 @@ private struct DevicesContentView: View {
                 if hasIntune { ownershipColumn }
                 if hasProvisioning { purchaseColumn }
                 if hasAppleOrgSource { appleOrgColumns }
+            } rows: {
+                deviceRows
             }
         } else {
             // Conditional columns need macOS 14.4; earlier releases get them all.
-            Table(filteredRows, selection: $selectedDeviceIds, sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
+            Table(of: DeviceListRow.self, selection: $selectedDeviceIds, sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
                 identityColumns
                 intuneColumns
                 provisioningColumns
@@ -450,7 +455,18 @@ private struct DevicesContentView: View {
                 ownershipColumn
                 purchaseColumn
                 appleOrgColumns
+            } rows: {
+                deviceRows
             }
+        }
+    }
+
+    /// Each row drags out as its agent context block.
+    @TableRowBuilder<DeviceListRow>
+    private var deviceRows: some TableRowContent<DeviceListRow> {
+        ForEach(filteredRows) { row in
+            TableRow(row)
+                .itemProvider { AgentContextPasteboard.itemProvider([AgentContext.device(row)]) }
         }
     }
 

@@ -70,3 +70,6 @@ codecov/
 
 # AI assistant project files
 .claude/
+
+# Worktrees
+/.worktrees/

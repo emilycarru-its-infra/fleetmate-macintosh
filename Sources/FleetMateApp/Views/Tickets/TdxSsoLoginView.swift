@@ -990,7 +990,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                             navigationLog.append(userLog)
                         }
                         
-                        authResult = TdxSsoResult.success(
+                        authResult = verifiedSuccess(
                             token: cleanToken,
                             userName: userInfo.name,
                             userEmail: userInfo.email
@@ -1083,7 +1083,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                                 navigationLog.append(userLog)
                             }
                             
-                            authResult = TdxSsoResult.success(
+                            authResult = verifiedSuccess(
                                 token: cleanToken,
                                 userName: userInfo.name,
                                 userEmail: userInfo.email
@@ -1464,6 +1464,27 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         return SamlFormData(actionUrl: actionUrl, fields: fields)
     }
     
+    /// The address this sign-in is for: the one Entra's account picker is
+    /// answered with.
+    private var expectedUpn: String? { platformSsoUpn ?? Self.fallbackUpn }
+
+    /// A successful sign-in, unless it belongs to someone else.
+    ///
+    /// Every success path ends here, so a session for another account is
+    /// refused whichever route produced it, and its token is dropped.
+    private func verifiedSuccess(token: String, userName: String?, userEmail: String?) -> TdxSsoResult {
+        let result = TdxSsoIdentity.verify(
+            .success(token: token, userName: userName, userEmail: userEmail),
+            expectedUpn: expectedUpn
+        )
+        if result.isWrongAccount, let reason = result.error {
+            let log = "[IDENTITY] \(reason) — token discarded"
+            dbg.warn(log, category: "tdx-sso")
+            navigationLog.append(log)
+        }
+        return result
+    }
+
     /// Handle a JWT obtained silently — set authResult.
     private func handleSilentJwt(_ jwt: String) async {
         let userInfo = Self.extractUserInfoFromJwt(jwt)
@@ -1471,7 +1492,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         dbg.info(successLog, category: "tdx-sso")
         await MainActor.run {
             navigationLog.append(successLog)
-            authResult = TdxSsoResult.success(
+            authResult = verifiedSuccess(
                 token: jwt,
                 userName: userInfo.name,
                 userEmail: userInfo.email
@@ -1502,7 +1523,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                         navigationLog.append(userLog)
                     }
                     
-                    authResult = TdxSsoResult.success(
+                    authResult = verifiedSuccess(
                         token: cleanToken,
                         userName: userInfo.name,
                         userEmail: userInfo.email
@@ -1605,7 +1626,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                                     navigationLog.append(userLog)
                                 }
                                 
-                                authResult = TdxSsoResult.success(
+                                authResult = verifiedSuccess(
                                     token: cleanToken,
                                     userName: userInfo.name,
                                     userEmail: userInfo.email
@@ -1649,7 +1670,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                 // Get user info
                 let userInfo = await extractUserInfo()
 
-                authResult = TdxSsoResult.success(
+                authResult = verifiedSuccess(
                     token: token,
                     userName: userInfo.name,
                     userEmail: userInfo.email
@@ -1667,7 +1688,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                     dbg.info(tokenLog, category: "tdx-sso")
                     await MainActor.run { navigationLog.append(tokenLog) }
 
-                    authResult = TdxSsoResult.success(
+                    authResult = verifiedSuccess(
                         token: sessionToken,
                         userName: userInfo.name,
                         userEmail: userInfo.email
@@ -1679,7 +1700,7 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
                     dbg.warn(warnLog, category: "tdx-sso")
                     await MainActor.run { navigationLog.append(warnLog) }
 
-                    authResult = TdxSsoResult.success(
+                    authResult = verifiedSuccess(
                         token: "sso-session",
                         userName: userInfo.name ?? "SSO User",
                         userEmail: userInfo.email

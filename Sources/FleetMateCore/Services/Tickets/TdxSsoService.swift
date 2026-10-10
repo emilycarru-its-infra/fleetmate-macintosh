@@ -11,6 +11,10 @@ public struct TdxSsoResult: Sendable, Equatable {
     public let userName: String?
     public let userEmail: String?
     public let error: String?
+    /// The sign-in finished, but as someone other than the signed-in user.
+    /// That is final: retrying the same browser session reaches the same
+    /// account, so callers stop rather than move on to another sign-in route.
+    public var isWrongAccount: Bool = false
     
     public static func success(token: String, userName: String? = nil, userEmail: String? = nil) -> TdxSsoResult {
         TdxSsoResult(success: true, token: token, userName: userName, userEmail: userEmail, error: nil)
@@ -18,6 +22,50 @@ public struct TdxSsoResult: Sendable, Equatable {
     
     public static func failure(_ error: String) -> TdxSsoResult {
         TdxSsoResult(success: false, token: nil, userName: nil, userEmail: nil, error: error)
+    }
+
+    public static func wrongAccount(signedInAs actual: String, expected: String) -> TdxSsoResult {
+        var result = failure("TDX session belongs to \(actual); expected \(expected)")
+        result.isWrongAccount = true
+        return result
+    }
+}
+
+// MARK: - TDX SSO Identity Check
+
+/// Checks that a TDX session belongs to the person signed in on this Mac.
+///
+/// Entra can hold more than one account, and the session TDX hands back is
+/// whichever one the chain ended on. A token for anyone else is refused
+/// outright: it is never stored, and the sign-in is reported as failed.
+public enum TdxSsoIdentity {
+    /// Verify a sign-in result's identity against the expected address.
+    ///
+    /// - A token whose address matches (ignoring case and surrounding space)
+    ///   is accepted.
+    /// - A token for a different address is refused with `wrongAccount`.
+    /// - A token with no address claim cannot be checked, so it is attributed
+    ///   to the expected account, which Entra's picker chose by exact address.
+    /// - With no expected address there is nothing to compare against, and
+    ///   the result passes through unchanged.
+    public static func verify(_ result: TdxSsoResult, expectedUpn: String?) -> TdxSsoResult {
+        guard result.success, let token = result.token else { return result }
+        let expected = normalized(expectedUpn)
+        let actual = normalized(result.userEmail)
+
+        guard let expected else { return result }
+        guard let actual else {
+            return .success(token: token, userName: result.userName, userEmail: expected)
+        }
+        if actual == expected { return result }
+        return .wrongAccount(signedInAs: actual, expected: expected)
+    }
+
+    /// A trimmed, lower-cased address, or nil for anything that is not one.
+    static func normalized(_ value: String?) -> String? {
+        guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              value.contains("@") else { return nil }
+        return value
     }
 }
 

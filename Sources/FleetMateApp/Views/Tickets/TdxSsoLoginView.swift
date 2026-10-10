@@ -598,58 +598,26 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
         dbg.info("[SAML] Interceptor installed (WebAuthn/FIDO allowed for Platform SSO)", category: "tdx-sso")
     }
     
-    /// Detect the current user's Platform SSO UPN via `app-sso platform -s`.
-    /// Parses the AD TGT ticket entry to find the user's UPN.
+    /// Detect the signed-in user's address from the device: Platform SSO
+    /// (`app-sso platform -s`: the on-premises Kerberos UPN, the cloud Kerberos
+    /// UPN, an unmasked `loginUserName`), then the Kerberos SSO extension
+    /// (`SignedInAddress`), then the app's own Entra identity when it is known.
     /// Runs on a background thread to avoid blocking the main/UI thread.
-    /// Returns the UPN (e.g. "user@domain.ca") or nil if not enrolled.
+    /// Returns the address (e.g. "user@domain.ca") or nil when no source has one.
     private static func detectPlatformSsoUpn() async -> String? {
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
-                let result = ProcessRunner.runSync("/usr/bin/app-sso", ["platform", "-s"])
-                guard result.exitCode != -1 else {
-                    Self.ssoLogStatic("[PSSO] Failed to run app-sso platform -s: \(result.stderr)")
-                    continuation.resume(returning: nil)
-                    return
-                }
-                let output = result.stdout
-                
-                // Parse the output for UPN entries.
-                // The AD TGT ticket has ticketKeyPath "tgt_ad" and a clean UPN.
-                // We skip Kerberos-format UPNs (contain KERBEROS.MICROSOFTONLINE.COM).
-                var bestUpn: String?
-                for line in output.components(separatedBy: .newlines) {
-                    let trimmed = line.trimmingCharacters(in: .whitespaces)
-                    // Match lines like:  upn = "user@DOMAIN.CA"  or  "upn" : "user@DOMAIN.CA"
-                    if trimmed.contains("upn") {
-                        // Extract the quoted value after upn
-                        if let range = trimmed.range(of: #""([^"]+@[^"]+)""#, options: .regularExpression) {
-                            let candidate = String(trimmed[range]).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-                            // Skip Kerberos-format entries
-                            if candidate.uppercased().contains("KERBEROS.MICROSOFTONLINE.COM") {
-                                continue
-                            }
-                            if candidate.contains("@") {
-                                bestUpn = candidate.lowercased()
-                            }
-                        }
-                    }
-                }
-                
-                if let upn = bestUpn {
-                    Self.ssoLogStatic("[PSSO] Detected Platform SSO UPN: \(upn)")
-                    continuation.resume(returning: upn)
+                if let found = SignedInAddress.readDevice() {
+                    Self.ssoLogStatic("[PSSO] Detected signed-in address from \(found.source): \(found.address)")
+                    continuation.resume(returning: found.address)
                 } else if let fallback = Self.fallbackUpn {
-                    // `app-sso platform -s` doesn't always carry a usable UPN:
-                    // on an enrolled Mac it may expose no `upn` key at all and
-                    // mask `loginUserName` as "a***e@example.edu". Without an
-                    // address the Entra page can't be advanced, silent SSO
-                    // times out, and every write falls back to the service
-                    // account. The signed-in Azure identity supplies the same
-                    // address and is already resolved by then.
-                    Self.ssoLogStatic("[PSSO] No usable UPN from app-sso — using signed-in Azure identity: \(fallback)")
+                    // The device holds no usable address (no Platform SSO
+                    // Kerberos ticket, a masked `loginUserName`, no Kerberos
+                    // SSO extension); the signed-in Entra identity supplies it.
+                    Self.ssoLogStatic("[PSSO] No address from the device — using the signed-in Entra identity: \(fallback)")
                     continuation.resume(returning: fallback)
                 } else {
-                    Self.ssoLogStatic("[PSSO] No Platform SSO UPN found in app-sso output")
+                    Self.ssoLogStatic("[PSSO] No signed-in address from Platform SSO or the Kerberos SSO extension")
                     continuation.resume(returning: nil)
                 }
             }

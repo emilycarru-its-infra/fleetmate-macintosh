@@ -597,8 +597,7 @@ private struct AuthSettingsContent: View {
             switch system.systemId {
             case .snipe where appState.config.snipeOidcAudience?.isEmpty != false:
                 if case .valid = system.state {
-                    Button("Sign Out") { appState.signOutSnipeSso() }
-                        .controlSize(.small)
+                    EmptyView()
                 } else if case .authenticating = system.state {
                     ProgressView().controlSize(.small)
                 } else {
@@ -609,8 +608,7 @@ private struct AuthSettingsContent: View {
 
             case .tdx:
                 if case .valid = system.state {
-                    Button("Sign Out") { appState.signOutTdxSso() }
-                        .controlSize(.small)
+                    EmptyView()
                 } else if case .authenticating = system.state {
                     ProgressView().controlSize(.small)
                 } else {
@@ -621,8 +619,7 @@ private struct AuthSettingsContent: View {
 
             case .devops:
                 if case .valid = system.state {
-                    Button("Sign Out") { appState.signOutDevOpsSso() }
-                        .controlSize(.small)
+                    EmptyView()
                 } else if case .authenticating = system.state {
                     ProgressView().controlSize(.small)
                 } else {

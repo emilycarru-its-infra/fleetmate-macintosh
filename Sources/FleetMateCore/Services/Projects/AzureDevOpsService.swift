@@ -140,7 +140,7 @@ public class AzureDevOpsService {
         return ok
     }
 
-    /// Clear the Bearer token (called on sign-out)
+    /// Clear the Bearer token
     public func clearBearerToken() {
         self.bearerToken = nil
         self.tokenExpiry = .distantPast

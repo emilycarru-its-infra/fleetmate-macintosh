@@ -309,7 +309,7 @@ class AuthManager: ObservableObject {
         }
     }
     
-    // MARK: - az CLI Login / Logout (legacy — kept for manual escape hatch)
+    // MARK: - az CLI Login (legacy — kept for manual escape hatch)
 
     /// Launch `az login` (opens browser), then re-probe DevOps state.
     func loginDevOps(devOpsService: AzureDevOpsService) async {
@@ -322,14 +322,6 @@ class AuthManager: ObservableObject {
         } else {
             update(.devops, state: .failed(message: "az login failed or was cancelled"))
         }
-    }
-
-    /// Run `az logout` then mark DevOps as needing re-auth.
-    func logoutDevOps(devOpsService: AzureDevOpsService) async {
-        let az = resolveAzPath()
-        _ = await ProcessRunner.run(az, ["logout"])
-        devOpsService.clearBearerToken()
-        update(.devops, state: .configured)
     }
 
     // MARK: - Individual Probes

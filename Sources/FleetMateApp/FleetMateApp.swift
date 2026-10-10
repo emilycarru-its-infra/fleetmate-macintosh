@@ -1222,16 +1222,6 @@ class AppState: ObservableObject {
         }
     }
     
-    /// Sign out of TDX SSO
-    func signOutTdxSso() {
-        tdxService.clearSsoToken()
-        tdxSsoAuthenticated = false
-        tdxAuthenticatedUserName = nil
-        tdxMe = nil
-        authManager.update(.tdx, state: .configured)
-        invalidateTicketsCache()
-    }
-
     // MARK: - TDX Identity ("me")
 
     /// The TDX person record for whoever is driving the app.
@@ -1559,17 +1549,6 @@ class AppState: ObservableObject {
         }
     }
 
-    /// Sign out of DevOps SSO
-    func signOutDevOpsSso() {
-        devOpsSsoService.clearTokens()
-        devOpsService.clearBearerToken()
-        devOpsSsoAuthenticated = false
-        devOpsSsoUserName = nil
-        devOpsSsoUserEmail = nil
-        authManager.update(.devops, state: .configured)
-        invalidateWorkItemsCache()
-    }
-
     // MARK: - Snipe-IT SSO Authentication
 
     /// Phase 1: Attempt silent SSO via URLSession (cached cookies).
@@ -1648,14 +1627,6 @@ class AppState: ObservableObject {
         snipeSsoAuthenticated = true
         snipeAuthenticatedUserName = userName
         authManager.update(.snipe, state: .valid(user: userName, expiry: nil))
-        invalidateAssetsCache()
-    }
-
-    func signOutSnipeSso() {
-        snipeService.clearSsoCookies()
-        snipeSsoAuthenticated = false
-        snipeAuthenticatedUserName = nil
-        authManager.update(.snipe, state: .configured)
         invalidateAssetsCache()
     }
 }

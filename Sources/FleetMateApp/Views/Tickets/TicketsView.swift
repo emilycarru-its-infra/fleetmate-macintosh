@@ -778,12 +778,6 @@ struct TicketsView: View {
                 Text(userName)
                     .appFont(.caption)
                     .foregroundColor(.secondary)
-                Button(action: { appState.signOutTdxSso() }) {
-                    Image(systemName: "rectangle.portrait.and.arrow.right")
-                        .appFont(.caption)
-                }
-                .buttonStyle(.plain)
-                .help("Sign out of TDX SSO")
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)

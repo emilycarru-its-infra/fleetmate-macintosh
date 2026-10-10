@@ -23,7 +23,7 @@ let package = Package(
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
         // Apple School and Business Manager API client. Pinned to a revision
         // because asbmutil's date-stamped tags are not semantic versions.
-        .package(url: "https://github.com/rodchristiansen/asbmutil.git", revision: "84393012164215e570ff79405c95490cc370e279"),
+        .package(url: "https://github.com/rodchristiansen/asbmutil.git", revision: "c079d4c4cf26b1e45bab8a1adf699b156e34f630"),
         // 1.12 added Metal shaders, which the Command Line Tools cannot compile.
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", "1.11.2"..<"1.12.0"),
         // The Reporting tab is the ReportMate app's own dashboard. Pinned to a

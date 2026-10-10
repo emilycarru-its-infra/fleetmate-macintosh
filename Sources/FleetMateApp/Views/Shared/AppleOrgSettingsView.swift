@@ -1,10 +1,9 @@
 import SwiftUI
-import UniformTypeIdentifiers
 import FleetMateCore
 
-/// Settings ▸ Apple: the Apple School / Business Manager API profiles behind
-/// the Devices tab's Mac view. These are asbmutil's profiles — one added here
-/// works with `asbmutil`, and one made with `asbmutil config set` shows here.
+/// Settings ▸ Apple: where the Apple School / Business Manager API credentials
+/// behind the Devices tab's Mac view come from. They are read from Key Vault
+/// with your own `az` sign-in each session; nothing is kept on this Mac.
 struct AppleOrgSettingsView: View {
     @EnvironmentObject var appState: AppState
 
@@ -14,28 +13,33 @@ struct AppleOrgSettingsView: View {
 }
 
 private struct AppleOrgSettingsForm: View {
+    @EnvironmentObject var appState: AppState
     @ObservedObject var store: AppleOrgStore
 
-    @State private var name = ""
-    @State private var clientId = ""
-    @State private var keyId = ""
-    @State private var keyFile: URL?
-    @State private var showImporter = false
-    @State private var saveError: String?
-    @State private var profilePendingDelete: AppleOrgProfile?
+    @State private var vault = ""
+    @State private var prefixes = ""
 
-    private var canSave: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty
-            && !clientId.trimmingCharacters(in: .whitespaces).isEmpty
-            && !keyId.trimmingCharacters(in: .whitespaces).isEmpty
-            && keyFile != nil
+    private var draftVault: String? {
+        let v = vault.trimmingCharacters(in: .whitespaces)
+        return v.isEmpty ? nil : v
+    }
+
+    private var draftPrefixes: [String]? {
+        let list = prefixes.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return list.isEmpty ? nil : list
+    }
+
+    private var changed: Bool {
+        draftVault != appState.config.appleOrgKeyVault || draftPrefixes != appState.config.appleOrgSecretPrefixes
     }
 
     var body: some View {
         Form {
             Section {
                 if store.profiles.isEmpty {
-                    Text("No profiles yet. Add one below, or run `asbmutil config set`.")
+                    Text(store.sources.isEmpty
+                         ? "No Key Vault is set, so no organization is read."
+                         : "No organization could be read. Check that az is signed in and can read the vault.")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(store.profiles) { profile in
@@ -44,84 +48,46 @@ private struct AppleOrgSettingsForm: View {
                             .foregroundStyle(.secondary)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(store.label(for: profile.name)).appFont(.body, weight: .medium)
-                            Text("Profile: \(profile.name)").appFont(.caption).foregroundStyle(.secondary)
+                            Text("Secrets: \(profile.name)ClientId, \(profile.name)KeyId, \(profile.name)PrivateKeyPem")
+                                .appFont(.caption).foregroundStyle(.secondary)
                         }
-                        Spacer()
-                        Button {
-                            profilePendingDelete = profile
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Remove this profile from the keychain")
                     }
                 }
             } header: {
                 Text("Apple School and Business Manager")
             } footer: {
-                Text("Every profile is read, and its devices appear in Devices beside their Intune records. Profiles are shared with the asbmutil command-line tool; the private key is kept in the keychain.")
+                Text("Every organization is read, and its devices appear in Devices beside their Intune records. The API credentials are read from Key Vault with your az sign-in each session and are never stored on this Mac.")
                     .appFont(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Section("Add a Profile") {
-                TextField("Profile name", text: $name)
-                TextField("Client ID", text: $clientId)
+            Section("Key Vault") {
+                TextField("Key Vault name", text: $vault)
                     .appFont(.body, design: .monospaced)
-                TextField("Key ID", text: $keyId)
+                TextField("Secret prefixes", text: $prefixes, prompt: Text(AppleOrgSource.defaultPrefix))
                     .appFont(.body, design: .monospaced)
-                HStack {
-                    Text(keyFile?.lastPathComponent ?? "No private key chosen")
-                        .foregroundStyle(keyFile == nil ? .secondary : .primary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    Button("Choose Private Key…") { showImporter = true }
-                }
-                Text("Create the API account in Apple School or Business Manager under Preferences ▸ API, with the Device Enrollment Manager role or higher, and download its private key (.pem).")
+                Text("One prefix per organization, separated by commas. Each needs the secrets <prefix>ClientId, <prefix>KeyId and <prefix>PrivateKeyPem.")
                     .appFont(.caption)
                     .foregroundStyle(.secondary)
-                if let saveError {
-                    Label(saveError, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .appFont(.caption)
-                }
                 HStack {
                     Spacer()
-                    Button("Save Profile") { save() }
-                        .disabled(!canSave)
+                    Button("Save") { save() }
+                        .disabled(!changed)
                         .keyboardShortcut(.defaultAction)
                 }
             }
         }
         .formStyle(.grouped)
-        .fileImporter(isPresented: $showImporter, allowedContentTypes: [UTType(filenameExtension: "pem") ?? .data, .data]) { result in
-            if case .success(let url) = result { keyFile = url }
+        .onAppear {
+            vault = appState.config.appleOrgKeyVault ?? ""
+            prefixes = appState.config.appleOrgSecretPrefixes?.joined(separator: ", ") ?? ""
         }
-        .alert("Remove Profile", isPresented: Binding(get: { profilePendingDelete != nil }, set: { if !$0 { profilePendingDelete = nil } }), presenting: profilePendingDelete) { profile in
-            Button("Cancel", role: .cancel) { }
-            Button("Remove", role: .destructive) {
-                AppleOrgService.deleteProfile(profile.name)
-                store.reloadProfiles()
-            }
-        } message: { profile in
-            Text("Remove '\(profile.name)' from the keychain? The asbmutil command-line tool loses it too.")
-        }
-        .onAppear { store.reloadProfiles() }
     }
 
     private func save() {
-        guard let keyFile else { return }
-        saveError = nil
-        let accessing = keyFile.startAccessingSecurityScopedResource()
-        defer { if accessing { keyFile.stopAccessingSecurityScopedResource() } }
-        do {
-            let profileName = name.trimmingCharacters(in: .whitespaces)
-            try AppleOrgService.saveProfile(name: profileName, clientId: clientId, keyId: keyId, privateKeyFile: keyFile)
-            store.reloadProfiles()
-            name = ""; clientId = ""; keyId = ""; self.keyFile = nil
-        } catch {
-            saveError = error.localizedDescription
-        }
+        var config = appState.config
+        config.appleOrgKeyVault = draftVault
+        config.appleOrgSecretPrefixes = draftPrefixes
+        appState.saveConfig(config)
     }
 }

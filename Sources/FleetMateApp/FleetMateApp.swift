@@ -389,6 +389,7 @@ class AppState: ObservableObject {
         }
         self.config = loadedConfig
         self.authManager = AuthManager(config: loadedConfig)
+        appleOrg.configure(sources: loadedConfig.appleOrgSources)
 
         // Log configuration status
         dbg.info("Graph configured:  \(config.isGraphConfigured)  (tenantId=\(config.graphTenantId != nil), devicesGraphId=\(config.devicesGraphId != nil), systemsGraphId=\(config.systemsGraphId != nil))", category: "config")
@@ -457,6 +458,7 @@ class AppState: ObservableObject {
             tdxService = TdxService(config: config)
             snipeService = SnipeService(config: config)
             reportMateService = ReportMateService(config: config)
+            appleOrg.configure(sources: config.appleOrgSources)
             manageState.reconfigure(
                 config: config.manage,
                 repoRoot: config.repoRoot,

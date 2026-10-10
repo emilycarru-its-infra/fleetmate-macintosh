@@ -15,13 +15,13 @@ struct AgentSettingsView: View {
     @State private var handbookSite = ""
     @State private var skillsRepo = ""
 
-    private var presetCommands: [String] { AgentLaunch.presets.map(\.command) }
+    private var presetCommands: [String] { AgentLaunch.installedPresets.map(\.command) }
 
     var body: some View {
         Form {
             Section {
                 Picker("Runs", selection: presetBinding) {
-                    ForEach(AgentLaunch.presets, id: \.command) { preset in
+                    ForEach(AgentLaunch.installedPresets, id: \.command) { preset in
                         Text(preset.label).tag(preset.command)
                     }
                     Text("Custom").tag("__custom__")

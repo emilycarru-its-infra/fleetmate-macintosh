@@ -237,23 +237,38 @@ public struct GitWorkingCopy: Sendable {
     // MARK: - Path safety
 
     /// Resolves a repository-relative path, rejecting anything that would
-    /// land outside the checkout (`..`, absolute paths elsewhere, symlinks out).
+    /// land outside the checkout (`..`, absolute paths elsewhere, symlinks out)
+    /// or inside `.git` in any letter case. A path that does not exist yet is
+    /// checked through its deepest existing ancestor, so a new file under a
+    /// symlinked folder cannot escape either.
     public func confinedPath(_ relative: String) throws -> String {
-        let root = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
-        let candidate: String
-        if relative.hasPrefix("/") {
-            candidate = relative
-        } else {
-            candidate = (root as NSString).appendingPathComponent(relative)
-        }
-        let resolved = URL(fileURLWithPath: candidate).standardizedFileURL.resolvingSymlinksInPath().path
+        let root = Self.realPath(URL(fileURLWithPath: path).standardizedFileURL.path)
+        let candidate = relative.hasPrefix("/") ? relative : (root as NSString).appendingPathComponent(relative)
+        let resolved = Self.realPath(URL(fileURLWithPath: candidate).standardizedFileURL.path)
         guard resolved == root || resolved.hasPrefix(root + "/") else {
             throw RepoError.pathOutsideRepository(relative)
         }
         let inside = String(resolved.dropFirst(root.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !inside.isEmpty else { throw RepoError.invalidArgument("Expected a file path inside the repository.") }
-        guard inside != ".git", !inside.hasPrefix(".git/") else { throw RepoError.pathOutsideRepository(relative) }
+        // APFS is case-insensitive by default, so `.GIT/hooks` is `.git/hooks`.
+        guard !inside.split(separator: "/").contains(where: { $0.lowercased() == ".git" }) else {
+            throw RepoError.pathOutsideRepository(relative)
+        }
         return inside
+    }
+
+    /// The path with every symlink resolved. Components that do not exist yet
+    /// are appended to the resolved form of the deepest ancestor that does.
+    static func realPath(_ standardized: String) -> String {
+        var existing = standardized
+        var missing: [String] = []
+        while !existing.isEmpty, existing != "/", !FileManager.default.fileExists(atPath: existing) {
+            missing.insert((existing as NSString).lastPathComponent, at: 0)
+            existing = (existing as NSString).deletingLastPathComponent
+        }
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        let base = realpath(existing, &buffer) != nil ? String(cString: buffer) : existing
+        return missing.reduce(base) { ($0 as NSString).appendingPathComponent($1) }
     }
 
     func confined(_ paths: [String]) throws -> [String] {

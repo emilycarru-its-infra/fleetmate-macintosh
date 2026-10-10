@@ -434,5 +434,19 @@ final class GitWorkingCopyTests: XCTestCase {
         XCTAssertThrowsError(try copy.confinedPath("/etc/hosts"))
         XCTAssertThrowsError(try copy.confinedPath(".git/config"))
         XCTAssertEqual(try copy.confinedPath("dir/../tracked.txt"), "tracked.txt")
+        XCTAssertThrowsError(try copy.confinedPath(".GIT/hooks/pre-commit"))
+        XCTAssertThrowsError(try copy.confinedPath("sub/.Git/config"))
+    }
+
+    func testNewFilesUnderASymlinkOutOfTheCheckoutAreRefused() throws {
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        try FileManager.default.createSymbolicLink(atPath: (copy.path as NSString).appendingPathComponent("escape"),
+                                                   withDestinationPath: outside.path)
+        XCTAssertThrowsError(try copy.confinedPath("escape/new-file.txt"))
+        XCTAssertThrowsError(try copy.writeFile("escape/deeper/new-file.txt", contents: Data("x".utf8)))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outside.appendingPathComponent("deeper").path))
+        XCTAssertEqual(try copy.confinedPath("brand/new/file.txt"), "brand/new/file.txt")
     }
 }

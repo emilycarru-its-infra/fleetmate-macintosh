@@ -290,6 +290,9 @@ public struct GitWorkingCopy: Sendable {
     static func runGit(_ arguments: [String], extraEnvironment: [String: String] = [:]) async -> ProcessOutput {
         var env = ProcessInfo.processInfo.environment
         env["GIT_TERMINAL_PROMPT"] = "0"
+        // Paths are file names, never pathspec magic: a file named ":/" must
+        // not widen a discard or stage to the whole checkout.
+        env["GIT_LITERAL_PATHSPECS"] = "1"
         for (key, value) in extraEnvironment { env[key] = value }
         return await ProcessRunner.run("git", arguments, environment: env)
     }

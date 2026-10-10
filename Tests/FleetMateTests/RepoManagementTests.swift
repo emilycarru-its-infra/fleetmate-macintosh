@@ -438,6 +438,12 @@ final class GitWorkingCopyTests: XCTestCase {
         XCTAssertThrowsError(try copy.confinedPath("sub/.Git/config"))
     }
 
+    func testPathspecMagicInAFileNameIsLiteral() async throws {
+        try copy.writeFile("tracked.txt", contents: Data("changed\n".utf8))
+        _ = try? await copy.discard([":(top)"])
+        XCTAssertEqual(String(decoding: try copy.readFile("tracked.txt"), as: UTF8.self), "changed\n")
+    }
+
     func testNewFilesUnderASymlinkOutOfTheCheckoutAreRefused() throws {
         let outside = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)

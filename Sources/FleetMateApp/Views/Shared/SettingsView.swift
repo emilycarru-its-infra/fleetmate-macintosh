@@ -38,6 +38,10 @@ struct SettingsView: View {
                 AgentSettingsView()
                     .environmentObject(appState)
                     .tabItem { Label("Agent", systemImage: "terminal") }
+                RepositoriesSettingsView()
+                    .environmentObject(appState)
+                    .tabItem { Label("Repositories", systemImage: "folder.badge.gearshape") }
+                    .tag(RepositoriesSettingsView.tabTag)
             }
             AboutSettingsView()
                 .tabItem { Label("About", systemImage: "info.circle") }

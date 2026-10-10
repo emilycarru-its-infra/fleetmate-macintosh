@@ -38,6 +38,12 @@ struct SegmentedPill<Value: Hashable>: View {
                             selection = option
                         }
                     }
+                    // A tap gesture alone is invisible to VoiceOver and
+                    // UI scripting; expose each segment as a button.
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(label(option))
+                    .accessibilityAddTraits(selection == option ? [.isButton, .isSelected] : .isButton)
+                    .accessibilityAction { selection = option }
             }
         }
         .padding(3)

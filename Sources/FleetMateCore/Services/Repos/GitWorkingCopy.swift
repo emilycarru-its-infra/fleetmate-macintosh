@@ -159,6 +159,25 @@ public struct GitWorkingCopy: Sendable {
         return head
     }
 
+    /// Commits exactly what is staged, leaving unstaged changes alone. Unlike
+    /// `commit(message:paths:)`, a staged rename or deletion commits whole,
+    /// since nothing is re-staged by path. Refuses a protected branch unless
+    /// `allowProtected`.
+    @discardableResult
+    public func commitStaged(message: String, protectedBranches: Set<String>, allowProtected: Bool = false) async throws -> RepoCommit {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw RepoError.invalidArgument("A commit message is required.") }
+        if let branch = await currentBranch() {
+            try guardBranch(branch, protectedBranches: protectedBranches, allow: allowProtected)
+        }
+        guard try await statusSnapshot().stagedCount > 0 else { throw RepoError.nothingToCommit }
+        _ = try await checked(["commit", "-m", trimmed])
+        guard let head = try await log(limit: 1).first else {
+            throw RepoError.gitFailed(command: "log", message: "no commit after commit")
+        }
+        return head
+    }
+
     // MARK: - Diff and history
 
     /// `git diff` of the worktree against the index, or of the index against

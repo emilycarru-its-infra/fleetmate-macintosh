@@ -159,6 +159,7 @@ struct EntraUserInspector: View {
                 }
             }
             Spacer()
+            AgentContextButton(.user(u))
             VStack(alignment: .trailing, spacing: 6) {
                 enabledBadge
                 Button(u.accountEnabled == false ? "Enable Account" : "Disable Account") {

@@ -325,7 +325,10 @@ struct GroupDisclosureRow: View {
             }
             .buttonStyle(.plain)
             .padding(.vertical, 4)
+            .agentContextDrag { .group(group) }
             .contextMenu {
+                AgentContextMenuItems(.group(group))
+                Divider()
                 Button("Add Member…") { onAddMember() }
                 Button("Deploy Cimian Push Remediation…") { onDeployRemediation() }
             }

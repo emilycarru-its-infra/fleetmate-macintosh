@@ -56,6 +56,7 @@ struct DeviceDetailView: View {
                     .textSelection(.enabled)
             }
             Spacer()
+            AgentContextButton(.device(row))
             ComplianceBadge(state: intune == nil ? "Not Enrolled" : intune?.complianceState)
         }
         .padding()

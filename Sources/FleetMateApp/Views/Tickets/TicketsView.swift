@@ -990,7 +990,12 @@ struct TicketsView: View {
                                         : (idx % 2 == 1 ? Color.secondary.opacity(0.04) : Color.clear)
                                 )
                                 .contentShape(Rectangle())
-                                .contextMenu { outlineContextMenu }
+                                .contextMenu {
+                                    TicketAgentMenuItems(ticket: ticket)
+                                    Divider()
+                                    outlineContextMenu
+                                }
+                                .agentContextDrag { appState.agentContext(for: ticket) }
                                 .onTapGesture {
                                     if let id = ticket.id {
                                         selectedTicketIds = [id]
@@ -1254,6 +1259,8 @@ struct TicketsView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Open ticket in web browser")
+
+                AgentContextButton(appState.agentContext(for: ticket))
                 
                 Spacer()
 
@@ -2837,6 +2844,23 @@ struct FeedEntryRow: View {
 }
 
 // MARK: - Ticket Status Badge
+
+extension AppState {
+    /// A ticket's agent block, with its TeamDynamix link.
+    func agentContext(for ticket: TdxTicket) -> AgentContext {
+        AgentContext.ticket(ticket, url: ticket.id.map { config.tdxTicketWebUrl($0) })
+    }
+}
+
+/// "Copy for Agent" and "Send to Agent" for a ticket row or card.
+struct TicketAgentMenuItems: View {
+    @EnvironmentObject private var appState: AppState
+    let ticket: TdxTicket
+
+    var body: some View {
+        AgentContextMenuItems(appState.agentContext(for: ticket))
+    }
+}
 
 struct TicketStatusBadge: View {
     let statusName: String?

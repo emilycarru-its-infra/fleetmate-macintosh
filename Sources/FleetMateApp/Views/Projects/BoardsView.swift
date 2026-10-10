@@ -815,6 +815,7 @@ struct BoardsView: View {
                             TaskListRow(task: task, isSelected: selectedTask?.compositeKey == task.compositeKey)
                                 .contentShape(Rectangle())
                                 .contextMenu { taskContextMenu(for: task) }
+                                .agentContextDrag { .workItem(task) }
                                 .onTapGesture { selectedTask = task; showDetailSidebar = true }
                             Divider().padding(.leading, 60)
                         }
@@ -919,6 +920,11 @@ struct BoardsView: View {
                         NSWorkspace.shared.open(url)
                     }
                 },
+                queryContext: { query, count in
+                    AgentContext.query(query, project: appState.devOpsService.resolvedProject,
+                                       url: appState.devOpsService.storedQueryWebUrl(queryId: query.id),
+                                       resultCount: count)
+                },
                 contextMenuBuilder: { task in taskContextMenu(for: task) }
             )
         } else {
@@ -957,6 +963,7 @@ struct BoardsView: View {
                             )
                             .contentShape(Rectangle())
                             .contextMenu { taskContextMenu(for: task) }
+                            .agentContextDrag { .workItem(task) }
                             .onTapGesture { selectedTask = task }
                             Divider().padding(.leading, 60)
                         }
@@ -1240,6 +1247,9 @@ struct BoardsView: View {
 
     @ViewBuilder
     private func taskContextMenu(for task: UnifiedTask) -> some View {
+        AgentContextMenuItems(.workItem(task))
+        Divider()
+
         // Open in Browser
         if let urlStr = task.externalUrl, let url = URL(string: urlStr) {
             Button {

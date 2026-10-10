@@ -263,6 +263,8 @@ struct AzDoTaskSidebarView: View {
 
             Spacer()
 
+            AgentContextButton(.workItem(task))
+
             if let error = actionError {
                 Text(error)
                     .appFont(.caption)

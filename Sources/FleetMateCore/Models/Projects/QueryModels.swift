@@ -11,6 +11,8 @@ public struct AdoQuery: Codable, Identifiable, Sendable {
     public let isPublic: Bool?
     public let hasChildren: Bool?
     public let queryType: String?
+    /// The query's WIQL text; sent when the tree is fetched with `$expand`.
+    public let wiql: String?
     public let children: [AdoQuery]?
 
     public var isLeafQuery: Bool { !(isFolder ?? false) }
@@ -32,12 +34,15 @@ public struct AdoSharedQuery: Identifiable, Sendable {
     public let name: String
     public let folderPath: String
     public let queryType: String
+    /// The query's WIQL, when the API sent it.
+    public let wiql: String?
 
-    public init(id: String, name: String, folderPath: String, queryType: String) {
+    public init(id: String, name: String, folderPath: String, queryType: String, wiql: String? = nil) {
         self.id = id
         self.name = name
         self.folderPath = folderPath
         self.queryType = queryType
+        self.wiql = wiql
     }
 }
 

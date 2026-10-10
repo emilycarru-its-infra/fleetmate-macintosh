@@ -242,6 +242,7 @@ struct BoardColumn: View {
                             onToggleExpand: { toggleExpansion(row.id) }
                         )
                         .padding(.leading, CGFloat(row.depth) * 16)
+                        .contextMenu { TicketAgentMenuItems(ticket: row.ticket) }
                         .draggable("\(row.ticket.id ?? 0)_\(columnKey)")
                         .onTapGesture {
                             onSelectTicket(row.ticket)

@@ -82,7 +82,10 @@ struct UsersView: View {
             } else {
                 List(searchResults, id: \.id, selection: $selectedUser) { user in
                     UserRow(user: user)
+                        .agentContextDrag { .user(user) }
                         .contextMenu {
+                            AgentContextMenuItems(.user(user))
+                            Divider()
                             if user.accountEnabled == true {
                                 Button("Disable Account", role: .destructive) { pendingDisable = user }
                             } else {

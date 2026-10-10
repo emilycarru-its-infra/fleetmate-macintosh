@@ -57,6 +57,8 @@ struct GlobalSearchResult: Identifiable, Hashable {
     /// fleetmate:// link, the same route an outside link takes.
     var link: FleetMateLink?
     var handbookPage: HandbookPage?
+    /// What "Copy for Agent" hands over, where the hit carries enough to say.
+    var agentContext: AgentContext?
 }
 
 /// A work-item id the way people actually type it: bare digits, or carrying a
@@ -143,7 +145,8 @@ enum GlobalSearchScanner {
                 title: hit.device.name,
                 subtitle: [hit.device.platform, hit.device.user].compactMap { $0 }.joined(separator: " · "),
                 matchLabel: "\(hit.field): \(hit.value)",
-                reportingSerial: hit.device.serial
+                reportingSerial: hit.device.serial,
+                agentContext: .reportingDevice(hit.device)
             )
         }
     }
@@ -544,5 +547,21 @@ struct GlobalSearchResultsPanel: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .modifier(SearchHitAgentContext(context: hit.agentContext))
+    }
+}
+
+/// "Copy for Agent" and a drag for hits that carry an agent context.
+private struct SearchHitAgentContext: ViewModifier {
+    let context: AgentContext?
+
+    func body(content: Content) -> some View {
+        if let context {
+            content
+                .contextMenu { AgentContextMenuItems(context) }
+                .agentContextDrag { context }
+        } else {
+            content
+        }
     }
 }

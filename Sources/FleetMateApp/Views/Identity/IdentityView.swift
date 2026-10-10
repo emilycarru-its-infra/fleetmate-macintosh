@@ -324,6 +324,8 @@ struct UsersContentView: View {
                 List(selection: $selectedId) {
                     ForEach(displayedUsers) { user in
                         UserSidebarRow(user: user).tag(rowId(user))
+                            .contextMenu { AgentContextMenuItems(.user(user)) }
+                            .agentContextDrag { .user(user) }
                     }
                 }
                 .listStyle(.inset)

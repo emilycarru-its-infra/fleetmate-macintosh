@@ -10,13 +10,17 @@ import FleetMateCore
 @MainActor
 final class DevelopmentModel: ObservableObject {
     enum Segment: String, CaseIterable, Hashable {
+        // First and the default: the checkouts people and agents work in.
+        case repos = "Repos"
         case pullRequests = "Pulls"
         case commits = "Commits"
         case pipelines = "Pipelines"
         case skills = "Skills"
     }
 
-    @Published var segment: Segment = .pullRequests
+    @Published var segment: Segment = .repos
+    /// The Repos segment: tracked checkouts, their files, changes and editor.
+    let repos = RepoWorkspaceModel()
     /// The GitHub inbox, shown in a toolbar popover rather than as a segment.
     @Published var showInbox = false
     @Published var selectedSkill: SkillCatalog.Entry?
@@ -753,11 +757,15 @@ private struct DevelopmentContent: View {
     @EnvironmentObject private var appState: AppState
     @ObservedObject var model: DevelopmentModel
 
-    private let listWidth: CGFloat = 470
+    /// The Repos segment's list is narrow: the editor needs the room.
+    private var listWidth: CGFloat { model.segment == .repos ? 250 : 470 }
 
     var body: some View {
         VStack(spacing: 0) {
-            DevelopmentWidgetsSection(model: model)
+            // Pull-request widgets say nothing about a checkout being edited.
+            if model.segment != .repos {
+                DevelopmentWidgetsSection(model: model)
+            }
             HStack(spacing: 0) {
                 leftPane
                     .frame(width: listWidth)
@@ -769,7 +777,12 @@ private struct DevelopmentContent: View {
         .toolbar { developmentToolbar }
         // Filters the list in view by title, repository, author, branch or
         // number, from the toolbar's one search field.
-        .tabSearch(text: $model.searchText, prompt: searchPrompt)
+        // In Repos, the field filters the file tree and Return searches
+        // every file's contents.
+        .tabSearch(text: $model.searchText, prompt: searchPrompt, onSubmit: { [model] in
+            guard model.segment == .repos else { return }
+            Task { await model.repos.grep(model.searchText) }
+        })
         .task {
             model.loadAll(appState: appState)
             // Inbox freshness matters more than anywhere else in the app:
@@ -818,6 +831,7 @@ private struct DevelopmentContent: View {
         case .commits: return "Filter commits"
         case .pipelines: return "Filter runs"
         case .skills: return "Filter skills and hooks"
+        case .repos: return "Filter files · Return searches contents"
         }
     }
 
@@ -845,6 +859,11 @@ private struct DevelopmentContent: View {
             }
 
             Button(action: {
+                if model.segment == .repos {
+                    model.repos.reloadRecords()
+                    Task { await model.repos.refreshStatuses(); await model.repos.loadSelected() }
+                    return
+                }
                 if model.segment == .skills {
                     Task { await appState.knowledge.sync(token: await appState.devOpsService.currentToken()) }
                     return
@@ -870,6 +889,7 @@ private struct DevelopmentContent: View {
             case .commits: commitsList
             case .pipelines: PipelinesListView(model: model, searchText: searchText)
             case .skills: SkillsListView(knowledge: appState.knowledge, selection: $model.selectedSkill, filter: searchText)
+            case .repos: ReposListView(model: model.repos)
             }
         }
     }
@@ -1202,7 +1222,9 @@ private struct DevelopmentContent: View {
 
     @ViewBuilder
     private var detailPane: some View {
-        if model.segment == .skills {
+        if model.segment == .repos {
+            RepoGitView(model: model.repos, searchText: searchText)
+        } else if model.segment == .skills {
             if let entry = model.selectedSkill {
                 SkillDetailView(entry: entry).id(entry.id)
             } else {

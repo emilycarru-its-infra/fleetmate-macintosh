@@ -513,7 +513,7 @@ struct BoardsView: View {
                                 .frame(width: 12)
                             Image(systemName: showDetailSidebar ? "chevron.compact.right" : "chevron.compact.left")
                                 .appFont(fixed: 14, weight: .semibold)
-                                .foregroundColor(.secondary.opacity(0.6))
+                                .foregroundColor(.secondary)
                         }
                     }
                     .buttonStyle(.plain)
@@ -734,7 +734,7 @@ struct BoardsView: View {
                                 .frame(width: 12)
                             Image(systemName: showDetailSidebar ? "chevron.compact.right" : "chevron.compact.left")
                                 .appFont(fixed: 14, weight: .semibold)
-                                .foregroundColor(.secondary.opacity(0.6))
+                                .foregroundColor(.secondary)
                         }
                     }
                     .buttonStyle(.plain)
@@ -886,7 +886,7 @@ struct BoardsView: View {
                     }
                     Text("Not in any shared query")
                         .appFont(.caption)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)

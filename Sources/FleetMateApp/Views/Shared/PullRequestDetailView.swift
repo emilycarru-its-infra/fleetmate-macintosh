@@ -165,7 +165,7 @@ struct PullRequestDetailView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                    Text("·").foregroundStyle(.tertiary)
+                    Text("·").foregroundStyle(.secondary)
                     Text(pullRequest.authorName)
                         .appFont(.caption)
                         .foregroundStyle(.secondary)
@@ -489,7 +489,7 @@ struct PullRequestDetailView: View {
         if checks.isEmpty {
             Text("No checks")
                 .appFont(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
         } else {
             let failing = checks.filter { $0.state == .failure }.count
             let pending = checks.filter { $0.state == .pending }.count
@@ -731,7 +731,7 @@ struct PullRequestDetailView: View {
                                     if let date = commit.date {
                                         Text(date.formatted(date: .abbreviated, time: .shortened))
                                             .appFont(.caption2)
-                                            .foregroundStyle(.tertiary)
+                                            .foregroundStyle(.secondary)
                                     }
                                 }
                             }

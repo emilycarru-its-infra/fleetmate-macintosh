@@ -37,7 +37,7 @@ struct SettingsView: View {
                     .tabItem { Label("Apple", systemImage: "apple.logo") }
                 AgentSettingsView()
                     .environmentObject(appState)
-                    .tabItem { Label("Agent", systemImage: "terminal") }
+                    .tabItem { Label("Agent", systemImage: ContentView.agentSymbol) }
                 RepositoriesSettingsView()
                     .environmentObject(appState)
                     .tabItem { Label("Repositories", systemImage: "folder.badge.gearshape") }

@@ -104,7 +104,7 @@ struct LabPickerSheet: View {
                                 VStack(spacing: 8) {
                                     Image(systemName: "tray").appFont(fixed: 22).foregroundStyle(.secondary)
                                     Text("No labs selected").appFont(.caption).foregroundStyle(.secondary)
-                                    Text("Drag areas or labs here").appFont(.caption2).foregroundStyle(.tertiary)
+                                    Text("Drag areas or labs here").appFont(.caption2).foregroundStyle(.secondary)
                                 }
                             }
                         }
@@ -169,7 +169,7 @@ struct LabPickerSheet: View {
         HStack(spacing: 8) {
             Button { toggle(room) } label: {
                 Image(systemName: selectedIDs.contains(room.id) ? "checkmark.square.fill" : "square")
-                    .foregroundStyle(selectedIDs.contains(room.id) ? Color.accentColor : Color(NSColor.tertiaryLabelColor))
+                    .foregroundStyle(selectedIDs.contains(room.id) ? Color.accentColor : Color(NSColor.secondaryLabelColor))
                     .appFont(fixed: 12)
             }
             .buttonStyle(.plain)

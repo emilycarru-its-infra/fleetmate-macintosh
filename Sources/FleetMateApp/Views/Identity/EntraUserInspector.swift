@@ -379,7 +379,7 @@ struct EntraUserInspector: View {
                     .frame(width: 210, alignment: .leading)
                 Text(value?.isEmpty == false ? value! : "—")
                     .appFont(.callout)
-                    .foregroundColor(value?.isEmpty == false ? .primary : .secondary.opacity(0.6))
+                    .foregroundColor(value?.isEmpty == false ? .primary : .secondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }

@@ -60,9 +60,16 @@ enum GlobalSearchRouter {
 /// switches which of the two it is doing.
 struct GlobalSearchToolbarField: View {
     @EnvironmentObject var appState: AppState
+    /// Narrower in a narrow window, so it stays out of the overflow menu.
+    var width: CGFloat = 300
     @State private var query = ""
     @State private var results: [GlobalSearchResult] = []
     @State private var showResults = false
+    /// A search is running; `loadingSource` names a source still loading.
+    @State private var isSearching = false
+    @State private var loadingSource: String?
+    /// Only the newest search clears the in-progress state when it ends.
+    @State private var searchGeneration = UUID()
     /// Searching everything rather than filtering the tab's list.
     @State private var everything = false
     @FocusState private var focused: Bool
@@ -76,9 +83,16 @@ struct GlobalSearchToolbarField: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(focused ? Color.accentColor : .secondary)
-                .onTapGesture { focused = true }
+            if isSearching {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: 16, height: 16)
+                    .accessibilityLabel("Searching")
+            } else {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(focused ? Color.accentColor : .secondary)
+                    .onTapGesture { focused = true }
+            }
             if let tabSearch {
                 scopeChip(tabSearch)
             }
@@ -103,7 +117,7 @@ struct GlobalSearchToolbarField: View {
         }
         .appFont(.body)
         .padding(.horizontal, 10)
-        .frame(width: 300, height: 28)
+        .frame(width: width, height: 28)
         .contentShape(Rectangle())
         .onTapGesture { focused = true }
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
@@ -136,12 +150,30 @@ struct GlobalSearchToolbarField: View {
         .popover(isPresented: $showResults, arrowEdge: .bottom) {
             ScrollView {
                 if results.isEmpty {
-                    Text("No matches.").appFont(.callout).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(14)
+                    HStack(spacing: 8) {
+                        if isSearching { ProgressView().controlSize(.small) }
+                        Text(isSearching ? "Searching…" : "No matches.")
+                            .appFont(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
                 } else {
-                    GlobalSearchResultsPanel(results: results, width: 560) { hit in open(hit) }
-                        .padding(8)
+                    // The popover is the container: no second material box,
+                    // border and shadow inside it (grey on grey).
+                    GlobalSearchResultsPanel(results: results, width: 560, chrome: false) { hit in open(hit) }
+                        .padding(.vertical, 4)
+                }
+                if let loadingSource, !results.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Still loading \(loadingSource)…")
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
                 }
             }
             .frame(width: 576)
@@ -149,6 +181,14 @@ struct GlobalSearchToolbarField: View {
         }
         .task(id: searchingEverything ? query : "") {
             let trimmed = query.trimmingCharacters(in: .whitespaces)
+            let generation = UUID()
+            searchGeneration = generation
+            defer {
+                if searchGeneration == generation {
+                    isSearching = false
+                    loadingSource = nil
+                }
+            }
             guard searchingEverything, trimmed.count >= 2 || parseWorkItemId(trimmed) != nil else {
                 results = []
                 showResults = false
@@ -157,11 +197,14 @@ struct GlobalSearchToolbarField: View {
             // Debounce; a newer keystroke cancels this scan.
             try? await Task.sleep(nanoseconds: 120_000_000)
             guard !Task.isCancelled else { return }
+            isSearching = true
             results = GlobalSearchScanner.search(trimmed, appState: appState)
             showResults = true
             if appState.reporting.session.devicesLoadedAt == nil {
+                loadingSource = "Reporting devices"
                 await appState.reporting.loadDevicesForSearch()
                 guard !Task.isCancelled else { return }
+                loadingSource = nil
                 results = GlobalSearchScanner.search(trimmed, appState: appState)
             }
             if let row = await GlobalSearchRouter.workItemLookup(for: trimmed, appState: appState, existing: results),

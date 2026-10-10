@@ -35,7 +35,7 @@ struct SkillsListView: View {
                 }
                 Spacer()
             }
-            .appFont(.caption2)
+            .appFont(.caption)
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -49,7 +49,7 @@ struct SkillsListView: View {
                     selection = knowledge.skills.entries.first { $0.id == id }
                 })) {
                     ForEach(grouped, id: \.0) { title, rows in
-                        Section(title) {
+                        Section {
                             ForEach(rows) { entry in
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(entry.name).appFont(.body, weight: .medium)
@@ -63,10 +63,17 @@ struct SkillsListView: View {
                                 .padding(.vertical, 3)
                                 .tag(entry.id)
                             }
+                        } header: {
+                            // The sidebar style drew these in its faint
+                            // section-header grey; this pane is a content
+                            // list, not the window's sidebar.
+                            Text(title)
+                                .appFont(.caption, weight: .semibold)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
-                .listStyle(.sidebar)
+                .listStyle(.inset)
             }
         }
     }

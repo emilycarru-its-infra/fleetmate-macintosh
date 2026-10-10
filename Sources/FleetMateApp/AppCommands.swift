@@ -156,8 +156,10 @@ struct FleetMateCommands: Commands {
             Divider()
 
             if !AppEdition.current.isTicketsOnly {
-                Button("Toggle Terminal") {
+                Button {
                     appState.terminals.toggle(defaultLaunch: appState.agentDefaultLaunch)
+                } label: {
+                    Label("Toggle Terminal", systemImage: ContentView.agentSymbol)
                 }
                 .keyboardShortcut("`", modifiers: .control)
                 Button("New Terminal Tab") { appState.terminals.open(appState.agentDefaultLaunch) }

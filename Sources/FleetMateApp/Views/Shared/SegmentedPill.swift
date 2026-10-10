@@ -14,8 +14,19 @@ struct SegmentedPill<Value: Hashable>: View {
     var segmentWidth: CGFloat? = 56
 
     @Namespace private var pillNS
+    @Environment(\.compactModuleToolbar) private var compactToolbar
 
     var body: some View {
+        // A narrow window folds a long switch into one pill naming the open
+        // segment ("Repos ⌄"), so the window's module tab bar keeps its room.
+        if compactToolbar && options.count > 2 {
+            PillMenu(selection: $selection, options: options, label: label)
+        } else {
+            segments
+        }
+    }
+
+    private var segments: some View {
         HStack(spacing: 0) {
             ForEach(options, id: \.self) { option in
                 Text(label(option))
@@ -90,6 +101,11 @@ struct PillMenu<Value: Hashable>: View {
         .background(Capsule().fill(.primary.opacity(0.08)))
         .contentShape(Capsule())
         .onTapGesture { isPresented.toggle() }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label(selection))
+        .accessibilityHint("Shows the other choices")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { isPresented.toggle() }
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 1) {
                 ForEach(options, id: \.self) { option in
@@ -114,6 +130,36 @@ struct PillMenu<Value: Hashable>: View {
             }
             .padding(6)
             .frame(minWidth: 170, alignment: .leading)
+        }
+    }
+}
+
+/// True when the window is too narrow for every module's toolbar controls at
+/// full width. ContentView sets it from the window width; a module's toolbar
+/// reads it to fold segment switches into a menu and drop button titles, so
+/// the module tab bar in the centre never has to give way.
+private struct CompactModuleToolbarKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var compactModuleToolbar: Bool {
+        get { self[CompactModuleToolbarKey.self] }
+        set { self[CompactModuleToolbarKey.self] = newValue }
+    }
+}
+
+/// Title and icon when there is room, icon only when there isn't. The title
+/// stays the accessibility label either way, and callers pair it with
+/// `.help` so the icon-only form still names itself on hover.
+struct AdaptiveLabelStyle: LabelStyle {
+    let iconOnly: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        if iconOnly {
+            Label(configuration).labelStyle(.iconOnly)
+        } else {
+            Label(configuration).labelStyle(.titleAndIcon)
         }
     }
 }

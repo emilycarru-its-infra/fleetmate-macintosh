@@ -145,7 +145,6 @@ struct TicketBoardView: View {
             }
             .padding()
         }
-        .background(Color.secondary.opacity(0.03))
     }
 
     private func boardColumn(_ col: (key: String, label: String, tickets: [TdxTicket])) -> some View {

@@ -253,7 +253,7 @@ struct MachineRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: isSelected ? "checkmark.square.fill" : "square")
-                .foregroundStyle(isSelected ? Color.accentColor : Color(NSColor.tertiaryLabelColor))
+                .foregroundStyle(isSelected ? Color.accentColor : Color(NSColor.secondaryLabelColor))
                 .appFont(fixed: 13)
                 .frame(width: 16)
 
@@ -341,7 +341,7 @@ struct MachineRow: View {
                     }
                 }
             }
-            .foregroundStyle(isOnline ? Color.secondary : Color(NSColor.quaternaryLabelColor))
+            .foregroundStyle(isOnline ? Color.secondary : Color(NSColor.tertiaryLabelColor))
         }
         .contentShape(Rectangle())
         .opacity(isOnline || manage.isScanning ? 1.0 : 0.5)
@@ -438,7 +438,7 @@ struct MachineRow: View {
         } else if !computer.location.isEmpty || !computer.asset.isEmpty {
             Text([computer.location, computer.asset, computer.serial].filter { !$0.isEmpty }.joined(separator: "  ·  "))
                 .appFont(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
     }

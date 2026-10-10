@@ -1,14 +1,6 @@
 import SwiftUI
 import FleetMateCore
 
-/// Preference key to relay the content area width up to ContentView.
-private struct WindowWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 1000
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
     /// When each system's silent SSO was last attempted from a tab switch.
@@ -19,6 +11,9 @@ struct ContentView: View {
     @State private var lastSsoAttempt: [AuthSystemId: Date] = [:]
     private static let ssoRetryInterval: TimeInterval = 60
     @State private var windowWidth: CGFloat = 1000
+    /// Below this width the visible module folds its toolbar (segments into a
+    /// menu, titled buttons to icons) so the module tab bar keeps its room.
+    static let compactModuleToolbarBelow: CGFloat = 1400
     @State private var showAuthPopover = false
     @ObservedObject private var terminals: AgentTerminalStore
     @AppStorage(AgentSettingsKey.panelHeight) private var panelHeight: Double = 280
@@ -39,32 +34,32 @@ struct ContentView: View {
             if !(terminals.isMaximized && terminals.isVisible && !terminals.sessions.isEmpty) {
                 tabContent
                     .frame(maxHeight: .infinity)
+                    .environment(\.compactModuleToolbar, windowWidth < Self.compactModuleToolbarBelow)
             }
             if terminals.isVisible && !terminals.sessions.isEmpty {
                 terminalPanel
             }
         }
             .frame(minWidth: 500, minHeight: 400)
-            .background(
-                GeometryReader { geo in
-                    Color.clear.preference(key: WindowWidthKey.self, value: geo.size.width)
-                }
-            )
-            .onPreferenceChange(WindowWidthKey.self) { windowWidth = $0 }
+            // A preference read through a background GeometryReader stopped
+            // updating once the window had been narrowed, so widening it
+            // again left the toolbar compact. Observe the geometry directly.
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
+            .background(ToolbarPriorityBridge { appState.globalSearchFocusRequest += 1 })
             .toolbar {
                 // Browser-style history, mirrored on ⌘[ / ⌘].
                 ToolbarItemGroup(placement: .navigation) {
                     Button {
                         appState.goBack()
                     } label: {
-                        Image(systemName: "chevron.left")
+                        Label("Back", systemImage: "chevron.left")
                     }
                     .help("Back (⌘[)")
                     .disabled(!appState.canGoBack)
                     Button {
                         appState.goForward()
                     } label: {
-                        Image(systemName: "chevron.right")
+                        Label("Forward", systemImage: "chevron.right")
                     }
                     .help("Forward (⌘])")
                     .disabled(!appState.canGoForward)
@@ -102,7 +97,13 @@ struct ContentView: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: { showAuthPopover.toggle() }) {
-                        ElevationShieldLabel()
+                        // A Label, so the overflow menu and Customize Toolbar
+                        // show "Authentication" rather than a bare shield.
+                        Label {
+                            Text("Authentication")
+                        } icon: {
+                            ElevationShieldLabel()
+                        }
                     }
                     .popover(isPresented: $showAuthPopover, arrowEdge: .bottom) {
                         AuthSettingsView()
@@ -113,23 +114,28 @@ struct ContentView: View {
                 }
                 if appState.authManager.hasServicePrincipalWarning {
                     ToolbarItem(placement: .automatic) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                                .appFont(fixed: 11)
-                            Text("SP")
-                                .appFont(fixed: 10, weight: .bold)
-                                .foregroundStyle(.orange)
+                        // A Label, so the overflow menu has a name for it.
+                        Label {
+                            Text("Service Principal")
+                        } icon: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .appFont(fixed: 11)
+                                Text("SP")
+                                    .appFont(fixed: 10, weight: .bold)
+                            }
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.orange.opacity(0.12), in: .rect(cornerRadius: 4))
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(.orange.opacity(0.12), in: .rect(cornerRadius: 4))
+                        .labelStyle(.iconOnly)
                         .help("One or more systems are logged in as a Service Principal")
                     }
                 }
                 // Last, at the far right, where search is looked for.
                 ToolbarItem(placement: .primaryAction) {
-                    GlobalSearchToolbarField()
+                    GlobalSearchToolbarField(width: windowWidth < Self.compactModuleToolbarBelow ? 200 : 300)
                 }
             }
             .onAppear {

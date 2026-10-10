@@ -846,16 +846,20 @@ private struct DevelopmentContent: View {
             )
 
             // The inbox is a glance, not a page: a popover off one button.
-            // A full tray means unread mail; no count, per the toolbar's rule.
-            Button {
-                model.showInbox.toggle()
-            } label: {
-                Label("Inbox", systemImage: model.unreadCount > 0 ? "tray.full" : "tray")
-            }
-            .help(model.unreadCount > 0 ? "Inbox: unread notifications" : "Inbox")
-            .popover(isPresented: $model.showInbox, arrowEdge: .bottom) {
-                inboxList
-                    .frame(width: 440, height: 520)
+            // The button only appears while there is something unread (or its
+            // popover is open, so marking all read doesn't pull the anchor
+            // out from under it); an empty inbox is not worth toolbar room.
+            if model.unreadCount > 0 || model.showInbox {
+                Button {
+                    model.showInbox.toggle()
+                } label: {
+                    Label("Inbox", systemImage: "tray.full")
+                }
+                .help("Inbox: unread notifications")
+                .popover(isPresented: $model.showInbox, arrowEdge: .bottom) {
+                    inboxList
+                        .frame(width: 440, height: 520)
+                }
             }
 
             Button(action: {
@@ -1040,7 +1044,7 @@ private struct DevelopmentContent: View {
                 if let at = model.inboxLoadedAt {
                     Text("Checked \(DevelopmentView.relative(at))")
                         .appFont(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                 }
                 Button {
                     model.markAllRead(appState: appState)
@@ -1121,7 +1125,7 @@ private struct DevelopmentContent: View {
                 if let at = model.commitsLoadedAt {
                     Text("Checked \(DevelopmentView.relative(at))")
                         .appFont(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                 }
             }
             .padding(.horizontal, 12)
@@ -1200,7 +1204,7 @@ private struct DevelopmentContent: View {
                 .clipShape(RoundedRectangle(cornerRadius: 1.5))
             Text(repo.displayName).appFont(.caption, weight: .semibold, design: .monospaced)
             if let branch = repo.defaultBranch {
-                Text(branch).appFont(.caption2, design: .monospaced).foregroundStyle(.tertiary)
+                Text(branch).appFont(.caption2, design: .monospaced).foregroundStyle(.secondary)
             }
             Text("\(repo.commits.count)")
                 .appFont(.caption2).monospacedDigit()
@@ -1211,7 +1215,7 @@ private struct DevelopmentContent: View {
             Spacer()
             Text(DevelopmentView.relative(repo.latestDate))
                 .appFont(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
@@ -1311,7 +1315,7 @@ struct CodePullRequestRow: View {
                         Text(pullRequest.authorName)
                             .appFont(.caption2)
                             .foregroundStyle(.secondary)
-                        Text("·").foregroundStyle(.tertiary)
+                        Text("·").foregroundStyle(.secondary)
                         Text(pullRequest.sourceBranch)
                             .appFont(.caption2, design: .monospaced)
                             .foregroundStyle(.secondary)
@@ -1449,7 +1453,7 @@ struct InboxRow: View {
                             if let at = notification.updatedAt {
                                 Text(DevelopmentView.relative(at))
                                     .appFont(.caption2)
-                                    .foregroundStyle(.tertiary)
+                                    .foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -1532,7 +1536,7 @@ struct ActivityRow: View {
                     if let date = entry.comment.date {
                         Text(DevelopmentView.relative(date))
                             .appFont(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                     }
                     if isHovering, let url = entry.comment.url.flatMap(URL.init) {
                         Button {
@@ -1557,7 +1561,7 @@ struct ActivityRow: View {
                     Text(entry.pullRequest.title)
                         .appFont(.caption2)
                         .lineLimit(1)
-                    Text("·").foregroundStyle(.tertiary)
+                    Text("·").foregroundStyle(.secondary)
                     Text(entry.pullRequest.repository)
                         .appFont(.caption2, design: .monospaced)
                         .lineLimit(1)
@@ -1673,12 +1677,12 @@ struct CommitDetailView: View {
                         Image(systemName: "arrow.triangle.branch").appFont(.caption2).foregroundStyle(.secondary)
                         Text(branch).appFont(.caption, design: .monospaced).foregroundStyle(.secondary)
                     }
-                    Text("·").foregroundStyle(.tertiary)
+                    Text("·").foregroundStyle(.secondary)
                     Text(commit.authorName ?? "unknown").appFont(.caption).foregroundStyle(.secondary)
                     if let date = commit.date {
                         Text(date.formatted(date: .abbreviated, time: .shortened))
                             .appFont(.caption)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -1786,7 +1790,7 @@ struct CommitDetailView: View {
                         }
                         Text("These files are binary or too large to show as a diff.")
                             .appFont(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                     } else {
                         Text("No file changes recorded.")
                             .appFont(.callout)

@@ -141,7 +141,15 @@ final class AgentBriefTests: XCTestCase {
     func testCodexGetsDeveloperInstructions() {
         XCTAssertEqual(
             AgentBrief.launchLine("codex --search", briefPath: brief, codexValuePath: codexValue),
-            #"codex -c "developer_instructions=$(cat '/Users/a b/FleetMate/agent-brief.codex-toml')" --search"#)
+            #"codex $(codex --help 2>/dev/null | grep -q -e --no-daemon && printf %s --no-daemon) -c "developer_instructions=$(cat '/Users/a b/FleetMate/agent-brief.codex-toml')" --search"#)
+    }
+
+    func testCodexSkipsItsOwnUpdateCheckWhenFleetMateUpdates() {
+        let line = AgentBrief.launchLine("codex", briefPath: brief, codexValuePath: codexValue, selfUpdate: false)
+        XCTAssertTrue(line.contains(" -c check_for_update_on_startup=false "))
+        XCTAssertTrue(line.contains("--no-daemon"))
+        XCTAssertFalse(AgentBrief.launchLine("codex", briefPath: brief, codexValuePath: codexValue)
+            .contains("check_for_update_on_startup"))
     }
 
     func testOtherCommandsAreUnchanged() {

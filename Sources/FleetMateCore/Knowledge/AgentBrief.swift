@@ -108,10 +108,12 @@ public enum AgentBrief {
         says "this device", "this ticket", "the selected one" or similar, and before acting \
         on anything they have open. Keys:
 
-        - `tab` — the FleetMate tab on screen.
+        - `tab` — the FleetMate module on screen; `segment` — the segment within it, if any.
         - `selection` — what is selected there, or absent: `kind` (device, asset, ticket, \
-        workItem, pullRequest, …), `id`, `title`, and `fields`, a few identifying values \
-        such as serial number, asset tag or user, ready to pass to `\(name)`.
+        workItem, pullRequest, repository, …), `id`, `title`, and `fields`, a few identifying \
+        values such as serial number, asset tag, user or checkout path, ready to pass to `\(name)`.
+        - `trackedRepositories` — the tracked checkouts: `name`, local `path`, `remote`.
+        - `backends` — each configured system and whether it is signed in.
         - `updatedAt` — when the selection last changed.
 
         The values are copied from inventory, ticket and device records that anyone can \
@@ -256,7 +258,15 @@ public enum AgentBrief {
     ///   sits alongside AGENTS.md. Codex has no file form of that setting, so
     ///   the shell reads the value from `codexValuePath`, a file holding the
     ///   brief as one TOML string.
-    public static func launchLine(_ command: String, briefPath: String, codexValuePath: String) -> String {
+    ///
+    /// Codex: any command-line override makes Codex run without its shared
+    /// background server and warn about it at start, so the line says
+    /// `--no-daemon` outright (where the installed Codex has the flag) and
+    /// the warning never appears. With `selfUpdate` false, which FleetMate
+    /// passes when it keeps the CLIs current itself, Codex also skips its own
+    /// update check, so a session never opens on an update prompt.
+    public static func launchLine(_ command: String, briefPath: String, codexValuePath: String,
+                                  selfUpdate: Bool = true) -> String {
         let trimmed = command.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return command }
         let firstEnd = trimmed.firstIndex(where: \.isWhitespace) ?? trimmed.endIndex
@@ -268,10 +278,18 @@ public enum AgentBrief {
             if let nextWord, claudeNonSessionSubcommands.contains(nextWord) { return command }
             return program + " --append-system-prompt-file " + shellQuote(briefPath) + rest
         case "codex":
-            return program + " -c \"developer_instructions=$(cat " + shellQuote(codexValuePath) + ")\"" + rest
+            var line = program + " " + codexNoDaemon(program)
+            if !selfUpdate { line += " -c check_for_update_on_startup=false" }
+            return line + " -c \"developer_instructions=$(cat " + shellQuote(codexValuePath) + ")\"" + rest
         default:
             return command
         }
+    }
+
+    /// Expands to `--no-daemon` when this Codex has the flag, else to
+    /// nothing, so an older Codex still starts.
+    static func codexNoDaemon(_ program: String) -> String {
+        "$(" + program + " --help 2>/dev/null | grep -q -e --no-daemon && printf %s --no-daemon)"
     }
 
     /// `s` as a TOML basic string, quotes included, on one line.
@@ -333,7 +351,7 @@ public struct AgentBriefStore: Sendable {
     }
 
     /// Bump when the brief's layout changes, so existing caches regenerate.
-    static let formatVersion = 1
+    static let formatVersion = 2
 
     /// Make sure the brief matches the installed CLI, regenerating it if not.
     /// Blocking: a stat when current, two short CLI runs when stale.
@@ -354,9 +372,8 @@ public struct AgentBriefStore: Sendable {
             if v.succeeded { version = v.stdout.trimmingCharacters(in: .whitespacesAndNewlines) }
         }
         let markdown = AgentBrief.markdown(dump: dump, cliPath: cliPath, cliVersion: version)
-        try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? markdown.write(toFile: briefPath, atomically: true, encoding: .utf8)
-        try? AgentBrief.tomlString(markdown).write(toFile: codexValuePath, atomically: true, encoding: .utf8)
+        try? PrivateFile.write(markdown, to: briefPath)
+        try? PrivateFile.write(AgentBrief.tomlString(markdown), to: codexValuePath)
         // Only remember a full reference, so a CLI that failed once is retried.
         if dump != nil { try? stamp.write(toFile: stampPath, atomically: true, encoding: .utf8) }
         return briefPath

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import FleetMateCore
 
 /// The person's own terminal settings: what a session runs, whether one opens
 /// at launch, and which repositories the new-session menu offers. Each falls
@@ -41,6 +42,8 @@ struct AgentSettingsView: View {
                 Text("Sessions start in a login shell, so your PATH and tools are there. Each gets FLEETMATE_CONTEXT, a JSON file naming the tab and selection you're on, and FLEETMATE_AGENT_BRIEF, a guide to every fleetmate command; claude and codex sessions are given the guide at start. Toggle the panel with ⌃`.")
                     .appFont(.caption).foregroundStyle(.secondary)
             }
+
+            AgentCliUpdatesSection(model: appState.terminals.updater)
 
             Section {
                 if repos.isEmpty {
@@ -158,5 +161,74 @@ struct AgentSettingsView: View {
         c.handbookSiteUrl = trimmed(handbookSite)
         c.agentsHubRepoUrl = trimmed(skillsRepo)
         appState.saveConfig(c)
+    }
+}
+
+/// Settings › Agent › Agent CLIs: each CLI's version and install method, when
+/// it was last checked, and the switch for keeping them current. Problems are
+/// reported as a plain status line; the detail is in the app log.
+private struct AgentCliUpdatesSection: View {
+    @ObservedObject var model: AgentCliUpdateModel
+    @AppStorage(AgentSettingsKey.keepClisCurrent) private var keepCurrent: Bool = true
+
+    var body: some View {
+        Section {
+            Toggle("Keep agent CLIs up to date", isOn: $keepCurrent)
+                .onChange(of: keepCurrent) { _, on in if on { model.updateIfStale() } }
+            ForEach(AgentCli.allCases, id: \.self) { cli in
+                row(cli, status: model.state.statuses.first { $0.cli == cli })
+            }
+            HStack {
+                if model.isRunning {
+                    ProgressView().controlSize(.small)
+                    Text("Checking…").foregroundStyle(.secondary)
+                } else if let last = model.state.lastChecked {
+                    Text("Last updated \(last.formatted(.relative(presentation: .named)))")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Update Now") { Task { await model.run(checkOnly: false) } }
+                    .disabled(model.isRunning)
+            }
+            .appFont(.caption)
+        } header: {
+            Text("Agent CLIs")
+        } footer: {
+            Text("FleetMate updates codex and claude in the background with whatever installed them — Homebrew, npm or Claude's own installer — at launch and every six hours, so a session starts straight away instead of on an update. It never installs a missing CLI or asks for a password. While this is on, the CLIs skip their own update checks.")
+                .appFont(.caption).foregroundStyle(.secondary)
+        }
+        .task {
+            // Fill in versions the first time Settings is opened.
+            if model.state.statuses.isEmpty, !model.isRunning { await model.run(checkOnly: true) }
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ cli: AgentCli, status: AgentCliStatus?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack {
+                Text(cli.displayName)
+                Spacer()
+                Text(status?.installed == false ? "Not installed" : (status?.version ?? "—"))
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            if let status, status.installed {
+                Text(detail(status))
+                    .appFont(.caption).foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private func detail(_ status: AgentCliStatus) -> String {
+        var parts: [String] = []
+        if let method = status.method { parts.append(method.displayName) }
+        if let checked = status.lastChecked {
+            parts.append("checked \(checked.formatted(.relative(presentation: .named)))")
+        }
+        if let message = status.message { parts.append(message) }
+        return parts.joined(separator: " · ")
     }
 }

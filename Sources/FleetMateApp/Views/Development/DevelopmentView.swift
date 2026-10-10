@@ -10,7 +10,6 @@ import FleetMateCore
 @MainActor
 final class DevelopmentModel: ObservableObject {
     enum Segment: String, CaseIterable, Hashable {
-        case inbox = "Inbox"
         case pullRequests = "Pulls"
         case commits = "Commits"
         case pipelines = "Pipelines"
@@ -18,6 +17,8 @@ final class DevelopmentModel: ObservableObject {
     }
 
     @Published var segment: Segment = .pullRequests
+    /// The GitHub inbox, shown in a toolbar popover rather than as a segment.
+    @Published var showInbox = false
     @Published var selectedSkill: SkillCatalog.Entry?
 
     // Pull requests
@@ -797,9 +798,6 @@ private struct DevelopmentContent: View {
             if ready { model.loadPullRequests(appState: appState, force: true) }
         }
         .onAppear {
-            // The model outlives the tab, so an inbox read to zero on an
-            // earlier visit would otherwise still be the open segment.
-            if model.segment == .inbox, model.unreadCount == 0 { model.segment = .pullRequests }
             consumeLink()
         }
         .onChange(of: appState.pendingDevelopmentLink) { _, _ in consumeLink() }
@@ -817,20 +815,9 @@ private struct DevelopmentContent: View {
     private var searchPrompt: String {
         switch model.segment {
         case .pullRequests: return "Filter pull requests"
-        case .inbox: return "Filter inbox"
         case .commits: return "Filter commits"
         case .pipelines: return "Filter runs"
         case .skills: return "Filter skills and hooks"
-        }
-    }
-
-    /// Inbox leads the row and only appears while it has unread
-    /// notifications — an empty inbox is not worth a segment. It stays while
-    /// it is the open segment, so marking everything read does not yank the
-    /// page out from under the reader.
-    private var visibleSegments: [DevelopmentModel.Segment] {
-        DevelopmentModel.Segment.allCases.filter {
-            $0 != .inbox || model.unreadCount > 0 || model.segment == .inbox
         }
     }
 
@@ -839,21 +826,22 @@ private struct DevelopmentContent: View {
         ToolbarItemGroup(placement: .navigation) {
             SegmentedPill(
                 selection: $model.segment,
-                options: visibleSegments,
-                // The segment only shows while there is unread mail, so the
-                // name alone says it; the count was noise in the toolbar.
+                options: DevelopmentModel.Segment.allCases,
                 label: { $0.rawValue },
                 segmentWidth: nil
             )
 
-            if model.segment == .inbox {
-                Button {
-                    model.markAllRead(appState: appState)
-                } label: {
-                    Label("Mark all read", systemImage: "envelope.open")
-                }
-                .disabled(model.unreadCount == 0)
-                .help("Mark every notification as read")
+            // The inbox is a glance, not a page: a popover off one button.
+            // A full tray means unread mail; no count, per the toolbar's rule.
+            Button {
+                model.showInbox.toggle()
+            } label: {
+                Label("Inbox", systemImage: model.unreadCount > 0 ? "tray.full" : "tray")
+            }
+            .help(model.unreadCount > 0 ? "Inbox: unread notifications" : "Inbox")
+            .popover(isPresented: $model.showInbox, arrowEdge: .bottom) {
+                inboxList
+                    .frame(width: 440, height: 520)
             }
 
             Button(action: {
@@ -879,7 +867,6 @@ private struct DevelopmentContent: View {
         VStack(alignment: .leading, spacing: 0) {
             switch model.segment {
             case .pullRequests: pullRequestList
-            case .inbox: inboxList
             case .commits: commitsList
             case .pipelines: PipelinesListView(model: model, searchText: searchText)
             case .skills: SkillsListView(knowledge: appState.knowledge, selection: $model.selectedSkill, filter: searchText)
@@ -1035,6 +1022,14 @@ private struct DevelopmentContent: View {
                         .appFont(.caption2)
                         .foregroundStyle(.tertiary)
                 }
+                Button {
+                    model.markAllRead(appState: appState)
+                } label: {
+                    Label("Mark all read", systemImage: "envelope.open").labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.unreadCount == 0)
+                .help("Mark every notification as read")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -1064,7 +1059,11 @@ private struct DevelopmentContent: View {
                             InboxRow(
                                 notification: notification,
                                 isBusy: model.busyThreadIds.contains(notification.id),
-                                onOpen: { model.open(notification, appState: appState) },
+                                onOpen: {
+                                    model.open(notification, appState: appState)
+                                    model.segment = .pullRequests
+                                    model.showInbox = false
+                                },
                                 onMarkRead: { model.markRead(notification, appState: appState) },
                                 onDone: { model.markDone(notification, appState: appState) },
                                 onUnsubscribe: { model.unsubscribe(notification, appState: appState) }

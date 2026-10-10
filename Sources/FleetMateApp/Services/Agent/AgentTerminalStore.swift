@@ -264,8 +264,11 @@ final class AgentTerminalStore: ObservableObject {
     var selected: AgentTerminalSession? { sessions.first { $0.id == selectedId } }
     var split: AgentTerminalSession? { sessions.first { $0.id == splitId } }
 
+    /// Start a session. `show` false leaves the panel as it is, so a session
+    /// started at launch is ready behind the toolbar button without taking
+    /// half the window.
     @discardableResult
-    func open(_ launch: AgentLaunch, focus: Bool = true) -> AgentTerminalSession {
+    func open(_ launch: AgentLaunch, focus: Bool = true, show: Bool = true) -> AgentTerminalSession {
         let session = AgentTerminalSession(launch: launch, contextPath: contextPath)
         session.wantsFocus = focus
         let id = session.id
@@ -274,7 +277,7 @@ final class AgentTerminalStore: ObservableObject {
         }
         sessions.append(session)
         selectedId = session.id
-        isVisible = true
+        if show { isVisible = true }
         return session
     }
 

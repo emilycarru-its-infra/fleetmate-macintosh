@@ -38,7 +38,7 @@ struct AgentSettingsView: View {
             } header: {
                 Text("Terminal")
             } footer: {
-                Text("Sessions start in a login shell, so your PATH and tools are there. Each gets FLEETMATE_CONTEXT, a JSON file naming the tab and selection you're on. Toggle the panel with ⌃`.")
+                Text("Sessions start in a login shell, so your PATH and tools are there. Each gets FLEETMATE_CONTEXT, a JSON file naming the tab and selection you're on, and FLEETMATE_AGENT_BRIEF, a guide to every fleetmate command; claude and codex sessions are given the guide at start. Toggle the panel with ⌃`.")
                     .appFont(.caption).foregroundStyle(.secondary)
             }
 

@@ -24,14 +24,14 @@ enum AgentContextPasteboard {
 }
 
 extension AppState {
-    /// Paste the blocks into a running agent's input, opening the terminal
-    /// (and an agent session, when none is running) first. Never presses
-    /// Return. With no agent CLI installed the blocks are copied instead.
+    /// Paste the blocks into a running agent's input, never pressing Return.
+    /// With no agent running, copy them and open the terminal idle, so the
+    /// person pastes them alongside their own request.
     func sendToAgent(_ contexts: [AgentContext]) {
         guard !contexts.isEmpty else { return }
-        if !terminals.insert(AgentContextRenderer.render(contexts), launch: agentDefaultLaunch) {
+        if !terminals.insert(AgentContextRenderer.render(contexts)) {
             AgentContextPasteboard.write(contexts)
-            NSSound.beep()
+            terminals.show(defaultLaunch: agentDefaultLaunch)
         }
     }
 }
@@ -81,7 +81,7 @@ struct AgentContextButton: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .disabled(context == nil)
-        .help("Send this \(context?.kind.label.lowercased() ?? "item") to the agent session; the menu copies it instead")
+        .help("Send this \(context?.kind.label.lowercased() ?? "item") to the running agent, or copy it when none is running; the menu copies it")
     }
 }
 

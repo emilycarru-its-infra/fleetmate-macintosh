@@ -34,8 +34,8 @@ public class TdxService {
     private var ssoCookies: [HTTPCookie]?
     private var cookieSession: Session?
 
-    /// Why the last SSO sign-in was refused, when it reached someone else's
-    /// account. While set, no credential is offered at all — not the service
+    /// Why the last SSO sign-in was refused, when its identity could not be
+    /// confirmed as the signed-in user's. While set, no credential is offered at all — not the service
     /// account either — until a sign-in as the right person succeeds.
     public private(set) var refusedSsoReason: String?
 
@@ -179,7 +179,7 @@ public class TdxService {
         self.cookieSession = nil
     }
 
-    /// Refuse SSO because the session belongs to a different account: drop
+    /// Refuse SSO because the session's identity failed the check: drop
     /// every held credential and stop offering any, service account included.
     public func refuseSso(reason: String) {
         clearSsoToken()

@@ -11,10 +11,12 @@ public struct TdxSsoResult: Sendable, Equatable {
     public let userName: String?
     public let userEmail: String?
     public let error: String?
-    /// The sign-in finished, but as someone other than the signed-in user.
-    /// That is final: retrying the same browser session reaches the same
-    /// account, so callers stop rather than move on to another sign-in route.
-    public var isWrongAccount: Bool = false
+    /// The sign-in finished, but its identity could not be confirmed as the
+    /// signed-in user: it is someone else, or one side has no address to
+    /// compare. That is final: retrying the same browser session reaches the
+    /// same account, so callers stop rather than move on to another sign-in
+    /// route, and never fall back to the service account.
+    public var isIdentityRefused: Bool = false
     
     public static func success(token: String, userName: String? = nil, userEmail: String? = nil) -> TdxSsoResult {
         TdxSsoResult(success: true, token: token, userName: userName, userEmail: userEmail, error: nil)
@@ -24,11 +26,23 @@ public struct TdxSsoResult: Sendable, Equatable {
         TdxSsoResult(success: false, token: nil, userName: nil, userEmail: nil, error: error)
     }
 
-    public static func wrongAccount(signedInAs actual: String, expected: String) -> TdxSsoResult {
-        var result = failure("TDX session belongs to \(actual); expected \(expected)")
-        result.isWrongAccount = true
+    /// A sign-in refused because its identity failed the check; the token is
+    /// not carried.
+    public static func identityRefused(_ reason: String) -> TdxSsoResult {
+        var result = failure(reason)
+        result.isIdentityRefused = true
         return result
     }
+
+    public static func wrongAccount(signedInAs actual: String, expected: String) -> TdxSsoResult {
+        identityRefused("TDX session belongs to \(actual); expected \(expected)")
+    }
+
+    public static let noAddressInTokenReason =
+        "TDX sign-in refused: the session carries no email or UPN to confirm whose it is"
+
+    public static let unknownExpectedAddressReason =
+        "TDX sign-in refused: the signed-in user's own address could not be determined"
 }
 
 // MARK: - TDX SSO Identity Check
@@ -36,26 +50,27 @@ public struct TdxSsoResult: Sendable, Equatable {
 /// Checks that a TDX session belongs to the person signed in on this Mac.
 ///
 /// Entra can hold more than one account, and the session TDX hands back is
-/// whichever one the chain ended on. A token for anyone else is refused
-/// outright: it is never stored, and the sign-in is reported as failed.
+/// whichever one the chain ended on. A sign-in is accepted only when its
+/// address is known and equals the signed-in user's own; anything else is
+/// refused outright: the token is never stored, and the sign-in is reported
+/// as failed.
 public enum TdxSsoIdentity {
     /// Verify a sign-in result's identity against the expected address.
     ///
     /// - A token whose address matches (ignoring case and surrounding space)
     ///   is accepted.
     /// - A token for a different address is refused with `wrongAccount`.
-    /// - A token with no address claim cannot be checked, so it is attributed
-    ///   to the expected account, which Entra's picker chose by exact address.
-    /// - With no expected address there is nothing to compare against, and
-    ///   the result passes through unchanged.
+    /// - With no expected address there is nothing to compare against, so
+    ///   the sign-in is refused.
+    /// - A token with no address claim cannot be checked, so it is refused.
+    /// - A result that is already a failure passes through unchanged.
     public static func verify(_ result: TdxSsoResult, expectedUpn: String?) -> TdxSsoResult {
-        guard result.success, let token = result.token else { return result }
-        let expected = normalized(expectedUpn)
-        let actual = normalized(result.userEmail)
-
-        guard let expected else { return result }
-        guard let actual else {
-            return .success(token: token, userName: result.userName, userEmail: expected)
+        guard result.success, result.token != nil else { return result }
+        guard let expected = normalized(expectedUpn) else {
+            return .identityRefused(TdxSsoResult.unknownExpectedAddressReason)
+        }
+        guard let actual = normalized(result.userEmail) else {
+            return .identityRefused(TdxSsoResult.noAddressInTokenReason)
         }
         if actual == expected { return result }
         return .wrongAccount(signedInAs: actual, expected: expected)

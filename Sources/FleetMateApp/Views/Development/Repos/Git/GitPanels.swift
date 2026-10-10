@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 import FleetMateCore
 
 // Ported from MunkiStudio (Apache-2.0),
@@ -9,6 +10,23 @@ import FleetMateCore
 
 /// The working-tree change list: checkbox to stage, status chip, glyph, path.
 struct GitFilesPanel: View {
+    /// Opens a file from a checkout in the default plain-text editor, never in
+    /// the app registered for its type: a repository can carry `.command`,
+    /// `.app` or `.terminal` files, and opening those runs them.
+    static func isRunnable(_ fileURL: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory)
+        if isDirectory.boolValue { return true }
+        if FileManager.default.isExecutableFile(atPath: fileURL.path) { return true }
+        let type = UTType(filenameExtension: fileURL.pathExtension)
+        return type.map { $0.conforms(to: .executable) || $0.conforms(to: .application) || $0.conforms(to: .shellScript) } ?? false
+    }
+
+    static func openInTextEditor(_ fileURL: URL) {
+        guard let editor = NSWorkspace.shared.urlForApplication(toOpen: .plainText) else { return }
+        NSWorkspace.shared.open([fileURL], withApplicationAt: editor, configuration: NSWorkspace.OpenConfiguration())
+    }
+
     @Bindable var state: GitPaneState
     /// Opens a repository-relative path in FleetMate's editor.
     let openInEditor: (String) -> Void
@@ -69,9 +87,11 @@ struct GitFilesPanel: View {
 
         Button("Open") { openInEditor(relativePath) }
             .disabled(!exists)
-        Button("Open in External Editor") { if let fileURL { NSWorkspace.shared.open(fileURL) } }
+        Button("Open in External Editor") { if let fileURL { Self.openInTextEditor(fileURL) } }
             .disabled(!exists)
-        if let fileURL, exists {
+        // No Open With for anything that could run: executables, scripts
+        // marked executable and bundles such as .app.
+        if let fileURL, exists, !Self.isRunnable(fileURL) {
             let apps = NSWorkspace.shared.urlsForApplications(toOpen: fileURL)
             if !apps.isEmpty {
                 Menu("Open With") {

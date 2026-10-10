@@ -34,6 +34,15 @@ final class DevelopmentModel: ObservableObject {
     @Published var selectedCommitRepo: String?
     @Published var selectedPipelineRepo: String?
     @Published var onlyMine = false
+    /// Pulls list layout: one list by last modified (the default), or
+    /// sections per repository. Remembered across launches.
+    @Published var pullsGroupedByRepo = UserDefaults.standard.bool(forKey: "development.pulls.grouped") {
+        didSet { UserDefaults.standard.set(pullsGroupedByRepo, forKey: "development.pulls.grouped") }
+    }
+    /// Oldest modified first instead of newest.
+    @Published var pullsOldestFirst = UserDefaults.standard.bool(forKey: "development.pulls.oldestFirst") {
+        didSet { UserDefaults.standard.set(pullsOldestFirst, forKey: "development.pulls.oldestFirst") }
+    }
     @Published var selectedPullRequest: UnifiedPullRequest?
     @Published private(set) var availableSources: Set<PullRequestSource> = []
 
@@ -352,10 +361,11 @@ final class DevelopmentModel: ObservableObject {
                     || $0.reference.lowercased() == needle
             }
         }
-        return rows.sorted { $0.lastActivity > $1.lastActivity }
+        let oldestFirst = pullsOldestFirst
+        return rows.sorted { oldestFirst ? $0.lastActivity < $1.lastActivity : $0.lastActivity > $1.lastActivity }
     }
 
-    /// Rows grouped by "container/repository", busiest activity first.
+    /// Rows grouped by "container/repository", in the chosen modified order.
     func groupedPullRequests(matching search: String) -> [(key: String, rows: [UnifiedPullRequest])] {
         let rows = visiblePullRequests(matching: search)
         var buckets: [String: [UnifiedPullRequest]] = [:]
@@ -365,7 +375,7 @@ final class DevelopmentModel: ObservableObject {
             .sorted { lhs, rhs in
                 let l = lhs.rows.first?.lastActivity ?? .distantPast
                 let r = rhs.rows.first?.lastActivity ?? .distantPast
-                return l == r ? lhs.key < rhs.key : l > r
+                return l == r ? lhs.key < rhs.key : (pullsOldestFirst ? l < r : l > r)
             }
     }
 
@@ -905,27 +915,25 @@ private struct DevelopmentContent: View {
             if model.isLoadingPullRequests { ProgressView().progressViewStyle(.linear).controlSize(.mini) }
             filterRows
             Divider()
-            let groups = model.groupedPullRequests(matching: searchText)
-            if groups.isEmpty {
+            let rows = model.visiblePullRequests(matching: searchText)
+            if rows.isEmpty {
                 emptyPullRequests
-            } else {
+            } else if model.pullsGroupedByRepo {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                        ForEach(groups, id: \.key) { group in
+                        ForEach(model.groupedPullRequests(matching: searchText), id: \.key) { group in
                             Section {
-                                ForEach(group.rows) { pr in
-                                    CodePullRequestRow(
-                                        pullRequest: pr,
-                                        isSelected: model.selectedPullRequest?.id == pr.id
-                                    ) {
-                                        model.selectedPullRequest = pr
-                                    }
-                                    Divider().padding(.leading, 12)
-                                }
+                                ForEach(group.rows) { pr in pullRequestRow(pr, showRepository: false) }
                             } header: {
                                 repoHeader(group.key, count: group.rows.count)
                             }
                         }
+                    }
+                }
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(rows) { pr in pullRequestRow(pr, showRepository: true) }
                     }
                 }
             }
@@ -941,6 +949,36 @@ private struct DevelopmentContent: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func pullRequestRow(_ pr: UnifiedPullRequest, showRepository: Bool) -> some View {
+        CodePullRequestRow(
+            pullRequest: pr,
+            isSelected: model.selectedPullRequest?.id == pr.id,
+            showRepository: showRepository
+        ) {
+            model.selectedPullRequest = pr
+        }
+        Divider().padding(.leading, 12)
+    }
+
+    private var pullsSortMenu: some View {
+        Menu {
+            Picker("Sort By", selection: $model.pullsOldestFirst) {
+                Text("Recently Modified").tag(false)
+                Text("Least Recently Modified").tag(true)
+            }
+            .pickerStyle(.inline)
+            Divider()
+            Toggle("Group by Repository", isOn: $model.pullsGroupedByRepo)
+        } label: {
+            Label("Sort", systemImage: "arrow.up.arrow.down").labelStyle(.iconOnly)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Sorted by \(model.pullsOldestFirst ? "least" : "most") recently modified\(model.pullsGroupedByRepo ? ", grouped by repository" : "")")
     }
 
     private var filterRows: some View {
@@ -965,6 +1003,7 @@ private struct DevelopmentContent: View {
                 if !model.repoCounts.isEmpty {
                     RepoFilterMenu(selection: $model.selectedRepo, counts: model.repoCounts)
                 }
+                pullsSortMenu
                 Spacer()
                 Text("\(model.visiblePullRequests(matching: searchText).count) open")
                     .appFont(.caption2)
@@ -1287,6 +1326,8 @@ private struct DevelopmentContent: View {
 struct CodePullRequestRow: View {
     let pullRequest: UnifiedPullRequest
     let isSelected: Bool
+    /// Names the repository on the row, for the ungrouped list.
+    var showRepository = false
     let onSelect: () -> Void
 
     @State private var isHovering = false
@@ -1312,6 +1353,13 @@ struct CodePullRequestRow: View {
                         if pullRequest.hasConflicts { pill("Conflicts", color: .orange) }
                     }
                     HStack(spacing: 6) {
+                        if showRepository {
+                            Text(pullRequest.repository)
+                                .appFont(.caption2, weight: .medium)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            Text("·").foregroundStyle(.secondary)
+                        }
                         Text(pullRequest.authorName)
                             .appFont(.caption2)
                             .foregroundStyle(.secondary)

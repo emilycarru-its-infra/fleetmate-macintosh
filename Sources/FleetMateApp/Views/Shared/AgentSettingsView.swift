@@ -101,7 +101,7 @@ struct AgentSettingsView: View {
             skillsRepo = appState.config.agentsHubRepoUrl ?? ""
             repos = appState.agentRepos
             hasOwnCommand = UserDefaults.standard.string(forKey: AgentSettingsKey.command) != nil
-            if !hasOwnCommand { command = appState.config.agentCommand ?? "" }
+            if !hasOwnCommand { command = appState.config.agentCommand ?? AgentLaunch.defaultCommand }
         }
     }
 

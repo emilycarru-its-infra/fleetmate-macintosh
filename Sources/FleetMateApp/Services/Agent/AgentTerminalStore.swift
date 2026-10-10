@@ -10,6 +10,8 @@ struct AgentLaunch: Hashable {
     var directory: String?
 
     static let shell = AgentLaunch(command: "", directory: nil)
+    /// What a session runs when neither the person nor a profile chose.
+    static let defaultCommand = "codex"
 
     /// The commands offered in the new-session menu and in Settings.
     static let presets: [(label: String, command: String)] = [

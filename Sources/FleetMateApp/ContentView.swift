@@ -95,9 +95,9 @@ struct ContentView: View {
                 if !AppEdition.current.isTicketsOnly {
                     ToolbarItem(placement: .primaryAction) {
                         Button(action: { terminals.toggle(defaultLaunch: appState.agentDefaultLaunch) }) {
-                            Label("Terminal", systemImage: "terminal")
+                            Label("Agent", systemImage: Self.agentSymbol)
                         }
-                        .help("Show or hide the terminal (⌃`)")
+                        .help("Show or hide the agent terminal (⌃`)")
                     }
                 }
                 ToolbarItem(placement: .primaryAction) {
@@ -135,7 +135,7 @@ struct ContentView: View {
             .onAppear {
                 terminals.defaultLaunch = appState.agentDefaultLaunch
                 if appState.agentAutoStart && terminals.sessions.isEmpty {
-                    terminals.open(appState.agentDefaultLaunch, focus: false)
+                    terminals.open(appState.agentDefaultLaunch, focus: false, show: false)
                 }
                 writeAgentContext()
             }
@@ -227,6 +227,11 @@ struct ContentView: View {
                                  selection: appState.agentSelection,
                                  to: terminals.contextPath)
     }
+
+    /// The agent symbol where the system has it (macOS 15.1 and later),
+    /// sparkles before that.
+    static let agentSymbol = NSImage(systemSymbolName: "apple.intelligence", accessibilityDescription: nil) != nil
+        ? "apple.intelligence" : "sparkles"
 
     /// The shared bottom terminal, with a drag handle to resize it.
     private var terminalPanel: some View {

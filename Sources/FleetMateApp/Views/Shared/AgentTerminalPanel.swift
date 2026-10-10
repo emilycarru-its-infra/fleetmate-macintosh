@@ -54,13 +54,17 @@ private struct TerminalHost: NSViewRepresentable {
 
 /// The bottom panel every tab shares. Sessions are a list down the left —
 /// name, folder and state on each row — rather than tabs, because ten or
-/// fifteen tabs leave nothing readable. The list collapses to status dots.
+/// fifteen tabs leave nothing readable. With one session the list is docked to
+/// its status dot; from two it shows names, unless toggled by hand.
 struct AgentTerminalPanel: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var store: AgentTerminalStore
     let repos: [String]
     let defaultLaunch: AgentLaunch
-    @AppStorage("agentSessionListCollapsed") private var listCollapsed = false
+    /// A hand toggle, kept until the number of sessions changes.
+    @State private var listOverride: Bool?
+
+    private var listCollapsed: Bool { listOverride ?? (store.sessions.count < 2) }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -78,6 +82,7 @@ struct AgentTerminalPanel: View {
             }
         }
         .background(SwiftUI.Color(nsColor: .textBackgroundColor))
+        .onChange(of: store.sessions.count) { _, _ in listOverride = nil }
     }
 
     private func pane(_ session: AgentTerminalSession) -> some View {
@@ -113,7 +118,7 @@ struct AgentTerminalPanel: View {
                     .buttonStyle(.borderless)
                     .help("Hide the terminal (⌃`)")
                 }
-                Button(action: { listCollapsed.toggle() }) {
+                Button(action: { listOverride = !listCollapsed }) {
                     Label("Collapse", systemImage: listCollapsed ? "sidebar.left" : "sidebar.squares.left")
                         .labelStyle(.iconOnly)
                 }
@@ -122,6 +127,21 @@ struct AgentTerminalPanel: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
+            if listCollapsed {
+                // Docked: the header has room only for its toggle, so the
+                // controls a single session still needs stack under it.
+                VStack(spacing: 8) {
+                    newSessionMenu
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                    Button(action: { store.isVisible = false }) {
+                        Label("Hide Panel", systemImage: "chevron.down").labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Hide the terminal (⌃`)")
+                }
+                .padding(.bottom, 6)
+            }
             Divider()
             ScrollView {
                 LazyVStack(spacing: 1) {

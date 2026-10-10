@@ -398,7 +398,7 @@ struct DevelopmentWidgetsSection: View {
                     color: .purple, loading: prLoading, tab: .development),
             ]) { kpi in
                 if kpi.title == "Unread in Inbox", model.unreadCount > 0 {
-                    model.segment = .inbox
+                    model.showInbox = true
                 } else {
                     model.selectedSource = nil
                     model.segment = .pullRequests

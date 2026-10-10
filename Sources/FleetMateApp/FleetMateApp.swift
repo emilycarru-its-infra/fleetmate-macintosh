@@ -1239,7 +1239,8 @@ class AppState: ObservableObject {
     ///
     /// `app-sso platform -s` is not a reliable source: on an enrolled Mac it
     /// can expose no `upn` key at all and mask `loginUserName` as
-    /// `a***e@example.edu`. The Azure identity has the real address.
+    /// `a***e@example.edu`. The Azure identity has the real address; failing
+    /// that, the device sources and the Office account (`SignedInAddress`).
     func primeTdxSsoUpn() async {
         guard TdxSsoLoginViewModel.fallbackUpn == nil else { return }
 
@@ -1249,6 +1250,21 @@ class AppState: ObservableObject {
         }
         if let account = await devOpsService.currentIdentity().account, !account.isEmpty {
             TdxSsoLoginViewModel.fallbackUpn = account.lowercased()
+            return
+        }
+        // Last: the device, then the account Office and Company Portal were
+        // activated with. The identity check refuses a sign-in with no address
+        // to compare against, so an address from any of these beats none.
+        let found = await Task.detached(priority: .userInitiated) { () -> (address: String, source: String)? in
+            if let device = SignedInAddress.readDevice() { return device }
+            if let office = SignedInAddress.readMicrosoftAccount() { return (office, "Microsoft Office account") }
+            return nil
+        }.value
+        if let found {
+            dbg.info("[PSSO] Signed-in address from \(found.source): \(found.address)", category: "tdx-sso")
+            TdxSsoLoginViewModel.fallbackUpn = found.address
+        } else {
+            dbg.warn("[PSSO] No signed-in address from Azure DevOps, the Azure CLI, the device or Office", category: "tdx-sso")
         }
     }
 

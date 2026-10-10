@@ -87,10 +87,10 @@ class AppState: ObservableObject {
     @Published var agentSelection: AgentSelection?
 
     /// What a new session runs: the person's choice, else the managed default,
-    /// else a login shell.
+    /// else Codex. Choosing Shell in Settings stores "" and runs a login shell.
     var agentDefaultLaunch: AgentLaunch {
         AgentLaunch(command: UserDefaults.standard.string(forKey: AgentSettingsKey.command)
-                    ?? config.agentCommand ?? "")
+                    ?? config.agentCommand ?? AgentLaunch.defaultCommand)
     }
 
     /// The person's repositories, seeded from the managed default list until

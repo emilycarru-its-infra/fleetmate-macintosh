@@ -156,12 +156,8 @@ struct FleetMateCommands: Commands {
             Divider()
 
             if !AppEdition.current.isTicketsOnly {
-                Button {
-                    appState.terminals.toggle(defaultLaunch: appState.agentDefaultLaunch)
-                } label: {
-                    Label("Toggle Terminal", systemImage: ContentView.agentSymbol)
-                }
-                .keyboardShortcut("`", modifiers: .control)
+                AgentTerminalMenuItems(terminals: appState.terminals,
+                                       defaultLaunch: { appState.agentDefaultLaunch })
                 Button("New Terminal Tab") { appState.terminals.open(appState.agentDefaultLaunch) }
                     .keyboardShortcut("t", modifiers: .command)
                 Button("Terminal Full Window") {
@@ -175,15 +171,23 @@ struct FleetMateCommands: Commands {
                 Divider()
             }
 
-            Button("Zoom In") { setScale(fontScale + zoomStep) }
+            // While a terminal has the keyboard, zoom acts on the terminal's
+            // own text, as in Terminal; elsewhere on the whole app.
+            Button("Zoom In") {
+                if appState.terminals.hasKeyboardFocus { appState.terminals.adjustFont(by: 1) }
+                else { setScale(fontScale + zoomStep) }
+            }
                 .keyboardShortcut("+", modifiers: .command)
-                .disabled(fontScale >= AppFontScale.range.upperBound)
-            Button("Zoom Out") { setScale(fontScale - zoomStep) }
+            Button("Zoom Out") {
+                if appState.terminals.hasKeyboardFocus { appState.terminals.adjustFont(by: -1) }
+                else { setScale(fontScale - zoomStep) }
+            }
                 .keyboardShortcut("-", modifiers: .command)
-                .disabled(fontScale <= AppFontScale.range.lowerBound)
-            Button("Actual Size") { fontScale = AppFontScale.default }
+            Button("Actual Size") {
+                if appState.terminals.hasKeyboardFocus { appState.terminals.resetFont() }
+                else { fontScale = AppFontScale.default }
+            }
                 .keyboardShortcut("0", modifiers: .command)
-                .disabled(abs(fontScale - AppFontScale.default) < 0.001)
         }
     }
 

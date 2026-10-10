@@ -15,21 +15,35 @@ final class ReportingHost {
         session = ReportMateSession(configuration: Self.configuration(from: config))
     }
 
-    /// FleetMate's ReportMate connection, when it has one: the same endpoint and
-    /// Entra audience the rest of FleetMate reads with. Without one the dashboard
-    /// uses its own saved settings, as the standalone app does.
-    static func configuration(from config: FleetMateConfig) -> ReportMateKit.AppConfiguration? {
-        guard let url = config.reportMateUrl?.trimmingCharacters(in: .whitespaces), !url.isEmpty else { return nil }
+    /// FleetMate's ReportMate connection: the same endpoint and Entra audience
+    /// the rest of FleetMate reads with, falling back to the runner's preference
+    /// domain for the endpoint. Never nil: a nil configuration makes the
+    /// dashboard read the standalone app's saved settings from that app's
+    /// Keychain items, and macOS then asks for the login Keychain password.
+    /// Without an endpoint the dashboard shows its not-configured state.
+    static func configuration(
+        from config: FleetMateConfig,
+        runner: ReportMateKit.AppConfiguration? = ReportMateKit.AppConfiguration.fromRunner()
+    ) -> ReportMateKit.AppConfiguration {
         // The standalone app's web dashboard address, so Copy Link can fall back to the browser.
         let web = UserDefaults(suiteName: "com.github.reportmate.mac")?
             .string(forKey: ReportMateKit.AppConfiguration.webBaseURLDefaultsKey) ?? ""
+        let own = config.reportMateUrl?.trimmingCharacters(in: .whitespaces) ?? ""
+        let url = own.isEmpty ? (runner?.baseURL ?? "") : own
+        guard !url.isEmpty else { return ReportMateKit.AppConfiguration(webBaseURL: web) }
         if let audience = config.reportMateOidcAudience, !audience.isEmpty {
             return ReportMateKit.AppConfiguration(baseURL: url, authMethod: .entraBearer, oidcAudience: audience, webBaseURL: web)
         }
         if let passphrase = config.reportMatePassphrase, !passphrase.isEmpty {
             return ReportMateKit.AppConfiguration(baseURL: url, authMethod: .passphrase, passphrase: passphrase, webBaseURL: web)
         }
-        return nil
+        // The runner's passphrase, read from its preference domain rather than a
+        // Keychain. Not marked as inherited, so the dashboard never upgrades and
+        // re-saves it into its own Keychain items.
+        if let passphrase = runner?.passphrase, !passphrase.isEmpty {
+            return ReportMateKit.AppConfiguration(baseURL: url, authMethod: .passphrase, passphrase: passphrase, webBaseURL: web)
+        }
+        return ReportMateKit.AppConfiguration(baseURL: url, webBaseURL: web)
     }
 
     /// Open a `reportmate://` page (the target of a `fleetmate://reporting/…` link).

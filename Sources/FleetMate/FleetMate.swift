@@ -37,6 +37,7 @@ struct FleetMate: AsyncParsableCommand {
             TdxCommand.self,
             ManageCommand.self,
             ReposCommand.self,
+            AgentCommand.self,
         ],
         defaultSubcommand: StatusCommand.self
     )

@@ -133,6 +133,7 @@ struct ContentView: View {
                 }
             }
             .onAppear {
+                appState.wireAgentTerminal()
                 terminals.defaultLaunch = appState.agentDefaultLaunch
                 if appState.agentAutoStart && terminals.sessions.isEmpty {
                     terminals.open(appState.agentDefaultLaunch, focus: false, show: false)
@@ -223,9 +224,7 @@ struct ContentView: View {
     }
 
     private func writeAgentContext() {
-        AgentContextWriter.write(tab: appState.selectedTab.rawValue,
-                                 selection: appState.agentSelection,
-                                 to: terminals.contextPath)
+        appState.writeAgentContext()
     }
 
     /// The agent symbol where the system has it (macOS 15.1 and later),

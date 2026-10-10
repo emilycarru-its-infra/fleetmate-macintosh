@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftTerm
 import FleetMateCore
 
@@ -36,6 +37,12 @@ struct AgentLaunch: Hashable {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let folders = ["\(home)/.local/bin", "\(home)/bin", "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
         return folders.contains { FileManager.default.isExecutableFile(atPath: "\($0)/\(program)") }
+    }
+
+    /// Whether `command` starts Codex or Claude Code.
+    static func isAgent(_ command: String) -> Bool {
+        guard let program = command.split(separator: " ").first else { return false }
+        return ["codex", "claude"].contains((String(program) as NSString).lastPathComponent)
     }
 
     var label: String {
@@ -113,7 +120,7 @@ final class FleetMateTerminalView: LocalProcessTerminalView {
 final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, LocalProcessTerminalViewDelegate {
     enum Activity { case idle, busy, attention, exited }
 
-    let id = UUID()
+    let id: UUID
     let launch: AgentLaunch
     let view: FleetMateTerminalView
     /// What the program running in the session calls it: an agent's session
@@ -146,10 +153,14 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         return directory.hasPrefix(home) ? "~" + directory.dropFirst(home.count) : directory
     }
 
-    init(launch: AgentLaunch, contextPath: String, brief: AgentBriefStore) {
+    /// Starts `launch` in `directory`. `briefPath` and `codexValuePath` are
+    /// this session's own brief, with where it opened at the top.
+    /// `cliUpdatesManaged` is true when FleetMate keeps the agent CLIs
+    /// current, so they skip their own update checks.
+    init(id: UUID, launch: AgentLaunch, directory start: String, contextPath: String,
+         briefPath: String, codexValuePath: String, cliUpdatesManaged: Bool) {
+        self.id = id
         self.launch = launch
-        let start = launch.directory.map { ($0 as NSString).expandingTildeInPath }
-            ?? FileManager.default.homeDirectoryForCurrentUser.path
         self.directory = start
         self.view = FleetMateTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 240))
         super.init()
@@ -166,7 +177,8 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
                 self.activity = .attention
             }
         }
-        startProcess(contextPath: contextPath, brief: brief, directory: start)
+        startProcess(contextPath: contextPath, briefPath: briefPath, codexValuePath: codexValuePath,
+                     cliUpdatesManaged: cliUpdatesManaged, directory: start)
         // Follow the shell's directory and let a busy session settle back to
         // idle once output stops.
         poll = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
@@ -174,15 +186,17 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         }
     }
 
-    private func startProcess(contextPath: String, brief: AgentBriefStore, directory: String) {
+    private func startProcess(contextPath: String, briefPath: String, codexValuePath: String,
+                              cliUpdatesManaged: Bool, directory: String) {
         let shell = ProcessInfo.processInfo.environment["SHELL"].flatMap { $0.isEmpty ? nil : $0 } ?? "/bin/zsh"
         var args = ["-l"]
         let command = launch.command.trimmingCharacters(in: .whitespaces)
         if !command.isEmpty {
             // Claude Code and Codex are handed the FleetMate brief on their
             // command line; anything else finds it through the environment.
-            var line = AgentBrief.launchLine(command, briefPath: brief.briefPath,
-                                             codexValuePath: brief.codexValuePath)
+            var line = AgentBrief.launchLine(command, briefPath: briefPath,
+                                             codexValuePath: codexValuePath,
+                                             selfUpdate: !cliUpdatesManaged)
             // The remote wrappers take the folder to open as their argument.
             if let dir = launch.directory, command.hasSuffix("-remote") {
                 line += " " + Self.quote(dir)
@@ -200,7 +214,12 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         // How an agent sees what the person is looking at in FleetMate.
         env[AgentBrief.contextVariable] = contextPath
         // What FleetMate is and every `fleetmate` command, for any agent.
-        env[AgentBrief.briefVariable] = brief.briefPath
+        env[AgentBrief.briefVariable] = briefPath
+        if cliUpdatesManaged {
+            // FleetMate updates Claude Code in the background, so it must not
+            // update itself mid-session too.
+            env["DISABLE_AUTOUPDATER"] = "1"
+        }
         let environment = env.map { "\($0.key)=\($0.value)" }
 
         view.startProcess(executable: shell, args: args, environment: environment,
@@ -274,6 +293,14 @@ final class AgentTerminalStore: ObservableObject {
     @Published var isMaximized = false
     /// What ⌘T opens. Kept current by the window from the person's settings.
     var defaultLaunch: AgentLaunch = .shell
+    /// What to tell a new session about where it is, given its directory.
+    /// Set by AppState; nil until then.
+    var whereabouts: ((String) -> AgentWhereabouts)?
+    /// Where a session opens when its launch names no folder.
+    var startDirectory: (() -> String)?
+    var subscriptions = Set<AnyCancellable>()
+    /// Keeps codex and claude current in the background.
+    let updater = AgentCliUpdateModel()
 
     let contextPath: String
     /// The agent brief beside the context file, regenerated when the
@@ -288,7 +315,26 @@ final class AgentTerminalStore: ObservableObject {
         brief = AgentBriefStore(directory: dir)
         // Generate ahead of the first session; open() checks again.
         let brief = brief
-        Task.detached(priority: .utility) { brief.refresh() }
+        Task.detached(priority: .utility) {
+            brief.refresh()
+            // Session briefs left by the last run; this run has none yet.
+            try? FileManager.default.removeItem(at: brief.sessionDirectory)
+        }
+        updater.start()
+    }
+
+    /// The folder a session opens in when nothing better is known: the
+    /// clone root repositories live under, else FleetMate's support folder.
+    static func workspaceDirectory() -> String {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        if let root = try? RepoRegistryStore().load().settings.cloneRoot {
+            let path = RepoSettings.expand(root)
+            if fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue { return path }
+        }
+        let support = AppEdition.current.supportPath("")
+        try? fm.createDirectory(atPath: support, withIntermediateDirectories: true)
+        return support
     }
 
     var selected: AgentTerminalSession? { sessions.first { $0.id == selectedId } }
@@ -302,9 +348,17 @@ final class AgentTerminalStore: ObservableObject {
         // A stat when the brief is current; a regeneration only after the
         // CLI was installed or updated.
         brief.refresh()
-        let session = AgentTerminalSession(launch: launch, contextPath: contextPath, brief: brief)
+        let id = UUID()
+        let directory = launch.directory.map { ($0 as NSString).expandingTildeInPath }
+            ?? startDirectory?() ?? Self.workspaceDirectory()
+        let place = whereabouts?(directory) ?? AgentWhereabouts(module: "FleetMate", workingDirectory: directory)
+        let paths = brief.writeSessionBrief(id: id.uuidString, whereabouts: place)
+        let managed = updater.isEnabled
+        if managed, AgentLaunch.isAgent(launch.command) { updater.updateIfStale() }
+        let session = AgentTerminalSession(id: id, launch: launch, directory: directory, contextPath: contextPath,
+                                           briefPath: paths.briefPath, codexValuePath: paths.codexValuePath,
+                                           cliUpdatesManaged: managed)
         session.wantsFocus = focus
-        let id = session.id
         session.view.onShortcut = { [weak self] shortcut in
             Task { @MainActor in self?.handle(shortcut, from: id) }
         }
@@ -330,6 +384,7 @@ final class AgentTerminalStore: ObservableObject {
     func close(_ id: AgentTerminalSession.ID) {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         sessions[index].terminate()
+        brief.removeSessionBrief(id: id.uuidString)
         sessions.remove(at: index)
         if splitId == id { splitId = nil }
         if selectedId == id {
@@ -358,6 +413,7 @@ final class AgentTerminalStore: ObservableObject {
 
     func terminateAll() {
         sessions.forEach { $0.terminate() }
+        try? FileManager.default.removeItem(at: brief.sessionDirectory)
     }
 
     private func cycle(by offset: Int) {
@@ -394,4 +450,6 @@ enum AgentSettingsKey {
     static let autoStart = "agentAutoStart"
     static let repos = "agentRepos"
     static let panelHeight = "agentPanelHeight"
+    /// Keep codex and claude at their latest versions. Default on.
+    static let keepClisCurrent = "agentKeepClisCurrent"
 }

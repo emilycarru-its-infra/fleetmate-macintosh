@@ -23,6 +23,8 @@ struct ReposListView: View {
         VStack(alignment: .leading, spacing: 0) {
             panelPicker
             Divider()
+            filterBar
+            Divider()
             if model.tracked.isEmpty {
                 ContentUnavailableView {
                     Label("No tracked repositories", systemImage: "folder.badge.gearshape")
@@ -36,8 +38,6 @@ struct ReposListView: View {
             } else {
                 repositoryList
             }
-            Divider()
-            bottomBar
         }
         .task {
             model.reloadRecords()
@@ -157,9 +157,10 @@ struct ReposListView: View {
         )
     }
 
-    // MARK: Bottom bar
+    // MARK: Filter bar
 
-    private var bottomBar: some View {
+    /// Filter, sort and fetch, at the top of the list they act on.
+    private var filterBar: some View {
         HStack(spacing: 6) {
             HStack(spacing: 4) {
                 Image(systemName: "line.3.horizontal.decrease.circle")

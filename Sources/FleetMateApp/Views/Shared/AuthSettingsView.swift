@@ -235,12 +235,24 @@ private struct AuthSettingsContent: View {
             case .azureCli:
                 if runningCliSignIn == .azureCli {
                     ProgressView().controlSize(.small)
-                } else {
-                    Button(auth.azAccount == nil ? "az login" : "Switch Account…") { runAzLogin() }
+                } else if auth.azAccount == nil {
+                    Button("az login") { runAzLogin() }
                         .buttonStyle(.borderedProminent)
-                        .tint(auth.azAccount == nil ? .accentColor : .secondary)
                         .controlSize(.small)
                         .help(CliSignIn.azLoginCommandDescription(config: appState.config))
+                } else {
+                    // Signed in, changing account is rare and belongs to az:
+                    // kept in a menu rather than as a button on the card.
+                    Menu {
+                        Button("Switch Account…") { runAzLogin() }
+                            .help(CliSignIn.azLoginCommandDescription(config: appState.config))
+                    } label: {
+                        Label("More", systemImage: "ellipsis.circle").labelStyle(.iconOnly)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("More Azure CLI actions")
                 }
             case .githubCli:
                 if auth.ghAccount == nil {

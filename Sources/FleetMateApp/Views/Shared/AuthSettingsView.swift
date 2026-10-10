@@ -1,9 +1,25 @@
 import SwiftUI
 import FleetMateCore
 
-/// Authentication settings tab — PSSO-style per-system cards with full credential detail.
+/// Settings ▸ Authentication, grouped by where each credential comes from:
+/// one card per provider (the `az` sign-in, the `gh` sign-in, single sign-on,
+/// stored credentials), listing the systems that depend on it. One expired
+/// `az` session shows as one problem on one card, with the systems it takes
+/// down listed underneath, instead of the same failure repeated per system.
 struct AuthSettingsView: View {
     @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        // AuthManager is an ObservableObject of its own, and AppState does not
+        // forward its changes, so observe it directly: the cards repaint as
+        // each probe lands.
+        AuthSettingsContent(auth: appState.authManager)
+    }
+}
+
+private struct AuthSettingsContent: View {
+    @EnvironmentObject var appState: AppState
+    @ObservedObject var auth: AuthManager
     @State private var editingSystem: AuthSystemId?
 
     // Editable fields (populated when editing starts)
@@ -23,27 +39,25 @@ struct AuthSettingsView: View {
     @State private var editDevopsClientId = ""
     @State private var editDevopsTenantId = ""
 
-    // CLI sign-in (az / gh) run from the cards themselves
-    @State private var runningCliSignIn: AuthSystemId?
-    @State private var cliSignInResult: [AuthSystemId: CliSignIn.Outcome] = [:]
+    // CLI sign-in (az / gh) run from the provider cards
+    @State private var runningCliSignIn: CredentialProvider?
+    @State private var cliSignInResult: [CredentialProvider: CliSignIn.Outcome] = [:]
+
+    private var groups: [(provider: CredentialProvider, systems: [AuthSystemId])] {
+        AuthProviderGrouping.group(auth.configuredSystems.map(\.systemId), config: appState.config)
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // SP Warning Banner
-                if appState.authManager.hasServicePrincipalWarning {
+            VStack(alignment: .leading, spacing: 16) {
+                if auth.hasServicePrincipalWarning {
                     spWarningBanner
                 }
 
-                // Group systems by category
-                ForEach(AuthCategory.allCases, id: \.self) { category in
-                    let categorySystems = appState.authManager.systems(for: category)
-                    if !categorySystems.isEmpty {
-                        authCategorySection(category: category, systems: categorySystems)
-                    }
+                ForEach(groups, id: \.provider) { group in
+                    providerCard(group.provider, systems: group.systems)
                 }
 
-                // Refresh All
                 HStack {
                     Spacer()
                     Button(action: refreshAll) {
@@ -51,9 +65,19 @@ struct AuthSettingsView: View {
                     }
                     .controlSize(.large)
                 }
-                .padding(.top, 8)
+                .padding(.top, 4)
             }
             .padding(20)
+        }
+        .task {
+            // Verify on open: a row is never left at "Configured" waiting for
+            // someone to click Re-check.
+            let unchecked = auth.systems.values.contains { $0.lastChecked == nil }
+            if unchecked {
+                refreshAll()
+            } else if !auth.cliAccountsChecked {
+                await auth.probeCliAccounts()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .editAuthSystem)) { notification in
             if let systemId = notification.object as? AuthSystemId {
@@ -84,96 +108,225 @@ struct AuthSettingsView: View {
         .cornerRadius(8)
     }
 
-    // MARK: - Category Section
+    // MARK: - Provider Card
 
-    private func authCategorySection(category: AuthCategory, systems: [AuthSystemStatus]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: category.icon)
-                    .foregroundColor(.secondary)
-                Text(category.displayName)
-                    .appFont(.headline)
+    private func providerCard(_ provider: CredentialProvider, systems: [AuthSystemId]) -> some View {
+        let summary = groupSummary(provider, systems: systems)
+        // The gh sign-in has one dependent and no state of its own beyond the
+        // account, so its card lists what uses it instead of a repeated row.
+        let showRows = provider != .githubCli
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: provider.icon)
+                    .appFont(.title2)
+                    .foregroundColor(color(summary.tone))
+                    .frame(width: 28)
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(provider.title).appFont(fixed: 14, weight: .semibold)
+                        pill(summary.label, tone: summary.tone, spinning: summary.tone == .neutral)
+                        Spacer()
+                        providerActions(provider)
+                    }
+                    Text(provider.summary)
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    providerDetail(provider)
+                }
             }
-            ForEach(systems, id: \.systemId) { system in
-                authSystemCard(system)
+
+            if showRows {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(systems.enumerated()), id: \.element) { index, id in
+                        if index > 0 { Divider().padding(.leading, 40) }
+                        if let system = auth.systems[id] {
+                            systemRow(system)
+                        }
+                    }
+                }
+                .background(Color(NSColor.windowBackgroundColor).opacity(0.6))
+                .cornerRadius(6)
+            }
+        }
+        .padding(14)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(8)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(NSColor.separatorColor), lineWidth: 1))
+    }
+
+    /// One row's status under the shared model.
+    private func displayStatus(_ system: AuthSystemStatus) -> AuthDisplayStatus {
+        if isStartingElevation(system) { return .checking("Starting elevation session…") }
+        return AuthDisplayStatus(state: system.state, lastChecked: system.lastChecked)
+    }
+
+    /// The CLI account's own status, for the providers that have one.
+    private func accountStatus(_ provider: CredentialProvider) -> AuthDisplayStatus? {
+        switch provider {
+        case .azureCli:
+            guard auth.cliAccountsChecked else { return .checking(nil) }
+            guard let account = auth.azAccount else { return .needsSignIn }
+            return account.isServicePrincipal ? .failed("Signed in as a service principal, so actions will not show as you.") : .valid
+        case .githubCli:
+            guard auth.cliAccountsChecked else { return .checking(nil) }
+            return auth.ghAccount == nil ? .needsSignIn : .valid
+        case .browserSso, .storedCredential:
+            return nil
+        }
+    }
+
+    /// The group pill: the sign-in itself plus every system under it.
+    private func groupSummary(_ provider: CredentialProvider, systems: [AuthSystemId]) -> (label: String, tone: AuthDisplayStatus.Tone) {
+        if provider == .githubCli, let account = accountStatus(provider) {
+            return (account.label, account.tone)
+        }
+        var members = systems.compactMap { auth.systems[$0] }.map(displayStatus)
+        if let account = accountStatus(provider) { members.insert(account, at: 0) }
+        return AuthDisplayStatus.summary(members)
+    }
+
+    @ViewBuilder
+    private func providerDetail(_ provider: CredentialProvider) -> some View {
+        switch provider {
+        case .azureCli:
+            detailGrid {
+                if let account = auth.azAccount {
+                    detailRow("Signed in as", account.user)
+                    if let tenant = account.tenantId { detailRow("Tenant", shortId(tenant)) }
+                    if let sub = account.subscription { detailRow("Subscription", sub) }
+                } else if auth.cliAccountsChecked {
+                    detailRow("Status", "Not signed in. Every system below needs this.")
+                }
+                if let outcome = cliSignInResult[.azureCli] {
+                    detailRow(outcome.succeeded ? "az login" : "Sign-in error", outcome.message)
+                }
+            }
+        case .githubCli:
+            detailGrid {
+                if let account = auth.ghAccount {
+                    detailRow("Signed in as", account.user)
+                } else if auth.cliAccountsChecked {
+                    detailRow("Status", "Not signed in")
+                }
+                detailRow("Used by", githubDependents)
+                if let org = appState.config.tasks?.providers.github?.organization { detailRow("Organization", org) }
+                if let outcome = cliSignInResult[.githubCli] {
+                    detailRow(outcome.succeeded ? "gh auth" : "Sign-in error", outcome.message)
+                }
+            }
+        case .browserSso, .storedCredential:
+            EmptyView()
+        }
+    }
+
+    /// What reads through the gh sign-in.
+    private var githubDependents: String {
+        var uses = ["Development (repositories, pull requests, Actions)"]
+        if appState.config.tasks?.providers.github?.enabled == true { uses.append("Projects (issues)") }
+        return uses.joined(separator: ", ")
+    }
+
+    @ViewBuilder
+    private func providerActions(_ provider: CredentialProvider) -> some View {
+        HStack(spacing: 6) {
+            switch provider {
+            case .azureCli:
+                if runningCliSignIn == .azureCli {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button(auth.azAccount == nil ? "az login" : "Switch Account…") { runAzLogin() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(auth.azAccount == nil ? .accentColor : .secondary)
+                        .controlSize(.small)
+                        .help(CliSignIn.azLoginCommandDescription(config: appState.config))
+                }
+            case .githubCli:
+                if auth.ghAccount == nil {
+                    // gh prompts on the TTY even with every flag given, so this
+                    // hands off to Terminal rather than pretending to run inline.
+                    Button("gh auth login") {
+                        cliSignInResult[.githubCli] = CliSignIn.ghLoginInTerminal()
+                        pollForGhLogin()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .help("Opens Terminal to finish the GitHub device/browser flow")
+                }
+            case .browserSso, .storedCredential:
+                EmptyView()
+            }
+            if provider == .azureCli || provider == .githubCli {
+                Button {
+                    cliSignInResult[provider] = nil
+                    Task { await recheckProvider(provider) }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .controlSize(.small)
+                .help("Re-check the sign-in and every system that uses it")
             }
         }
     }
 
-    // MARK: - System Card
+    // MARK: - System Row
 
-    private func authSystemCard(_ system: AuthSystemStatus) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            // Icon
+    private func systemRow(_ system: AuthSystemStatus) -> some View {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: system.systemId.icon)
-                .appFont(.title2)
-                .foregroundColor(colorForState(system.state))
-                .frame(width: 32)
+                .appFont(.body)
+                .foregroundColor(color(displayStatus(system).tone))
+                .frame(width: 20)
                 .padding(.top, 2)
 
-            // Main content
-            VStack(alignment: .leading, spacing: 6) {
-                // Header row: name + status badge + action buttons
+            VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
                     Text(system.systemId.displayName)
                         .appFont(fixed: 13, weight: .semibold)
-                    statusBadge(system.state)
+                    Text(AuthProviderGrouping.methodDescription(for: system.systemId, config: appState.config))
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                    statusPill(displayStatus(system))
                     Spacer()
                     actionButtons(for: system)
                 }
 
-                // System-specific detail rows
                 systemDetail(for: system)
 
-                // Inline edit form
                 if editingSystem == system.systemId {
                     Divider().padding(.vertical, 4)
                     inlineEditForm(for: system.systemId)
                 }
             }
         }
-        .padding(14)
-        .background(Color(NSColor.controlBackgroundColor))
-        .cornerRadius(8)
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(borderColorForState(system.state), lineWidth: 1))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    private func isStartingElevation(_ system: AuthSystemStatus) -> Bool {
+        guard case .authenticating = system.state,
+              let domain = AuthProviderGrouping.elevationDomain(for: system.systemId, config: appState.config)
+        else { return false }
+        return auth.startingElevation.contains(domain) || appState.elevationStatus(domain) == .starting
     }
 
     // MARK: - Per-System Detail
-
-    /// Graph/Intune/Entra authenticate secretlessly: by default through the `az`
-    /// elevation model (a managed-identity token minted inside an ephemeral
-    /// container), or in break-glass `direct` mode with a delegated token from
-    /// your own `az login`. There is no service-principal client secret.
-    private func graphAuthMethod(_ cfg: FleetMateConfig) -> String {
-        cfg.graphUsesAze ? "Secretless — az elevation" : "Delegated az token (your sign-in)"
-    }
 
     @ViewBuilder
     private func systemDetail(for system: AuthSystemStatus) -> some View {
         let cfg = appState.config
         switch system.systemId {
 
-        case .intune:
+        case .intune, .graph, .entra:
             detailGrid {
-                detailRow("Auth method", graphAuthMethod(cfg))
-                if cfg.graphUsesAze { detailRow("Identity", "DevOps-Devices (managed identity)") }
-                if let user = system.user { detailRow("Probed as", user) }
-                checkedRow(system.lastChecked)
-            }
-
-        case .graph:
-            detailGrid {
-                detailRow("Auth method", graphAuthMethod(cfg))
-                if cfg.graphUsesAze { detailRow("Identity", "DevOps-Devices / DevOps-Identity") }
-                if let user = system.user { detailRow("Probed as", user) }
-                checkedRow(system.lastChecked)
-            }
-
-        case .entra:
-            detailGrid {
-                detailRow("Auth method", graphAuthMethod(cfg))
-                if cfg.graphUsesAze { detailRow("Identity", "DevOps-Identity (managed identity)") }
-                if let user = system.user { detailRow("Probed as", user) }
+                if let domain = AuthProviderGrouping.elevationDomain(for: system.systemId, config: cfg) {
+                    detailRow("Runs as", "\(ElevationSession().identity(for: domain)) (managed identity)")
+                    elevationRow(domain)
+                }
+                if case .failed(let msg) = system.state {
+                    errorRow(msg)
+                }
                 checkedRow(system.lastChecked)
             }
 
@@ -187,34 +340,28 @@ struct AuthSettingsView: View {
                 let usesOidc = (cfg.snipeOidcAudience?.isEmpty == false)
                 let isCookieSso = !usesOidc && (cfg.snipeSsoEnabled || cfg.snipeAuthMethod == .browserSSO)
 
-                if usesOidc {
-                    detailRow("Auth method", "SSO bearer (OIDC)")
-                } else {
-                    detailRow("Auth method", isCookieSso ? "Platform SSO (Browser)" : "API key (Bearer token)")
-                }
                 if let url = cfg.snipeUrl {
                     detailRow("Instance URL", url)
                 }
                 if usesOidc {
                     detailRow("Audience", cfg.snipeOidcAudience.map { shortId($0) } ?? "")
-                    if let user = system.user { detailRow("Signed in as", user, .green) }
                 } else if isCookieSso {
                     if let user = appState.snipeSsoAuthenticated ? appState.snipeAuthenticatedUserName : system.user {
-                        detailRow("SSO signed in as", user, .green)
+                        detailRow("SSO signed in as", user)
                     }
                 } else {
                     if let key = cfg.snipeApiKey {
                         detailRow("API key", maskedToken(key))
                     } else {
-                        detailRow("API key", "missing", .orange)
+                        detailRow("API key", "missing")
                     }
                 }
+                if case .failed(let msg) = system.state { errorRow(msg) }
                 checkedRow(system.lastChecked)
             }
 
         case .tdx:
             detailGrid {
-                detailRow("Auth method", tdxAuthDescription())
                 if let url = cfg.tdxBaseUrl { detailRow("Base URL", url) }
                 let tApp = cfg.tdxTicketingAppId ?? cfg.tdxAppId
                 let aApp = cfg.tdxAssetsAppId ?? cfg.tdxAppId
@@ -224,38 +371,37 @@ struct AuthSettingsView: View {
                 // signed-in user when the service account is doing the work.
                 if appState.tdxService.actingIdentityIsUser {
                     let who = appState.tdxMe?.fullName ?? appState.tdxAuthenticatedUserName ?? "signed-in user"
-                    detailRow("Acting as", who, .green)
+                    detailRow("Acting as", who)
                 } else if cfg.tdxBeid != nil || cfg.tdxUsername != nil {
-                    detailRow("Acting as", "Service account — edits will not show your name", .orange)
+                    detailRow("Acting as", "Service account — edits will not show your name")
                 } else {
                     // No service account to fall back to, so this isn't
                     // "acting as the wrong identity" — it's no access at all.
-                    detailRow("Acting as", "Nobody — not signed in, TDX calls will fail", .orange)
+                    detailRow("Acting as", "Nobody — not signed in, TDX calls will fail")
                 }
                 if cfg.tdxBeid != nil {
-                    detailRow("Service account", cfg.tdxUsername ?? "configured", .secondary)
+                    detailRow("Service account", cfg.tdxUsername ?? "configured")
                     detailRow("BEID", cfg.tdxBeid.map { shortId($0) } ?? "")
                 }
+                if case .failed(let msg) = system.state { errorRow(msg) }
                 checkedRow(system.lastChecked)
             }
 
         case .devops:
             detailGrid {
-                // Deliberately not phrased like the Graph rows' "Secretless — az
-                // elevation". Azure DevOps does NOT go through elevation and must
-                // not: every commit, pull request and work-item edit has to be
-                // attributed to the operator's own @example.edu account, not to a
-                // managed identity. The token comes straight from `az login`.
-                detailRow("Auth method", "Your az sign-in — no elevation")
+                // Azure DevOps does NOT go through elevation and must not:
+                // every commit, pull request and work-item edit has to be
+                // attributed to the operator's own account, not to a managed
+                // identity. The token comes straight from `az login`.
                 if let org = cfg.devopsOrganization {
                     detailRow("Organization", org)
                 } else {
-                    detailRow("Organization", "not set — required", .orange)
+                    detailRow("Organization", "not set — required")
                 }
                 if let proj = cfg.devopsProject {
                     detailRow("Project", proj)
                 } else if cfg.devopsOrganization != nil {
-                    detailRow("Project", "auto-discovered", .secondary)
+                    detailRow("Project", "auto-discovered")
                 }
                 // Show the UPN, not just a display name — the point is to make it
                 // visible *which* account DevOps will attribute work to.
@@ -263,43 +409,34 @@ struct AuthSettingsView: View {
                     ? (appState.devOpsSsoUserEmail ?? appState.devOpsSsoUserName)
                     : system.user
                 if let signedInAs {
-                    detailRow("Signed in as", signedInAs, .green)
+                    detailRow("Signed in as", signedInAs)
                 }
                 if let name = appState.devOpsSsoUserName,
                    appState.devOpsSsoUserEmail != nil,
                    name != appState.devOpsSsoUserEmail {
-                    detailRow("Attributed to", name, .secondary)
+                    detailRow("Attributed to", name)
                 }
                 if case .failed(let msg) = system.state {
-                    detailRow("Error", msg, .orange)
+                    errorRow(msg)
                 }
-                cliSignInRow(.devops)
                 checkedRow(system.lastChecked)
             }
 
         case .github:
             detailGrid {
-                detailRow("Auth method", "gh CLI (device/browser flow)")
                 if let org  = cfg.tasks?.providers.github?.organization { detailRow("Organization", org) }
                 if let num  = cfg.tasks?.providers.github?.projectNumber { detailRow("Project #",  String(num)) }
-                if let user = system.user {
-                    detailRow("Signed in as", user, .green)
-                } else {
-                    detailRow("Status", "not logged in", .secondary)
-                }
-                cliSignInRow(.github)
                 checkedRow(system.lastChecked)
             }
 
         case .gitea:
             detailGrid {
-                detailRow("Auth method", "API token")
                 if let url   = cfg.tasks?.providers.gitea?.url   { detailRow("Instance URL", url) }
                 if let owner = cfg.tasks?.providers.gitea?.owner { detailRow("Owner",        owner) }
                 if let tok   = cfg.tasks?.providers.gitea?.token {
                     detailRow("Token", maskedToken(tok))
                 } else {
-                    detailRow("Token", "missing", .orange)
+                    detailRow("Token", "missing")
                 }
                 checkedRow(system.lastChecked)
             }
@@ -315,7 +452,7 @@ struct AuthSettingsView: View {
         }
     }
 
-    private func detailRow(_ label: String, _ value: String, _ valueColor: Color = .secondary) -> some View {
+    private func detailRow(_ label: String, _ value: String) -> some View {
         HStack(alignment: .top, spacing: 0) {
             Text(label)
                 .appFont(.caption)
@@ -323,9 +460,46 @@ struct AuthSettingsView: View {
                 .frame(width: 130, alignment: .leading)
             Text(value)
                 .appFont(.caption, design: .monospaced)
-                .foregroundColor(valueColor)
+                .foregroundColor(.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
+        }
+    }
+
+    /// The elevation session behind a system: idle, starting, ready (with its
+    /// expiry), expired.
+    @ViewBuilder
+    private func elevationRow(_ domain: GraphDomain) -> some View {
+        let status = auth.startingElevation.contains(domain) ? .starting : appState.elevationStatus(domain)
+        switch status {
+        case .ready(let expires?):
+            detailRow("Elevation session", "Session ready until \(expires.formatted(date: .omitted, time: .shortened))")
+        case .ready:
+            detailRow("Elevation session", "Session ready")
+        case .starting:
+            detailRow("Elevation session", "Starting (a cold start takes about a minute)")
+        case .idle:
+            detailRow("Elevation session", "Idle. Starts on first use.")
+        case .expired:
+            detailRow("Elevation session", "Stopped. Restarts on next use.")
+        case .unknown:
+            detailRow("Elevation session", "Unknown")
+        }
+    }
+
+    /// A failure in full, wrapped, and selectable so it can be copied.
+    private func errorRow(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            Text("Error")
+                .appFont(.caption)
+                .foregroundColor(Color(NSColor.tertiaryLabelColor))
+                .frame(width: 130, alignment: .leading)
+            Text(message)
+                .appFont(.caption, design: .monospaced)
+                .foregroundColor(.primary)
+                .lineLimit(4)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
     }
 
@@ -346,21 +520,6 @@ struct AuthSettingsView: View {
     }
 
     // MARK: - Helpers
-
-    private func tdxAuthDescription() -> String {
-        switch appState.config.tdxAuthMethod {
-        case .browserSSO:     return "Browser SSO (Entra ID / Shibboleth)"
-        case .serviceAccount: return "Service account (BEID + WebServicesKey)"
-        case .userPassword:   return "Username / password"
-        case .auto:
-            // SSO first — a user JWT or cookie session is preferred over the
-            // service account now, so describe it in that order.
-            if appState.config.tdxBeid != nil {
-                return "Auto → SSO, falling back to service account (BEID)"
-            }
-            return "Auto → SSO only (no service account configured)"
-        }
-    }
 
     /// Show first 6 + "…" + last 6 characters of a token/key
     private func maskedToken(_ s: String) -> String {
@@ -386,19 +545,29 @@ struct AuthSettingsView: View {
 
     // MARK: - Status Badge
 
-    private func statusBadge(_ state: AuthTokenState) -> some View {
+    private func statusPill(_ status: AuthDisplayStatus) -> some View {
+        pill(status.label, tone: status.tone, spinning: status.isChecking)
+    }
+
+    /// The one coloured element on a row or group. Failures carry their
+    /// detail in the row's Error line, so the pill stays short.
+    private func pill(_ label: String, tone: AuthDisplayStatus.Tone, spinning: Bool) -> some View {
         HStack(spacing: 4) {
-            Circle()
-                .fill(colorForState(state))
-                .frame(width: 7, height: 7)
-            Text(state.statusLabel)
+            if spinning {
+                ProgressView().controlSize(.mini)
+            } else {
+                Circle().fill(color(tone)).frame(width: 7, height: 7)
+            }
+            Text(label)
                 .appFont(.caption)
-                .foregroundColor(colorForState(state))
+                .foregroundColor(tone == .neutral ? .secondary : color(tone))
+                .lineLimit(1)
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
-        .background(colorForState(state).opacity(0.1))
+        .background(color(tone).opacity(0.1))
         .cornerRadius(4)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Action Buttons
@@ -407,7 +576,10 @@ struct AuthSettingsView: View {
     private func actionButtons(for system: AuthSystemStatus) -> some View {
         HStack(spacing: 6) {
             // Edit button for systems with editable credentials
-            if [.graph, .intune, .snipe, .tdx, .devops].contains(system.systemId) {
+            // Graph credentials are only editable in service-principal mode;
+            // elevation needs nothing stored here.
+            if [.snipe, .tdx, .devops].contains(system.systemId)
+                || (system.systemId == .graph && !appState.config.graphUsesAze) {
                 Button {
                     if editingSystem == system.systemId {
                         editingSystem = nil
@@ -423,7 +595,7 @@ struct AuthSettingsView: View {
 
             // SSO / auth action buttons
             switch system.systemId {
-            case .snipe:
+            case .snipe where appState.config.snipeOidcAudience?.isEmpty != false:
                 if case .valid = system.state {
                     Button("Sign Out") { appState.signOutSnipeSso() }
                         .controlSize(.small)
@@ -459,37 +631,8 @@ struct AuthSettingsView: View {
                         .controlSize(.small)
                 }
 
-            case .github:
-                if case .valid = system.state {
-                    EmptyView()
-                } else if runningCliSignIn == .github {
-                    ProgressView().controlSize(.small)
-                } else {
-                    // gh prompts on the TTY even with every flag given, so this
-                    // hands off to Terminal rather than pretending to run inline.
-                    Button("gh auth login") {
-                        cliSignInResult[.github] = CliSignIn.ghLoginInTerminal()
-                        pollForGhLogin()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .help("Opens Terminal to finish the GitHub device/browser flow")
-                }
-
             default:
                 EmptyView()
-            }
-
-            // `az login` is the trust anchor for DevOps and for every aze
-            // elevation session, so offer it on the cards that depend on it.
-            if needsAzSignIn(system) {
-                if runningCliSignIn == system.systemId {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Button("az login") { runAzLogin(for: system.systemId) }
-                        .controlSize(.small)
-                        .help(CliSignIn.azLoginCommandDescription(config: appState.config))
-                }
             }
 
             // Every card gets a Re-check: sign-ins finish outside the app
@@ -510,45 +653,39 @@ struct AuthSettingsView: View {
 
     // MARK: - CLI sign-in
 
-    /// True for systems that authenticate off the operator's `az` session and
-    /// currently aren't signed in. Graph, Entra and Intune only qualify when
-    /// they're actually routed through elevation rather than a service principal.
-    private func needsAzSignIn(_ system: AuthSystemStatus) -> Bool {
-        if case .valid = system.state { return false }
-        switch system.systemId {
-        case .devops:                  return true
-        case .graph, .entra, .intune:  return appState.config.graphUsesAze
-        default:                       return false
+    /// `az login` scoped to the configured tenant, then re-probe everything
+    /// that rides it.
+    private func runAzLogin() {
+        runningCliSignIn = .azureCli
+        Task {
+            let outcome = await CliSignIn.azLogin(config: appState.config)
+            cliSignInResult[.azureCli] = outcome
+            runningCliSignIn = nil
+            if outcome.succeeded { await recheckProvider(.azureCli) }
         }
     }
 
-    private func runAzLogin(for id: AuthSystemId) {
-        runningCliSignIn = id
-        Task {
-            let outcome = await CliSignIn.azLogin(config: appState.config)
-            await MainActor.run {
-                cliSignInResult[id] = outcome
-                runningCliSignIn = nil
-            }
-            // Re-probe so the card reflects the new session rather than the
-            // state it had before signing in.
-            if outcome.succeeded {
-                await appState.authManager.probeAll(
-                    graphService: appState.graphService,
-                    tdxService: appState.tdxService,
-                    snipeService: appState.snipeService,
-                    devOpsService: appState.devOpsService
-                )
-            }
+    /// Re-read the CLI account, then re-probe each system that depends on it.
+    private func recheckProvider(_ provider: CredentialProvider) async {
+        await auth.probeCliAccounts()
+        let members = groups.first { $0.provider == provider }?.systems ?? []
+        // .graph and .intune share one probe.
+        for id in members where !(id == .intune && members.contains(.graph)) {
+            await auth.probeSystem(
+                id,
+                graphService: appState.graphService,
+                tdxService: appState.tdxService,
+                snipeService: appState.snipeService,
+                devOpsService: appState.devOpsService
+            )
         }
     }
 
     /// Re-probe one system so its card reflects a sign-in that just happened
     /// outside the app.
     private func recheck(_ id: AuthSystemId) {
-        cliSignInResult[id] = nil
         Task {
-            await appState.authManager.probeSystem(
+            await auth.probeSystem(
                 id,
                 graphService: appState.graphService,
                 tdxService: appState.tdxService,
@@ -564,40 +701,25 @@ struct AuthSettingsView: View {
         Task {
             for _ in 0..<36 {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
-                await appState.authManager.probeGitHub()
-                if case .valid = appState.authManager.systems[.github]?.state {
-                    cliSignInResult[.github] = nil
+                await auth.probeGitHub()
+                if auth.ghAccount != nil {
+                    cliSignInResult[.githubCli] = nil
                     return
                 }
             }
         }
     }
 
-    @ViewBuilder
-    private func cliSignInRow(_ id: AuthSystemId) -> some View {
-        if let outcome = cliSignInResult[id] {
-            detailRow(outcome.succeeded ? "az / gh" : "Sign-in error",
-                      outcome.message,
-                      outcome.succeeded ? .green : .orange)
-        }
-    }
-
     // MARK: - Colors
 
-    private func colorForState(_ state: AuthTokenState) -> Color {
-        switch state {
-        case .valid:             return .green
-        case .configured:        return .yellow
-        case .authenticating:    return .blue
-        case .expired:           return .orange
-        case .failed:            return .orange
-        case .servicePrincipal:  return .orange
-        case .notConfigured:     return .gray
+    /// Never red: orange only where the person has to act.
+    private func color(_ tone: AuthDisplayStatus.Tone) -> Color {
+        switch tone {
+        case .positive: .green
+        case .neutral: .secondary
+        case .attention: .orange
+        case .inactive: .gray
         }
-    }
-
-    private func borderColorForState(_ state: AuthTokenState) -> Color {
-        colorForState(state).opacity(0.3)
     }
 
     // MARK: - Inline Edit
@@ -729,7 +851,7 @@ struct AuthSettingsView: View {
 
     private func refreshAll() {
         Task {
-            await appState.authManager.probeAll(
+            await auth.probeAll(
                 graphService: appState.graphService,
                 tdxService: appState.tdxService,
                 snipeService: appState.snipeService,

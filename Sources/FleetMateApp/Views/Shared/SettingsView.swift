@@ -1,10 +1,23 @@
 import SwiftUI
 import FleetMateCore
 
+/// Settings window tabs. Every tab needs an explicit tag: a tab without one
+/// can never become the selection, so clicking it left the pane blank.
+enum SettingsTab {
+    static let general = 0
+    static let authentication = 1
+    static let appearance = 2
+    static let manage = 3
+    static let about = 4
+    static let repositories = RepositoriesSettingsView.tabTag
+    static let enrollment = 6
+    static let agent = 7
+}
+
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
     /// TicketsMate has no General tab, so it opens on Authentication.
-    @AppStorage("settings.selectedTab") private var selectedTabIndex: Int = AppEdition.current.isTicketsOnly ? 1 : 0
+    @AppStorage("settings.selectedTab") private var selectedTabIndex: Int = AppEdition.current.isTicketsOnly ? SettingsTab.authentication : SettingsTab.general
     private let ticketsOnly = AppEdition.current.isTicketsOnly
 
     var body: some View {
@@ -14,38 +27,40 @@ struct SettingsView: View {
                 GeneralSettingsTab()
                     .environmentObject(appState)
                     .tabItem { Label("General", systemImage: "gear") }
-                    .tag(0)
+                    .tag(SettingsTab.general)
             }
 
             AuthSettingsView()
                 .environmentObject(appState)
                 .tabItem { Label("Authentication", systemImage: "lock.shield") }
-                .tag(1)
+                .tag(SettingsTab.authentication)
 
             AppearanceSettingsView()
                 .tabItem { Label("Appearance", systemImage: "circle.lefthalf.filled") }
-                .tag(2)
+                .tag(SettingsTab.appearance)
 
             if !ticketsOnly {
                 ManageSettingsView()
                     .environmentObject(appState)
                     .tabItem { Label("Manage", systemImage: "wrench.and.screwdriver") }
-                    .tag(3)
+                    .tag(SettingsTab.manage)
 
                 AppleOrgSettingsView()
                     .environmentObject(appState)
-                    .tabItem { Label("Apple", systemImage: "apple.logo") }
+                    .tabItem { Label("Enrollment", systemImage: FleetModule.enrollment.icon) }
+                    .tag(SettingsTab.enrollment)
                 AgentSettingsView()
                     .environmentObject(appState)
                     .tabItem { Label("Agent", systemImage: ContentView.agentSymbol) }
+                    .tag(SettingsTab.agent)
                 RepositoriesSettingsView()
                     .environmentObject(appState)
                     .tabItem { Label("Repositories", systemImage: "folder.badge.gearshape") }
-                    .tag(RepositoriesSettingsView.tabTag)
+                    .tag(SettingsTab.repositories)
             }
             AboutSettingsView()
                 .tabItem { Label("About", systemImage: "info.circle") }
-                .tag(4)
+                .tag(SettingsTab.about)
         }
         .frame(minWidth: 600, maxWidth: 700, minHeight: 700, idealHeight: 900, maxHeight: 1100)
     }
@@ -56,132 +71,82 @@ struct SettingsView: View {
 private struct GeneralSettingsTab: View {
     @EnvironmentObject var appState: AppState
     @AppStorage("settings.selectedTab") private var selectedTabIndex: Int = 0
-    /// Modules switched on before their credentials exist. The switch flips
-    /// immediately and stays here; the row grows a Configure button instead of
-    /// the old behavior of yanking the user to the Authentication tab.
-    @State private var pendingConfigure: Set<AuthSystemId> = []
-
-    private var enableGraph: Bool { appState.config.isGraphConfigured || appState.config.graphTenantId != nil }
-    private var enableSnipe: Bool { appState.config.isSnipeConfigured }
-    private var enableTdx: Bool { appState.config.isTdxConfigured }
-    private var enableDevOps: Bool { appState.config.isDevOpsConfigured }
-    private var enableManage: Bool { appState.config.manage?.enabled ?? false }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button("Setup Wizard") {
-                    appState.showOnboardingWizard = true
-                    NSApp.keyWindow?.close()
-                }
-                .help("Run the guided setup wizard")
-                Spacer()
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-
-            Divider()
-
-            Form {
+        Form {
                 Section {
-                    moduleRow(
-                        enabled: enableGraph,
-                        icon: "shield.checkered",
-                        title: "Devices & Identity",
-                        subtitle: "Microsoft Intune devices, Entra ID users and groups",
-                        systemId: .graph,
-                        onDisable: {
-                            var c = appState.config
-                            c.graphTenantId = nil
-                            c.devicesGraphId = nil; c.devicesGraphSecret = nil
-                            c.systemsGraphId = nil; c.systemsGraphSecret = nil
-                            appState.saveConfig(c)
-                        }
-                    )
-                    moduleRow(
-                        enabled: enableSnipe,
-                        icon: "tag",
-                        title: "Inventory",
-                        subtitle: "Snipe-IT asset management",
-                        systemId: .snipe,
-                        onDisable: {
-                            var c = appState.config
-                            c.snipeUrl = nil; c.snipeApiKey = nil
-                            c.snipeSsoEnabled = false
-                            appState.saveConfig(c)
-                        }
-                    )
-                    moduleRow(
-                        enabled: enableTdx,
-                        icon: "ticket",
-                        title: "Tickets",
-                        subtitle: "TeamDynamix service desk",
-                        systemId: .tdx,
-                        onDisable: {
-                            var c = appState.config
-                            c.tdxBaseUrl = nil
-                            appState.saveConfig(c)
-                        }
-                    )
-                    moduleRow(
-                        enabled: enableDevOps,
-                        icon: "square.stack.3d.up",
-                        title: "Projects",
-                        subtitle: "Azure DevOps boards and GitHub issues",
-                        systemId: .devops,
-                        onDisable: {
-                            var c = appState.config
-                            c.devopsOrganization = nil
-                            appState.saveConfig(c)
-                        }
-                    )
-                    manageRow
+                    ForEach(FleetModule.allCases) { module in
+                        moduleRow(module)
+                    }
                 } header: {
                     Text("Enabled Modules")
                 } footer: {
-                    Text("Disabled modules are hidden from the tab bar. Configure credentials in the Authentication tab.")
+                    Text("Switched-off modules are hidden from the tab bar and stop loading. Their settings are kept, so switching one back on picks up where it left off.")
+                    .settingsFooter()
                 }
-            }
-            .formStyle(.grouped)
+
+                Section {
+                    LabeledContent {
+                        Button("Run Setup Wizard…") {
+                            appState.showOnboardingWizard = true
+                            NSApp.keyWindow?.close()
+                        }
+                    } label: {
+                        Text("Setup Wizard")
+                        Text("Walks through choosing modules and connecting each one.")
+                    }
+                }
         }
+        .formStyle(.grouped)
     }
 
-    /// Manage has no credentials to collect, only a roster path, so its row
-    /// flips the config flag directly and points at the Manage tab.
-    private var manageRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle(isOn: Binding(
-                get: { enableManage },
-                set: { newValue in
+    private func binding(for module: FleetModule) -> Binding<Bool> {
+        Binding(
+            get: { appState.modules.isOn(module) },
+            set: { on in
+                withAnimation(.snappy) {
+                    appState.modules.set(module, on: on)
+                }
+                // Manage keeps its own enabled flag in config (the CLI reads
+                // it too), so switching the module on also sets that.
+                if module == .manage, on, appState.config.manage?.enabled != true {
                     var c = appState.config
                     var manage = c.manage ?? ManageConfig()
-                    manage.enabled = newValue
+                    manage.enabled = true
                     c.manage = manage
                     appState.saveConfig(c)
                 }
-            )) {
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func moduleRow(_ module: FleetModule) -> some View {
+        let on = appState.modules.isOn(module)
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: binding(for: module)) {
                 HStack(spacing: 12) {
-                    Image(systemName: "wrench.and.screwdriver")
+                    Image(systemName: module.icon)
                         .appFont(.title3)
                         .foregroundStyle(.tint)
                         .frame(width: 24)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Manage").appFont(.body, weight: .medium)
-                        Text("Lab operations over SSH and Screen Sharing").appFont(.caption).foregroundStyle(.secondary)
+                        Text(module.title).appFont(.body, weight: .medium)
+                        Text(module.summary).appFont(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
             .toggleStyle(.switch)
 
-            if enableManage && !appState.config.isManageConfigured {
+            if on && !module.isConfigured(appState.config) {
                 HStack(spacing: 8) {
-                    Image(systemName: "doc.text")
+                    Image(systemName: "key")
                         .foregroundStyle(.secondary)
-                    Text("Needs the enrollment roster before it can show rooms.")
+                    Text(needsMessage(module))
                         .appFont(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
-                    Button("Configure…") { selectedTabIndex = 3 }
+                    Button("Configure…") { configure(module) }
                         .controlSize(.small)
                 }
                 .padding(.leading, 36)
@@ -189,59 +154,36 @@ private struct GeneralSettingsTab: View {
         }
     }
 
-    @ViewBuilder
-    private func moduleRow(enabled: Bool, icon: String, title: String, subtitle: String, systemId: AuthSystemId, onDisable: @escaping () -> Void) -> some View {
-        let needsConfig = pendingConfigure.contains(systemId) && !enabled
-        VStack(alignment: .leading, spacing: 8) {
-            Toggle(isOn: Binding(
-                get: { enabled || pendingConfigure.contains(systemId) },
-                set: { newValue in
-                    withAnimation(.snappy) {
-                        if newValue {
-                            pendingConfigure.insert(systemId)
-                        } else {
-                            pendingConfigure.remove(systemId)
-                            if enabled { onDisable() }
-                        }
-                    }
-                }
-            )) {
-                HStack(spacing: 12) {
-                    Image(systemName: icon)
-                        .appFont(.title3)
-                        .foregroundStyle(.tint)
-                        .frame(width: 24)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title).appFont(.body, weight: .medium)
-                        Text(subtitle).appFont(.caption).foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .toggleStyle(.switch)
-
-            if needsConfig {
-                HStack(spacing: 8) {
-                    Image(systemName: "key")
-                        .foregroundStyle(.secondary)
-                    Text("Needs credentials before it can load anything.")
-                        .appFont(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Configure…") {
-                        selectedTabIndex = 1
-                        // The Authentication tab may not exist yet when the tab
-                        // switch lands, so let it build before asking it to edit.
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                            NotificationCenter.default.post(name: .editAuthSystem, object: systemId)
-                        }
-                    }
-                    .controlSize(.small)
-                }
-                .padding(.leading, 36)
-            }
+    private func needsMessage(_ module: FleetModule) -> String {
+        switch module {
+        case .manage: "Needs the enrollment roster before it can show rooms."
+        case .enrollment: "Needs where its API credentials are kept."
+        default: "Needs a connection before it can load anything."
         }
-        .onChange(of: enabled) { _, nowEnabled in
-            if nowEnabled { pendingConfigure.remove(systemId) }
+    }
+
+    /// Open the settings pane that configures the module.
+    private func configure(_ module: FleetModule) {
+        switch module {
+        case .manage:
+            selectedTabIndex = SettingsTab.manage
+        case .enrollment:
+            selectedTabIndex = SettingsTab.enrollment
+        case .devices, .identity, .inventory, .tickets, .projects:
+            let system: AuthSystemId = switch module {
+            case .inventory: .snipe
+            case .tickets: .tdx
+            case .projects: .devops
+            default: .graph
+            }
+            selectedTabIndex = SettingsTab.authentication
+            // The Authentication tab may not exist yet when the tab switch
+            // lands, so let it build before asking it to edit.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                NotificationCenter.default.post(name: .editAuthSystem, object: system)
+            }
+        case .development, .reporting:
+            break
         }
     }
 }
@@ -256,3 +198,16 @@ extension Notification.Name {
         .environmentObject(AppState())
 }
 #endif
+
+extension View {
+    /// Explanatory text under a Settings group: leading-aligned, footnote
+    /// size, secondary colour, as a native grouped Form footer reads. Without
+    /// the explicit frame a multi-line footer centres or trails ragged.
+    func settingsFooter() -> some View {
+        self.font(.footnote)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}

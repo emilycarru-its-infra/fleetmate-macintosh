@@ -65,3 +65,22 @@ public enum AppEdition: String, Sendable {
         NSString(string: "\(supportDirectory)/\(name)").expandingTildeInPath
     }
 }
+
+/// The version string the About pane shows.
+public enum AppVersionDisplay {
+    /// Release builds stamp CFBundleShortVersionString with the date
+    /// (YYYY.MM.DD) and CFBundleVersion with the time (HHMM); joined they are
+    /// the same YYYY.MM.DD.HHMM `fleetmate --version` reports. An unstamped
+    /// build reads "dev", with the commit it was built from when known.
+    public static func string(short: String?, build: String?, commit: String?) -> String {
+        let short = short?.trimmingCharacters(in: .whitespaces) ?? ""
+        let build = build?.trimmingCharacters(in: .whitespaces) ?? ""
+        let isDate = short.split(separator: ".").count == 3 && short.count == 10 && short.allSatisfy { $0.isNumber || $0 == "." }
+        if isDate {
+            return build.count == 4 && build.allSatisfy(\.isNumber) ? "\(short).\(build)" : short
+        }
+        if short.split(separator: ".").count == 4 && short.hasPrefix("20") { return short }
+        if let commit, !commit.isEmpty { return "dev (\(commit))" }
+        return "dev"
+    }
+}

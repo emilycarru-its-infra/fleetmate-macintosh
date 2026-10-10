@@ -24,12 +24,19 @@ private final class WebSocketReceiveGate: @unchecked Sendable {
 /// compliant device and their elevation operators-group membership. The app is
 /// not a privilege — an unauthorized caller's `az` calls simply fail.
 public actor ElevationSession {
-    // Constants mirrored from the aze script.
-    static let sessionsResourceGroup = "Entra"
-    static let identityResourceGroup = "Entra"
-    static let image = "myregistry.azurecr.io/elevation-session:latest"
-    static let transcriptAccount = "transcriptstore"
+    // Deployment-specific values (registry image, resource groups, transcript
+    // account) come from configuration — see `ElevationSettings`. Nothing
+    // site-specific is built in.
+    static var sessionsResourceGroup: String { ElevationSettings.current.sessionsResourceGroup }
+    static var identityResourceGroup: String { ElevationSettings.current.identityResourceGroup }
     public static let defaultTtlHours = 8
+    /// Minutes with nothing attached before an image that ships `aze-hold`
+    /// stops its own session, matching the `aze` script.
+    static let idleMinutes = 30
+    /// How long to wait for a container someone else is creating (another
+    /// FleetMate window, the `aze` script) to reach Running. A cold start is
+    /// typically 30–75 seconds.
+    static let pendingWaitSeconds = 180
     static let execApiVersion = "2023-05-01"
 
     private let azPath: String
@@ -90,33 +97,63 @@ public actor ElevationSession {
 
     // MARK: - Container lifecycle (via az)
 
-    /// Ensure a running session container for the domain, creating it (cold
-    /// start, ~30s) if absent.
+    /// Ensure a running session container for the domain, creating it if
+    /// absent. A cold start (create + identity login inside the container)
+    /// takes roughly 30–75 seconds; callers show "Starting elevation session…"
+    /// while this runs rather than treating the wait as a failure.
     public func ensureSession(_ domain: GraphDomain, ttlHours: Int = ElevationSession.defaultTtlHours) async throws {
         let name = ElevationSession.sessionName(for: domain)
+        let settings = ElevationSettings.current
 
-        let show = try await runAz(["container", "show", "--resource-group", ElevationSession.sessionsResourceGroup, "--name", name, "--query", "instanceView.state", "-o", "tsv"])
-        let state = show.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        var state = try await containerState(name)
         if state == "Running" { return }
 
+        // A container that is still coming up belongs to a create already in
+        // flight (another window, or the `aze` script). Deleting it would
+        // throw away a cold start that is nearly done, so wait for it instead.
+        if ElevationSession.isTransitional(state) {
+            let deadline = Date().addingTimeInterval(TimeInterval(ElevationSession.pendingWaitSeconds))
+            while ElevationSession.isTransitional(state), Date() < deadline {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                state = try await containerState(name)
+            }
+            if state == "Running" { return }
+        }
+
+        guard let image = settings.image else {
+            throw ElevationError.notConfigured(
+                "no elevation session image is configured. Set elevation_image in config.yaml, "
+                + "elevationImage in the configuration profile, or FLEETMATE_ELEVATION_IMAGE."
+            )
+        }
+
         if !state.isEmpty {
-            _ = try await runAz(["container", "delete", "--resource-group", ElevationSession.sessionsResourceGroup, "--name", name, "--yes", "-o", "none"])
+            _ = try await runAz(["container", "delete", "--resource-group", settings.sessionsResourceGroup, "--name", name, "--yes", "-o", "none"])
         }
 
         // Resolve the user-assigned identity id + clientId in one round-trip.
-        let idShow = try await runAz(["identity", "show", "--resource-group", ElevationSession.identityResourceGroup, "--name", ElevationSession.identityName(for: domain), "--query", "[id,clientId]", "-o", "tsv"])
+        // az has emitted the two-element tsv list both tab- and
+        // newline-separated across versions, so accept either.
+        let identityName = ElevationSession.identityName(for: domain)
+        let idShow = try await runAz(["identity", "show", "--resource-group", settings.identityResourceGroup, "--name", identityName, "--query", "[id,clientId]", "-o", "tsv"])
         let parts = idShow.out.split(whereSeparator: { $0 == "\t" || $0 == "\n" }).map(String.init)
-        guard parts.count >= 2 else { throw ElevationError.identityResolutionFailed(domain) }
+        guard idShow.code == 0, parts.count >= 2 else {
+            throw ElevationError.identityResolutionFailed(domain, ElevationSession.azMessage(idShow))
+        }
         let identityId = parts[0], clientId = parts[1]
 
         let sleepSeconds = ttlHours * 3600
-        let commandLine = "/bin/bash -c 'az login --identity --client-id \(clientId) --allow-no-subscriptions -o none; sleep \(sleepSeconds)'"
+        let commandLine = ElevationSession.containerCommandLine(clientId: clientId, ttlSeconds: sleepSeconds, idleSeconds: ElevationSession.idleMinutes * 60)
 
+        var environment = ["ELEVATION_CLIENT_ID=\(clientId)"]
+        if let account = settings.transcriptAccount {
+            environment.append("ELEVATION_TRANSCRIPT_ACCOUNT=\(account)")
+        }
         let create = try await runAz([
             "container", "create",
-            "--resource-group", ElevationSession.sessionsResourceGroup,
+            "--resource-group", settings.sessionsResourceGroup,
             "--name", name,
-            "--image", ElevationSession.image,
+            "--image", image,
             "--assign-identity", identityId,
             "--acr-identity", identityId,
             "--os-type", "Linux",
@@ -124,17 +161,49 @@ public actor ElevationSession {
             "--memory", "1.5",
             "--restart-policy", "Never",
             "--command-line", commandLine,
-            "--environment-variables", "ELEVATION_CLIENT_ID=\(clientId)", "ELEVATION_TRANSCRIPT_ACCOUNT=\(ElevationSession.transcriptAccount)",
+            "--environment-variables",
+        ] + environment + [
             "--output", "none",
         ])
-        guard create.code == 0 else { throw ElevationError.createFailed(create.err.isEmpty ? create.out : create.err) }
+        guard create.code == 0 else { throw ElevationError.createFailed(ElevationSession.azMessage(create)) }
 
         // az container create has no --tags; tag in a follow-up call (best-effort).
-        let idLookup = try? await runAz(["container", "show", "--resource-group", ElevationSession.sessionsResourceGroup, "--name", name, "--query", "id", "-o", "tsv"])
+        let idLookup = try? await runAz(["container", "show", "--resource-group", settings.sessionsResourceGroup, "--name", name, "--query", "id", "-o", "tsv"])
         if let containerId = idLookup?.out.trimmingCharacters(in: .whitespacesAndNewlines), !containerId.isEmpty {
             let expires = Int(Date().timeIntervalSince1970) + sleepSeconds
             _ = try? await runAz(["resource", "tag", "--ids", containerId, "--tags", "elevation=true", "domain=\(domain.rawValue)", "expires=\(expires)", "--output", "none"])
         }
+    }
+
+    /// `instanceView.state` of a session container, or "" when there is none.
+    private func containerState(_ name: String) async throws -> String {
+        let show = try await runAz(["container", "show", "--resource-group", ElevationSession.sessionsResourceGroup, "--name", name, "--query", "instanceView.state", "-o", "tsv"])
+        return show.code == 0 ? show.out.trimmingCharacters(in: .whitespacesAndNewlines) : ""
+    }
+
+    /// States a container passes through on its way to Running.
+    static func isTransitional(_ state: String) -> Bool {
+        ["pending", "creating", "waiting", "repairing"].contains(state.lowercased())
+    }
+
+    /// The container's entrypoint: sign in as the domain identity, then hold
+    /// the session open. Images that ship `aze-hold` stop themselves after
+    /// `idleSeconds` with nothing attached; older images sleep out the TTL.
+    static func containerCommandLine(clientId: String, ttlSeconds: Int, idleSeconds: Int) -> String {
+        "/bin/bash -c 'az login --identity --client-id \(clientId) --allow-no-subscriptions -o none; "
+            + "if command -v aze-hold >/dev/null; then exec aze-hold \(ttlSeconds) \(idleSeconds); fi; "
+            + "sleep \(ttlSeconds)'"
+    }
+
+    /// The useful part of a failed az call: stderr (minus az's WARNING noise),
+    /// else stdout, else the exit code.
+    static func azMessage(_ r: (out: String, err: String, code: Int32)) -> String {
+        let lines = r.err.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("WARNING:") }
+        if !lines.isEmpty { return lines.joined(separator: " ") }
+        let out = r.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        return out.isEmpty ? "az exited with code \(r.code)" : out
     }
 
     // MARK: - Exec (handshake via az, raw websocket native)
@@ -542,8 +611,8 @@ actor ElevationSessionGate {
     }
 }
 
-public enum ElevationError: Error, CustomStringConvertible {
-    case identityResolutionFailed(GraphDomain)
+public enum ElevationError: LocalizedError, CustomStringConvertible {
+    case identityResolutionFailed(GraphDomain, String)
     case createFailed(String)
     case execHandshakeFailed(String)
     case noOutputMarkers(String)
@@ -551,6 +620,7 @@ public enum ElevationError: Error, CustomStringConvertible {
     case webSocketTimedOut
     case commandRejected(String)
     case azLaunchFailed(String)
+    case notConfigured(String)
 
     /// A capture that the pty mangled — worth re-running the exec. Handshake and
     /// identity failures are not retriable here; they surface to the caller.
@@ -563,14 +633,78 @@ public enum ElevationError: Error, CustomStringConvertible {
 
     public var description: String {
         switch self {
-        case .identityResolutionFailed(let d): return "Could not resolve managed identity for domain \(d.rawValue)"
-        case .createFailed(let m): return "Failed to create elevation session: \(m)"
+        case .identityResolutionFailed(let d, let m):
+            return "Could not resolve the \(ElevationSession.identityName(for: d)) managed identity for the \(d.rawValue) elevation session: \(m)"
+        case .createFailed(let m): return "Could not start the elevation session: \(m)"
         case .execHandshakeFailed(let m): return "Exec handshake failed: \(m)"
         case .noOutputMarkers(let summary): return "Could not find output markers in session output (\(summary))"
         case .corruptedOutput(let expected, let actual): return "Elevation output truncated by the exec bridge (expected \(expected) bytes, got \(actual))"
         case .webSocketTimedOut: return "Elevation websocket produced no data for 30 seconds"
         case .commandRejected(let m): return "Elevation command rejected: \(m)"
         case .azLaunchFailed(let m): return "Could not launch az: \(m)"
+        case .notConfigured(let m): return "Elevation is not set up: \(m)"
         }
+    }
+
+    /// Bridged to `localizedDescription`, so the Settings cards and alerts
+    /// show the real reason (including az's own error) rather than
+    /// "The operation couldn't be completed. (ElevationError error 1.)".
+    public var errorDescription: String? { description }
+}
+
+/// Where elevation sessions run. These are deployment-specific (a container
+/// registry, resource groups, a transcript storage account), so they come from
+/// config.yaml, the configuration profile or the environment rather than code.
+public struct ElevationSettings: Sendable, Equatable {
+    /// Fully qualified session image, e.g. `<registry>/elevation-session:latest`.
+    public var image: String?
+    public var sessionsResourceGroup: String
+    public var identityResourceGroup: String
+    public var transcriptAccount: String?
+
+    /// Resource group used when none is configured.
+    public static let defaultResourceGroup = "Entra"
+
+    public init(image: String? = nil,
+                sessionsResourceGroup: String? = nil,
+                identityResourceGroup: String? = nil,
+                transcriptAccount: String? = nil) {
+        func clean(_ s: String?) -> String? {
+            guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+            return t
+        }
+        self.image = clean(image)
+        let sessions = clean(sessionsResourceGroup) ?? ElevationSettings.defaultResourceGroup
+        self.sessionsResourceGroup = sessions
+        self.identityResourceGroup = clean(identityResourceGroup) ?? sessions
+        self.transcriptAccount = clean(transcriptAccount)
+    }
+
+    public init(config: FleetMateConfig) {
+        self.init(image: config.elevationImage,
+                  sessionsResourceGroup: config.elevationResourceGroup,
+                  identityResourceGroup: config.elevationIdentityResourceGroup,
+                  transcriptAccount: config.elevationTranscriptAccount)
+    }
+
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var stored: ElevationSettings?
+
+    /// The settings in effect: whatever the app or CLI last applied, else read
+    /// from configuration on first use.
+    public static var current: ElevationSettings {
+        lock.lock()
+        if let stored { lock.unlock(); return stored }
+        lock.unlock()
+        let loaded = ElevationSettings(config: (try? FleetMateConfig.load()) ?? FleetMateConfig())
+        lock.lock(); defer { lock.unlock() }
+        if stored == nil { stored = loaded }
+        return stored!
+    }
+
+    /// Apply settings after a configuration (re)load.
+    public static func apply(_ settings: ElevationSettings) {
+        lock.lock(); defer { lock.unlock() }
+        stored = settings
     }
 }

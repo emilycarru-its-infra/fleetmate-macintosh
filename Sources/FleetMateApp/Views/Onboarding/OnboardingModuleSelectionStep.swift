@@ -1,4 +1,5 @@
 import SwiftUI
+import FleetMateCore
 
 struct OnboardingModuleSelectionStep: View {
     @EnvironmentObject var wizardState: OnboardingWizardState
@@ -8,7 +9,7 @@ struct OnboardingModuleSelectionStep: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Choose Your Modules")
                     .appFont(.title2, weight: .bold)
-                Text("Select the systems you want to connect. You can change this later in Settings.")
+                Text("Pick what you want FleetMate to show. The next steps connect each one; you can change this later in Settings.")
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 24)
@@ -16,36 +17,9 @@ struct OnboardingModuleSelectionStep: View {
 
             Form {
                 Section {
-                    moduleToggle(
-                        isOn: $wizardState.enableGraph,
-                        icon: "shield.checkered",
-                        title: "Devices & Identity",
-                        subtitle: "Microsoft Intune devices, Entra ID users and groups"
-                    )
-                    moduleToggle(
-                        isOn: $wizardState.enableSnipe,
-                        icon: "tag",
-                        title: "Inventory",
-                        subtitle: "Snipe-IT asset management"
-                    )
-                    moduleToggle(
-                        isOn: $wizardState.enableTdx,
-                        icon: "ticket",
-                        title: "Tickets",
-                        subtitle: "TeamDynamix service desk"
-                    )
-                    moduleToggle(
-                        isOn: $wizardState.enableDevOps,
-                        icon: "square.stack.3d.up",
-                        title: "Projects",
-                        subtitle: "Azure DevOps boards and GitHub issues"
-                    )
-                    moduleToggle(
-                        isOn: $wizardState.enableManage,
-                        icon: "wrench.and.screwdriver",
-                        title: "Manage",
-                        subtitle: "Lab operations over SSH and Screen Sharing"
-                    )
+                    ForEach(FleetModule.allCases) { module in
+                        moduleToggle(module)
+                    }
                 }
             }
             .formStyle(.grouped)
@@ -59,16 +33,25 @@ struct OnboardingModuleSelectionStep: View {
         }
     }
 
-    private func moduleToggle(isOn: Binding<Bool>, icon: String, title: String, subtitle: String) -> some View {
-        Toggle(isOn: isOn) {
+    private func binding(_ module: FleetModule) -> Binding<Bool> {
+        Binding(
+            get: { wizardState.selectedModules.contains(module) },
+            set: { on in
+                if on { wizardState.selectedModules.insert(module) } else { wizardState.selectedModules.remove(module) }
+            }
+        )
+    }
+
+    private func moduleToggle(_ module: FleetModule) -> some View {
+        Toggle(isOn: binding(module)) {
             HStack(spacing: 12) {
-                Image(systemName: icon)
+                Image(systemName: module.icon)
                     .appFont(.title3)
                     .foregroundStyle(.tint)
                     .frame(width: 24)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title).appFont(.body, weight: .medium)
-                    Text(subtitle).appFont(.caption).foregroundStyle(.secondary)
+                    Text(module.title).appFont(.body, weight: .medium)
+                    Text(module.summary).appFont(.caption).foregroundStyle(.secondary)
                 }
             }
         }

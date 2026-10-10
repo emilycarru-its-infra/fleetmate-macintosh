@@ -1468,16 +1468,18 @@ class TdxSsoLoginViewModel: NSObject, ObservableObject {
     /// answered with.
     private var expectedUpn: String? { platformSsoUpn ?? Self.fallbackUpn }
 
-    /// A successful sign-in, unless it belongs to someone else.
+    /// A successful sign-in, unless its identity cannot be confirmed as the
+    /// signed-in user's.
     ///
-    /// Every success path ends here, so a session for another account is
-    /// refused whichever route produced it, and its token is dropped.
+    /// Every success path ends here, so a session for another account, one
+    /// with no address, or one with no expected address to compare against
+    /// is refused whichever route produced it, and its token is dropped.
     private func verifiedSuccess(token: String, userName: String?, userEmail: String?) -> TdxSsoResult {
         let result = TdxSsoIdentity.verify(
             .success(token: token, userName: userName, userEmail: userEmail),
             expectedUpn: expectedUpn
         )
-        if result.isWrongAccount, let reason = result.error {
+        if result.isIdentityRefused, let reason = result.error {
             let log = "[IDENTITY] \(reason) — token discarded"
             dbg.warn(log, category: "tdx-sso")
             navigationLog.append(log)

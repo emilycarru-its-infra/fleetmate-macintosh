@@ -1,8 +1,8 @@
 import XCTest
 @testable import FleetMateCore
 
-/// A TDX session for anyone but the signed-in user must fail the sign-in,
-/// never be stored, and never hand over to the service account.
+/// A TDX session not confirmed as the signed-in user's must fail the
+/// sign-in, never be stored, and never hand over to the service account.
 final class TdxSsoIdentityTests: XCTestCase {
 
     private let token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZG9lIn0.signature"
@@ -16,7 +16,7 @@ final class TdxSsoIdentityTests: XCTestCase {
         )
         XCTAssertTrue(result.success)
         XCTAssertEqual(result.token, token)
-        XCTAssertFalse(result.isWrongAccount)
+        XCTAssertFalse(result.isIdentityRefused)
     }
 
     func testADifferentAddressFailsAndDropsTheToken() {
@@ -25,31 +25,53 @@ final class TdxSsoIdentityTests: XCTestCase {
             expectedUpn: "adoe@example.edu"
         )
         XCTAssertFalse(result.success)
-        XCTAssertTrue(result.isWrongAccount)
+        XCTAssertTrue(result.isIdentityRefused)
         XCTAssertNil(result.token)
         XCTAssertEqual(result.error, "TDX session belongs to aws-adoe@example.edu; expected adoe@example.edu")
     }
 
-    func testAMissingAddressIsAttributedToTheExpectedAccount() {
-        for missing in [nil, "", "Alex Doe"] as [String?] {
+    func testAMissingAddressFailsAndDropsTheToken() {
+        for missing in [nil, "", "  ", "Alex Doe"] as [String?] {
             let result = TdxSsoIdentity.verify(
                 .success(token: token, userName: "Alex", userEmail: missing),
                 expectedUpn: "ADoe@example.edu"
             )
-            XCTAssertTrue(result.success, "email \(String(describing: missing))")
-            XCTAssertEqual(result.token, token)
-            XCTAssertEqual(result.userEmail, "adoe@example.edu")
+            XCTAssertFalse(result.success, "email \(String(describing: missing))")
+            XCTAssertTrue(result.isIdentityRefused)
+            XCTAssertNil(result.token)
+            XCTAssertNil(result.userEmail)
+            XCTAssertEqual(result.error, TdxSsoResult.noAddressInTokenReason)
         }
     }
 
-    func testWithNoExpectedAddressTheResultPassesThrough() {
-        let original = TdxSsoResult.success(token: token, userName: "Alex", userEmail: "adoe@example.edu")
-        XCTAssertEqual(TdxSsoIdentity.verify(original, expectedUpn: nil), original)
+    func testAnUnknownExpectedAddressFailsAndDropsTheToken() {
+        for unknown in [nil, "", "not-an-address"] as [String?] {
+            let result = TdxSsoIdentity.verify(
+                .success(token: token, userName: "Alex", userEmail: "adoe@example.edu"),
+                expectedUpn: unknown
+            )
+            XCTAssertFalse(result.success, "expected \(String(describing: unknown))")
+            XCTAssertTrue(result.isIdentityRefused)
+            XCTAssertNil(result.token)
+            XCTAssertEqual(result.error, TdxSsoResult.unknownExpectedAddressReason)
+        }
+    }
+
+    func testNeitherAddressKnownFailsOnTheExpectedOne() {
+        let result = TdxSsoIdentity.verify(
+            .success(token: token, userName: "Alex", userEmail: nil),
+            expectedUpn: nil
+        )
+        XCTAssertFalse(result.success)
+        XCTAssertTrue(result.isIdentityRefused)
+        XCTAssertEqual(result.error, TdxSsoResult.unknownExpectedAddressReason)
     }
 
     func testAFailureIsLeftAlone() {
         let failure = TdxSsoResult.failure("Silent SSO timed out")
         XCTAssertEqual(TdxSsoIdentity.verify(failure, expectedUpn: "adoe@example.edu"), failure)
+        XCTAssertEqual(TdxSsoIdentity.verify(failure, expectedUpn: nil), failure)
+        XCTAssertFalse(TdxSsoIdentity.verify(failure, expectedUpn: nil).isIdentityRefused)
     }
 
     // MARK: - No service-account fallback
@@ -73,10 +95,10 @@ final class TdxSsoIdentityTests: XCTestCase {
         let service = makeServiceWithServiceAccount()
         service.setSsoToken(token, expiry: Date().addingTimeInterval(3600), userName: "Alex")
 
-        service.refuseSso(reason: "TDX session belongs to b@example.edu; expected a@example.edu")
+        service.refuseSso(reason: TdxSsoResult.noAddressInTokenReason)
 
         XCTAssertFalse(service.hasUserJwt)
-        XCTAssertEqual(service.refusedSsoReason, "TDX session belongs to b@example.edu; expected a@example.edu")
+        XCTAssertEqual(service.refusedSsoReason, TdxSsoResult.noAddressInTokenReason)
         do {
             _ = try await service.getTicket(id: 1)
             XCTFail("a refused sign-in must not reach TDX")

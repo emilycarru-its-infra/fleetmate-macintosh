@@ -1030,9 +1030,9 @@ class AppState: ObservableObject {
                     userId: result.userEmail,
                     userName: result.userName
                 )
-            } else if let result = viewModel.authResult, result.isWrongAccount {
+            } else if let result = viewModel.authResult, result.isIdentityRefused {
                 // Final: the headless browser would reach the same account.
-                self.rejectTdxSsoWrongAccount(result)
+                self.rejectTdxSsoIdentity(result)
             } else {
                 dbg.warn("[SSO Phase 1] Silent SSO FAILED — will attempt headless WKWebView (Phase 1.5)", category: "tdx-sso")
                 // Phase 1.5: Try headless WKWebView SSO before falling back to interactive sheet
@@ -1094,8 +1094,8 @@ class AppState: ObservableObject {
                         )
                         return
                     }
-                    if result.isWrongAccount {
-                        self.rejectTdxSsoWrongAccount(result)
+                    if result.isIdentityRefused {
+                        self.rejectTdxSsoIdentity(result)
                         return
                     }
                     break
@@ -1179,12 +1179,13 @@ class AppState: ObservableObject {
         }
     }
     
-    /// Refuse a TDX session that belongs to someone other than the signed-in
-    /// user. Its token is never stored, any earlier session is cleared, and
+    /// Refuse a TDX session that is not confirmed as the signed-in user's:
+    /// another account's, one with no address, or one with no expected
+    /// address to compare against. Its token is never stored, any earlier session is cleared, and
     /// the service account is shut off too, so nothing is attributed to the
     /// wrong person. There is no other route: no interactive window either.
-    func rejectTdxSsoWrongAccount(_ result: TdxSsoResult) {
-        let reason = result.error ?? "TDX session belongs to a different account"
+    func rejectTdxSsoIdentity(_ result: TdxSsoResult) {
+        let reason = result.error ?? "TDX sign-in refused: identity could not be confirmed"
         dbg.error("[SSO] \(reason) — sign-in refused", category: "tdx-sso")
         tdxService.refuseSso(reason: reason)
         tdxSsoAuthenticated = false

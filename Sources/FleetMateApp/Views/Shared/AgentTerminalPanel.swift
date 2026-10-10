@@ -105,18 +105,6 @@ struct AgentTerminalPanel: View {
                     }
                     .buttonStyle(.borderless)
                     .help(store.splitId == nil ? "Split (⌘D)" : "Unsplit (⌘D)")
-                    Button(action: { store.isMaximized.toggle() }) {
-                        Label(store.isMaximized ? "Restore" : "Full Window",
-                              systemImage: store.isMaximized ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-                            .labelStyle(.iconOnly)
-                    }
-                    .buttonStyle(.borderless)
-                    .help(store.isMaximized ? "Restore the tab (⇧⌘↩)" : "Fill the window with the terminal (⇧⌘↩)")
-                    Button(action: { store.isVisible = false }) {
-                        Label("Hide Panel", systemImage: "chevron.down").labelStyle(.iconOnly)
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Hide the terminal (⌃`)")
                 }
                 Button(action: { listOverride = !listCollapsed }) {
                     Label("Collapse", systemImage: listCollapsed ? "sidebar.left" : "sidebar.squares.left")
@@ -134,11 +122,6 @@ struct AgentTerminalPanel: View {
                     newSessionMenu
                         .menuIndicator(.hidden)
                         .fixedSize()
-                    Button(action: { store.isVisible = false }) {
-                        Label("Hide Panel", systemImage: "chevron.down").labelStyle(.iconOnly)
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Hide the terminal (⌃`)")
                 }
                 .padding(.bottom, 6)
             }

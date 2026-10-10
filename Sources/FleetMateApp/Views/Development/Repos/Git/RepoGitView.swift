@@ -13,7 +13,6 @@ import FleetMateCore
 
 /// The Repos workspace's detail: the selected repository's git pane.
 struct RepoGitView: View {
-    @EnvironmentObject private var appState: AppState
     @ObservedObject var model: RepoWorkspaceModel
     let searchText: String
     @FocusState private var paneFocused: Bool
@@ -144,15 +143,10 @@ struct RepoGitView: View {
             Spacer()
             agentsMarker
             Button {
-                _ = appState.terminals.open(AgentLaunch(command: appState.agentDefaultLaunch.command, directory: path))
-            } label: {
-                Label("Terminal", systemImage: "terminal")
-            }
-            .help("Open an agent terminal session in this checkout")
-            Button {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
             } label: {
-                Label("Reveal", systemImage: "folder")
+                Label("Reveal in Finder", systemImage: "folder")
+                    .labelStyle(.iconOnly)
             }
             .help("Reveal \(repoAbbreviatedPath(path)) in Finder")
         }

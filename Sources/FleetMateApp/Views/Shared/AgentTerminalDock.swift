@@ -1,8 +1,9 @@
 import SwiftUI
 import AppKit
 
-/// The bottom of the window: the Agent Terminal when it is open, a slim strip
-/// when it is not. The two behave as one split: drag the divider down to the
+/// The bottom of the window: the Agent Terminal when it is open, above a slim
+/// bar that stays on the window's edge either way and holds the show, hide
+/// and full-window controls. The two behave as one split: drag the divider down to the
 /// bottom and the terminal folds into the strip, drag the strip up (or click
 /// it) and it opens at the height it had. Double-clicking the divider closes
 /// it. ⌃` and View › Show/Hide Agent Terminal do the same from anywhere.
@@ -23,14 +24,14 @@ struct AgentTerminalDock: View {
     static let snapHeight: Double = 80
 
     var body: some View {
-        if store.isShowing {
-            VStack(spacing: 0) {
-                divider
+        VStack(spacing: 0) {
+            if store.isShowing {
+                // Filling the window, there is nothing above to resize against.
+                if !store.isMaximized { divider }
                 AgentTerminalPanel(store: store, repos: repos, defaultLaunch: defaultLaunch)
                     .frame(height: store.isMaximized ? nil : CGFloat(liveHeight ?? panelHeight))
                     .frame(maxHeight: store.isMaximized ? .infinity : nil)
             }
-        } else {
             AgentTerminalStrip(store: store, defaultLaunch: defaultLaunch)
         }
     }
@@ -81,9 +82,9 @@ struct AgentTerminalDock: View {
     }
 }
 
-/// What shows at the bottom while the terminal is closed: the agent, the
-/// sessions and how to bring them back. Plain text throughout; nothing here
-/// is a badge.
+/// The bar on the window's bottom edge: the agent, the sessions, and the
+/// controls to show, hide or fill the window with the terminal. Plain text
+/// throughout; nothing here is a badge.
 struct AgentTerminalStrip: View {
     @ObservedObject var store: AgentTerminalStore
     let defaultLaunch: AgentLaunch
@@ -105,29 +106,54 @@ struct AgentTerminalStrip: View {
                     Text(status).appFont(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
-                Text("⌃`").appFont(.caption).foregroundStyle(.tertiary)
-                Image(systemName: "chevron.up")
-                    .appFont(.caption, weight: .semibold)
-                    .foregroundStyle(.secondary)
+                Button(action: toggleFullWindow) {
+                    Label(isFullWindow ? "Restore" : "Full Window",
+                          systemImage: isFullWindow ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                }
+                .help(isFullWindow ? "Restore the terminal to its height (⇧⌘↩)" : "Fill the window with the terminal (⇧⌘↩)")
+                Button(action: toggleShown) {
+                    Label(store.isShowing ? "Hide Agent Terminal" : "Show Agent Terminal",
+                          systemImage: store.isShowing ? "chevron.down" : "chevron.up")
+                }
+                .help(store.isShowing ? "Hide the Agent Terminal (⌃`)" : "Show the Agent Terminal (⌃`)")
             }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
             .padding(.horizontal, 12)
             .frame(height: Self.height - 1)
         }
-        .background(hovered ? Color.secondary.opacity(0.08) : Color.secondary.opacity(0.04))
+        .background(hovered && !store.isShowing ? Color.secondary.opacity(0.08) : Color.secondary.opacity(0.04))
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
-        .onTapGesture { store.show(defaultLaunch: defaultLaunch) }
+        .onTapGesture { if !store.isShowing { store.show(defaultLaunch: defaultLaunch) } }
         .gesture(
             DragGesture(minimumDistance: 4)
                 .onEnded { value in
-                    if value.translation.height < -8 { store.show(defaultLaunch: defaultLaunch) }
+                    if value.translation.height < -8, !store.isShowing {
+                        store.show(defaultLaunch: defaultLaunch)
+                    } else if value.translation.height > 8, store.isShowing {
+                        store.hide()
+                    }
                 }
         )
-        .help("Show the Agent Terminal (⌃`) — click or drag up")
-        .accessibilityElement(children: .combine)
+        .help(store.isShowing ? "" : "Show the Agent Terminal (⌃`) — click or drag up")
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("Agent Terminal, \(status)")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { store.show(defaultLaunch: defaultLaunch) }
+    }
+
+    private var isFullWindow: Bool { store.isShowing && store.isMaximized }
+
+    private func toggleShown() {
+        if store.isShowing { store.hide() } else { store.show(defaultLaunch: defaultLaunch) }
+    }
+
+    private func toggleFullWindow() {
+        if isFullWindow {
+            store.isMaximized = false
+        } else {
+            store.show(defaultLaunch: defaultLaunch)
+            store.isMaximized = true
+        }
     }
 
     private var status: String {

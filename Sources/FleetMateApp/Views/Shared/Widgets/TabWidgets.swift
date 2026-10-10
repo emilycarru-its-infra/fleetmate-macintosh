@@ -90,7 +90,7 @@ struct InventoryWidgetsSection: View {
 
             WidgetCard(title: "Assets by Category", isLoading: metrics.isLoading(.inventory)) {
                 if metrics.assetCategoryBars.isEmpty {
-                    if metrics.isLoading(.inventory) { SkeletonChartCard() } else { WidgetEmptyState("No asset data") }
+                    if metrics.isLoading(.inventory) { SkeletonChartCard() } else { WidgetEmptyState(AssetsLoadFailure.headline(appState.assetsLoadError)) }
                 } else {
                     HorizontalBarList(bars: metrics.assetCategoryBars) { label in
                         appState.openWidgetFilter(tab: .inventory, category: "Category", label: label)
@@ -100,7 +100,7 @@ struct InventoryWidgetsSection: View {
 
             WidgetCard(title: "Asset Status", isLoading: metrics.isLoading(.inventory)) {
                 if metrics.assetStatusSlices.isEmpty {
-                    if metrics.isLoading(.inventory) { SkeletonChartCard() } else { WidgetEmptyState("No asset data") }
+                    if metrics.isLoading(.inventory) { SkeletonChartCard() } else { WidgetEmptyState(AssetsLoadFailure.headline(appState.assetsLoadError)) }
                 } else {
                     DonutWidget(slices: metrics.assetStatusSlices, size: 130) { label in
                         appState.openWidgetFilter(tab: .inventory, category: "Status", label: label)

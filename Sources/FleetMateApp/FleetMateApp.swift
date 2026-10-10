@@ -267,6 +267,9 @@ class AppState: ObservableObject {
     
     @Published var cachedDevices: [IntuneDevice] = []
     @Published var cachedAssets: [SnipeAsset] = []
+    /// Why the assets could not be loaded, or nil. The Inventory widgets show
+    /// it instead of "No asset data".
+    @Published var assetsLoadError: String?
     @Published var cachedTickets: [TdxTicket] = []
     /// The organization's most recently changed work items, anyone's and in
     /// any state: feeds global search and the activity feed.
@@ -562,6 +565,7 @@ class AppState: ObservableObject {
     
     /// Update assets cache
     func updateAssetsCache(_ assets: [SnipeAsset]) {
+        assetsLoadError = nil
         cachedAssets = assets
         assetsCacheTime = Date()
     }
@@ -820,6 +824,7 @@ class AppState: ObservableObject {
                         dbg.info("Assets preloaded: \(assets.count) assets", category: "preload")
                     } catch {
                         dbg.error("Assets preload FAILED: \(error)", category: "preload")
+                        self.assetsLoadError = AssetsLoadFailure.reason(error)
                     }
                 }
             }

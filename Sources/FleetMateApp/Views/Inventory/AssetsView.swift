@@ -604,8 +604,10 @@ struct AssetsView: View {
                 print("[AssetsView] Loaded \(fetchedAssets.count) assets")
                 appState.updateAssetsCache(fetchedAssets)
             } catch {
-                print("[AssetsView] Failed to load assets: \(error.localizedDescription)")
-                appState.errorMessage = "Failed to load assets: \(error.localizedDescription)"
+                let reason = AssetsLoadFailure.reason(error)
+                dbg.error("Failed to load assets: \(reason)", category: "snipe")
+                appState.assetsLoadError = reason
+                appState.errorMessage = "Failed to load assets: \(reason)"
             }
         }
     }

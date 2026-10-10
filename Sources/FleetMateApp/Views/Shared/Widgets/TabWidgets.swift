@@ -103,7 +103,7 @@ struct InventoryWidgetsSection: View {
                     if metrics.isLoading(.inventory) { SkeletonChartCard() } else { WidgetEmptyState(AssetsLoadFailure.headline(appState.assetsLoadError)) }
                 } else {
                     DonutWidget(slices: metrics.assetStatusSlices, size: 130) { label in
-                        appState.openWidgetFilter(tab: .inventory, category: "Status", label: label)
+                        appState.openWidgetFilter(tab: .inventory, category: "Status Type", label: label)
                     }
                 }
             }

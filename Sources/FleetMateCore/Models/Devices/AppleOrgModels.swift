@@ -1,8 +1,7 @@
 import Foundation
 
-/// An Apple School Manager or Apple Business Manager API profile, as stored in
-/// asbmutil's keychain so a profile made with `asbmutil config set` shows up
-/// here unchanged.
+/// An Apple School Manager or Apple Business Manager organization, named after
+/// the Key Vault secret prefix its API credentials are stored under.
 public struct AppleOrgProfile: Identifiable, Hashable, Sendable {
     public let name: String
     public let clientId: String

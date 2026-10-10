@@ -38,6 +38,20 @@ public struct FleetMateConfig: Codable {
     /// Unset → legacy passphrase. Deployments set it in config.yaml or the
     /// configuration profile (reportMateOidcAudience).
     public var reportMateOidcAudience: String?
+
+    /// Key Vault holding the Apple School / Business Manager API credentials,
+    /// read with the operator's `az` sign-in. Unset → no Apple organization.
+    public var appleOrgKeyVault: String?
+    /// One secret prefix per organization (`<prefix>ClientId`, `<prefix>KeyId`,
+    /// `<prefix>PrivateKeyPem`). Unset → the single default prefix.
+    public var appleOrgSecretPrefixes: [String]?
+
+    /// The Apple organizations to read, one per prefix in the configured vault.
+    public var appleOrgSources: [AppleOrgSource] {
+        guard let vault = appleOrgKeyVault?.trimmingCharacters(in: .whitespaces), !vault.isEmpty else { return [] }
+        let prefixes = (appleOrgSecretPrefixes ?? []).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return (prefixes.isEmpty ? [AppleOrgSource.defaultPrefix] : prefixes).map { AppleOrgSource(vault: vault, prefix: $0) }
+    }
     
 
     // Snipe-IT settings
@@ -189,6 +203,8 @@ public struct FleetMateConfig: Codable {
         case reportMateUrl = "reportmate_url"
         case reportMatePassphrase = "reportmate_passphrase"
         case reportMateOidcAudience = "reportmate_oidc_audience"
+        case appleOrgKeyVault = "apple_org_key_vault"
+        case appleOrgSecretPrefixes = "apple_org_secret_prefixes"
         case snipeUrl = "snipe_url"
         case snipeApiKey = "snipe_api_key"
         case snipeOidcAudience = "snipe_oidc_audience"
@@ -403,6 +419,10 @@ public struct FleetMateConfig: Codable {
         guard let contents = try? String(contentsOfFile: path, encoding: .utf8),
               let yaml = try? Yams.load(yaml: contents) as? [String: Any] else { return }
 
+        // Apple School / Business Manager credentials in Key Vault
+        if let v = (yaml["apple_org_key_vault"] ?? yaml["appleOrgKeyVault"]) as? String { config.appleOrgKeyVault = v }
+        if let v = (yaml["apple_org_secret_prefixes"] ?? yaml["appleOrgSecretPrefixes"]) as? [String] { config.appleOrgSecretPrefixes = v }
+
         // SecureShell (camelCase in existing YAML)
         if let ssh = (yaml["secureShell"] ?? yaml["secure_shell"]) as? [String: Any] {
             var s = config.secureShell ?? SecureShellConfig()
@@ -518,8 +538,8 @@ public struct FleetMateConfig: Codable {
         guard FileManager.default.fileExists(atPath: path),
               let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let creds = try? JSONSerialization.jsonObject(with: data) as? [String: String] else {
-            // Fall back to legacy Keychain read
-            loadFromKeychainLegacy(into: &config)
+            // No Keychain fallback: reading items another tool wrote makes
+            // macOS ask for the login Keychain password.
             return
         }
         apply(credentials: creds, into: &config)
@@ -572,6 +592,10 @@ public struct FleetMateConfig: Codable {
         if let v = get("azureTenantId")      { config.azureTenantId = v }
         if let v = get("azureSubscriptionId") { config.azureSubscriptionId = v }
         if let v = get("reportMateOidcAudience") { config.reportMateOidcAudience = v }
+        if let v = get("appleOrgKeyVault")   { config.appleOrgKeyVault = v }
+        if let v = get("appleOrgSecretPrefixes") {
+            config.appleOrgSecretPrefixes = v.split(whereSeparator: { $0 == "\n" || $0 == "," }).map(String.init)
+        }
         if let v = get("snipeOidcAudience")  { config.snipeOidcAudience = v }
         if let v = get("graphClientId")      { config.graphClientId = v }
         if let v = get("graphClientSecret")  { config.graphClientSecret = v }
@@ -624,40 +648,12 @@ public struct FleetMateConfig: Codable {
         }
     }
 
-    /// Legacy Keychain loader — used when credentials.json doesn't exist yet
-    private static func loadFromKeychainLegacy(into config: inout FleetMateConfig) {
-        let kc = KeychainService.shared
-        if let v = kc.get(.reportMateUrl)        { config.reportMateUrl = v }
-        if let v = kc.get(.reportMatePassphrase)  { config.reportMatePassphrase = v }
-        if let v = kc.get(.snipeUrl)    { config.snipeUrl = v }
-        if let v = kc.get(.snipeApiKey) { config.snipeApiKey = v }
-        if let v = kc.get(.graphTenantId) { config.graphTenantId = v }
-        if let v = kc.get(.graphClientId)     { config.graphClientId = v }
-        if let v = kc.get(.graphClientSecret) { config.graphClientSecret = v }
-        if let v = kc.get(.devicesGraphId)     { config.devicesGraphId = v }
-        if let v = kc.get(.devicesGraphSecret) { config.devicesGraphSecret = v }
-        if let v = kc.get(.systemsGraphId)     { config.systemsGraphId = v }
-        if let v = kc.get(.systemsGraphSecret) { config.systemsGraphSecret = v }
-        if let v = kc.get(.devopsOrganization) { config.devopsOrganization = v }
-        if let v = kc.get(.devopsProject)      { config.devopsProject = v }
-        if let v = kc.get(.devopsClientId)     { config.devopsClientId = v }
-        if let v = kc.get(.devopsTenantId)     { config.devopsTenantId = v }
-        if let v = kc.get(.tdxBaseUrl)         { config.tdxBaseUrl = v }
-        if let v = kc.get(.tdxAppId),       let id = Int(v) { config.tdxAppId = id }
-        if let v = kc.get(.tdxTicketingAppId), let id = Int(v) { config.tdxTicketingAppId = id }
-        if let v = kc.get(.tdxAssetsAppId),    let id = Int(v) { config.tdxAssetsAppId = id }
-        if let v = kc.get(.tdxUsername)        { config.tdxUsername = v }
-        if let v = kc.get(.tdxPassword)        { config.tdxPassword = v }
-        if let v = kc.get(.tdxBeid)            { config.tdxBeid = v }
-        if let v = kc.get(.tdxWebServicesKey)  { config.tdxWebServicesKey = v }
-        if let v = kc.get(.tdxResponsibleGroupId), let id = Int(v) { config.tdxResponsibleGroupId = id }
-    }
-
     private static func loadEnvironmentVariables(into config: inout FleetMateConfig) {
         let env = ProcessInfo.processInfo.environment
 
         // ReportMate
         if let v = env["REPORTMATE_URL"] { config.reportMateUrl = v }
+        if let v = env["FLEETMATE_APPLE_ORG_KEY_VAULT"], !v.isEmpty { config.appleOrgKeyVault = v }
         if let v = env["REPORTMATE_PASSPHRASE"] { config.reportMatePassphrase = v }
 
 
@@ -931,6 +927,8 @@ public struct FleetMateConfig: Codable {
         set("sshKeyPath", config.secureShell?.privateKeyPath)
         set("sshDefaultUsername", config.secureShell?.defaultUsername)
         set("sshKeyVaultName", config.secureShell?.keyVaultName)
+        set("appleOrgKeyVault", config.appleOrgKeyVault)
+        set("appleOrgSecretPrefixes", config.appleOrgSecretPrefixes?.joined(separator: ","))
         set("handbookRepoUrl", config.handbookRepoUrl)
         set("handbookSiteUrl", config.handbookSiteUrl)
         set("agentsHubRepoUrl", config.agentsHubRepoUrl)

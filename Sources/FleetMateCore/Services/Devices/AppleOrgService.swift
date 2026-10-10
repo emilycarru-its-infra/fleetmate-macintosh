@@ -3,10 +3,10 @@ import ASBMUtilCore
 
 /// Apple School Manager / Apple Business Manager, through asbmutil's client.
 ///
-/// Credentials are asbmutil's own keychain profiles, so a profile made with
-/// `asbmutil config set` works here unchanged and one added in FleetMate's
-/// Settings works in the CLI. Everything Apple-specific stays behind this
-/// type: the app layer sees only FleetMate's `AppleOrg*` models.
+/// Credentials come from Key Vault with the operator's own `az` sign-in (see
+/// `AppleOrgSource`), never from the Keychain, and the access token is kept in
+/// memory. Everything Apple-specific stays behind this type: the app layer
+/// sees only FleetMate's `AppleOrg*` models.
 public actor AppleOrgService {
     public nonisolated let profile: AppleOrgProfile
     private let client: APIClient
@@ -22,67 +22,54 @@ public actor AppleOrgService {
         self.client = client
     }
 
-    /// Sign in with a stored profile. The token is cached in the keychain by
-    /// asbmutil, so this is a request only when the cached one has expired.
-    public static func connect(profileName: String) async throws -> AppleOrgService {
-        let credentials = try Creds.load(profileName: profileName)
-        let client = try await APIClient(credentials: credentials, profileName: profileName)
-        let profile = AppleOrgProfile(name: profileName, clientId: credentials.clientId)
-        dbg.info("Connected to \(profile.serviceName) profile '\(profileName)'", category: "appleorg")
+    /// Sign in to one organization. Reads its three secrets from Key Vault and
+    /// requests an access token, which lives only as long as this service.
+    public static func connect(source: AppleOrgSource) async throws -> AppleOrgService {
+        async let clientId = AppleOrgKeyVault.secret(source.clientIdSecret, in: source.vault)
+        async let keyId = AppleOrgKeyVault.secret(source.keyIdSecret, in: source.vault)
+        async let pem = AppleOrgKeyVault.secret(source.privateKeySecret, in: source.vault)
+        let id = try await clientId.sanitizedIdentifier
+        let key = try await keyId.sanitizedIdentifier
+        let privateKey = AppleOrgKeyVault.normalizedPEM(try await pem)
+        guard privateKey.contains("PRIVATE KEY") else { throw AppleOrgError.invalidPrivateKey }
+        let credentials = Credentials(clientId: id, keyId: key, privateKeyPEM: privateKey,
+                                      scope: id.hasPrefix("SCHOOLAPI") ? "school.api" : "business.api")
+        let client = try await APIClient(credentials: credentials, profileName: source.name, cachesToken: false)
+        let profile = AppleOrgProfile(name: source.name, clientId: id)
+        dbg.info("Connected to \(profile.serviceName) '\(source.name)' from Key Vault", category: "appleorg")
         return AppleOrgService(profile: profile, client: client)
     }
 
     // MARK: - Profiles
 
-    public static func profiles() -> [AppleOrgProfile] {
-        var found = ASBMUtilCore.Keychain.listProfiles()
-            .map { AppleOrgProfile(name: $0.name, clientId: $0.clientId) }
-        // asbmutil's profile list can be empty while credentials exist — the
-        // list and the credentials are stored separately, and an older
-        // `config set` wrote only the latter. The current and default
-        // profiles are always worth probing directly.
-        for name in [currentProfileName, "default"] where !found.contains(where: { $0.name == name }) {
-            if let blob = ASBMUtilCore.Keychain.loadBlob(profileName: name), !blob.clientId.isEmpty {
-                found.append(AppleOrgProfile(name: name, clientId: blob.clientId))
+    /// One profile per configured source whose client ID can be read. A source
+    /// that cannot be read (no sign-in, no access) is logged and left out.
+    public static func profiles(for sources: [AppleOrgSource]) async -> [AppleOrgProfile] {
+        let found = await withTaskGroup(of: AppleOrgProfile?.self) { group in
+            for source in sources {
+                group.addTask {
+                    do {
+                        let id = try await AppleOrgKeyVault.secret(source.clientIdSecret, in: source.vault)
+                        return AppleOrgProfile(name: source.name, clientId: id.sanitizedIdentifier)
+                    } catch {
+                        dbg.error("Apple organization '\(source.name)' unavailable: \(error.localizedDescription)", category: "appleorg")
+                        return nil
+                    }
+                }
             }
+            var out: [AppleOrgProfile] = []
+            for await p in group { if let p { out.append(p) } }
+            return out
         }
-        // Two profiles holding the same credential are one organization;
-        // reading both would count every device twice. A named profile is
-        // kept over the generic "default".
+        // Two sources holding the same credential are one organization;
+        // reading both would count every device twice.
         var byClient: [String: AppleOrgProfile] = [:]
-        for p in found {
-            if let kept = byClient[p.clientId], kept.name != "default" { continue }
-            byClient[p.clientId] = p
+        for p in found where byClient[p.clientId] == nil { byClient[p.clientId] = p }
+        let profiles = byClient.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        if !sources.isEmpty {
+            dbg.info("Apple organizations from Key Vault: \(profiles.map(\.serviceName).joined(separator: ", "))", category: "appleorg")
         }
-        return byClient.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-    }
-
-    public static var currentProfileName: String { ASBMUtilCore.Keychain.getCurrentProfile() }
-
-    public static func setCurrentProfile(_ name: String) {
-        ASBMUtilCore.Keychain.setCurrentProfile(name)
-    }
-
-    /// Store a profile from a client ID, key ID and the private key file Apple
-    /// issued. The PEM text goes into the keychain; the file is not kept.
-    public static func saveProfile(name: String, clientId: String, keyId: String, privateKeyFile: URL) throws {
-        let pem = try String(contentsOf: privateKeyFile, encoding: .utf8)
-        guard pem.contains("PRIVATE KEY") else {
-            throw AppleOrgError.invalidPrivateKey
-        }
-        let blob = KCBlob(
-            clientId: clientId.trimmingCharacters(in: .whitespacesAndNewlines),
-            keyId: keyId.trimmingCharacters(in: .whitespacesAndNewlines),
-            privateKey: pem,
-            teamId: ""
-        )
-        let status = ASBMUtilCore.Keychain.saveBlob(blob, profileName: name)
-        guard status == errSecSuccess else { throw AppleOrgError.keychain(status) }
-        if profiles().count == 1 { setCurrentProfile(name) }
-    }
-
-    public static func deleteProfile(_ name: String) {
-        _ = ASBMUtilCore.Keychain.deleteBlob(profileName: name)
+        return profiles
     }
 
     // MARK: - Reading
@@ -241,15 +228,15 @@ public enum AppleOrgError: LocalizedError {
     case noDevices
     case businessOnly
     case invalidPrivateKey
-    case keychain(OSStatus)
+    case keyVault(String, String)
 
     public var errorDescription: String? {
         switch self {
-        case .noProfile: "No Apple School or Business Manager profile is configured."
+        case .noProfile: "No Apple School or Business Manager organization is configured."
         case .noDevices: "No devices were selected."
         case .businessOnly: "Releasing devices is available only in Apple Business Manager."
-        case .invalidPrivateKey: "That file is not a PEM private key."
-        case .keychain(let status): "The keychain refused the profile (status \(status))."
+        case .invalidPrivateKey: "The private key in Key Vault is not a PEM private key."
+        case .keyVault(let secret, let reason): "Could not read \(secret) from Key Vault: \(reason)"
         }
     }
 }

@@ -28,8 +28,20 @@ final class AppleOrgStore: ObservableObject {
 
     private var services: [String: AppleOrgService] = [:]
     private var loadTask: Task<Void, Never>?
+    /// The Key Vault sources from settings, one per organization.
+    private(set) var sources: [AppleOrgSource] = []
+    /// A view asked for the organizations before their profiles were read;
+    /// read them as soon as the profiles arrive.
+    private var loadWanted = false
 
-    init() { reloadProfiles() }
+    init() {}
+
+    /// Take the sources from settings, and re-read the profiles when they change.
+    func configure(sources: [AppleOrgSource]) {
+        guard sources != self.sources else { return }
+        self.sources = sources
+        Task { await reloadProfiles() }
+    }
 
     var hasProfile: Bool { !profiles.isEmpty }
 
@@ -43,14 +55,14 @@ final class AppleOrgStore: ObservableObject {
 
     func servers(in orgId: String) -> [AppleOrgServer] { servers.filter { $0.orgId == orgId } }
 
-    /// Re-read the profile list, and the organizations if it changed.
-    func reloadProfiles() {
-        let fresh = AppleOrgService.profiles()
+    /// Re-read the profile list from Key Vault, and the organizations if it changed.
+    func reloadProfiles() async {
+        let fresh = await AppleOrgService.profiles(for: sources)
         guard fresh != profiles else { return }
         let hadLoaded = lastLoaded != nil
         profiles = fresh
         resetSession()
-        if hadLoaded { load(force: true) }
+        if hadLoaded || loadWanted { load(force: true) }
     }
 
     private func resetSession() {
@@ -66,8 +78,10 @@ final class AppleOrgStore: ObservableObject {
 
     private func service(for orgId: String) async throws -> AppleOrgService {
         if let s = services[orgId] { return s }
-        guard profile(named: orgId) != nil else { throw AppleOrgError.noProfile }
-        let s = try await AppleOrgService.connect(profileName: orgId)
+        guard profile(named: orgId) != nil, let source = sources.first(where: { $0.name == orgId }) else {
+            throw AppleOrgError.noProfile
+        }
+        let s = try await AppleOrgService.connect(source: source)
         services[orgId] = s
         return s
     }
@@ -76,6 +90,7 @@ final class AppleOrgStore: ObservableObject {
 
     /// Read every organization unless this session already has them.
     func load(force: Bool = false) {
+        loadWanted = true
         guard hasProfile else {
             dbg.debug("No Apple organization profiles found", category: "appleorg")
             return

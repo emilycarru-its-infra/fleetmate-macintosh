@@ -426,6 +426,11 @@ public struct GitRepository: Codable, Identifiable {
     public let defaultBranch: String?
     public let project: GitRepoProject?
     public let webUrl: String?
+    /// HTTPS clone URL. Optional so payloads that omit it still decode.
+    public let remoteUrl: String?
+    public let sshUrl: String?
+    /// Disabled repositories cannot be cloned or read.
+    public let isDisabled: Bool?
 
     public struct GitRepoProject: Codable {
         public let id: String?

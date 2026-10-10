@@ -38,12 +38,20 @@ enum AssetFilterCategory: String, FilterCategoryProtocol {
     var id: String { rawValue }
 }
 
+extension SnipeAsset {
+    /// The Status filter's value: the asset's status type, as the Asset
+    /// Status widget counts it, capitalised for the filter list.
+    var statusTypeLabel: String {
+        WidgetFilterMatch.assetStatusType(meta: statusLabel?.statusMeta, name: statusLabel?.name).capitalized
+    }
+}
+
 extension FilterState where Category == AssetFilterCategory {
     func buildFromAssets(_ assets: [SnipeAsset]) {
         func extract(_ keyPath: (SnipeAsset) -> String?) -> [String] {
             Array(Set(assets.compactMap(keyPath).filter { !$0.isEmpty })).sorted()
         }
-        availableValues[.status] = extract { $0.statusLabel?.statusMeta?.capitalized }
+        availableValues[.status] = extract { $0.statusTypeLabel }
         availableValues[.category] = extract { $0.category?.name }
         availableValues[.platform] = extract { $0.customFieldByName("Platform")?.value }
         availableValues[.manufacturer] = extract { $0.manufacturer?.name }
@@ -58,7 +66,7 @@ extension FilterState where Category == AssetFilterCategory {
         for (category, selected) in selectedValues where !selected.isEmpty {
             let value: String?
             switch category {
-            case .status:       value = asset.statusLabel?.statusMeta?.capitalized
+            case .status:       value = asset.statusTypeLabel
             case .category:     value = asset.category?.name
             case .platform:     value = asset.customFieldByName("Platform")?.value
             case .manufacturer: value = asset.manufacturer?.name
@@ -570,12 +578,14 @@ struct AssetsView: View {
     }
 
     /// Apply a dashboard widget's deep-linked filter (a status wedge or
-    /// category bar).
+    /// category bar). A status wedge is a status type, which is what the
+    /// Status filter holds, so it selects every asset of that type.
     private func consumeModuleFilter() {
         guard let link = appState.navigateToModuleFilter, link.tab == .inventory,
               let category = AssetFilterCategory(rawValue: link.category) else { return }
         appState.navigateToModuleFilter = nil
-        filters.selectedValues[category] = [resolveFilterValue(link.value, in: filters.availableValues[category])]
+        filters.selectedValues[category] = Set(WidgetFilterMatch.matchingValues(
+            link.value, in: filters.availableValues[category]))
     }
 
     private func loadAllAssets() {

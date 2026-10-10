@@ -138,12 +138,7 @@ final class WidgetMetrics: ObservableObject {
             "Linux": .teal,
             "ChromeOS": .brown
         ]
-        let platformLabelMap: [String: String] = [
-            "macOS": "Macintosh",
-            "iOS": "iOS/iPadOS",
-            "iPadOS": "iOS/iPadOS"
-        ]
-        let osCounts = Dictionary(grouping: devices, by: { platformLabelMap[$0.operatingSystem ?? ""] ?? ($0.operatingSystem ?? "") })
+        let osCounts = Dictionary(grouping: devices, by: { WidgetFilterMatch.platformLabel($0.operatingSystem) })
             .filter { !$0.key.isEmpty && $0.value.count > 0 }
             .map { (key: $0.key, count: $0.value.count) }
             .sorted { $0.count > $1.count }
@@ -255,7 +250,9 @@ final class WidgetMetrics: ObservableObject {
         deployedCount = assets.filter { $0.statusLabel?.statusMeta?.lowercased() == "deployed" }.count
         unassignedCount = assets.filter { $0.assignedTo == nil }.count
 
-        let statusGroups = Dictionary(grouping: assets, by: { $0.statusLabel?.statusMeta ?? $0.statusLabel?.name ?? "Unknown" })
+        let statusGroups = Dictionary(grouping: assets, by: {
+            WidgetFilterMatch.assetStatusType(meta: $0.statusLabel?.statusMeta, name: $0.statusLabel?.name)
+        })
             .map { (status: $0.key, count: $0.value.count) }
             .sorted { $0.count > $1.count }
             .prefix(5)

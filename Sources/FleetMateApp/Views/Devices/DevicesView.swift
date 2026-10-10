@@ -619,7 +619,12 @@ private struct DevicesContentView: View {
         guard let link = appState.navigateToModuleFilter, link.tab == .devices,
               let category = DeviceFilterCategory(rawValue: link.category) else { return }
         appState.navigateToModuleFilter = nil
-        filters.selectedValues[category] = [resolveFilterValue(link.value, in: filters.availableValues[category])]
+        // The Platform widget names platforms "Macintosh" and "iOS/iPadOS";
+        // the filter holds Intune's names, so each is matched through that
+        // label and "iOS/iPadOS" selects both iOS and iPadOS.
+        filters.selectedValues[category] = Set(WidgetFilterMatch.matchingValues(
+            link.value, in: filters.availableValues[category],
+            display: category == .platform ? WidgetFilterMatch.platformLabel : nil))
     }
 
     private func refreshAll() {

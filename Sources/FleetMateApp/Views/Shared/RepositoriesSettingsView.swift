@@ -288,7 +288,7 @@ struct RepositoriesSettingsView: View {
             Text("Locations")
         } footer: {
             Text("New clones go to <clone root>/AzDevOps/<Project>/<Repo> or <clone root>/GitHub/<owner>/<repo>. Finding clones scans the folders above \(model.settings.scanDepth) levels deep and links each checkout by its origin. The same settings drive `fleetmate repos`.")
-                .appFont(.caption).foregroundStyle(.secondary)
+                .settingsFooter()
         }
     }
 
@@ -313,7 +313,7 @@ struct RepositoriesSettingsView: View {
         } header: {
             Text("Catalog")
         } footer: {
-            Text(catalogFooter).appFont(.caption).foregroundStyle(.secondary)
+            Text(catalogFooter).settingsFooter()
         }
     }
 

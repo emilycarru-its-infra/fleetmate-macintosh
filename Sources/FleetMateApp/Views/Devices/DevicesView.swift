@@ -262,7 +262,7 @@ private struct DevicesContentView: View {
                 loadDevices()
             }
             appleOrg.load()
-            if appState.config.isGraphConfigured { autopilot.load(using: appState.graphService) }
+            if appState.config.isGraphConfigured && appState.modules.isOn(.enrollment) { autopilot.load(using: appState.graphService) }
             rebuildRows()
             if let id = appState.navigateToDeviceId {
                 selectedDeviceIds = [id]
@@ -630,7 +630,7 @@ private struct DevicesContentView: View {
     private func refreshAll() {
         loadDevices()
         appleOrg.load(force: true)
-        if appState.config.isGraphConfigured { autopilot.load(using: appState.graphService, force: true) }
+        if appState.config.isGraphConfigured && appState.modules.isOn(.enrollment) { autopilot.load(using: appState.graphService, force: true) }
     }
 
     private func loadDevices() {

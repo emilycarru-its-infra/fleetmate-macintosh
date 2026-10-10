@@ -48,6 +48,14 @@ struct OnboardingSummaryStep: View {
                             rows: devOpsSummaryRows
                         )
                     }
+                    if wizardState.enableDevelopment {
+                        summaryCard(
+                            icon: FleetModule.development.icon,
+                            title: "Development",
+                            rows: [("Clone into", wizardState.repoCloneRoot),
+                                   ("Find checkouts in", wizardState.repoScanRoot)]
+                        )
+                    }
                     if wizardState.enableManage {
                         summaryCard(
                             icon: "wrench.and.screwdriver",

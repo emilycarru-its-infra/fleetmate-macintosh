@@ -6,6 +6,14 @@ import FleetMateCore
 @MainActor
 class AuthManager: ObservableObject {
     @Published var systems: [AuthSystemId: AuthSystemStatus] = [:]
+    /// Who `az` and `gh` are signed in as (nil: not signed in or not checked).
+    @Published var azAccount: CliAccount?
+    @Published var ghAccount: CliAccount?
+    /// True once the CLI accounts have been read at least once.
+    @Published var cliAccountsChecked = false
+    /// Elevation domains whose session is cold-starting for a probe, so the
+    /// cards read "Starting elevation session…" instead of a bare spinner.
+    @Published var startingElevation: Set<GraphDomain> = []
     
     private(set) var config: FleetMateConfig
 
@@ -140,12 +148,20 @@ class AuthManager: ObservableObject {
 
     /// Validate/probe each configured system asynchronously. Called once on launch
     /// and again whenever config is reloaded.
+    /// True while `probeAll` runs, so opening Settings during a launch-time
+    /// probe does not start a second one.
+    @Published private(set) var isProbingAll = false
+
     func probeAll(
         graphService: GraphService,
         tdxService: TdxService,
         snipeService: SnipeService,
         devOpsService: AzureDevOpsService
     ) async {
+        guard !isProbingAll else { return }
+        isProbingAll = true
+        defer { isProbingAll = false }
+        await probeCliAccounts()
         // .intune shares .graph's probe — skip it so the pair is probed once.
         for id in AuthSystemId.allCases where systems[id] != nil && id != .intune {
             await probeSystem(
@@ -181,8 +197,12 @@ class AuthManager: ObservableObject {
             if devOpsService.hasValidToken {
                 update(.devops, state: .authenticating)
                 await probeDevOps(devOpsService: devOpsService)
+            } else {
+                // Checked and no token: the silent SSO at launch either has
+                // not finished or did not work. Stamp it so the row reads
+                // "Needs sign-in" rather than checking forever.
+                update(.devops, state: .configured)
             }
-            // If no token yet, leave at .configured — SSO will handle it
         case .github:
             update(.github, state: .authenticating)
             await probeGitHub()
@@ -191,10 +211,31 @@ class AuthManager: ObservableObject {
         }
     }
 
+    /// Read who `az` and `gh` are signed in as — one shared check behind
+    /// every card that depends on either CLI.
+    func probeCliAccounts() async {
+        async let az = CliAccountProbe.azAccount()
+        async let gh = CliAccountProbe.ghAccount()
+        azAccount = await az
+        ghAccount = await gh
+        cliAccountsChecked = true
+    }
+
+    /// Note a cold start before a probe that rides an elevation session, so
+    /// the wait (often over a minute) is shown as progress, not a hang.
+    private func noteElevationStart(_ domain: GraphDomain) async {
+        guard config.graphUsesAze else { return }
+        let info = await ElevationSession().sessionInfo(domain)
+        if case .ready = info.status() { return }
+        startingElevation.insert(domain)
+    }
+
     private func probeGraphIntune(graphService: GraphService) async {
         guard systems[.graph] != nil else { return }
         update(.graph, state: .authenticating)
         update(.intune, state: .authenticating)
+        await noteElevationStart(.devices)
+        defer { startingElevation.remove(.devices) }
         do {
             // Attempt a lightweight Graph call
             _ = try await graphService.getManagedDevices(limit: 1)
@@ -208,6 +249,8 @@ class AuthManager: ObservableObject {
 
     private func probeEntra(graphService: GraphService) async {
         update(.entra, state: .authenticating)
+        await noteElevationStart(.identity)
+        defer { startingElevation.remove(.identity) }
         do {
             _ = try await graphService.searchGroups("test", limit: 1)
             update(.entra, state: .valid(user: "az elevation", expiry: nil))
@@ -242,8 +285,10 @@ class AuthManager: ObservableObject {
             } catch {
                 update(.snipe, state: .failed(message: error.localizedDescription))
             }
+        } else {
+            // No way in yet; stamp the check so the row asks for sign-in.
+            update(.snipe, state: .configured)
         }
-        // SSO not yet authenticated + no API key = leave at .configured, SSO will handle it
     }
 
     private func probeTdx(tdxService: TdxService) async {
@@ -313,12 +358,9 @@ class AuthManager: ObservableObject {
         // A GUI app's PATH has no Homebrew, so resolve gh by absolute path.
         // `gh auth status` exits non-zero when logged out and prints to stderr
         // on some versions, so read both streams and ignore the exit code.
-        let gh = CliSignIn.resolveExecutable("gh")
-        let output = await shellOutputLenient(gh, ["auth", "status", "--active"])
-        if output.contains("Logged in") {
-            let user = output.components(separatedBy: "account ").last?
-                .components(separatedBy: " ").first?.trimmingCharacters(in: .whitespacesAndNewlines)
-            update(.github, state: .valid(user: user, expiry: nil))
+        ghAccount = await CliAccountProbe.ghAccount()
+        if let account = ghAccount {
+            update(.github, state: .valid(user: account.user, expiry: nil))
         } else {
             // gh missing or not logged in
             update(.github, state: .configured)
@@ -327,44 +369,7 @@ class AuthManager: ObservableObject {
     
     // MARK: - Shell Helpers
     
-    struct AzAccountInfo {
-        let name: String
-        let type: String // "user" or "servicePrincipal"
-    }
-    
-    private func runAzAccountShow() async throws -> AzAccountInfo {
-        let output = try await shellOutput(resolveAzPath(), ["account", "show", "-o", "json"])
-        guard let data = output.data(using: .utf8) else { throw AuthError.parseError }
-        struct AzAccount: Decodable {
-            let user: AzUser
-            struct AzUser: Decodable {
-                let name: String
-                let type: String
-            }
-        }
-        let account = try JSONDecoder().decode(AzAccount.self, from: data)
-        return AzAccountInfo(name: account.user.name, type: account.user.type)
-    }
-    
     private func resolveAzPath() -> String {
         ProcessRunner.resolve("az")
-    }
-    
-    private func shellOutput(_ executable: String, _ arguments: [String]) async throws -> String {
-        let result = await ProcessRunner.run(executable, arguments)
-        guard result.succeeded else { throw AuthError.commandFailed }
-        return result.stdout
-    }
-
-    /// Run a command and return stdout + stderr regardless of exit code —
-    /// for tools like `gh auth status` that report state on stderr and exit 1.
-    private func shellOutputLenient(_ executable: String, _ arguments: [String]) async -> String {
-        let result = await ProcessRunner.run(executable, arguments)
-        return result.stdout + result.stderr
-    }
-
-    enum AuthError: Error {
-        case commandFailed
-        case parseError
     }
 }

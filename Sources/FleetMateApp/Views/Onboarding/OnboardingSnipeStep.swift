@@ -6,9 +6,9 @@ struct OnboardingSnipeStep: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Snipe-IT")
+                Text("Inventory")
                     .appFont(.title2, weight: .bold)
-                Text("Connect to your Snipe-IT instance for asset inventory.")
+                Text("Asset inventory and lifecycle. Connector: Snipe-IT.")
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 24)

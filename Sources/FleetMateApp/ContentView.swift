@@ -22,7 +22,7 @@ struct ContentView: View {
     }
 
     private var availableTabs: [AppTab] {
-        AppTab.enabledTabs(config: appState.config)
+        AppTab.enabledTabs(config: appState.config, modules: appState.modules)
     }
 
     private var selectedTab: AppTab { appState.selectedTab }
@@ -205,6 +205,7 @@ struct ContentView: View {
             .onChange(of: appState.config.isTdxConfigured) { _, _ in validateSelectedTab() }
             .onChange(of: appState.config.isDevOpsConfigured) { _, _ in validateSelectedTab() }
             .onChange(of: appState.config.isManageConfigured) { _, _ in validateSelectedTab() }
+            .onChange(of: appState.modules) { _, _ in validateSelectedTab() }
             .sheet(isPresented: $appState.showOnboardingWizard) {
                 OnboardingWizardView()
                     .environmentObject(appState)
@@ -224,7 +225,7 @@ struct ContentView: View {
     }
 
     private func validateSelectedTab() {
-        if !selectedTab.isEnabled(config: appState.config) {
+        if !selectedTab.isEnabled(config: appState.config, modules: appState.modules) {
             appState.selectedTab = AppTab.launchTab()
         }
     }

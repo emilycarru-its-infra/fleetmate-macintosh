@@ -40,7 +40,7 @@ struct AgentSettingsView: View {
                 Text("Terminal")
             } footer: {
                 Text("Sessions start in a login shell, so your PATH and tools are there. Each gets FLEETMATE_CONTEXT, a JSON file naming the tab and selection you're on, and FLEETMATE_AGENT_BRIEF, a guide to every fleetmate command; claude and codex sessions are given the guide at start. Toggle the panel with ⌃`.")
-                    .appFont(.caption).foregroundStyle(.secondary)
+                    .settingsFooter()
             }
 
             AgentCliUpdatesSection(model: appState.terminals.updater)
@@ -79,7 +79,7 @@ struct AgentSettingsView: View {
                 Text("Repositories")
             } footer: {
                 Text("Offered under New Session › Open in repository. Starts from your organization's list; your edits are yours alone.")
-                    .appFont(.caption).foregroundStyle(.secondary)
+                    .settingsFooter()
             }
 
             Section {
@@ -94,7 +94,7 @@ struct AgentSettingsView: View {
                 Text("Handbook and Skills")
             } footer: {
                 Text("The Handbook reader, its search results and cards, and the shared skills appear once these are set. A value from your organization's profile takes precedence.")
-                    .appFont(.caption).foregroundStyle(.secondary)
+                    .settingsFooter()
             }
         }
         .formStyle(.grouped)

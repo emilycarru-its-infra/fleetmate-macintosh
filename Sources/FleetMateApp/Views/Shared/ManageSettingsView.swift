@@ -67,8 +67,7 @@ struct ManageSettingsView: View {
                 Text("Data")
             } footer: {
                 Text("Leave the library path empty to use the per-user copy FleetMate seeds and keeps up to date.")
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
+                    .settingsFooter()
             }
 
             Section {
@@ -158,8 +157,7 @@ struct ManageSettingsView: View {
                 Text("Screen Sharing")
             } footer: {
                 Text("With a stored password Screen Sharing opens straight to the desktop. It lives in the login Keychain under FleetMate, never in a file.")
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
+                    .settingsFooter()
             }
 
             Section {

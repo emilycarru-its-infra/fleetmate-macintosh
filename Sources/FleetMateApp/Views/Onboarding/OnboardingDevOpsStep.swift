@@ -6,9 +6,9 @@ struct OnboardingDevOpsStep: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Azure DevOps")
+                Text("Projects")
                     .appFont(.title2, weight: .bold)
-                Text("Connect to Azure DevOps for project boards and work items.")
+                Text("Boards, work items and issues. Connector: Azure DevOps.")
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 24)

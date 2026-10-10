@@ -67,7 +67,7 @@ struct FleetMateCommands: Commands {
     private var selectedTab: AppTab { appState.selectedTab }
 
     private var enabledTabs: [AppTab] {
-        AppTab.enabledTabs(config: appState.config)
+        AppTab.enabledTabs(config: appState.config, modules: appState.modules)
     }
 
     var body: some Commands {
@@ -120,7 +120,7 @@ struct FleetMateCommands: Commands {
             ForEach(Array(AppTab.editionTabs().enumerated()), id: \.element.id) { index, tab in
                 Button(tab.rawValue) { appState.selectedTab = tab }
                     .keyboardShortcut(tabShortcut(index), modifiers: .command)
-                    .disabled(!tab.isEnabled(config: appState.config))
+                    .disabled(!tab.isEnabled(config: appState.config, modules: appState.modules))
             }
 
             Divider()

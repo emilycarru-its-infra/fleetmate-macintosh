@@ -50,8 +50,7 @@ struct OnboardingManageStep: View {
                     Text("Roster")
                 } footer: {
                     Text("computers.csv in the repo root when it is known; any file with the same columns otherwise.")
-                        .appFont(.caption)
-                        .foregroundStyle(.secondary)
+                    .settingsFooter()
                 }
 
                 Section {

@@ -6,9 +6,9 @@ struct OnboardingGraphStep: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Microsoft Graph")
+                Text("Devices & Identity")
                     .appFont(.title2, weight: .bold)
-                Text("Connect to Intune for device management and Entra ID for identity.")
+                Text("Managed devices, users and groups. Connector: Microsoft Graph (Intune and Entra ID).")
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 24)

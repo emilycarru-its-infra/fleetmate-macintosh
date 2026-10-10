@@ -359,6 +359,21 @@ class AppState: ObservableObject {
     lazy var graphService: GraphService = GraphService(config: config)
     /// Apple School / Business Manager for the Devices tab's Mac view.
     let appleOrg = AppleOrgStore()
+
+    /// Modules switched off in Settings ▸ General. Disabled modules hide from
+    /// the tab bar; Enrollment also stops reading enrollment records.
+    @Published var modules: ModuleEnablement = .load() {
+        didSet {
+            guard modules != oldValue else { return }
+            modules.save()
+            appleOrg.configure(sources: enrollmentSources(config))
+        }
+    }
+
+    /// Enrollment sources, or none while the Enrollment module is off.
+    func enrollmentSources(_ config: FleetMateConfig) -> [AppleOrgSource] {
+        modules.isOn(.enrollment) ? config.appleOrgSources : []
+    }
     /// Windows Autopilot identities, matched to Intune records in Devices.
     let autopilot = AutopilotStore()
     lazy var devOpsService: AzureDevOpsService = AzureDevOpsService(config: config)
@@ -392,7 +407,8 @@ class AppState: ObservableObject {
         }
         self.config = loadedConfig
         self.authManager = AuthManager(config: loadedConfig)
-        appleOrg.configure(sources: loadedConfig.appleOrgSources)
+        ElevationSettings.apply(ElevationSettings(config: loadedConfig))
+        appleOrg.configure(sources: enrollmentSources(loadedConfig))
 
         // Log configuration status
         dbg.info("Graph configured:  \(config.isGraphConfigured)  (tenantId=\(config.graphTenantId != nil), devicesGraphId=\(config.devicesGraphId != nil), systemsGraphId=\(config.systemsGraphId != nil))", category: "config")
@@ -446,6 +462,7 @@ class AppState: ObservableObject {
         do {
             let previous = config
             config = try FleetMateConfig.load()
+            ElevationSettings.apply(ElevationSettings(config: config))
             restartKnowledgeIfChanged(from: previous)
             
             // Check if secrets are configured
@@ -461,7 +478,7 @@ class AppState: ObservableObject {
             tdxService = TdxService(config: config)
             snipeService = SnipeService(config: config)
             reportMateService = ReportMateService(config: config)
-            appleOrg.configure(sources: config.appleOrgSources)
+            appleOrg.configure(sources: enrollmentSources(config))
             manageState.reconfigure(
                 config: config.manage,
                 repoRoot: config.repoRoot,

@@ -6,9 +6,9 @@ struct OnboardingTdxStep: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("TeamDynamix")
+                Text("Tickets")
                     .appFont(.title2, weight: .bold)
-                Text("Connect to TDX for ticket management.")
+                Text("Service desk tickets. Connector: TeamDynamix.")
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 24)

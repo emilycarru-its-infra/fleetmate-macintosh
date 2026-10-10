@@ -236,6 +236,10 @@ release-app:
 	mkdir -p "$(APP_BUNDLE)/Contents/Resources"; \
 	cp "$$REAL_BIN_PATH" "$(APP_BUNDLE)/Contents/MacOS/$(APP_BUNDLE_EXECUTABLE)"; \
 	cp "$(APP_INFO_PLIST)" "$(APP_BUNDLE)/Contents/Info.plist"; \
+	GIT_SHA=$$(git rev-parse --short HEAD 2>/dev/null); \
+	if [ -n "$$GIT_SHA" ]; then \
+		/usr/libexec/PlistBuddy -c "Add :FleetMateGitCommit string $$GIT_SHA" "$(APP_BUNDLE)/Contents/Info.plist"; \
+	fi; \
 	if [ "$(EDITION)" = "ticketsmate" ]; then \
 		/usr/libexec/PlistBuddy \
 			-c "Set :CFBundleIdentifier $(TICKETSMATE_BUNDLE_ID)" \

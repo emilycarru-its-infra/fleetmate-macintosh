@@ -1,8 +1,9 @@
 import SwiftUI
 import FleetMateCore
 
-/// Settings ▸ Apple: where the Apple School / Business Manager API credentials
-/// behind the Devices tab's Mac view come from. They are read from Key Vault
+/// Settings ▸ Enrollment: where the enrollment records joined into Devices
+/// come from — Windows registrations through the Devices connection, and the
+/// Mac enrollment organizations whose API credentials are configured here. They are read from Key Vault
 /// with your own `az` sign-in each session; nothing is kept on this Mac.
 struct AppleOrgSettingsView: View {
     @EnvironmentObject var appState: AppState
@@ -36,6 +37,36 @@ private struct AppleOrgSettingsForm: View {
     var body: some View {
         Form {
             Section {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Windows").appFont(.body, weight: .medium)
+                        Text(appState.config.isGraphConfigured
+                             ? "Registrations are read through the Devices connection."
+                             : "Connect Devices to read Windows registrations.")
+                            .appFont(.caption).foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "pc").foregroundStyle(.secondary)
+                }
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Mac, iPad and iPhone").appFont(.body, weight: .medium)
+                        Text(store.profiles.isEmpty
+                             ? "Add an enrollment organization below."
+                             : "\(store.profiles.count) organization\(store.profiles.count == 1 ? "" : "s") read.")
+                            .appFont(.caption).foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "laptopcomputer").foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Enrollment Records")
+            } footer: {
+                Text("Enrollment records appear in Devices beside each device's management record, so devices that are registered but not yet enrolled show up too. Switch Enrollment off in General to stop reading them.")
+                    .settingsFooter()
+            }
+
+            Section {
                 if store.profiles.isEmpty {
                     Text(store.sources.isEmpty
                          ? "No Key Vault is set, so no organization is read."
@@ -56,9 +87,8 @@ private struct AppleOrgSettingsForm: View {
             } header: {
                 Text("Apple School and Business Manager")
             } footer: {
-                Text("Every organization is read, and its devices appear in Devices beside their Intune records. The API credentials are read from Key Vault with your az sign-in each session and are never stored on this Mac.")
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
+                Text("Every organization is read. The API credentials are read from Key Vault with your az sign-in each session and are never stored on this Mac.")
+                    .settingsFooter()
             }
 
             Section("Key Vault") {

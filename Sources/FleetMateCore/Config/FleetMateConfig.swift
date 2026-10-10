@@ -195,6 +195,15 @@ public struct FleetMateConfig: Codable {
     public var agentsHubRepoUrl: String?
     /// The subnets fleet addresses are chosen from (see `FleetSubnets`).
     public var fleetSubnets = FleetSubnets()
+
+    // Elevation sessions (see ElevationSettings). Deployment-specific, so they
+    // come from config.yaml (elevation_image, elevation_resource_group,
+    // elevation_identity_resource_group, elevation_transcript_account), the
+    // configuration profile (camelCase) or FLEETMATE_ELEVATION_* variables.
+    public var elevationImage: String?
+    public var elevationResourceGroup: String?
+    public var elevationIdentityResourceGroup: String?
+    public var elevationTranscriptAccount: String?
     
     /// Default initializer
     public init() {}
@@ -255,6 +264,10 @@ public struct FleetMateConfig: Codable {
         case logLevel = "log_level"
         case cacheMinutes = "cache_minutes"
         case repoRoot = "repo_root"
+        case elevationImage = "elevation_image"
+        case elevationResourceGroup = "elevation_resource_group"
+        case elevationIdentityResourceGroup = "elevation_identity_resource_group"
+        case elevationTranscriptAccount = "elevation_transcript_account"
     }
 
     static var configPath: String { "\(AppEdition.current.supportDirectory)/config.yaml" }
@@ -480,6 +493,20 @@ public struct FleetMateConfig: Codable {
             config.logLevel = ll
         }
 
+        // Elevation sessions, flat top-level keys in either spelling.
+        if let v = (yaml["elevation_image"] ?? yaml["elevationImage"]) as? String, !v.isEmpty {
+            config.elevationImage = v
+        }
+        if let v = (yaml["elevation_resource_group"] ?? yaml["elevationResourceGroup"]) as? String, !v.isEmpty {
+            config.elevationResourceGroup = v
+        }
+        if let v = (yaml["elevation_identity_resource_group"] ?? yaml["elevationIdentityResourceGroup"]) as? String, !v.isEmpty {
+            config.elevationIdentityResourceGroup = v
+        }
+        if let v = (yaml["elevation_transcript_account"] ?? yaml["elevationTranscriptAccount"]) as? String, !v.isEmpty {
+            config.elevationTranscriptAccount = v
+        }
+
         // Tasks — nested section (snake_case keys matching CodingKeys)
         if let tasks = yaml["tasks"] as? [String: Any],
            let providers = tasks["providers"] as? [String: Any] {
@@ -640,6 +667,10 @@ public struct FleetMateConfig: Codable {
         if let v = get("handbookRepoUrl") { config.handbookRepoUrl = v }
         if let v = get("handbookSiteUrl") { config.handbookSiteUrl = v }
         if let v = get("agentsHubRepoUrl") { config.agentsHubRepoUrl = v }
+        if let v = get("elevationImage"), !v.isEmpty { config.elevationImage = v }
+        if let v = get("elevationResourceGroup"), !v.isEmpty { config.elevationResourceGroup = v }
+        if let v = get("elevationIdentityResourceGroup"), !v.isEmpty { config.elevationIdentityResourceGroup = v }
+        if let v = get("elevationTranscriptAccount"), !v.isEmpty { config.elevationTranscriptAccount = v }
         if get("fleetWiredSubnets") != nil || get("fleetWirelessSubnets") != nil || get("fleetSubnets") != nil {
             config.fleetSubnets = FleetSubnets(
                 wired: FleetSubnets.parse(get("fleetWiredSubnets")),
@@ -668,6 +699,12 @@ public struct FleetMateConfig: Codable {
 
         // Azure DevOps
         if let v = env["DEVOPS_ORGANIZATION"] { config.devopsOrganization = v }
+
+        // Elevation sessions
+        if let v = env["FLEETMATE_ELEVATION_IMAGE"], !v.isEmpty { config.elevationImage = v }
+        if let v = env["FLEETMATE_ELEVATION_RESOURCE_GROUP"], !v.isEmpty { config.elevationResourceGroup = v }
+        if let v = env["FLEETMATE_ELEVATION_IDENTITY_RESOURCE_GROUP"], !v.isEmpty { config.elevationIdentityResourceGroup = v }
+        if let v = env["FLEETMATE_ELEVATION_TRANSCRIPT_ACCOUNT"], !v.isEmpty { config.elevationTranscriptAccount = v }
         if let v = env["AZDEVOPS_URL"] { config.devopsBaseUrl = v }
         if let v = env["DEVOPS_PROJECT"] { config.devopsProject = v }
         // NO PAT — Azure DevOps uses SSO only

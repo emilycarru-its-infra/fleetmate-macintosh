@@ -43,23 +43,30 @@ enum AppTab: String, CaseIterable, Identifiable, Hashable {
         edition.isTicketsOnly ? .tickets : .development
     }
 
-    func isEnabled(config: FleetMateConfig) -> Bool {
-        guard Self.editionTabs().contains(self) else { return false }
-        return switch self {
-        case .devices:   config.isGraphConfigured
-        // ReportMate falls back to its own saved settings, so the tab is always on.
-        case .reporting: true
-        case .manage:    config.isManageConfigured
-        case .inventory: config.isSnipeConfigured
-        case .tickets:   config.isTdxConfigured
-        case .projects:  config.isDevOpsConfigured
-        // GitHub needs no config beyond a gh login, so the tab is always on.
-        case .development: true
-        case .identity:  config.isGraphConfigured
+    /// The Settings ▸ General module behind this tab.
+    var module: FleetModule {
+        switch self {
+        case .development: .development
+        case .projects: .projects
+        case .devices: .devices
+        case .reporting: .reporting
+        case .manage: .manage
+        case .inventory: .inventory
+        case .identity: .identity
+        case .tickets: .tickets
         }
     }
 
-    static func enabledTabs(config: FleetMateConfig) -> [AppTab] {
-        editionTabs().filter { $0.isEnabled(config: config) }
+    /// Shown when this edition carries the tab, its module is switched on, and
+    /// the module has the configuration it needs.
+    func isEnabled(config: FleetMateConfig, modules: ModuleEnablement) -> Bool {
+        guard Self.editionTabs().contains(self) else { return false }
+        // TicketsMate's one tab cannot be switched off.
+        if AppEdition.current.isTicketsOnly { return module.isConfigured(config) }
+        return modules.isActive(module, config: config)
+    }
+
+    static func enabledTabs(config: FleetMateConfig, modules: ModuleEnablement) -> [AppTab] {
+        editionTabs().filter { $0.isEnabled(config: config, modules: modules) }
     }
 }

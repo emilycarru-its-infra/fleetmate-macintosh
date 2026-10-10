@@ -16,8 +16,27 @@ import FleetMateCore
 @Observable
 @MainActor
 final class GitPaneState {
-    enum Panel: Hashable, CaseIterable {
-        case files, history, browse
+    enum Panel: String, Hashable, CaseIterable {
+        case files, history, browse, insights
+
+        var title: String {
+            switch self {
+            case .files: "Changes"
+            case .history: "History"
+            case .browse: "Files"
+            case .insights: "Insights"
+            }
+        }
+
+        /// The key that selects the panel while the git pane has focus.
+        var key: String {
+            switch self {
+            case .files: "1"
+            case .history: "2"
+            case .browse: "3"
+            case .insights: "4"
+            }
+        }
     }
 
     /// The checkout this pane shows, nil when no repository is selected.
@@ -40,7 +59,11 @@ final class GitPaneState {
     var primaryFileSelection: String? { fileSelection.sorted().first }
     var primaryEntry: GitStatusEntry? { files.first { $0.id == primaryFileSelection } }
 
-    var focusedPanel: Panel = .files
+    /// Remembered across launches: the workspace reopens in the mode it was left in.
+    var focusedPanel: Panel = Panel(rawValue: UserDefaults.standard.string(forKey: GitPaneState.panelDefaultsKey) ?? "") ?? .files {
+        didSet { UserDefaults.standard.set(focusedPanel.rawValue, forKey: GitPaneState.panelDefaultsKey) }
+    }
+    static let panelDefaultsKey = "repos.panel"
     var diffText: String = ""
 
     var commitSubject: String = ""
@@ -122,7 +145,7 @@ final class GitPaneState {
             fileSelection = nextID(in: filteredFiles.map(\.id), after: primaryFileSelection).map { [$0] } ?? []
         case .history:
             commitSelection = nextID(in: filteredCommits.map(\.sha), after: commitSelection)
-        case .browse:
+        case .browse, .insights:
             break
         }
     }
@@ -133,7 +156,7 @@ final class GitPaneState {
             fileSelection = previousID(in: filteredFiles.map(\.id), before: primaryFileSelection).map { [$0] } ?? []
         case .history:
             commitSelection = previousID(in: filteredCommits.map(\.sha), before: commitSelection)
-        case .browse:
+        case .browse, .insights:
             break
         }
     }
@@ -223,7 +246,7 @@ final class GitPaneState {
         case .history:
             guard let sha = commitSelection else { diffText = ""; return }
             diffText = (try? await copy.show(sha)) ?? ""
-        case .browse:
+        case .browse, .insights:
             break
         }
     }

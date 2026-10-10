@@ -758,7 +758,7 @@ private struct DevelopmentContent: View {
     @ObservedObject var model: DevelopmentModel
 
     /// The Repos segment's list is narrow: the editor needs the room.
-    private var listWidth: CGFloat { model.segment == .repos ? 250 : 470 }
+    private var listWidth: CGFloat { model.segment == .repos ? 280 : 470 }
 
     var body: some View {
         VStack(spacing: 0) {

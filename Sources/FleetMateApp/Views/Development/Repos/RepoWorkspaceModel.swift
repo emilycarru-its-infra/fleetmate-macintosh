@@ -40,6 +40,8 @@ final class RepoWorkspaceModel: ObservableObject {
     let manager = RepoManager()
     /// The selected repository's git pane.
     let git = GitPaneState()
+    /// The Insights panel's period, scope and statistics.
+    let insights = RepoInsightsModel()
 
     init() {
         git.onError = { [weak self] title, message in self?.report(title: title, message) }

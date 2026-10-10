@@ -265,7 +265,8 @@ public struct RepoManager: Sendable {
         do {
             let snapshot = try await copy.statusSnapshot()
             let worktrees = await copy.worktrees()
-            return RepoStatus(id: record.id, displayName: record.key.displayName, path: local.path, snapshot: snapshot, worktrees: worktrees, agentsFile: copy.agentsFile, error: nil)
+            let lastCommit = await copy.lastCommitDate()
+            return RepoStatus(id: record.id, displayName: record.key.displayName, path: local.path, snapshot: snapshot, worktrees: worktrees, agentsFile: copy.agentsFile, lastCommitAt: lastCommit, error: nil)
         } catch {
             return RepoStatus(id: record.id, displayName: record.key.displayName, path: local.path, snapshot: nil, worktrees: [], agentsFile: copy.agentsFile, error: error.localizedDescription)
         }

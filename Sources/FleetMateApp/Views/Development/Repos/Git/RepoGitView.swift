@@ -223,13 +223,22 @@ struct RepoGitView: View {
 
     // MARK: Body
 
+    @ViewBuilder
     private var mainBody: some View {
+        if state.focusedPanel == .insights {
+            RepoInsightsView(model: model)
+        } else {
+            changesBody
+        }
+    }
+
+    /// Changes, History and Files: the panel list beside its diff or editor.
+    /// The panel switcher sits at the top of the repository sidebar.
+    private var changesBody: some View {
         GeometryReader { geometry in
             let leftWidth = max(380, geometry.size.width * 0.42)
             HSplitView {
                 VStack(spacing: 0) {
-                    panelTabs
-                    Divider()
                     if state.focusedPanel == .files {
                         commitComposer
                         Divider()
@@ -275,52 +284,12 @@ struct RepoGitView: View {
                         GitCommitDetailView(text: state.diffText, commit: state.focusedCommit)
                     case .browse:
                         RepoEditorPane(model: model)
+                    case .insights:
+                        EmptyView()
                     }
                 }
                 .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
             }
-        }
-    }
-
-    private var panelTabs: some View {
-        HStack(spacing: 0) {
-            ForEach(GitPaneState.Panel.allCases, id: \.self) { panel in
-                Button {
-                    state.focusedPanel = panel
-                    paneFocused = true
-                } label: {
-                    Text(label(for: panel))
-                        .font(.callout)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            state.focusedPanel == panel ? Color.accentColor.opacity(0.15) : Color.clear,
-                            in: .rect(cornerRadius: 5)
-                        )
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .help("\(label(for: panel)) (press \(keyHint(for: panel)))")
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-    }
-
-    private func keyHint(for panel: GitPaneState.Panel) -> String {
-        switch panel {
-        case .files: "1"
-        case .history: "2"
-        case .browse: "3"
-        }
-    }
-
-    private func label(for panel: GitPaneState.Panel) -> String {
-        switch panel {
-        case .files: "Changes"
-        case .history: "History"
-        case .browse: "Files"
         }
     }
 
@@ -330,6 +299,7 @@ struct RepoGitView: View {
         case .files: GitFilesPanel(state: state, openInEditor: openInEditor)
         case .history: GitCommitsPanel(state: state)
         case .browse: RepoFilesPane(model: model, searchText: searchText)
+        case .insights: EmptyView()
         }
     }
 
@@ -543,6 +513,7 @@ private extension RepoGitView {
         case "1": state.focusedPanel = .files; return .handled
         case "2": state.focusedPanel = .history; return .handled
         case "3": state.focusedPanel = .browse; return .handled
+        case "4": state.focusedPanel = .insights; return .handled
         case "j": state.moveSelectionDown(); return .handled
         case "k": state.moveSelectionUp(); return .handled
         case " ":

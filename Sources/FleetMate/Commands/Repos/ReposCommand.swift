@@ -36,6 +36,7 @@ struct ReposCommand: AsyncParsableCommand {
             ReposBranchCommand.self,
             ReposDiffCommand.self,
             ReposLogCommand.self,
+            ReposStatsCommand.self,
             ReposFilesCommand.self,
             ReposGrepCommand.self,
             ReposSettingsCommand.self,
@@ -699,6 +700,116 @@ struct ReposLogCommand: AsyncParsableCommand {
         }
     }
 }
+
+// MARK: - stats
+
+struct ReposStatsCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "stats",
+        abstract: "Commit, author and churn statistics from git history",
+        discussion: """
+        With one repository: commits and lines added/removed over time, top authors,
+        most-changed files and top-level folders, and commits by weekday and hour.
+        With none (or several): one row per repository with commits, churn, ahead,
+        behind and open changes, plus the combined statistics. Merge commits are
+        left out; renames count as a delete plus an add.
+        """
+    )
+
+    @Argument(help: "Repositories (default: all tracked)")
+    var repos: [String] = []
+
+    @Option(name: .long, help: "Start of the period: 30d, 12w, 6m, 1y, or YYYY-MM-DD (default: 90d; 'all' for full history)")
+    var since: String = "90d"
+
+    @Option(name: .long, help: "Timeline bucket: day, week or month (default: chosen from the period)")
+    var by: RepoStatsBucket?
+
+    @Option(name: .long, help: "How many files, folders and authors to list")
+    var top: Int = 10
+
+    @Flag(name: .long, help: "Output JSON")
+    var json = false
+
+    func run() async throws {
+        let manager = RepoManager()
+        do {
+            let start: Date?
+            if since.lowercased() == "all" {
+                start = nil
+            } else if let parsed = RepoStatsRange.parseSince(since) {
+                start = parsed
+            } else {
+                throw RepoError.invalidArgument("'\(since)' is not a period. Use 30d, 12w, 6m, 1y, YYYY-MM-DD or all.")
+            }
+            let records = try manager.resolveLocal(repos)
+            if records.count == 1 {
+                let report = try await manager.stats(for: records[0], since: start, bucket: by, top: top)
+                if json { try ReposCLI.printJSON(report); return }
+                print("\n" + records[0].key.displayName.bold + "  " + ReposStatsCommand.period(start).lightBlack)
+                ReposStatsCommand.printReport(report, top: top)
+                return
+            }
+            if records.isEmpty { print("No tracked repositories. Name one, or track some with 'fleetmate repos track'."); return }
+            let summary = await manager.statsSummary(for: records, since: start, bucket: by, top: top)
+            if json { try ReposCLI.printJSON(summary); return }
+            print("\n" + "Tracked repositories".bold + "  " + ReposStatsCommand.period(start).lightBlack + "\n")
+            print(["Repository".col(44), "Commits".col(8), "+lines".col(9), "-lines".col(9), "Ahead".col(6), "Behind".col(7), "Open"].joined(separator: " ").lightBlack)
+            for row in summary.rows {
+                if let error = row.error, row.commits == 0 {
+                    print(row.displayName.col(44) + " " + error.yellow)
+                    continue
+                }
+                print([row.displayName.col(44), "\(row.commits)".col(8), "+\(row.added)".col(9), "-\(row.removed)".col(9), "\(row.ahead)".col(6), "\(row.behind)".col(7), "\(row.openChanges)"].joined(separator: " "))
+            }
+            print("\n" + "All repositories".bold)
+            ReposStatsCommand.printReport(summary.combined, top: top)
+        } catch {
+            throw ReposCLI.fail(error)
+        }
+    }
+
+    static func period(_ start: Date?) -> String {
+        guard let start else { return "all history" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return "since \(formatter.string(from: start))"
+    }
+
+    static func printReport(_ report: RepoStatsReport, top: Int) {
+        let t = report.totals
+        print("  \(t.commits) commits by \(t.authors) author\(t.authors == 1 ? "" : "s"), " + "+\(t.added)".green + " / " + "-\(t.removed)".yellow + " lines, \(t.filesTouched) files")
+        let formatter = DateFormatter()
+        formatter.dateFormat = report.bucket == .month ? "yyyy-MM" : "yyyy-MM-dd"
+        let peak = max(1, report.timeline.map(\.commits).max() ?? 1)
+        print("\n  Commits per \(report.bucket.rawValue)".bold)
+        for point in report.timeline.suffix(26) {
+            let bar = String(repeating: "▇", count: Int((Double(point.commits) / Double(peak) * 30).rounded(.up)))
+            print("  " + formatter.string(from: point.start).lightBlack + " " + "\(point.commits)".col(4) + " " + bar.cyan)
+        }
+        if !report.contributors.isEmpty {
+            print("\n  Authors".bold)
+            for person in report.contributors.prefix(top) {
+                print("  " + "\(person.commits)".col(6) + person.name.col(28) + "+\(person.added) -\(person.removed)".lightBlack)
+            }
+        }
+        if !report.areas.isEmpty {
+            print("\n  Folders".bold)
+            for area in report.areas.prefix(top) {
+                print("  " + "\(area.commits)".col(6) + area.path.col(40) + "+\(area.added) -\(area.removed)".lightBlack)
+            }
+        }
+        if !report.files.isEmpty {
+            print("\n  Files".bold)
+            for file in report.files.prefix(top) {
+                print("  " + "\(file.commits)".col(6) + file.path + "  " + "+\(file.added) -\(file.removed)".lightBlack)
+            }
+        }
+        print("")
+    }
+}
+
+extension RepoStatsBucket: ExpressibleByArgument {}
 
 // MARK: - files / grep
 

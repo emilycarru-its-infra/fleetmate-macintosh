@@ -239,9 +239,11 @@ public struct RepoStatus: Codable, Sendable {
     /// The repository's agent instructions (`AGENTS.md`), when it has one.
     /// Agents read it before working in the repository.
     public let agentsFile: String?
+    /// When HEAD was last committed; nil for an empty repository.
+    public let lastCommitAt: Date?
     public let error: String?
 
-    public init(id: String, displayName: String, path: String, snapshot: GitStatusSnapshot?, worktrees: [RepoWorktree], agentsFile: String?, error: String?) {
+    public init(id: String, displayName: String, path: String, snapshot: GitStatusSnapshot?, worktrees: [RepoWorktree], agentsFile: String?, lastCommitAt: Date? = nil, error: String?) {
         self.id = id
         self.displayName = displayName
         self.path = path
@@ -257,8 +259,12 @@ public struct RepoStatus: Codable, Sendable {
         self.changes = snapshot?.changes ?? []
         self.worktrees = worktrees
         self.agentsFile = agentsFile
+        self.lastCommitAt = lastCommitAt
         self.error = error
     }
+
+    /// Staged, unstaged and untracked paths together.
+    public var changedCount: Int { staged + unstaged + untracked }
 }
 
 // MARK: - History, search, results

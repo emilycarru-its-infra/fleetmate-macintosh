@@ -4,15 +4,24 @@ import FleetMateCore
 
 // MARK: - Left pane
 
-/// Tracked repositories with branch, sync and change state. Refreshed on
-/// appear and every 30 seconds while shown; fetch is on demand.
+/// The Repos sidebar: the workspace's mode (Changes, History, Files,
+/// Insights) on top, then tracked repositories grouped the way checkouts sit
+/// on disk — host, then project or owner — with a filter and sort below.
+/// Status refreshes on appear and every 30 seconds while shown; fetch is on
+/// demand. Sort, grouping, filter and which groups are collapsed persist.
 struct ReposListView: View {
     @ObservedObject var model: RepoWorkspaceModel
     @AppStorage("settings.selectedTab") private var settingsTab: Int = 0
+    @AppStorage("repos.sidebar.sort") private var sort: RepoSidebarSort = .name
+    @AppStorage("repos.sidebar.grouped") private var grouped = true
+    @AppStorage("repos.sidebar.filter") private var filter = ""
+    /// Collapsed section and group ids, newline-separated. Collapsed rather
+    /// than expanded is stored so a newly tracked project starts open.
+    @AppStorage("repos.sidebar.collapsed") private var collapsedStorage = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
+            panelPicker
             Divider()
             if model.tracked.isEmpty {
                 ContentUnavailableView {
@@ -25,14 +34,10 @@ struct ReposListView: View {
                 }
                 .frame(maxHeight: .infinity)
             } else {
-                List(selection: $model.selectedId) {
-                    ForEach(model.tracked) { record in
-                        RepoListRow(record: record, status: model.statuses[record.id], isFetching: model.isFetching.contains(record.id))
-                            .tag(record.id)
-                    }
-                }
-                .listStyle(.sidebar)
+                repositoryList
             }
+            Divider()
+            bottomBar
         }
         .task {
             model.reloadRecords()
@@ -49,23 +54,170 @@ struct ReposListView: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            Text("Tracked").appFont(.caption, weight: .semibold).foregroundStyle(.secondary)
-            if model.isRefreshing { ProgressView().controlSize(.mini) }
-            Spacer()
+    // MARK: Mode
+
+    /// Switches what the rest of the window shows for the selected
+    /// repository. It sits above the list because it is a mode of the whole
+    /// workspace: it stays put as the selection moves between repositories.
+    private var panelPicker: some View {
+        Picker("View", selection: Bindable(model.git).focusedPanel) {
+            ForEach(GitPaneState.Panel.allCases, id: \.self) { panel in
+                Text(panel.title).tag(panel)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .controlSize(.regular)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .help("Changes, History, Files or Insights for the selected repository (keys 1–4)")
+    }
+
+    // MARK: List
+
+    private var repositoryList: some View {
+        let filtering = !filter.trimmingCharacters(in: .whitespaces).isEmpty
+        return List(selection: $model.selectedId) {
+            if grouped {
+                let sections = RepoSidebarOrganizer.sections(model.tracked, statuses: model.statuses, sort: sort, matching: filter)
+                ForEach(sections) { section in
+                    Section(isExpanded: expansion(section.id, forcedOpen: filtering)) {
+                        ForEach(section.groups) { group in
+                            DisclosureGroup(isExpanded: expansion(group.id, forcedOpen: filtering)) {
+                                ForEach(group.records) { record in
+                                    row(record, showScope: false)
+                                }
+                            } label: {
+                                Label(group.scope, systemImage: "folder")
+                                    .help(group.title)
+                            }
+                        }
+                    } header: {
+                        Text(section.title)
+                    }
+                }
+            } else {
+                ForEach(RepoSidebarOrganizer.flat(model.tracked, statuses: model.statuses, sort: sort, matching: filter)) { record in
+                    row(record, showScope: true)
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .overlay {
+            if filtering, RepoSidebarOrganizer.flat(model.tracked, statuses: [:], sort: .name, matching: filter).isEmpty {
+                ContentUnavailableView.search(text: filter)
+            }
+        }
+    }
+
+    private func row(_ record: RepoRecord, showScope: Bool) -> some View {
+        RepoListRow(record: record, status: model.statuses[record.id], isFetching: model.isFetching.contains(record.id), showScope: showScope)
+            .tag(record.id)
+            .contextMenu { rowMenu(record) }
+    }
+
+    @ViewBuilder
+    private func rowMenu(_ record: RepoRecord) -> some View {
+        if let path = record.local?.path {
+            Button("Fetch") { Task { await model.fetch([record.id]) } }
+            Divider()
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            }
+            Button("Copy Path") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(path, forType: .string)
+            }
+        }
+        Button("Copy Name") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(record.key.displayName, forType: .string)
+        }
+    }
+
+    private var collapsed: Set<String> {
+        Set(collapsedStorage.split(separator: "\n").map(String.init))
+    }
+
+    /// A group's disclosure state. While a filter is typed every group is
+    /// open, so a match is never hidden inside a collapsed folder; the stored
+    /// state comes back when the filter is cleared.
+    private func expansion(_ id: String, forcedOpen: Bool) -> Binding<Bool> {
+        Binding(
+            get: { forcedOpen || !collapsed.contains(id) },
+            set: { open in
+                guard !forcedOpen else { return }
+                var set = collapsed
+                if open { set.remove(id) } else { set.insert(id) }
+                collapsedStorage = set.sorted().joined(separator: "\n")
+            }
+        )
+    }
+
+    // MARK: Bottom bar
+
+    private var bottomBar: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .foregroundStyle(.secondary)
+                TextField("Filter", text: $filter)
+                    .textFieldStyle(.plain)
+                if !filter.isEmpty {
+                    Button {
+                        filter = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("Clear the filter")
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Color(nsColor: .textBackgroundColor), in: .rect(cornerRadius: 5))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.secondary.opacity(0.35)))
+
+            Menu {
+                Picker("Sort By", selection: $sort) {
+                    ForEach(RepoSidebarSort.allCases, id: \.self) { option in
+                        Text(option.title).tag(option)
+                    }
+                }
+                .pickerStyle(.inline)
+                Divider()
+                Toggle("Group by Source", isOn: $grouped)
+                if grouped {
+                    Button("Expand All") { collapsedStorage = "" }
+                    Button("Collapse All") {
+                        let sections = RepoSidebarOrganizer.sections(model.tracked, statuses: [:], sort: .name)
+                        collapsedStorage = sections.flatMap { $0.groups.map(\.id) }.sorted().joined(separator: "\n")
+                    }
+                }
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Sort by \(sort.title.lowercased())\(grouped ? ", grouped by source" : "")")
+
+            if model.isRefreshing || !model.isFetching.isEmpty {
+                ProgressView().controlSize(.small)
+            }
             Button {
                 Task { await model.fetch(model.tracked.map(\.id)) }
             } label: {
-                Label("Fetch All", systemImage: "arrow.down.circle")
+                Image(systemName: "arrow.down.circle")
             }
             .buttonStyle(.borderless)
             .disabled(model.tracked.isEmpty || !model.isFetching.isEmpty)
             .help("Fetch every tracked repository from its remote")
+            .accessibilityLabel("Fetch All")
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .background(.bar)
     }
 }
 
@@ -73,42 +225,59 @@ private struct RepoListRow: View {
     let record: RepoRecord
     let status: RepoStatus?
     let isFetching: Bool
+    /// In the ungrouped list the project or owner is not implied by a folder.
+    let showScope: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
-                Image(systemName: record.key.provider == .gitHub ? "chevron.left.forwardslash.chevron.right" : "square.stack.3d.up")
-                    .foregroundStyle(.secondary)
-                    .frame(width: 14)
                 Text(record.key.name).appFont(.body, weight: .medium).lineLimit(1)
+                if showScope {
+                    Text(record.key.scope).appFont(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
                 Spacer(minLength: 4)
                 if isFetching { ProgressView().controlSize(.mini) }
             }
-            HStack(spacing: 8) {
-                if let error = status?.error {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                        .lineLimit(1)
-                } else if let status {
-                    Label(status.branch ?? "detached", systemImage: "arrow.triangle.branch")
-                        .lineLimit(1)
-                    if status.ahead > 0 { Text("↑\(status.ahead)") }
-                    if status.behind > 0 { Text("↓\(status.behind)") }
-                    let changed = status.staged + status.unstaged + status.untracked
-                    if changed > 0 {
-                        Text("\(changed) changed")
-                    } else if status.isClean {
-                        Text("clean")
-                    }
-                } else {
-                    Text(record.key.scope)
-                }
-            }
-            .appFont(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.leading, 20)
+            metadata
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
         .padding(.vertical, 2)
+        .help(record.local.map { repoAbbreviatedPath($0.path) } ?? record.key.displayName)
+    }
+
+    @ViewBuilder
+    private var metadata: some View {
+        if let error = status?.error {
+            Label(error, systemImage: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+        } else if let status {
+            HStack(spacing: 8) {
+                HStack(spacing: 2) {
+                    Image(systemName: "arrow.triangle.branch").imageScale(.small)
+                    Text(status.branch ?? "detached").truncationMode(.middle)
+                }
+                if status.ahead > 0 || status.behind > 0 {
+                    Text(syncText(status)).monospacedDigit()
+                        .help("\(status.ahead) ahead, \(status.behind) behind \(status.upstream ?? "upstream")")
+                }
+                if status.changedCount > 0 {
+                    Text("\(status.changedCount) changed").monospacedDigit()
+                } else if status.isClean {
+                    Text("clean")
+                }
+            }
+            .layoutPriority(1)
+        } else {
+            Text(record.key.scope)
+        }
+    }
+
+    private func syncText(_ status: RepoStatus) -> String {
+        [status.ahead > 0 ? "↑\(status.ahead)" : nil, status.behind > 0 ? "↓\(status.behind)" : nil]
+            .compactMap { $0 }
+            .joined(separator: " ")
     }
 }
 

@@ -45,11 +45,45 @@ final class WidgetFilterMatchTests: XCTestCase {
         XCTAssertEqual(WidgetFilterMatch.assetStatusType(meta: "", name: nil), "Unknown")
     }
 
-    /// The Asset Status wedge and the Status filter both read the status
-    /// type, so a wedge's label always resolves to a filter value.
-    func testStatusWedgeResolvesToTheStatusFilterValue() {
-        let wedge = WidgetFilterMatch.filterValue("\(WidgetFilterMatch.assetStatusType(meta: "deployable", name: "Ready")) (4)")
-        let filterValue = WidgetFilterMatch.assetStatusType(meta: "deployable", name: "Ready").capitalized
-        XCTAssertEqual(WidgetFilterMatch.matchingValues(wedge, in: [filterValue, "Deployed"]), [filterValue])
+    func testStatusTypeFilterValueIsTheCapitalisedType() {
+        XCTAssertEqual(WidgetFilterMatch.assetStatusTypeFilterValue(meta: "deployable", name: "Ready"), "Deployable")
+        XCTAssertEqual(WidgetFilterMatch.assetStatusTypeFilterValue(meta: nil, name: "ready to deploy"), "Ready To Deploy")
+        XCTAssertEqual(WidgetFilterMatch.assetStatusTypeFilterValue(meta: nil, name: nil), "Unknown")
+    }
+
+    func testStatusFilterValueIsTheStatusNameAsSnipeITNamesIt() {
+        XCTAssertEqual(WidgetFilterMatch.assetStatusNameFilterValue("Ready to Deploy"), "Ready to Deploy")
+        XCTAssertEqual(WidgetFilterMatch.assetStatusNameFilterValue(" In Repair "), "In Repair")
+        XCTAssertNil(WidgetFilterMatch.assetStatusNameFilterValue(""))
+        XCTAssertNil(WidgetFilterMatch.assetStatusNameFilterValue(nil))
+    }
+
+    /// The Asset Status wedge and the Status Type filter both read the
+    /// status type, so a wedge's label always resolves to a Status Type
+    /// value and selects every asset of that type, whatever its name.
+    func testStatusWedgeSelectsEveryAssetOfItsType() {
+        let assets: [(meta: String?, name: String?)] = [
+            ("deployable", "Ready to Deploy"), ("deployable", "Spare"), ("deployed", "In Use")
+        ]
+        let typeValues = Array(Set(assets.map { WidgetFilterMatch.assetStatusTypeFilterValue(meta: $0.meta, name: $0.name) }))
+        let wedge = WidgetFilterMatch.filterValue("deployable (2)")
+
+        let selected = WidgetFilterMatch.matchingValues(wedge, in: typeValues)
+
+        XCTAssertEqual(selected, ["Deployable"])
+        XCTAssertEqual(assets.filter {
+            selected.contains(WidgetFilterMatch.assetStatusTypeFilterValue(meta: $0.meta, name: $0.name))
+        }.count, 2)
+    }
+
+    /// The Status filter still offers each name, so one name narrows within
+    /// a type that several names share.
+    func testStatusNameSelectsOnlyThatName() {
+        let assets: [(meta: String?, name: String?)] = [
+            ("deployable", "Ready to Deploy"), ("deployable", "Spare"), ("deployed", "In Use")
+        ]
+        let nameValues = Set(assets.compactMap { WidgetFilterMatch.assetStatusNameFilterValue($0.name) })
+        XCTAssertEqual(nameValues, ["Ready to Deploy", "Spare", "In Use"])
+        XCTAssertEqual(assets.filter { WidgetFilterMatch.assetStatusNameFilterValue($0.name) == "Spare" }.count, 1)
     }
 }

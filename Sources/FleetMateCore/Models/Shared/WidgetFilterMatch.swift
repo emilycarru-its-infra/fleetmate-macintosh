@@ -33,14 +33,29 @@ public enum WidgetFilterMatch {
     }
 
     /// The status type an asset is counted under by the Asset Status widget
-    /// and filtered by in the Inventory Status filter: Snipe-IT's status
-    /// meta (deployed, deployable, pending, archived…), else the status
-    /// name, else "Unknown". Both read this, so a wedge always finds its
-    /// assets.
+    /// and filtered by in the Inventory Status Type filter: Snipe-IT's
+    /// status meta (deployed, deployable, pending, archived…), else the
+    /// status name, else "Unknown". Both read this, so a wedge always finds
+    /// its assets.
     public static func assetStatusType(meta: String?, name: String?) -> String {
         if let meta, !meta.isEmpty { return meta }
         if let name, !name.isEmpty { return name }
         return "Unknown"
+    }
+
+    /// The Inventory Status Type filter's value: the status type, capitalised
+    /// for the list ("deployable" → "Deployable").
+    public static func assetStatusTypeFilterValue(meta: String?, name: String?) -> String {
+        assetStatusType(meta: meta, name: name).capitalized
+    }
+
+    /// The Inventory Status filter's value: the asset's own status name
+    /// ("Ready to Deploy", "In Repair"), exactly as Snipe-IT names it, or nil
+    /// when it has none. Several names can share one status type, so this is
+    /// the finer of the two filters.
+    public static func assetStatusNameFilterValue(_ name: String?) -> String? {
+        guard let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else { return nil }
+        return name
     }
 
     private static func normalize(_ s: String) -> String {

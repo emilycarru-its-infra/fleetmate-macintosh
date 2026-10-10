@@ -26,7 +26,11 @@ enum AssetSortField: String, CaseIterable {
 // MARK: - Asset Filter Categories
 
 enum AssetFilterCategory: String, FilterCategoryProtocol {
+    /// The asset's own status name ("Ready to Deploy", "In Repair").
     case status = "Status"
+    /// The status type several names share (Deployable, Deployed, Pending,
+    /// Archived); what the Asset Status widget counts and its wedges select.
+    case statusType = "Status Type"
     case category = "Category"
     case platform = "Platform"
     case manufacturer = "Manufacturer"
@@ -39,10 +43,15 @@ enum AssetFilterCategory: String, FilterCategoryProtocol {
 }
 
 extension SnipeAsset {
-    /// The Status filter's value: the asset's status type, as the Asset
+    /// The Status filter's value: the asset's own status name.
+    var statusNameFilterValue: String? {
+        WidgetFilterMatch.assetStatusNameFilterValue(statusLabel?.name)
+    }
+
+    /// The Status Type filter's value: the asset's status type, as the Asset
     /// Status widget counts it, capitalised for the filter list.
     var statusTypeLabel: String {
-        WidgetFilterMatch.assetStatusType(meta: statusLabel?.statusMeta, name: statusLabel?.name).capitalized
+        WidgetFilterMatch.assetStatusTypeFilterValue(meta: statusLabel?.statusMeta, name: statusLabel?.name)
     }
 }
 
@@ -51,7 +60,8 @@ extension FilterState where Category == AssetFilterCategory {
         func extract(_ keyPath: (SnipeAsset) -> String?) -> [String] {
             Array(Set(assets.compactMap(keyPath).filter { !$0.isEmpty })).sorted()
         }
-        availableValues[.status] = extract { $0.statusTypeLabel }
+        availableValues[.status] = extract { $0.statusNameFilterValue }
+        availableValues[.statusType] = extract { $0.statusTypeLabel }
         availableValues[.category] = extract { $0.category?.name }
         availableValues[.platform] = extract { $0.customFieldByName("Platform")?.value }
         availableValues[.manufacturer] = extract { $0.manufacturer?.name }
@@ -66,7 +76,8 @@ extension FilterState where Category == AssetFilterCategory {
         for (category, selected) in selectedValues where !selected.isEmpty {
             let value: String?
             switch category {
-            case .status:       value = asset.statusTypeLabel
+            case .status:       value = asset.statusNameFilterValue
+            case .statusType:   value = asset.statusTypeLabel
             case .category:     value = asset.category?.name
             case .platform:     value = asset.customFieldByName("Platform")?.value
             case .manufacturer: value = asset.manufacturer?.name
@@ -578,8 +589,9 @@ struct AssetsView: View {
     }
 
     /// Apply a dashboard widget's deep-linked filter (a status wedge or
-    /// category bar). A status wedge is a status type, which is what the
-    /// Status filter holds, so it selects every asset of that type.
+    /// category bar). A status wedge is a status type, so it lands on the
+    /// Status Type filter and selects every asset of that type; the Status
+    /// filter keeps the individual status names.
     private func consumeModuleFilter() {
         guard let link = appState.navigateToModuleFilter, link.tab == .inventory,
               let category = AssetFilterCategory(rawValue: link.category) else { return }

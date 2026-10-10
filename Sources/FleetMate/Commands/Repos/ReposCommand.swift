@@ -214,11 +214,14 @@ struct ReposCatalogCommand: AsyncParsableCommand {
                 }))
             } else {
                 print("\n" + "Repository catalog".bold + " (\(records.count))\n")
-                print("   " + "Provider".col(8) + " " + "Repository".col(48) + " " + "Default".col(10) + " Local")
+                let header: [String] = ["Provider".col(8), "Repository".col(48), "Default".col(10), "Local"]
+                print("   " + header.joined(separator: " "))
                 for r in records {
                     let marker = r.isTracked ? "●".green : (r.isLocal ? "○".cyan : " ")
                     let local = r.local?.path ?? ""
-                    print(" \(marker) " + r.key.provider.rawValue.col(8) + " " + r.key.displayName.col(48) + " " + (r.defaultBranch ?? "").col(10) + " " + local.lightBlack)
+                    let columns: [String] = [r.key.provider.rawValue.col(8), r.key.displayName.col(48),
+                                             (r.defaultBranch ?? "").col(10), local.lightBlack]
+                    print(" \(marker) " + columns.joined(separator: " "))
                 }
                 print("\n ● tracked  ○ local, untracked".lightBlack)
                 for error in errors { print("warning: \(error)".yellow) }
@@ -307,10 +310,14 @@ struct ReposDiscoverCommand: AsyncParsableCommand {
             let noRemote = results.filter { $0.action == .noRemote }
             print("\nScanned " + settings.scanRoots.joined(separator: ", ") + " (depth \(settings.scanDepth)): \(results.count) checkouts\n")
             for r in linked {
-                print("  + ".green + (r.displayName ?? "").col(44) + " " + r.path.lightBlack + (r.inCatalog ? "" : "  (not in catalog)".yellow))
+                let note: String = r.inCatalog ? "" : "  (not in catalog)".yellow
+                let name: String = (r.displayName ?? "").col(44)
+                print("  + ".green + name + " " + r.path.lightBlack + note)
             }
             for r in duplicates {
-                print("  = ".yellow + (r.displayName ?? "").col(44) + " " + r.path.lightBlack + "  (already at \(r.registeredPath ?? ""))")
+                let name: String = (r.displayName ?? "").col(44)
+                let note: String = "  (already at \(r.registeredPath ?? ""))"
+                print("  = ".yellow + name + " " + r.path.lightBlack + note)
             }
             print("\n\(linked.count) linked, \(known.count) already linked, \(duplicates.count) duplicate copies, \(noRemote.count) without a usable origin")
         } catch {
@@ -684,7 +691,8 @@ struct ReposLogCommand: AsyncParsableCommand {
             formatter.dateFormat = "yyyy-MM-dd HH:mm"
             for commit in commits {
                 let date = commit.date.map { formatter.string(from: $0) } ?? ""
-                print(commit.shortSha.yellow + " " + date.lightBlack + " " + commit.author.col(18).cyan + " " + commit.subject)
+                let columns: [String] = [commit.shortSha.yellow, date.lightBlack, commit.author.col(18).cyan, commit.subject]
+                print(columns.joined(separator: " "))
             }
         } catch {
             throw ReposCLI.fail(error)

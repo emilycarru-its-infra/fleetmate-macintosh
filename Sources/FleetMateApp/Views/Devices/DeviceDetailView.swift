@@ -276,7 +276,7 @@ private struct IntuneDeviceSections: View {
                                     .foregroundColor(.secondary)
                                 Image(systemName: "chevron.right")
                                     .appFont(.caption2)
-                                    .foregroundColor(Color(NSColor.tertiaryLabelColor))
+                                    .foregroundColor(Color(NSColor.secondaryLabelColor))
                             }
                             .contentShape(Rectangle())
                         }

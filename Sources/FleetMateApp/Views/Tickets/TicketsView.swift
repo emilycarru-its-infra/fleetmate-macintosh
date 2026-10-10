@@ -112,6 +112,7 @@ enum AcademicTerm: String, CaseIterable {
 
 struct TicketsView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.compactModuleToolbar) private var compactToolbar
     @State private var isLoading = false
     /// Share of the width the ticket detail takes when it opens.
     @State private var detailFraction = 0.5
@@ -720,7 +721,7 @@ struct TicketsView: View {
 
                 Toggle(isOn: $assignedToMe) {
                     Label("Assigned to Me", systemImage: assignedToMe ? "person.crop.circle.fill" : "person.crop.circle")
-                        .labelStyle(.titleAndIcon)
+                        .labelStyle(AdaptiveLabelStyle(iconOnly: compactToolbar))
                 }
                 .toggleStyle(.button)
                 .disabled(appState.tdxMe == nil)
@@ -1778,7 +1779,7 @@ struct TicketsView: View {
                 if text.isEmpty {
                     Text("No description")
                         .appFont(.body)
-                        .foregroundColor(.secondary.opacity(0.6))
+                        .foregroundColor(.secondary)
                         .italic()
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)

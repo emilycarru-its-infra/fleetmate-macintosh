@@ -159,7 +159,7 @@ struct CompliancePolicyLightboxView: View {
                 }
                 if let type = definition.odataType {
                     Text(type.replacingOccurrences(of: "#microsoft.graph.", with: ""))
-                        .appFont(.caption2).foregroundStyle(.tertiary)
+                        .appFont(.caption2).foregroundStyle(.secondary)
                 }
             }
         }
@@ -207,13 +207,13 @@ struct CompliancePolicyLightboxView: View {
                         Text(assignmentLabel(assignment)).appFont(.caption)
                         Spacer()
                         if let id = assignment.groupId {
-                            Text(id).appFont(.caption2, design: .monospaced).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+                            Text(id).appFont(.caption2, design: .monospaced).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                         }
                     }
                 }
                 if let modified = definition.lastModifiedDateTime {
                     Text("Policy last modified \(formatted(modified) ?? modified)")
-                        .appFont(.caption2).foregroundStyle(.tertiary).padding(.top, 4)
+                        .appFont(.caption2).foregroundStyle(.secondary).padding(.top, 4)
                 }
             } else if definition != nil {
                 Text("No assignments.").appFont(.caption).foregroundStyle(.secondary)
@@ -287,10 +287,10 @@ struct CompliancePolicyLightboxView: View {
                     }
                     if let sources = setting.sources, !sources.isEmpty {
                         Text("From " + sources.compactMap { $0.displayName }.joined(separator: ", "))
-                            .appFont(.caption2).foregroundStyle(.tertiary)
+                            .appFont(.caption2).foregroundStyle(.secondary)
                     }
                     if let user = setting.userPrincipalName ?? setting.userName, !user.isEmpty {
-                        Text(user).appFont(.caption2).foregroundStyle(.tertiary)
+                        Text(user).appFont(.caption2).foregroundStyle(.secondary)
                     }
                 }
             }

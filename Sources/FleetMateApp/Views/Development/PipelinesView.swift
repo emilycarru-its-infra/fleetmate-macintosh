@@ -31,7 +31,7 @@ struct PipelinesListView: View {
                     if let at = model.pipelinesLoadedAt {
                         Text("Checked \(DevelopmentView.relative(at))")
                             .appFont(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 HStack(spacing: 4) {
@@ -142,7 +142,7 @@ struct PipelineRunRow: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                         if let branch = run.branch {
-                            Image(systemName: "arrow.triangle.branch").appFont(fixed: 8).foregroundStyle(.tertiary)
+                            Image(systemName: "arrow.triangle.branch").appFont(fixed: 8).foregroundStyle(.secondary)
                             Text(branch)
                                 .appFont(.caption2, design: .monospaced)
                                 .foregroundStyle(.secondary)
@@ -150,7 +150,7 @@ struct PipelineRunRow: View {
                                 .truncationMode(.middle)
                         }
                         if let who = run.triggeredBy {
-                            Text("·").foregroundStyle(.tertiary)
+                            Text("·").foregroundStyle(.secondary)
                             Text(who).appFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
                         }
                     }
@@ -164,7 +164,7 @@ struct PipelineRunRow: View {
                         Text(PipelineRunDetailView.format(duration))
                             .appFont(.caption2)
                             .monospacedDigit()
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .frame(width: 56, alignment: .trailing)
@@ -245,18 +245,18 @@ struct PipelineRunDetailView: View {
                         Text(branch).appFont(.caption, design: .monospaced).foregroundStyle(.secondary).lineLimit(1)
                     }
                     if let sha = run.commitSha {
-                        Text(String(sha.prefix(8))).appFont(.caption, design: .monospaced).foregroundStyle(.tertiary)
+                        Text(String(sha.prefix(8))).appFont(.caption, design: .monospaced).foregroundStyle(.secondary)
                     }
                     if let who = run.triggeredBy {
-                        Text("·").foregroundStyle(.tertiary)
+                        Text("·").foregroundStyle(.secondary)
                         Text(who).appFont(.caption).foregroundStyle(.secondary)
                     }
                     if let started = run.startedAt {
-                        Text("·").foregroundStyle(.tertiary)
-                        Text(started.formatted(date: .abbreviated, time: .shortened)).appFont(.caption).foregroundStyle(.tertiary)
+                        Text("·").foregroundStyle(.secondary)
+                        Text(started.formatted(date: .abbreviated, time: .shortened)).appFont(.caption).foregroundStyle(.secondary)
                     }
                     if let duration = run.duration {
-                        Text(Self.format(duration)).appFont(.caption).monospacedDigit().foregroundStyle(.tertiary)
+                        Text(Self.format(duration)).appFont(.caption).monospacedDigit().foregroundStyle(.secondary)
                     }
                 }
             }
@@ -352,7 +352,7 @@ struct PipelineRunDetailView: View {
                     Text(section.name).appFont(.callout, weight: .medium).lineLimit(1)
                     Spacer()
                     Text("\(section.text.split(separator: "\n").count) lines")
-                        .appFont(.caption2).monospacedDigit().foregroundStyle(.tertiary)
+                        .appFont(.caption2).monospacedDigit().foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)

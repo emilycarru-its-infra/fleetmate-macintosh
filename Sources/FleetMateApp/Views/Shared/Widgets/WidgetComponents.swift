@@ -69,12 +69,15 @@ struct GraphsToolbarButton: View {
         Button {
             withAnimation(.easeInOut(duration: 0.22)) { collapsed.toggle() }
         } label: {
-            Image(systemName: "chart.bar.xaxis")
-                .foregroundStyle(collapsed ? Color.secondary : Color.accentColor)
+            Label {
+                Text("Graphs")
+            } icon: {
+                Image(systemName: "chart.bar.xaxis")
+                    .foregroundStyle(collapsed ? Color.secondary : Color.accentColor)
+            }
         }
         .keyboardShortcut("g", modifiers: [.command, .option])
         .help(collapsed ? "Show Graphs (⌥⌘G)" : "Hide Graphs (⌥⌘G)")
-        .accessibilityLabel("Graphs")
         .accessibilityValue(collapsed ? "Hidden" : "Shown")
     }
 }
@@ -170,7 +173,7 @@ struct WidgetCard<Content: View>: View {
                         HStack(spacing: 4) {
                             Text(title).appFont(.subheadline, weight: .bold)
                             Image(systemName: "chevron.right")
-                                .appFont(.caption2).foregroundStyle(.tertiary)
+                                .appFont(.caption2).foregroundStyle(.secondary)
                         }
                     }
                     .buttonStyle(.plain)
@@ -211,7 +214,7 @@ struct WidgetEmptyState: View {
 
     var body: some View {
         Text(message)
-            .appFont(.callout).foregroundStyle(.tertiary)
+            .appFont(.callout).foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 20)
     }

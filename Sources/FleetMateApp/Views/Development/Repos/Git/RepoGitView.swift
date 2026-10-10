@@ -96,7 +96,25 @@ struct RepoGitView: View {
 
     // MARK: Header
 
+    /// Titled buttons when the pane is wide enough, icons otherwise: a narrow
+    /// pane truncated every title ("Fe…", "Pu…") and wrapped "AGENTS.md".
+    /// The icon-only row keeps each title as its accessibility label and
+    /// tooltip.
     private func header(record: RepoRecord, path: String) -> some View {
+        ViewThatFits(in: .horizontal) {
+            headerRow(path: path, iconOnly: false)
+            headerRow(path: path, iconOnly: true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .popover(item: $newBranchAction, arrowEdge: .bottom) { action in
+            GitCommitActionSheet(action: action, currentBranch: state.currentBranch) { request in
+                await state.run(request)
+            }
+        }
+    }
+
+    private func headerRow(path: String, iconOnly: Bool) -> some View {
         HStack(spacing: 8) {
             branchPicker
             Button { Task { await state.runFetch() } } label: {
@@ -138,17 +156,11 @@ struct RepoGitView: View {
             }
             .help("Reveal \(repoAbbreviatedPath(path)) in Finder")
         }
-        .labelStyle(.titleAndIcon)
+        .labelStyle(AdaptiveLabelStyle(iconOnly: iconOnly))
+        .lineLimit(1)
         .fontWeight(.semibold)
         .buttonStyle(.bordered)
         .controlSize(.large)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .popover(item: $newBranchAction, arrowEdge: .bottom) { action in
-            GitCommitActionSheet(action: action, currentBranch: state.currentBranch) { request in
-                await state.run(request)
-            }
-        }
     }
 
     @ViewBuilder
@@ -161,11 +173,13 @@ struct RepoGitView: View {
             }
             .buttonStyle(.borderless)
             .fontWeight(.regular)
+            .fixedSize()
             .help("Agents read this file before working here. Click to open it.")
         } else {
             Label("No AGENTS.md", systemImage: "doc")
                 .fontWeight(.regular)
                 .foregroundStyle(.secondary)
+                .fixedSize()
                 .help("This repository has no AGENTS.md for agents to read")
         }
     }

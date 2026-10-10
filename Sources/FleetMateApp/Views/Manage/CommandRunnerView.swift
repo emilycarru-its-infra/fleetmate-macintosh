@@ -371,7 +371,7 @@ struct CommandEditorSheet: View {
                     .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3)))
                 Text("Use <PLACEHOLDER> tokens for values to prompt for; names containing PASSWORD, SECRET or TOKEN are masked.")
                     .appFont(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
             }
 
             VStack(alignment: .leading, spacing: 6) {

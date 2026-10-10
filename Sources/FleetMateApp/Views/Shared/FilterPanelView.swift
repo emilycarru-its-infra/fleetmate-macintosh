@@ -133,7 +133,7 @@ struct FilterPanelView<Category: FilterCategoryProtocol>: View {
                             if filteredValues.isEmpty {
                                 Text("No matching values")
                                     .appFont(.caption)
-                                    .foregroundStyle(.tertiary)
+                                    .foregroundStyle(.secondary)
                                     .padding(12)
                             }
                         }

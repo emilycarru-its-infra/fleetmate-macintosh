@@ -452,6 +452,9 @@ private struct SearchFieldChrome: ViewModifier {
 struct GlobalSearchResultsPanel: View {
     let results: [GlobalSearchResult]
     var width: CGFloat = 420
+    /// Its own material, border and shadow; off where a popover already
+    /// supplies the container.
+    var chrome: Bool = true
     let onSelect: (GlobalSearchResult) -> Void
 
     private var grouped: [(GlobalSearchResult.Category, [GlobalSearchResult])] {
@@ -491,13 +494,25 @@ struct GlobalSearchResultsPanel: View {
         .frame(width: width)
         .frame(maxHeight: 480)
         .fixedSize(horizontal: false, vertical: true)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.secondary.opacity(0.2), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.25), radius: 18, y: 6)
+        .modifier(PanelChrome(enabled: chrome))
+    }
+
+    private struct PanelChrome: ViewModifier {
+        let enabled: Bool
+        func body(content: Content) -> some View {
+            if enabled {
+                content
+                    .background(.regularMaterial)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(Color.secondary.opacity(0.2), lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.25), radius: 18, y: 6)
+            } else {
+                content
+            }
+        }
     }
 
     private func resultRow(_ hit: GlobalSearchResult) -> some View {
@@ -520,7 +535,7 @@ struct GlobalSearchResultsPanel: View {
                 }
                 Text(hit.matchLabel)
                     .appFont(.caption2, design: .monospaced)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }

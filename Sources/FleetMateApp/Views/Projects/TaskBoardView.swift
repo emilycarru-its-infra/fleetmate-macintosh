@@ -32,7 +32,6 @@ struct TaskBoardView: View {
             }
             .padding()
         }
-        .background(Color.secondary.opacity(0.03))
     }
 }
 

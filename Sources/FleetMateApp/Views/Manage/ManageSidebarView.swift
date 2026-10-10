@@ -70,7 +70,7 @@ struct ManageSidebarView: View {
                     HStack(spacing: 8) {
                         Text("\(searchResults.count) machine\(searchResults.count == 1 ? "" : "s")")
                             .appFont(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                         Spacer()
                         Button("All") { checkedSearchIDs = Set(searchResults.map(\.id)) }
                             .appFont(.caption2)
@@ -124,7 +124,7 @@ struct ManageSidebarView: View {
                             .foregroundStyle(.secondary)
                         Text(manage.rosterError ?? "Check the roster path in Settings › Manage")
                             .appFont(.caption2)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 12)
                     }
@@ -288,7 +288,7 @@ struct ManageSidebarView: View {
                 if !manage.rosterSource.isEmpty {
                     Text(manage.rosterSource)
                         .appFont(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .help(manage.rosterSource)
@@ -436,7 +436,7 @@ struct SidebarDeviceRow: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: isChecked ? "checkmark.square.fill" : "square")
-                .foregroundStyle(isChecked ? Color.accentColor : Color(NSColor.tertiaryLabelColor))
+                .foregroundStyle(isChecked ? Color.accentColor : Color(NSColor.secondaryLabelColor))
                 .appFont(fixed: 11)
             VStack(alignment: .leading, spacing: 2) {
                 Text(computer.displayName).appFont(.body).lineLimit(1)
@@ -449,7 +449,7 @@ struct SidebarDeviceRow: View {
             if !computer.hasHostname {
                 Text("no hostname")
                     .appFont(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 10)

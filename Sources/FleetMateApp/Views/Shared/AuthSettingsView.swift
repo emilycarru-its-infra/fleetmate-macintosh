@@ -319,7 +319,7 @@ struct AuthSettingsView: View {
         HStack(alignment: .top, spacing: 0) {
             Text(label)
                 .appFont(.caption)
-                .foregroundColor(Color(NSColor.tertiaryLabelColor))
+                .foregroundColor(Color(NSColor.secondaryLabelColor))
                 .frame(width: 130, alignment: .leading)
             Text(value)
                 .appFont(.caption, design: .monospaced)
@@ -335,11 +335,11 @@ struct AuthSettingsView: View {
                 HStack(alignment: .top, spacing: 0) {
                     Text("Last verified")
                         .appFont(.caption)
-                        .foregroundColor(Color(NSColor.tertiaryLabelColor))
+                        .foregroundColor(Color(NSColor.secondaryLabelColor))
                         .frame(width: 130, alignment: .leading)
                     Text("\(d, style: .relative) ago  (\(d, formatter: timeFormatter))")
                         .appFont(.caption)
-                        .foregroundColor(Color(NSColor.tertiaryLabelColor))
+                        .foregroundColor(Color(NSColor.secondaryLabelColor))
                 }
             }
         }
@@ -676,7 +676,7 @@ struct AuthSettingsView: View {
         HStack(spacing: 0) {
             Text(label)
                 .appFont(.caption)
-                .foregroundColor(Color(NSColor.tertiaryLabelColor))
+                .foregroundColor(Color(NSColor.secondaryLabelColor))
                 .frame(width: 130, alignment: .leading)
             TextField("", text: text)
                 .textFieldStyle(.roundedBorder)
@@ -688,7 +688,7 @@ struct AuthSettingsView: View {
         HStack(spacing: 0) {
             Text(label)
                 .appFont(.caption)
-                .foregroundColor(Color(NSColor.tertiaryLabelColor))
+                .foregroundColor(Color(NSColor.secondaryLabelColor))
                 .frame(width: 130, alignment: .leading)
             SecureField("", text: text)
                 .textFieldStyle(.roundedBorder)

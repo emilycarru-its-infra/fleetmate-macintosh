@@ -105,7 +105,7 @@ private struct AssetHistoryRow: View {
                     if let target = entry.target?.name, !target.isEmpty {
                         Image(systemName: "arrow.right")
                             .appFont(.caption)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.secondary)
                         Text(target)
                             .appFont(.callout)
                     }

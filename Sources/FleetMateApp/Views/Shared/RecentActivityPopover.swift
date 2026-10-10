@@ -29,14 +29,18 @@ struct RecentActivityToolbarButton: View {
 
     var body: some View {
         Button(action: { isPresented.toggle() }) {
-            Image(systemName: "clock.arrow.circlepath")
-                .overlay(alignment: .topTrailing) {
-                    // An app-level error used to sit in a Dashboard banner;
-                    // the dot is how it stays visible on every tab.
-                    if appState.errorMessage != nil {
-                        Circle().fill(.orange).frame(width: 6, height: 6).offset(x: 3, y: -2)
+            Label {
+                Text("Recent Activity")
+            } icon: {
+                Image(systemName: "clock.arrow.circlepath")
+                    .overlay(alignment: .topTrailing) {
+                        // An app-level error used to sit in a Dashboard banner;
+                        // the dot is how it stays visible on every tab.
+                        if appState.errorMessage != nil {
+                            Circle().fill(.orange).frame(width: 6, height: 6).offset(x: 3, y: -2)
+                        }
                     }
-                }
+            }
         }
         .help("Recent activity in \(appState.selectedTab.rawValue)")
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
@@ -202,7 +206,7 @@ struct ActivityFeedRow: View {
             .frame(width: 82, alignment: .center)
             Text(item.time)
                 .appFont(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .frame(width: 52, alignment: .trailing)
         }
         .padding(.vertical, 7)

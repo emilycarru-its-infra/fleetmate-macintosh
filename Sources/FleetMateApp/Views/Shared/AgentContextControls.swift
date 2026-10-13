@@ -67,6 +67,7 @@ struct AgentContextMenuItems: View {
 }
 
 /// The detail-view button: click sends to the agent session, the menu copies.
+/// TicketsMate has no agent terminal, so there it is not shown.
 struct AgentContextButton: View {
     @EnvironmentObject private var appState: AppState
     let context: AgentContext?
@@ -74,6 +75,10 @@ struct AgentContextButton: View {
     init(_ context: AgentContext?) { self.context = context }
 
     var body: some View {
+        if !AppEdition.current.isTicketsOnly { button }
+    }
+
+    private var button: some View {
         Menu {
             Button("Send to Agent") { if let context { appState.sendToAgent([context]) } }
             Button("Copy for Agent") { if let context { AgentContextPasteboard.write([context]) } }

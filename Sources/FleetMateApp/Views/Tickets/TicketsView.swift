@@ -236,7 +236,8 @@ struct TicketsView: View {
 
     // MARK: - Filter Options
 
-    /// Unique status (id, name) pairs from loaded tickets — for edit picker
+    /// Unique status (id, name) pairs from loaded tickets, in workflow order —
+    /// for the edit picker and the ticket menu
     var statusIdOptions: [(id: Int, name: String)] {
         var seen = Set<Int>()
         var result: [(id: Int, name: String)] = []
@@ -246,10 +247,11 @@ struct TicketsView: View {
                 result.append((id: id, name: name))
             }
         }
-        return result.sorted { $0.name < $1.name }
+        return TicketFieldOrder.sorted(result, by: TicketFieldOrder.status)
     }
 
-    /// Unique priority (id, name) pairs from loaded tickets — for edit picker
+    /// Unique priority (id, name) pairs from loaded tickets, least to most
+    /// urgent — for the edit picker and the ticket menu
     var priorityIdOptions: [(id: Int, name: String)] {
         var seen = Set<Int>()
         var result: [(id: Int, name: String)] = []
@@ -259,7 +261,7 @@ struct TicketsView: View {
                 result.append((id: id, name: name))
             }
         }
-        return result.sorted { $0.name < $1.name }
+        return TicketFieldOrder.sorted(result, by: TicketFieldOrder.priority)
     }
 
     /// Unique group (id, name) pairs from loaded tickets

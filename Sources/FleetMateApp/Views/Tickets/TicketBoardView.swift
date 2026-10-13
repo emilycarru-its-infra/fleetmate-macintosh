@@ -10,6 +10,29 @@ enum BoardGroupBy: String, CaseIterable {
     case group = "Group"
 }
 
+/// The order statuses and priorities run in, wherever they are listed: board
+/// columns, the detail pickers and the ticket menu's submenus. A name ranks
+/// by the first fragment it contains; one matching none goes last.
+enum TicketFieldOrder {
+    /// The order a ticket moves through, New to Closed.
+    static let status = ["new", "open", "in pro", "on hold", "pending", "waiting", "resolved", "completed", "closed", "cancel"]
+    /// Least to most urgent.
+    static let priority = ["low", "medium", "high", "urgent", "critical", "emergency"]
+
+    static func rank(_ name: String, in order: [String]) -> Int {
+        let lowered = name.lowercased()
+        return order.firstIndex { lowered.contains($0) } ?? order.count
+    }
+
+    /// Sorts (id, name) pairs by `order`, then by name.
+    static func sorted(_ options: [(id: Int, name: String)], by order: [String]) -> [(id: Int, name: String)] {
+        options.sorted { a, b in
+            let ra = rank(a.name, in: order), rb = rank(b.name, in: order)
+            return ra != rb ? ra < rb : a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
+    }
+}
+
 /// Kanban board view for tickets - drag cards between columns to update the grouped field
 struct TicketBoardView: View {
     let tickets: [TdxTicket]
@@ -98,11 +121,8 @@ struct TicketBoardView: View {
                 return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
             }
         case .priority:
-            let order = ["low", "medium", "high", "urgent", "critical"]
             keys = groups.keys.sorted { a, b in
-                let aIdx = order.firstIndex(where: { a.lowercased().contains($0) }) ?? 50
-                let bIdx = order.firstIndex(where: { b.lowercased().contains($0) }) ?? 50
-                return aIdx < bIdx
+                TicketFieldOrder.rank(a, in: TicketFieldOrder.priority) < TicketFieldOrder.rank(b, in: TicketFieldOrder.priority)
             }
         }
         return keys.map { key in (key: key, label: key, tickets: groups[key] ?? []) }
@@ -123,14 +143,7 @@ struct TicketBoardView: View {
             }
         }
         
-        // Order statuses: New -> In Progress -> On Hold -> then others -> Closed/Cancelled last
-        let order = ["new", "open", "in progress", "on hold", "pending", "waiting", "resolved", "completed", "closed", "cancelled"]
-        
-        return statusMap.sorted { a, b in
-            let aIndex = order.firstIndex { a.value.lowercased().contains($0) } ?? 50
-            let bIndex = order.firstIndex { b.value.lowercased().contains($0) } ?? 50
-            return aIndex < bIndex
-        }.map { (id: $0.key, name: $0.value) }
+        return TicketFieldOrder.sorted(statusMap.map { (id: $0.key, name: $0.value) }, by: TicketFieldOrder.status)
     }
     
     var body: some View {

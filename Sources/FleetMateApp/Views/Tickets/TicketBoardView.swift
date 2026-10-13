@@ -21,6 +21,8 @@ struct TicketBoardView: View {
     let selectedTicketId: Int?
     /// Shared with the list view so folding a parent in one view folds it in both.
     @Binding var collapsedTicketIds: Set<Int>
+    /// The right-click menu for a card; the same one the list rows carry.
+    let ticketMenu: (TdxTicket) -> AnyView
 
     // MARK: - Grouped columns based on groupBy
 
@@ -80,7 +82,10 @@ struct TicketBoardView: View {
     private func stringFieldColumns(in tickets: [TdxTicket], keyPath: KeyPath<TdxTicket, String?>, fallback: String, ordering: ColumnOrdering = .alphabetical) -> [(key: String, label: String, tickets: [TdxTicket])] {
         var groups: [String: [TdxTicket]] = [:]
         for ticket in tickets {
-            let val = ticket[keyPath: keyPath] ?? fallback
+            // TDX sends an empty name for an unassigned ticket as often as
+            // none, and an empty key draws a column with no heading.
+            let raw = ticket[keyPath: keyPath]?.trimmingCharacters(in: .whitespaces) ?? ""
+            let val = raw.isEmpty ? fallback : raw
             groups[val, default: []].append(ticket)
         }
         let keys: [String]
@@ -158,7 +163,8 @@ struct TicketBoardView: View {
             onDropTicket: { ticketId in
                 onDropTicket(ticketId, col.key)
             },
-            onSelectTicket: onSelectTicket
+            onSelectTicket: onSelectTicket,
+            ticketMenu: ticketMenu
         )
     }
 
@@ -203,6 +209,8 @@ struct BoardColumn: View {
     @Binding var collapsedTicketIds: Set<Int>
     let onDropTicket: (Int) -> Void
     let onSelectTicket: (TdxTicket) -> Void
+    /// The right-click menu for a card; the same one the list rows carry.
+    let ticketMenu: (TdxTicket) -> AnyView
 
     @State private var isTargeted = false
 
@@ -242,7 +250,7 @@ struct BoardColumn: View {
                             onToggleExpand: { toggleExpansion(row.id) }
                         )
                         .padding(.leading, CGFloat(row.depth) * 16)
-                        .contextMenu { TicketAgentMenuItems(ticket: row.ticket) }
+                        .contextMenu { ticketMenu(row.ticket) }
                         .draggable("\(row.ticket.id ?? 0)_\(columnKey)")
                         .onTapGesture {
                             onSelectTicket(row.ticket)
@@ -451,7 +459,8 @@ struct PriorityBadge: View {
         onDropTicket: { _, _ in },
         onSelectTicket: { _ in },
         selectedTicketId: nil,
-        collapsedTicketIds: .constant([])
+        collapsedTicketIds: .constant([]),
+        ticketMenu: { _ in AnyView(EmptyView()) }
     )
 }
 #endif

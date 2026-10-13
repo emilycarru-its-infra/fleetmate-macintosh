@@ -36,7 +36,8 @@ extension AppState {
     }
 }
 
-/// "Copy for Agent" and "Send to Agent", for a row's context menu.
+/// "Copy for Agent" and "Send to Agent", for a row's context menu. TicketsMate
+/// has no agent terminal, so there it shows neither.
 struct AgentContextMenuItems: View {
     @EnvironmentObject private var appState: AppState
     let contexts: [AgentContext]
@@ -45,6 +46,11 @@ struct AgentContextMenuItems: View {
     init(_ contexts: [AgentContext]) { self.contexts = contexts }
 
     var body: some View {
+        if !AppEdition.current.isTicketsOnly { items }
+    }
+
+    @ViewBuilder
+    private var items: some View {
         Button {
             AgentContextPasteboard.write(contexts)
         } label: {

@@ -211,6 +211,11 @@ struct TicketsView: View {
     @State private var parentTicketIdText = ""
     @State private var isSettingParent = false
     @State private var showCreateParentSheet = false
+    /// The ticket Set Parent or Create Parent acts on: the open one from the
+    /// detail pane, or any row from its menu before its detail has loaded.
+    @State private var parentSheetTicket: TdxTicket? = nil
+    /// Why a change made from a ticket's menu failed to save.
+    @State private var menuErrorMessage: String? = nil
     @State private var newParentTitle = ""
     @State private var isSaving = false
     @State private var hasEdits = false
@@ -658,6 +663,20 @@ struct TicketsView: View {
             }
         }
         .onChange(of: appState.navigateToModuleFilter) { _, _ in consumeModuleFilter() }
+        .sheet(isPresented: $showSetParentSheet) {
+            if let ticket = parentSheetTicket { setParentSheet(ticket: ticket) }
+        }
+        .sheet(isPresented: $showCreateParentSheet) {
+            if let ticket = parentSheetTicket { createParentSheet(ticket: ticket) }
+        }
+        .alert("Ticket Not Updated", isPresented: Binding(
+            get: { menuErrorMessage != nil },
+            set: { if !$0 { menuErrorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(menuErrorMessage ?? "")
+        }
         .task { consumeModuleFilter() }
         .onChange(of: appState.cachedTickets) { _, newTickets in
             applyMeMode()
@@ -694,17 +713,27 @@ struct TicketsView: View {
                 ViewModePill(selection: $viewMode)
 
                 if viewMode == .board {
-                    Picker("Group by", selection: $boardGroupBy) {
-                        ForEach(BoardGroupBy.allCases, id: \.self) { option in
-                            Text(option.rawValue).tag(option)
+                    // A menu-style Picker in the toolbar draws an empty
+                    // capsule once a value is chosen, so the menu carries its
+                    // own label naming the current grouping, with the choices
+                    // inside as a checked list.
+                    Menu {
+                        Picker("Group by", selection: $boardGroupBy) {
+                            ForEach(BoardGroupBy.allCases, id: \.self) { option in
+                                Text(option.rawValue).tag(option)
+                            }
                         }
+                        .pickerStyle(.inline)
+                    } label: {
+                        Text(boardGroupBy.rawValue)
                     }
-                    .pickerStyle(.menu)
                     // No fixed width: a capsule wider than the menu's own
                     // bounds leaves a hover highlight that doesn't reach the
                     // capsule's edges.
                     .fixedSize()
-                    .help("Group board columns by")
+                    .help("Group board columns by \(boardGroupBy.rawValue.lowercased())")
+                    .accessibilityLabel("Group by")
+                    .accessibilityValue(boardGroupBy.rawValue)
                 }
 
                 // No expand/collapse-all button here on purpose. Finder, Xcode,
@@ -872,7 +901,8 @@ struct TicketsView: View {
                 selectedTicketIds = [ticket.id]
             },
             selectedTicketId: selectedTicket?.id,
-            collapsedTicketIds: $collapsedTicketIds
+            collapsedTicketIds: $collapsedTicketIds,
+            ticketMenu: { AnyView(ticketContextMenu($0)) }
         )
     }
 
@@ -985,7 +1015,7 @@ struct TicketsView: View {
                                 )
                                 .contentShape(Rectangle())
                                 .contextMenu {
-                                    TicketAgentMenuItems(ticket: ticket)
+                                    ticketContextMenu(ticket)
                                     Divider()
                                     outlineContextMenu
                                 }
@@ -1044,6 +1074,136 @@ struct TicketsView: View {
                   : "Show \(row.childCount) child ticket\(row.childCount == 1 ? "" : "s") — ⌥ click for all")
         } else {
             Spacer().frame(width: 12)
+        }
+    }
+
+    /// Everything the detail pane does to a ticket, on its row and its board
+    /// card, so a ticket can be worked without opening it. Assignment, status
+    /// and priority save at once, the way a board drag does; on the open
+    /// ticket they wait while its own edits are unsaved, so neither change
+    /// overwrites the other.
+    @ViewBuilder
+    private func ticketContextMenu(_ ticket: TdxTicket) -> some View {
+        let id = ticket.id ?? 0
+        let link = appState.config.tdxTicketWebUrl(id)
+        let myUid = appState.tdxMe?.uid
+        let isAssigned = !(ticket.responsibleUid ?? "").isEmpty
+        let editsPending = hasEdits && selectedTicket?.id == ticket.id
+
+        Button {
+            if let url = URL(string: link) { NSWorkspace.shared.open(url) }
+        } label: {
+            Label("Open in TeamDynamix", systemImage: "globe")
+        }
+        Button { copyToPasteboard("\(id)") } label: {
+            Label("Copy Ticket Number", systemImage: "number")
+        }
+        Button { copyToPasteboard(link) } label: {
+            Label("Copy Link", systemImage: "link")
+        }
+        Button { copyToPasteboard(ticket.title ?? "") } label: {
+            Label("Copy Title", systemImage: "textformat")
+        }
+        .disabled((ticket.title ?? "").isEmpty)
+
+        Divider()
+
+        Button {
+            if let myUid { updateFromMenu(ticket, ["ResponsibleUid": myUid]) }
+        } label: {
+            Label("Assign to Me", systemImage: "person.fill")
+        }
+        .disabled(myUid == nil || ticket.responsibleUid == myUid || editsPending)
+        Button {
+            selectedTicketIds = [ticket.id]
+            responsibleSearchText = ""
+            responsibleSearchResults = []
+            isReassigning = true
+        } label: {
+            Label("Reassign…", systemImage: "person.2.fill")
+        }
+        Button {
+            updateFromMenu(ticket, ["ResponsibleUid": ""])
+        } label: {
+            Label("Unassign", systemImage: "person.fill.xmark")
+        }
+        .disabled(!isAssigned || editsPending)
+
+        Picker(selection: Binding(
+            get: { ticket.statusId ?? 0 },
+            set: { updateFromMenu(ticket, ["StatusID": $0]) }
+        )) {
+            ForEach(statusIdOptions, id: \.id) { option in
+                Text(option.name).tag(option.id)
+            }
+        } label: {
+            Label("Status", systemImage: "circle.dotted")
+        }
+        .pickerStyle(.menu)
+        .disabled(statusIdOptions.isEmpty || editsPending)
+        Picker(selection: Binding(
+            get: { ticket.priorityId ?? 0 },
+            set: { updateFromMenu(ticket, ["PriorityID": $0]) }
+        )) {
+            ForEach(priorityIdOptions, id: \.id) { option in
+                Text(option.name).tag(option.id)
+            }
+        } label: {
+            Label("Priority", systemImage: "flag")
+        }
+        .pickerStyle(.menu)
+        .disabled(priorityIdOptions.isEmpty || editsPending)
+
+        Divider()
+
+        Button {
+            selectedTicketIds = [ticket.id]
+            parentSheetTicket = ticket
+            showSetParentSheet = true
+        } label: {
+            Label("Set Parent…", systemImage: "arrow.up.doc")
+        }
+        Button {
+            selectedTicketIds = [ticket.id]
+            parentSheetTicket = ticket
+            newParentTitle = ticket.title ?? ""
+            showCreateParentSheet = true
+        } label: {
+            Label("Create Parent…", systemImage: "plus.rectangle.on.rectangle")
+        }
+        Button {
+            loadTickets()
+            if selectedTicket?.id == ticket.id {
+                loadTicketDetail(ticketId: id)
+                loadTicketFeed(ticketId: id)
+            }
+        } label: {
+            Label("Refresh", systemImage: "arrow.clockwise")
+        }
+
+        if !AppEdition.current.isTicketsOnly {
+            Divider()
+            TicketAgentMenuItems(ticket: ticket)
+        }
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Saves a change made from a ticket's menu straight away, then refreshes
+    /// the list and, when it is the open ticket, its detail.
+    private func updateFromMenu(_ ticket: TdxTicket, _ changes: [String: Any]) {
+        guard let ticketId = ticket.id else { return }
+        Task {
+            do {
+                _ = try await appState.tdxService.updateTicket(id: ticketId, updates: changes)
+                loadTickets()
+                if selectedTicket?.id == ticketId { loadTicketDetail(ticketId: ticketId) }
+            } catch {
+                menuErrorMessage = "Ticket #\(ticketId) was not updated: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -1368,12 +1528,16 @@ struct TicketsView: View {
             .disabled(editResponsibleUid == nil)
             .help("Clear the responsible person")
 
-            Button(action: { showSetParentSheet = true }) {
+            Button(action: {
+                parentSheetTicket = ticket
+                showSetParentSheet = true
+            }) {
                 Label("Set Parent", systemImage: "arrow.up.doc")
             }
             .help("Set parent ticket")
 
             Button(action: {
+                parentSheetTicket = ticket
                 newParentTitle = ticket.title ?? ""
                 showCreateParentSheet = true
             }) {
@@ -1597,12 +1761,6 @@ struct TicketsView: View {
             }
         }
         .padding(.vertical, 4)
-        .sheet(isPresented: $showSetParentSheet) {
-            setParentSheet(ticket: ticket)
-        }
-        .sheet(isPresented: $showCreateParentSheet) {
-            createParentSheet(ticket: ticket)
-        }
     }
 
     /// A labeled field row — compact label + content

@@ -59,10 +59,13 @@ struct TicketWorkflowView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task(id: reloadToken) { await loadWorkflow() }
-        .sheet(item: $selectedAction) { selection in
+        .sheet(item: $selectedAction, onDismiss: {
+            // Also refresh after an uncertain failure before offering actions again.
+            isLoading = true
+            reloadToken += 1
+        }) { selection in
             WorkflowActionSheet(ticketId: ticketId, selection: selection, service: service) {
                 onActionCompleted()
-                reloadToken += 1
             }
         }
     }

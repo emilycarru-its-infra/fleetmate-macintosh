@@ -248,7 +248,8 @@ release-app:
 			-c "Set :CFBundleIconFile $(APP_DISPLAY_NAME)" \
 			-c "Set :CFBundleIconName $(APP_DISPLAY_NAME)" \
 			-c "Add :FleetMateEdition string TicketsMate" \
-			-c "Delete :CFBundleURLTypes" \
+			-c "Set :CFBundleURLTypes:0:CFBundleURLName TicketsMate link" \
+			-c "Set :CFBundleURLTypes:0:CFBundleURLSchemes:0 ticketsmate" \
 			"$(APP_BUNDLE)/Contents/Info.plist"; \
 		echo "$(GREEN)✓ Info.plist set up for $(APP_DISPLAY_NAME)$(NC)"; \
 	fi; \

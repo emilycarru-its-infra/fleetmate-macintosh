@@ -63,6 +63,18 @@ final class FleetMateLinkTests: XCTestCase {
         for link in links { XCTAssertEqual(try FleetMateLink.parse(link.url), link) }
     }
 
+    func testTicketsMateLinksOnlyOpenTickets() throws {
+        XCTAssertEqual(try parse("ticketsmate://ticket/1234567"), .ticket(id: 1234567))
+        XCTAssertEqual(AppEdition.ticketsMate.linkScheme, "ticketsmate")
+        XCTAssertEqual(AppEdition.fleetMate.linkScheme, "fleetmate")
+        for value in ["ticketsmate://ticket/0", "ticketsmate://ticket/-1", "ticketsmate://ticket/2147483648",
+                      "ticketsmate://ticket/1/extra", "ticketsmate://ticket/%31", "ticketsmate://ticket/1?x=2",
+                      "ticketsmate://ticket/1#feed", "ticketsmate://user@ticket/1", "ticketsmate://ticket:9/1",
+                      "ticketsmate://device/1", "ticketsmate://open?url=https://example.com"] {
+            XCTAssertThrowsError(try parse(value), value)
+        }
+    }
+
     func testErrorsAreNamed() {
         XCTAssertThrowsError(try parse("fleetmate://nonsense/1")) { error in
             XCTAssertEqual(error as? FleetMateLinkError, .unknownRoute("nonsense"))

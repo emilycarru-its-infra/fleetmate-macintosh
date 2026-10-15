@@ -175,7 +175,7 @@ private struct WorkflowActionSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(selection.action.label).font(.title2)
-            Text("Ticket #\(ticketId) · \(selection.step.name ?? "Workflow step")")
+            Text("Ticket #\(String(ticketId)) · \(selection.step.name ?? "Workflow step")")
                 .textSelection(.enabled)
             if let tooltip = selection.action.tooltip, !tooltip.isEmpty {
                 Text(tooltip).foregroundStyle(.secondary)

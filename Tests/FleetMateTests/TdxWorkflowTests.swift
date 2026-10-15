@@ -11,7 +11,9 @@ final class TdxWorkflowTests: XCTestCase {
         config.tdxBaseUrl = "https://tdx.example.edu/TDWebApi"
         config.tdxAppId = 99
         config.tdxTicketingAppId = 115
-        config.tdxAuthMethod = .browserSSO
+        config.tdxAuthMethod = .auto
+        config.tdxBeid = "synthetic-service-id"
+        config.tdxWebServicesKey = "synthetic-service-key"
         StubURLProtocol.reset(stubs: [
             .init(pathContains: "/workflow", statusCode: status, body: body)
         ])
@@ -34,6 +36,16 @@ final class TdxWorkflowTests: XCTestCase {
         do {
             _ = try await service.performWorkflowAction(ticketId: 42, request: .init(stepId: stepId, actionId: "complete"))
             XCTFail("Writes must use the signed-in user")
+        } catch is TdxAuthError { }
+        XCTAssertTrue(StubURLProtocol.recorded.isEmpty)
+    }
+
+    func testExpiredUserSessionCannotFallBackToConfiguredServiceAccount() async throws {
+        let service = service(body: "null")
+        service.setSsoToken("eyJ.expired.user", expiry: .distantPast)
+        do {
+            _ = try await service.performWorkflowAction(ticketId: 42, request: .init(stepId: stepId, actionId: "complete"))
+            XCTFail("Expired SSO must not authenticate as the service account")
         } catch is TdxAuthError { }
         XCTAssertTrue(StubURLProtocol.recorded.isEmpty)
     }

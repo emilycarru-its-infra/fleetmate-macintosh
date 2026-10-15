@@ -325,6 +325,45 @@ public class TdxService {
         cookieSession ?? session
     }
 
+    // MARK: - Ticket workflows
+
+    public func getWorkflow(ticketId: Int) async throws -> TdxWorkflow? {
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
+        return try await workflowResponse(activeSession.request(
+            config.tdxTicketsUrl("\(ticketId)/workflow"), headers: headers), as: TdxWorkflow?.self)
+    }
+
+    public func getWorkflowActions(ticketId: Int, stepId: UUID) async throws -> [TdxWorkflowAction] {
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
+        let actions = try await workflowResponse(activeSession.request(
+            config.tdxTicketsUrl("\(ticketId)/workflow/actions"),
+            parameters: ["stepId": stepId.uuidString], headers: headers), as: [TdxWorkflowAction]?.self)
+        return actions ?? []
+    }
+
+    @discardableResult
+    public func performWorkflowAction(ticketId: Int, request: TdxWorkflowActionRequest) async throws -> TdxWorkflowActionResult {
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
+        let result = try await workflowResponse(activeSession.request(
+            config.tdxTicketsUrl("\(ticketId)/workflow/approve"), method: .post,
+            parameters: request, encoder: JSONParameterEncoder.default, headers: headers),
+            as: TdxWorkflowActionResult.self)
+        try result.validate()
+        return result
+    }
+
+    private func workflowResponse<Value: Decodable & Sendable>(_ request: DataRequest, as type: Value.Type) async throws -> Value {
+        try await withCheckedThrowingContinuation { continuation in
+            request.validate().responseDecodable(of: type) { response in
+                if let status = response.response?.statusCode, !(200..<300).contains(status) {
+                    continuation.resume(throwing: TdxWorkflowError.requestFailed(status))
+                    return
+                }
+                continuation.resume(with: response.result.mapError { $0 as Error })
+            }
+        }
+    }
+
     // MARK: - Tickets
 
     public func searchTickets(search: TicketSearchRequest? = nil, maxResults: Int = 50) async throws -> [TdxTicket] {

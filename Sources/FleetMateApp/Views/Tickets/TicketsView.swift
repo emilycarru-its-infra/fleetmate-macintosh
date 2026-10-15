@@ -231,7 +231,8 @@ struct TicketsView: View {
 
     var selectedTicket: TdxTicket? {
         guard let id = selectedTicketIds.first, let unwrappedId = id else { return nil }
-        return detailedTicket ?? tickets.first { $0.id == unwrappedId }
+        if detailedTicket?.id == unwrappedId { return detailedTicket }
+        return tickets.first { $0.id == unwrappedId }
     }
 
     // MARK: - Filter Options
@@ -638,6 +639,8 @@ struct TicketsView: View {
             isCommentPrivate = false
             notifyRequestor = false
             notifyResponsible = false
+            detailedTicket = nil
+            ticketFeed = []
             if let ticketId = newIds.first, let unwrappedId = ticketId {
                 loadTicketDetail(ticketId: unwrappedId)
                 loadTicketFeed(ticketId: unwrappedId)
@@ -1308,6 +1311,16 @@ struct TicketsView: View {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         descriptionSection(ticket: ticket)
                             .padding(.top, 10)
+                        if let ticketId = ticket.id {
+                            Divider().padding(.vertical, 8)
+                            TicketWorkflowView(ticketId: ticketId, service: appState.tdxService) {
+                                guard selectedTicket?.id == ticketId else { return }
+                                loadTicketDetail(ticketId: ticketId)
+                                loadTicketFeed(ticketId: ticketId)
+                                loadTickets()
+                            }
+                            .id(ticketId)
+                        }
                         if !ticket.attachmentList.isEmpty {
                             Divider().padding(.vertical, 8)
                             TicketAttachmentsView(attachments: ticket.attachmentList)
@@ -2258,6 +2271,7 @@ struct TicketsView: View {
             defer { isLoadingDetail = false }
             do {
                 if let full = try await appState.tdxService.getTicket(id: ticketId) {
+                    guard selectedTicketIds.first == ticketId else { return }
                     detailedTicket = full
                     populateEditFields(from: full)
                 }
@@ -2272,8 +2286,11 @@ struct TicketsView: View {
             isLoadingFeed = true
             defer { isLoadingFeed = false }
             do {
-                ticketFeed = try await appState.tdxService.getTicketFeed(ticketId: ticketId)
+                let loadedFeed = try await appState.tdxService.getTicketFeed(ticketId: ticketId)
+                guard selectedTicketIds.first == ticketId else { return }
+                ticketFeed = loadedFeed
             } catch {
+                guard selectedTicketIds.first == ticketId else { return }
                 print("Failed to load ticket feed: \(error)")
                 ticketFeed = []
             }

@@ -54,6 +54,17 @@ public enum FleetMateLink: Hashable, Sendable {
     /// names end up in API paths, so each must be a plain name: no slashes,
     /// no `.`/`..`, no query or fragment characters.
     public static func parse(_ url: URL) throws -> FleetMateLink {
+        if url.scheme?.lowercased() == "ticketsmate" {
+            guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                  components.host?.lowercased() == "ticket",
+                  components.user == nil, components.password == nil, components.port == nil,
+                  components.query == nil, components.fragment == nil,
+                  components.percentEncodedPath.range(of: "^/[1-9][0-9]*$", options: .regularExpression) != nil,
+                  let id = Int(components.path.dropFirst()), id <= Int32.max else {
+                throw FleetMateLinkError.malformed(url.absoluteString, expected: "ticketsmate://ticket/<positive number>")
+            }
+            return .ticket(id: id)
+        }
         let link = try parseUnchecked(url)
         guard link.names.allSatisfy(isSafeName) else {
             throw FleetMateLinkError.malformed(url.absoluteString, expected: "plain project, owner and repository names")

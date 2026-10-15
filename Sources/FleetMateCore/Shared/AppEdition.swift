@@ -26,6 +26,9 @@ public enum AppEdition: String, Sendable {
     /// True when the app shows only the Tickets tab.
     public var isTicketsOnly: Bool { self == .ticketsMate }
 
+    /// Each edition owns its URL scheme so installing one cannot take over the other.
+    public var linkScheme: String { isTicketsOnly ? "ticketsmate" : "fleetmate" }
+
     /// Per-user folder for config.yaml, credentials.json and debug.log.
     public var supportDirectory: String {
         switch self {

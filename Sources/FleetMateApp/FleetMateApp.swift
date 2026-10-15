@@ -201,6 +201,9 @@ class AppState: ObservableObject {
     /// Route a `fleetmate://` link to the tab that shows it.
     func open(_ url: URL) {
         do {
+            guard url.scheme?.lowercased() == AppEdition.current.linkScheme else {
+                throw FleetMateLinkError.notFleetMate(url.absoluteString)
+            }
             let link = try FleetMateLink.parse(url)
             dbg.info("Opening link \(url.absoluteString)", category: "links")
             switch link {

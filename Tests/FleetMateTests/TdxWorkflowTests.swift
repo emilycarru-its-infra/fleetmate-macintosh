@@ -20,6 +20,24 @@ final class TdxWorkflowTests: XCTestCase {
         return service
     }
 
+    func testWorkflowCallsRequireUserSessionWithoutServiceAccountFallback() async throws {
+        let service = service(body: "null")
+        service.clearSsoToken()
+        do {
+            _ = try await service.getWorkflow(ticketId: 42)
+            XCTFail("A workflow must use the signed-in user")
+        } catch is TdxAuthError { }
+        do {
+            _ = try await service.getWorkflowActions(ticketId: 42, stepId: stepId)
+            XCTFail("Actions must use the signed-in user")
+        } catch is TdxAuthError { }
+        do {
+            _ = try await service.performWorkflowAction(ticketId: 42, request: .init(stepId: stepId, actionId: "complete"))
+            XCTFail("Writes must use the signed-in user")
+        } catch is TdxAuthError { }
+        XCTAssertTrue(StubURLProtocol.recorded.isEmpty)
+    }
+
     func testWorkflowReadUsesTicketingAppAndIncludesParallelSteps() async throws {
         let body = """
         {"ID":12,"Name":"Review","IsComplete":false,"Status":0,

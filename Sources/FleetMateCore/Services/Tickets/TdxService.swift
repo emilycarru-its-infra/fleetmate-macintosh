@@ -328,13 +328,17 @@ public class TdxService {
     // MARK: - Ticket workflows
 
     public func getWorkflow(ticketId: Int) async throws -> TdxWorkflow? {
-        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
+        // Workflow actions must reflect the operator, never a service-account fallback.
+        guard hasUserJwt || hasUserCookieSession,
+              let headers = await headers() else { throw TdxAuthError.notAuthenticated }
         return try await workflowResponse(activeSession.request(
             config.tdxTicketsUrl("\(ticketId)/workflow"), headers: headers), as: TdxWorkflow?.self)
     }
 
     public func getWorkflowActions(ticketId: Int, stepId: UUID) async throws -> [TdxWorkflowAction] {
-        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
+        // Workflow actions must reflect the operator, never a service-account fallback.
+        guard hasUserJwt || hasUserCookieSession,
+              let headers = await headers() else { throw TdxAuthError.notAuthenticated }
         let actions = try await workflowResponse(activeSession.request(
             config.tdxTicketsUrl("\(ticketId)/workflow/actions"),
             parameters: ["stepId": stepId.uuidString], headers: headers), as: [TdxWorkflowAction]?.self)
@@ -343,7 +347,9 @@ public class TdxService {
 
     @discardableResult
     public func performWorkflowAction(ticketId: Int, request: TdxWorkflowActionRequest) async throws -> TdxWorkflowActionResult {
-        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
+        // Workflow actions must reflect the operator, never a service-account fallback.
+        guard hasUserJwt || hasUserCookieSession,
+              let headers = await headers() else { throw TdxAuthError.notAuthenticated }
         let result = try await workflowResponse(activeSession.request(
             config.tdxTicketsUrl("\(ticketId)/workflow/approve"), method: .post,
             parameters: request, encoder: JSONParameterEncoder.default, headers: headers),

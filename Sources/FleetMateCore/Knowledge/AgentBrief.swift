@@ -100,6 +100,10 @@ public enum AgentBrief {
         real devices and accounts. Confirm the target with the person before running them.
         """)
         out.append("")
+        out.append("## Workspace and knowledge")
+        out.append("")
+        out.append("Read FLEETMATE_INSTRUCTIONS for the workspace guide. FLEETMATE_WORKSPACE names the default working folder. The live context JSON includes local Handbook and shared skills paths; read relevant documents there when available. A missing path means the mirror has not synced. Context is a snapshot, not a push message: reread it before using the selection. Reading context does not perform a GUI action. To label and group your session in the sidebar, atomically write optional title and section strings to the JSON file at FLEETMATE_SESSION; manual names take precedence.")
+        out.append("")
         out.append("## What the person is looking at")
         out.append("")
         out.append("""
@@ -351,7 +355,7 @@ public struct AgentBriefStore: Sendable {
     }
 
     /// Bump when the brief's layout changes, so existing caches regenerate.
-    static let formatVersion = 2
+    static let formatVersion = 3
 
     /// Make sure the brief matches the installed CLI, regenerating it if not.
     /// Blocking: a stat when current, two short CLI runs when stale.

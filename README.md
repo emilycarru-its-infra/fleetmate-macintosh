@@ -556,3 +556,29 @@ For issues or questions:
 - File an issue on GitHub
 - Contact IT Systems team
 - Review logs in `/var/log/fleetmate/`
+
+### Agent workspace and terminal
+
+The Agent Terminal is shared across tabs. Choosing any top tab hides it without ending
+its sessions. The terminal’s top edge provides a clickable handle and labeled Show/Hide,
+Split View (half-height), and Full Window controls. Drag the divider to resize it.
+Shift+Enter inserts a newline. Shift+Page Up/Page Down browse pages; Shift+Home/End
+jump to the oldest/newest retained output. Ordinary shell history retains 50,000 lines.
+Full-screen programs control their own transcript; wheel input is forwarded to them.
+
+New sessions use the selected repository checkout when available, otherwise `~/.fleetmate`.
+An explicit repository launch always keeps its chosen folder. The default workspace contains
+an app-generated `FLEETMATE.md` guide and a create-only `AGENTS.md` for personal additions.
+Repository instructions continue to govern repository work. The installed CLI generates the
+capability reference supplied to supported agents; the live app context supplies the current
+tab, selection, configured backends, repositories, and local knowledge paths. Context is a
+snapshot that agents must reread, rather than a notification pushed into a running model.
+
+Right-click a session to rename it in an anchored popover, return to its automatic name, or move it into a section. Return saves a name; Escape or clicking away dismisses the editor.
+Sections can be created, collapsed, renamed, and removed. Removing a section returns its
+sessions to Sessions. Sidebar organization lasts for the app session; hiding the terminal
+preserves it. Agent automation uses `FLEETMATE_SESSION`, a per-session JSON file with optional
+`title` and `section` strings. FleetMate follows those labels while the process runs; manual
+names take precedence. `FLEETMATE_INSTRUCTIONS`, `FLEETMATE_WORKSPACE`,
+`FLEETMATE_AGENT_BRIEF`, and `FLEETMATE_CONTEXT` expose the guide, workspace, generated
+reference, and live context. Custom and remote launch wrappers keep their existing behavior.

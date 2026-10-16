@@ -6,6 +6,7 @@ import SwiftUI
 struct GlassTabBar: View {
     @Binding var selectedTab: AppTab
     let tabs: [AppTab]
+    var onSelect: () -> Void = {}
     let availableWidth: CGFloat
 
     /// Below this window width the tab names give way to icons.
@@ -24,6 +25,7 @@ struct GlassTabBar: View {
                 }
 
                 Button {
+                    onSelect()
                     withAnimation(.smooth(duration: 0.2)) {
                         selectedTab = tab
                     }

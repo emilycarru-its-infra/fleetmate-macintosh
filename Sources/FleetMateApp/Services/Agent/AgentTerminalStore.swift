@@ -7,7 +7,7 @@ import FleetMateCore
 struct AgentLaunch: Hashable {
     /// Empty runs the person's login shell.
     var command: String
-    /// Working directory; nil is the home folder.
+    /// Working directory; nil follows the selected repository or agent workspace.
     var directory: String?
 
     static let shell = AgentLaunch(command: "", directory: nil)
@@ -103,6 +103,68 @@ final class FleetMateTerminalView: LocalProcessTerminalView {
         onBell?()
     }
 
+    private var inputMonitor: Any?
+
+    func installInputHandling() {
+        inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .scrollWheel]) { [weak self] event in
+            guard let self, event.window === self.window else { return event }
+            if event.type == .keyDown, self.window?.firstResponder === self {
+                return self.handleKeyDown(event) ? nil : event
+            }
+            if event.type == .scrollWheel, !self.isHiddenOrHasHiddenAncestor,
+               self.bounds.contains(self.convert(event.locationInWindow, from: nil)) {
+                return self.handleScrollWheel(event) ? nil : event
+            }
+            return event
+        }
+    }
+
+    deinit {
+        if let inputMonitor { NSEvent.removeMonitor(inputMonitor) }
+    }
+
+    private func handleKeyDown(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if flags == .shift, event.keyCode == 36 || event.keyCode == 76 {
+            send([0x0a])
+            return true
+        }
+        if flags == .shift {
+            switch event.keyCode {
+            case 116: pageUp(); return true
+            case 121: pageDown(); return true
+            case 115: scroll(toPosition: 0); return true
+            case 119: scroll(toPosition: 1); return true
+            default: break
+            }
+        }
+        return false
+    }
+
+    private func handleScrollWheel(_ event: NSEvent) -> Bool {
+        let terminal = getTerminal()
+        // Shift always browses local history. Otherwise full-screen agents
+        // need wheel events delivered to their UI rather than an empty buffer.
+        guard terminal.isCurrentBufferAlternate, !event.modifierFlags.contains(.shift) else {
+            return false
+        }
+        guard event.scrollingDeltaY != 0 else { return true }
+        let count = min(10, max(1, Int(abs(event.scrollingDeltaY))))
+        if allowMouseReporting, terminal.mouseMode != .off {
+            let point = convert(event.locationInWindow, from: nil)
+            let column = min(terminal.cols - 1, max(0, Int(point.x / max(bounds.width, 1) * CGFloat(terminal.cols))))
+            let row = min(terminal.rows - 1, max(0, Int((bounds.height - point.y) / max(bounds.height, 1) * CGFloat(terminal.rows))))
+            for _ in 0..<count {
+                terminal.sendEvent(buttonFlags: event.scrollingDeltaY > 0 ? 64 : 65,
+                                   x: column, y: row, pixelX: Int(point.x), pixelY: Int(bounds.height - point.y))
+            }
+        } else {
+            let sequence = event.scrollingDeltaY > 0 ? "\u{1b}[A" : "\u{1b}[B"
+            for _ in 0..<count { send(txt: sequence) }
+        }
+        return true
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if window?.firstResponder === self, let shortcut = TerminalShortcut(event) {
             onShortcut?(shortcut)
@@ -175,6 +237,9 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
     /// What the program running in the session calls it: an agent's session
     /// name (Claude's /rename), or the shell's title.
     @Published private(set) var programTitle: String?
+    @Published private(set) var agentTitle: String?
+    @Published var customTitle = ""
+    @Published var section = "Sessions"
     /// The shell's working directory, followed as it changes.
     @Published private(set) var directory: String
     @Published private(set) var activity: Activity = .idle
@@ -188,10 +253,17 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         didSet { if isShown, activity == .attention { activity = .idle } }
     }
 
+    var onSectionChange: ((String) -> Void)?
+    private var metadataModifiedAt: Date?
+    private let metadataPath: String
+
     private var lastOutput = Date.distantPast
     private var poll: Timer?
 
     var title: String {
+        let name = customTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { return name }
+        if let agentTitle, !agentTitle.isEmpty { return agentTitle }
         if let programTitle, !programTitle.isEmpty { return programTitle }
         return launch.label
     }
@@ -209,11 +281,15 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
     init(id: UUID, launch: AgentLaunch, directory start: String, contextPath: String,
          briefPath: String, codexValuePath: String, cliUpdatesManaged: Bool, fontSize: CGFloat) {
         self.id = id
+        self.metadataPath = URL(fileURLWithPath: briefPath).deletingLastPathComponent()
+            .appendingPathComponent(id.uuidString + ".json").path
         self.launch = launch
         self.directory = start
         self.view = FleetMateTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 240))
         super.init()
         view.processDelegate = self
+        view.installInputHandling()
+        view.getTerminal().changeHistorySize(50_000)
         view.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         view.nativeBackgroundColor = .textBackgroundColor
         view.nativeForegroundColor = .textColor
@@ -265,6 +341,9 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         env[AgentBrief.contextVariable] = contextPath
         // What FleetMate is and every `fleetmate` command, for any agent.
         env[AgentBrief.briefVariable] = briefPath
+        env["FLEETMATE_SESSION"] = metadataPath
+        env["FLEETMATE_WORKSPACE"] = AgentWorkspace().root.path
+        env["FLEETMATE_INSTRUCTIONS"] = AgentWorkspace().instructionsURL.path
         if cliUpdatesManaged {
             // FleetMate updates Claude Code in the background, so it must not
             // update itself mid-session too.
@@ -283,10 +362,22 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
 
     private func refresh() {
         guard activity != .exited else { return }
+        refreshMetadata()
         if activity == .busy, Date().timeIntervalSince(lastOutput) > 2 { activity = .idle }
         if let pid = view.process?.shellPid, pid > 0, let cwd = Self.workingDirectory(of: pid), cwd != directory {
             directory = cwd
         }
+    }
+
+    private func refreshMetadata() {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: metadataPath),
+              let modified = attributes[.modificationDate] as? Date, modified != metadataModifiedAt,
+              ((attributes[.size] as? NSNumber)?.intValue ?? 0) <= 16_384,
+              let data = FileManager.default.contents(atPath: metadataPath),
+              let metadata = try? JSONDecoder().decode(AgentSessionMetadata.self, from: data) else { return }
+        metadataModifiedAt = modified
+        if let title = metadata.title { agentTitle = title }
+        if let section = metadata.section, !section.isEmpty { onSectionChange?(section) }
     }
 
     /// A process's current directory, from the kernel.
@@ -318,6 +409,7 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         poll?.invalidate()
         poll = nil
         view.terminate()
+        try? FileManager.default.removeItem(atPath: metadataPath)
     }
 
     static func quote(_ s: String) -> String {
@@ -374,6 +466,10 @@ final class AgentTerminalStore: ObservableObject {
     /// Keeps codex and claude current in the background.
     let updater = AgentCliUpdateModel()
 
+    let workspace = AgentWorkspace()
+    @Published private(set) var workspaceError: String?
+    @Published var sections = ["Sessions"]
+    @Published var collapsedSections: Set<String> = []
     let contextPath: String
     /// The agent brief beside the context file, regenerated when the
     /// installed `fleetmate` CLI changes.
@@ -386,13 +482,12 @@ final class AgentTerminalStore: ObservableObject {
         try? PrivateFile.ensureDirectory(dir.path)
         contextPath = dir.appendingPathComponent("agent-context.json").path
         brief = AgentBriefStore(directory: dir)
+        // Clear the previous run before a session can open. Doing this in
+        // the detached refresh could remove a newly created session's brief.
+        try? FileManager.default.removeItem(at: brief.sessionDirectory)
         // Generate ahead of the first session; open() checks again.
         let brief = brief
-        Task.detached(priority: .utility) {
-            brief.refresh()
-            // Session briefs left by the last run; this run has none yet.
-            try? FileManager.default.removeItem(at: brief.sessionDirectory)
-        }
+        Task.detached(priority: .utility) { brief.refresh() }
         updater.start()
         // Follow the app's text size as it changes (Settings, View › Zoom).
         appliedFontSize = fontSize
@@ -402,19 +497,8 @@ final class AgentTerminalStore: ObservableObject {
             .store(in: &subscriptions)
     }
 
-    /// The folder a session opens in when nothing better is known: the
-    /// clone root repositories live under, else FleetMate's support folder.
-    static func workspaceDirectory() -> String {
-        let fm = FileManager.default
-        var isDir: ObjCBool = false
-        if let root = try? RepoRegistryStore().load().settings.cloneRoot {
-            let path = RepoSettings.expand(root)
-            if fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue { return path }
-        }
-        let support = AppEdition.current.supportPath("")
-        try? fm.createDirectory(atPath: support, withIntermediateDirectories: true)
-        return support
-    }
+    /// The fallback workspace is independent of any repository checkout.
+    static func workspaceDirectory() -> String { AgentWorkspace().root.path }
 
     var selected: AgentTerminalSession? { sessions.first { $0.id == selectedId } }
     var split: AgentTerminalSession? { sessions.first { $0.id == splitId } }
@@ -427,9 +511,18 @@ final class AgentTerminalStore: ObservableObject {
         // A stat when the brief is current; a regeneration only after the
         // CLI was installed or updated.
         brief.refresh()
+        do {
+            try workspace.prepare()
+            workspaceError = nil
+        } catch {
+            workspaceError = "Could not prepare the agent workspace: \(error.localizedDescription)"
+        }
         let id = UUID()
-        let directory = launch.directory.map { ($0 as NSString).expandingTildeInPath }
+        var directory = launch.directory.map { ($0 as NSString).expandingTildeInPath }
             ?? startDirectory?() ?? Self.workspaceDirectory()
+        if directory == workspace.root.path, workspaceError != nil {
+            directory = FileManager.default.homeDirectoryForCurrentUser.path
+        }
         let place = whereabouts?(directory) ?? AgentWhereabouts(module: "FleetMate", workingDirectory: directory)
         let paths = brief.writeSessionBrief(id: id.uuidString, whereabouts: place)
         let managed = updater.isEnabled
@@ -438,9 +531,15 @@ final class AgentTerminalStore: ObservableObject {
                                            briefPath: paths.briefPath, codexValuePath: paths.codexValuePath,
                                            cliUpdatesManaged: managed, fontSize: fontSize)
         session.wantsFocus = focus
+        session.onSectionChange = { [weak self, weak session] name in
+            guard let self, let session else { return }
+            self.addSection(name)
+            self.move(session, to: name)
+        }
         session.view.onShortcut = { [weak self] shortcut in
             Task { @MainActor in self?.handle(shortcut, from: id) }
         }
+        session.section = selected?.section ?? "Sessions"
         sessions.append(session)
         selectedId = session.id
         if show { isVisible = true }
@@ -455,7 +554,9 @@ final class AgentTerminalStore: ObservableObject {
         }
         let base = selected?.launch ?? defaultLaunch
         let current = selectedId
+        let section = selected?.section ?? "Sessions"
         let session = open(base, focus: false)
+        session.section = section
         splitId = session.id
         selectedId = current
     }
@@ -593,6 +694,34 @@ final class AgentTerminalStore: ObservableObject {
         select(session.id)
         session.view.pasteText(text)
         return true
+    }
+
+    func move(_ session: AgentTerminalSession, to section: String) {
+        guard sections.contains(section) else { return }
+        objectWillChange.send()
+        session.section = section
+    }
+
+    func addSection(_ name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !sections.contains(name) else { return }
+        sections.append(name)
+    }
+
+    func renameSection(_ old: String, to name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != old, !sections.contains(name),
+              let index = sections.firstIndex(of: old) else { return }
+        sections[index] = name
+        if collapsedSections.remove(old) != nil { collapsedSections.insert(name) }
+        for session in sessions where session.section == old { session.section = name }
+    }
+
+    func removeSection(_ name: String) {
+        guard name != "Sessions" else { return }
+        for session in sessions where session.section == name { session.section = "Sessions" }
+        sections.removeAll { $0 == name }
+        collapsedSections.remove(name)
     }
 
     func terminateAll() {

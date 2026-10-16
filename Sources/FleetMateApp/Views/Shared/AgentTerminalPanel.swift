@@ -63,6 +63,9 @@ struct AgentTerminalPanel: View {
     let defaultLaunch: AgentLaunch
     /// A hand toggle, kept until the number of sessions changes.
     @State private var listOverride: Bool?
+    @State private var sectionEditor = false
+    @State private var editingSection: String?
+    @State private var sectionName = ""
 
     private var listCollapsed: Bool { listOverride ?? (store.sessions.count < 2) }
 
@@ -82,6 +85,11 @@ struct AgentTerminalPanel: View {
             }
         }
         .background(SwiftUI.Color(nsColor: .textBackgroundColor))
+        .overlay(alignment: .top) {
+            if let error = store.workspaceError {
+                Text(error).font(.caption).padding(6).background(.regularMaterial)
+            }
+        }
         .onChange(of: store.sessions.count) { _, _ in listOverride = nil }
     }
 
@@ -128,14 +136,46 @@ struct AgentTerminalPanel: View {
             Divider()
             ScrollView {
                 LazyVStack(spacing: 1) {
-                    ForEach(Array(store.sessions.enumerated()), id: \.element.id) { index, session in
-                        SessionRow(session: session,
-                                   index: index,
-                                   collapsed: listCollapsed,
-                                   isSelected: session.id == store.selectedId,
-                                   isSplit: session.id == store.splitId,
-                                   select: { store.select(session.id) },
-                                   close: { store.close(session.id) })
+                    ForEach(store.sections, id: \.self) { section in
+                        if !listCollapsed {
+                            Button {
+                                if !store.collapsedSections.insert(section).inserted { store.collapsedSections.remove(section) }
+                            } label: {
+                                Label(section, systemImage: store.collapsedSections.contains(section) ? "chevron.right" : "chevron.down")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(6)
+                            .popover(isPresented: Binding(
+                                get: { sectionEditor && editingSection == section },
+                                set: { sectionEditor = $0 }
+                            ), arrowEdge: .trailing) {
+                                sectionNameEditor
+                            }
+                            .contextMenu {
+                                if section != "Sessions" {
+                                    Button("Rename Section…") {
+                                        editingSection = section
+                                        sectionName = section
+                                        sectionEditor = true
+                                    }
+                                    Button("Remove Section") { store.removeSection(section) }
+                                }
+                                Button("New Section…", action: newSection)
+                            }
+                        }
+                        if listCollapsed || !store.collapsedSections.contains(section) {
+                            ForEach(Array(store.sessions.enumerated()).filter { $0.element.section == section }, id: \.element.id) { index, session in
+                                SessionRow(session: session, index: index, collapsed: listCollapsed,
+                                           isSelected: session.id == store.selectedId,
+                                           isSplit: session.id == store.splitId,
+                                           sections: store.sections,
+                                           move: { store.move(session, to: $0) },
+                                           select: { store.select(session.id) },
+                                           close: { store.close(session.id) })
+                            }
+                        }
                     }
                 }
                 .padding(4)
@@ -144,9 +184,29 @@ struct AgentTerminalPanel: View {
         .background(SwiftUI.Color.secondary.opacity(0.05))
     }
 
+    private var sectionNameEditor: some View {
+        AgentNamePopover(title: editingSection == nil ? "New Section" : "Rename Section",
+                         name: $sectionName,
+                         existingNames: store.sections.filter { $0 != editingSection },
+                         save: {
+                             if let editingSection { store.renameSection(editingSection, to: sectionName) }
+                             else { store.addSection(sectionName) }
+                             sectionEditor = false
+                         },
+                         cancel: { sectionEditor = false })
+    }
+
+    private func newSection() {
+        editingSection = nil
+        sectionName = ""
+        sectionEditor = true
+        listOverride = false
+    }
+
     private var newSessionMenu: some View {
         Menu {
             Button("New \(defaultLaunch.label)") { store.open(defaultLaunch) }
+            Button("New Section…", action: newSection)
             Divider()
             ForEach(AgentLaunch.installedPresets, id: \.command) { preset in
                 Button(preset.label) { store.open(AgentLaunch(command: preset.command)) }
@@ -167,6 +227,12 @@ struct AgentTerminalPanel: View {
             store.open(defaultLaunch)
         }
         .menuStyle(.borderlessButton)
+        .popover(isPresented: Binding(
+            get: { sectionEditor && editingSection == nil },
+            set: { sectionEditor = $0 }
+        ), arrowEdge: .trailing) {
+            sectionNameEditor
+        }
         .fixedSize()
         .help("New session (⌘T), or choose what it runs")
     }
@@ -178,9 +244,13 @@ private struct SessionRow: View {
     let collapsed: Bool
     let isSelected: Bool
     let isSplit: Bool
+    let sections: [String]
+    let move: (String) -> Void
     let select: () -> Void
     let close: () -> Void
     @State private var hovered = false
+    @State private var renaming = false
+    @State private var name = ""
 
     var body: some View {
         HStack(spacing: 6) {
@@ -215,7 +285,29 @@ private struct SessionRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: select)
         .onHover { hovered = $0 }
-        .help("\(session.title)\n\(session.shortDirectory)")
+        .contextMenu {
+            Button("Rename Session…") { name = session.title; renaming = true }
+            Button("Use Automatic Name") { session.customTitle = "" }
+                .disabled(session.customTitle.isEmpty)
+            Menu("Move to Section") {
+                ForEach(sections, id: \.self) { section in
+                    Button(section) { move(section) }
+                }
+            }
+            Divider()
+            Button("Scroll to Top") { session.view.scroll(toPosition: 0) }
+            Button("Scroll to Bottom") { session.view.scroll(toPosition: 1) }
+            Button("Close Session", action: close)
+        }
+        .popover(isPresented: $renaming, arrowEdge: .trailing) {
+            AgentNamePopover(title: "Rename Session", name: $name,
+                             save: { session.customTitle = name; renaming = false },
+                             cancel: { renaming = false })
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { select() }
+        .help("\(session.title)\n\(session.shortDirectory)\nProgram: \(session.programTitle ?? session.launch.label)")
     }
 
     private var rowBackground: SwiftUI.Color {
@@ -235,5 +327,101 @@ private struct SessionRow: View {
         case .exited: color = .secondary.opacity(0.2)
         }
         return Circle().fill(color).frame(width: 7, height: 7).frame(width: 12)
+    }
+}
+
+/// Lightweight contextual editing keeps the rest of the workspace available.
+private struct AgentNamePopover: View {
+    let title: String
+    @Binding var name: String
+    var existingNames: [String] = []
+    let save: () -> Void
+    let cancel: () -> Void
+
+    private var canSave: Bool {
+        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !value.isEmpty && !existingNames.contains(value)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.headline)
+            AgentNameField(name: $name, submit: { if canSave { save() } }, cancel: cancel)
+                .frame(height: 24)
+            HStack {
+                Spacer()
+                Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
+                Button("Save", action: save)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canSave)
+            }
+        }
+        .padding(14)
+        .frame(width: 260)
+        .onExitCommand(perform: cancel)
+    }
+}
+
+/// SwiftUI can leave the terminal as first responder when its context menu
+/// closes. Focus the native field after the popover has a window instead.
+private struct AgentNameField: NSViewRepresentable {
+    @Binding var name: String
+    let submit: () -> Void
+    let cancel: () -> Void
+
+    final class Field: NSTextField {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let self, let window, self.window === window else { return }
+                window.makeKey()
+                window.makeFirstResponder(self)
+                currentEditor()?.selectAll(nil)
+            }
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: AgentNameField
+
+        init(_ parent: AgentNameField) { self.parent = parent }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            parent.name = field.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            if selector == #selector(NSResponder.insertNewline(_:)) {
+                parent.submit()
+                return true
+            }
+            if selector == #selector(NSResponder.cancelOperation(_:)) {
+                parent.cancel()
+                return true
+            }
+            return false
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> Field {
+        let field = Field()
+        field.isBezeled = true
+        field.bezelStyle = .roundedBezel
+        field.isEditable = true
+        field.isSelectable = true
+        field.placeholderString = "Name"
+        field.setAccessibilityLabel("Name")
+        field.delegate = context.coordinator
+        field.stringValue = name
+        return field
+    }
+
+    func updateNSView(_ field: Field, context: Context) {
+        context.coordinator.parent = self
+        if field.stringValue != name { field.stringValue = name }
     }
 }

@@ -29,6 +29,13 @@ enum AgentContextWriter {
         var selection: AgentSelection?
         var trackedRepositories: [AgentWhereabouts.Repository]
         var backends: [AgentWhereabouts.Backend]
+        var instructions = AgentWorkspace().instructionsURL.path
+        var knowledge: [String: String] = {
+            let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("FleetMate/mirrors")
+            return ["handbook": root.appendingPathComponent("handbook/website/content").path,
+                    "skills": root.appendingPathComponent("agents-hub/agents").path]
+        }()
         var updatedAt: Date
     }
 

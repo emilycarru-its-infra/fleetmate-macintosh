@@ -63,6 +63,9 @@ struct AgentTerminalPanel: View {
     let defaultLaunch: AgentLaunch
     /// A hand toggle, kept until the number of sessions changes.
     @State private var listOverride: Bool?
+    @State private var sectionEditor = false
+    @State private var editingSection: String?
+    @State private var sectionName = ""
 
     private var listCollapsed: Bool { listOverride ?? (store.sessions.count < 2) }
 
@@ -82,6 +85,19 @@ struct AgentTerminalPanel: View {
             }
         }
         .background(SwiftUI.Color(nsColor: .textBackgroundColor))
+        .alert(editingSection == nil ? "New Section" : "Rename Section", isPresented: $sectionEditor) {
+            TextField("Section name", text: $sectionName)
+            Button("Save") {
+                if let editingSection { store.renameSection(editingSection, to: sectionName) }
+                else { store.addSection(sectionName) }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .overlay(alignment: .top) {
+            if let error = store.workspaceError {
+                Text(error).font(.caption).padding(6).background(.regularMaterial)
+            }
+        }
         .onChange(of: store.sessions.count) { _, _ in listOverride = nil }
     }
 
@@ -128,14 +144,40 @@ struct AgentTerminalPanel: View {
             Divider()
             ScrollView {
                 LazyVStack(spacing: 1) {
-                    ForEach(Array(store.sessions.enumerated()), id: \.element.id) { index, session in
-                        SessionRow(session: session,
-                                   index: index,
-                                   collapsed: listCollapsed,
-                                   isSelected: session.id == store.selectedId,
-                                   isSplit: session.id == store.splitId,
-                                   select: { store.select(session.id) },
-                                   close: { store.close(session.id) })
+                    ForEach(store.sections, id: \.self) { section in
+                        if !listCollapsed {
+                            Button {
+                                if !store.collapsedSections.insert(section).inserted { store.collapsedSections.remove(section) }
+                            } label: {
+                                Label(section, systemImage: store.collapsedSections.contains(section) ? "chevron.right" : "chevron.down")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(6)
+                            .contextMenu {
+                                if section != "Sessions" {
+                                    Button("Rename Section…") {
+                                        editingSection = section
+                                        sectionName = section
+                                        sectionEditor = true
+                                    }
+                                    Button("Remove Section") { store.removeSection(section) }
+                                }
+                                Button("New Section…", action: newSection)
+                            }
+                        }
+                        if listCollapsed || !store.collapsedSections.contains(section) {
+                            ForEach(Array(store.sessions.enumerated()).filter { $0.element.section == section }, id: \.element.id) { index, session in
+                                SessionRow(session: session, index: index, collapsed: listCollapsed,
+                                           isSelected: session.id == store.selectedId,
+                                           isSplit: session.id == store.splitId,
+                                           sections: store.sections,
+                                           move: { store.move(session, to: $0) },
+                                           select: { store.select(session.id) },
+                                           close: { store.close(session.id) })
+                            }
+                        }
                     }
                 }
                 .padding(4)
@@ -144,9 +186,17 @@ struct AgentTerminalPanel: View {
         .background(SwiftUI.Color.secondary.opacity(0.05))
     }
 
+    private func newSection() {
+        editingSection = nil
+        sectionName = ""
+        sectionEditor = true
+        listOverride = false
+    }
+
     private var newSessionMenu: some View {
         Menu {
             Button("New \(defaultLaunch.label)") { store.open(defaultLaunch) }
+            Button("New Section…", action: newSection)
             Divider()
             ForEach(AgentLaunch.installedPresets, id: \.command) { preset in
                 Button(preset.label) { store.open(AgentLaunch(command: preset.command)) }
@@ -178,9 +228,13 @@ private struct SessionRow: View {
     let collapsed: Bool
     let isSelected: Bool
     let isSplit: Bool
+    let sections: [String]
+    let move: (String) -> Void
     let select: () -> Void
     let close: () -> Void
     @State private var hovered = false
+    @State private var renaming = false
+    @State private var name = ""
 
     var body: some View {
         HStack(spacing: 6) {
@@ -215,7 +269,29 @@ private struct SessionRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: select)
         .onHover { hovered = $0 }
-        .help("\(session.title)\n\(session.shortDirectory)")
+        .contextMenu {
+            Button("Rename Session…") { name = session.title; renaming = true }
+            Button("Use Automatic Name") { session.customTitle = "" }
+                .disabled(session.customTitle.isEmpty)
+            Menu("Move to Section") {
+                ForEach(sections, id: \.self) { section in
+                    Button(section) { move(section) }
+                }
+            }
+            Divider()
+            Button("Scroll to Top") { session.view.scroll(toPosition: 0) }
+            Button("Scroll to Bottom") { session.view.scroll(toPosition: 1) }
+            Button("Close Session", action: close)
+        }
+        .alert("Rename Session", isPresented: $renaming) {
+            TextField("Session name", text: $name)
+            Button("Rename") { session.customTitle = name }
+            Button("Cancel", role: .cancel) {}
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { select() }
+        .help("\(session.title)\n\(session.shortDirectory)\nProgram: \(session.programTitle ?? session.launch.label)")
     }
 
     private var rowBackground: SwiftUI.Color {

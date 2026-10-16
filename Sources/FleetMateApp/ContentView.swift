@@ -67,7 +67,7 @@ struct ContentView: View {
                 // A single tab needs no tab bar.
                 if availableTabs.count > 1 {
                     ToolbarItem(placement: .principal) {
-                        GlassTabBar(selectedTab: $appState.selectedTab, tabs: availableTabs, availableWidth: windowWidth)
+                        GlassTabBar(selectedTab: $appState.selectedTab, tabs: availableTabs, onSelect: { terminals.hide() }, availableWidth: windowWidth)
                     }
                 }
                 // The authentication shield belongs to the window, not to the
@@ -147,6 +147,7 @@ struct ContentView: View {
                 writeAgentContext()
             }
             .onChange(of: appState.selectedTab) { _, _ in
+                terminals.hide()
                 appState.agentSelection = nil
                 writeAgentContext()
             }

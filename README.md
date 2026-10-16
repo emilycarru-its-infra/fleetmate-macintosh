@@ -574,7 +574,7 @@ capability reference supplied to supported agents; the live app context supplies
 tab, selection, configured backends, repositories, and local knowledge paths. Context is a
 snapshot that agents must reread, rather than a notification pushed into a running model.
 
-Right-click a session to rename it, return to its automatic name, or move it into a section.
+Right-click a session to rename it in an anchored popover, return to its automatic name, or move it into a section. Return saves a name; Escape or clicking away dismisses the editor.
 Sections can be created, collapsed, renamed, and removed. Removing a section returns its
 sessions to Sessions. Sidebar organization lasts for the app session; hiding the terminal
 preserves it. Agent automation uses `FLEETMATE_SESSION`, a per-session JSON file with optional

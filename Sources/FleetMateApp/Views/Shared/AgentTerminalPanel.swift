@@ -85,14 +85,6 @@ struct AgentTerminalPanel: View {
             }
         }
         .background(SwiftUI.Color(nsColor: .textBackgroundColor))
-        .alert(editingSection == nil ? "New Section" : "Rename Section", isPresented: $sectionEditor) {
-            TextField("Section name", text: $sectionName)
-            Button("Save") {
-                if let editingSection { store.renameSection(editingSection, to: sectionName) }
-                else { store.addSection(sectionName) }
-            }
-            Button("Cancel", role: .cancel) {}
-        }
         .overlay(alignment: .top) {
             if let error = store.workspaceError {
                 Text(error).font(.caption).padding(6).background(.regularMaterial)
@@ -155,6 +147,12 @@ struct AgentTerminalPanel: View {
                             }
                             .buttonStyle(.plain)
                             .padding(6)
+                            .popover(isPresented: Binding(
+                                get: { sectionEditor && editingSection == section },
+                                set: { sectionEditor = $0 }
+                            ), arrowEdge: .trailing) {
+                                sectionNameEditor
+                            }
                             .contextMenu {
                                 if section != "Sessions" {
                                     Button("Rename Section…") {
@@ -184,6 +182,20 @@ struct AgentTerminalPanel: View {
             }
         }
         .background(SwiftUI.Color.secondary.opacity(0.05))
+    }
+
+    private var sectionNameEditor: some View {
+        AgentNamePopover(title: editingSection == nil ? "New Section" : "Rename Section",
+                         name: $sectionName,
+                         canSave: !sectionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            && (!store.sections.contains(sectionName.trimmingCharacters(in: .whitespacesAndNewlines))
+                                || sectionName == editingSection),
+                         save: {
+                             if let editingSection { store.renameSection(editingSection, to: sectionName) }
+                             else { store.addSection(sectionName) }
+                             sectionEditor = false
+                         },
+                         cancel: { sectionEditor = false })
     }
 
     private func newSection() {
@@ -217,6 +229,12 @@ struct AgentTerminalPanel: View {
             store.open(defaultLaunch)
         }
         .menuStyle(.borderlessButton)
+        .popover(isPresented: Binding(
+            get: { sectionEditor && editingSection == nil },
+            set: { sectionEditor = $0 }
+        ), arrowEdge: .trailing) {
+            sectionNameEditor
+        }
         .fixedSize()
         .help("New session (⌘T), or choose what it runs")
     }
@@ -283,10 +301,11 @@ private struct SessionRow: View {
             Button("Scroll to Bottom") { session.view.scroll(toPosition: 1) }
             Button("Close Session", action: close)
         }
-        .alert("Rename Session", isPresented: $renaming) {
-            TextField("Session name", text: $name)
-            Button("Rename") { session.customTitle = name }
-            Button("Cancel", role: .cancel) {}
+        .popover(isPresented: $renaming, arrowEdge: .trailing) {
+            AgentNamePopover(title: "Rename Session", name: $name,
+                             canSave: !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                             save: { session.customTitle = name; renaming = false },
+                             cancel: { renaming = false })
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
@@ -311,5 +330,36 @@ private struct SessionRow: View {
         case .exited: color = .secondary.opacity(0.2)
         }
         return Circle().fill(color).frame(width: 7, height: 7).frame(width: 12)
+    }
+}
+
+/// Lightweight contextual editing keeps the rest of the workspace available.
+private struct AgentNamePopover: View {
+    let title: String
+    @Binding var name: String
+    let canSave: Bool
+    let save: () -> Void
+    let cancel: () -> Void
+    @FocusState private var nameFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.headline)
+            TextField("Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .focused($nameFocused)
+                .onSubmit { if canSave { save() } }
+            HStack {
+                Spacer()
+                Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
+                Button("Save", action: save)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canSave)
+            }
+        }
+        .padding(14)
+        .frame(width: 260)
+        .onAppear { nameFocused = true }
+        .onExitCommand(perform: cancel)
     }
 }

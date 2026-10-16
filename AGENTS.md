@@ -105,6 +105,8 @@ TicketsMate is the same app limited to the Tickets tab. Add `EDITION=ticketsmate
 
 ## Key Conventions
 
+- **Use anchored popovers for lightweight editing** — Session and section naming must stay contextual. Focus the name field, support Return to save and Escape/click-away to dismiss, and do not use modal alerts or naming dialogs.
+
 - **No interactive SSO popups** — All web auth must be silent/headless. Never show browser login sheets to the user. If silent SSO fails, mark auth as failed.
 - **No Xcode GUI** — Everything is SPM-driven from the command line.
 - **macOS 14+ target** — Platform is macOS only, minimum deployment target is macOS 14 (Sonoma).

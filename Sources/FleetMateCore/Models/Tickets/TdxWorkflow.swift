@@ -1,9 +1,11 @@
 import Foundation
 
 /// Wire shapes from TeamDynamix's TicketWorkflow OpenAPI schema.
-public struct TdxWorkflow: Decodable, Sendable {
+public struct TdxWorkflow: Decodable, Sendable, Equatable {
     public let id: Int
     public let name: String?
+    public let workflowConfigurationId: Int?
+    public let startDateUtc: String?
     public let isComplete: Bool
     public let status: Int
     public let currentStepIds: [UUID]?
@@ -24,12 +26,13 @@ public struct TdxWorkflow: Decodable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
+        case workflowConfigurationId = "WorkflowConfigurationID", startDateUtc = "StartDateUtc"
         case id = "ID", name = "Name", isComplete = "IsComplete", status = "Status"
         case currentStepIds = "CurrentStepIDs", steps = "Steps"
     }
 }
 
-public struct TdxWorkflowStep: Decodable, Identifiable, Sendable {
+public struct TdxWorkflowStep: Decodable, Identifiable, Sendable, Equatable {
     public let id: UUID
     public let name: String?
     public let description: String?
@@ -114,5 +117,15 @@ public enum TdxWorkflowError: LocalizedError {
         case .requestFailed(404): return "This ticket or workflow is no longer available. Refresh the ticket."
         case .requestFailed(let status): return "TeamDynamix could not complete the workflow request (HTTP \(status)). Refresh and try again."
         }
+    }
+}
+
+public struct TdxWorkflowChoice: Decodable, Identifiable, Sendable, Equatable, Hashable {
+    public let id: Int
+    public let name: String
+
+    public init(id: Int, name: String) {
+        self.id = id
+        self.name = name
     }
 }

@@ -4,8 +4,10 @@ import FleetMateCore
 /// The parent gives each ticket its own identity so drafts and delayed responses
 /// cannot carry over when the selection changes.
 struct TicketWorkflowView: View {
+    @EnvironmentObject private var appState: AppState
     let ticketId: Int
     let service: TdxService
+    let refreshToken: Int
     let onActionCompleted: () -> Void
 
     @State private var workflow: TdxWorkflow?
@@ -15,19 +17,40 @@ struct TicketWorkflowView: View {
     @State private var errorMessage: String?
     @State private var selectedAction: WorkflowActionSelection?
     @State private var reloadToken = 0
+    @State private var isExpanded = false
+    @State private var management: WorkflowManagementSelection?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Label("Workflow", systemImage: "arrow.triangle.branch")
-                    .font(.headline)
+                Button { isExpanded.toggle() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.right").font(.caption)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        Text("Workflow").font(.headline)
+                        if let workflow { Text(workflow.name ?? "").foregroundStyle(.secondary) }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+                .help(isExpanded ? "Hide workflow" : "Show workflow")
                 Spacer()
+                Button("Restart Workflow…") {
+                    if let workflow { management = .init(expected: workflow, isRestart: true) }
+                }
+                .disabled(workflow?.workflowConfigurationId.map { $0 > 0 } != true || isLoading || selectedAction != nil || management != nil)
+                Button(workflow == nil ? "Assign Workflow…" : "Change Workflow…") {
+                    management = .init(expected: workflow, isRestart: false)
+                }
+                .disabled(isLoading || errorMessage != nil || selectedAction != nil || management != nil)
                 Button("Refresh", systemImage: "arrow.clockwise") { reloadToken += 1 }
                     .labelStyle(.iconOnly)
                     .help("Refresh workflow")
-                    .disabled(isLoading || selectedAction != nil)
+                    .disabled(isLoading || selectedAction != nil || management != nil)
             }
 
+            if isExpanded {
             if isLoading {
                 ProgressView("Loading workflow…").controlSize(.small)
             } else if let errorMessage {
@@ -56,16 +79,34 @@ struct TicketWorkflowView: View {
             } else {
                 Text("No workflow assigned.").foregroundStyle(.secondary)
             }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .task(id: reloadToken) { await loadWorkflow() }
+        .contextMenu {
+            Button("Restart Workflow…") {
+                if let workflow { management = .init(expected: workflow, isRestart: true) }
+            }.disabled(workflow?.workflowConfigurationId.map { $0 > 0 } != true || isLoading || selectedAction != nil || management != nil)
+            Button(workflow == nil ? "Assign Workflow…" : "Change Workflow…") {
+                management = .init(expected: workflow, isRestart: false)
+            }.disabled(isLoading || errorMessage != nil || selectedAction != nil || management != nil)
+        }
+        .sheet(item: $management, onDismiss: {
+            isLoading = true
+            reloadToken += 1
+            onActionCompleted()
+        }) { selection in
+            WorkflowManagementSheet(ticketId: ticketId, selection: selection,
+                                    service: service, config: appState.config) {
+            }
+        }
+        .task(id: "\(refreshToken)-\(reloadToken)") { await loadWorkflow() }
         .sheet(item: $selectedAction, onDismiss: {
             // Also refresh after an uncertain failure before offering actions again.
             isLoading = true
             reloadToken += 1
+            onActionCompleted()
         }) { selection in
             WorkflowActionSheet(ticketId: ticketId, selection: selection, service: service) {
-                onActionCompleted()
             }
         }
     }
@@ -233,4 +274,107 @@ private struct WorkflowActionSheet: View {
         }
     }
 
+}
+
+private struct WorkflowManagementSelection: Identifiable {
+    let id = UUID()
+    let expected: TdxWorkflow?
+    let isRestart: Bool
+}
+
+private struct WorkflowManagementSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let ticketId: Int
+    let selection: WorkflowManagementSelection
+    let service: TdxService
+    let config: FleetMateConfig
+    let onCompleted: () -> Void
+
+    @State private var choices: [TdxWorkflowChoice] = []
+    @State private var selectedId: Int?
+    @State private var isLoading = true
+    @State private var isSubmitting = false
+    @State private var didAttempt = false
+    @State private var errorMessage: String?
+
+    private var title: String {
+        selection.isRestart ? "Restart Workflow" : (selection.expected == nil ? "Assign Workflow" : "Change Workflow")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(title).font(.title2)
+            Text("Ticket #\(String(ticketId))").textSelection(.enabled)
+            if let expected = selection.expected {
+                Text("Current workflow: \(expected.name ?? "Ticket workflow")")
+            }
+            if isLoading {
+                ProgressView("Loading available workflows…")
+            } else if selection.isRestart {
+                Text("Restart \(selection.expected?.name ?? "this workflow") from the beginning?")
+            } else {
+                Picker("New workflow", selection: $selectedId) {
+                    Text("Choose a workflow").tag(nil as Int?)
+                    ForEach(choices) { choice in Text(choice.name).tag(Optional(choice.id)) }
+                }.disabled(didAttempt)
+                if choices.isEmpty && errorMessage == nil {
+                    Text("No workflows are available to assign.").foregroundStyle(.secondary)
+                }
+            }
+            Text(selection.expected == nil
+                 ? "Applying this workflow may create tasks, send notifications, and run automation."
+                 : "This removes the current workflow and its incomplete workflow tasks. Progress will reset, and notifications, tasks, and automation may run again.")
+                .fixedSize(horizontal: false, vertical: true)
+            if let errorMessage { Text(errorMessage).foregroundStyle(.red).textSelection(.enabled) }
+            HStack {
+                Spacer()
+                Button(didAttempt ? "Close" : "Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isSubmitting)
+                Button(title) { Task { await submit() } }
+                    .disabled(isLoading || isSubmitting || selectedId == nil || didAttempt)
+            }
+            if isSubmitting { ProgressView("Updating workflow…").controlSize(.small) }
+        }
+        .padding(24).frame(width: 500)
+        .interactiveDismissDisabled(isSubmitting)
+        .task { await loadChoices() }
+    }
+
+    @MainActor private func loadChoices() async {
+        defer { isLoading = false }
+        do {
+            guard service.actingIdentityIsUser else { throw TdxAuthError.notAuthenticated }
+            let loader = TicketWorkflowCatalog()
+            choices = try await loader.load(ticketId: ticketId, config: config)
+            if !selection.isRestart { choices.removeAll { $0.id == selection.expected?.workflowConfigurationId } }
+            try Task.checkCancellation()
+            if selection.isRestart {
+                guard let id = selection.expected?.workflowConfigurationId,
+                      choices.contains(where: { $0.id == id }) else {
+                    throw TdxWorkflowError.actionFailed("This workflow is no longer available to restart.")
+                }
+                selectedId = id
+            }
+        } catch { if !Task.isCancelled { errorMessage = error.localizedDescription } }
+    }
+
+    @MainActor private func submit() async {
+        guard !isSubmitting, !didAttempt, let selectedId else { return }
+        isSubmitting = true
+        didAttempt = true
+        defer { isSubmitting = false }
+        do {
+            let loader = TicketWorkflowCatalog()
+            let currentChoices = try await loader.load(ticketId: ticketId, config: config)
+            guard currentChoices.contains(where: { $0.id == selectedId }) else {
+                throw TdxWorkflowError.actionFailed("The selected workflow is no longer available. Close this window and choose again.")
+            }
+            try await service.assignWorkflow(ticketId: ticketId, definitionId: selectedId, expected: selection.expected)
+            onCompleted()
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription + " Close this window to refresh before trying again."
+        }
+    }
 }

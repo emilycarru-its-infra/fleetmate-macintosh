@@ -136,9 +136,8 @@ struct TicketsWidgetsSection: View {
     var body: some View {
         let shown = tickets(nil)
         let stats = TicketStats(tickets: shown)
-        WidgetsSection(tab: .tickets, equalHeights: true) {
+        WidgetsSection(tab: .tickets, equalHeights: true, singleRow: true) {
             TicketKPIGrid(stats: stats, loading: isLoading && shown.isEmpty, tiles: kpiTiles(openStatuses: openStatuses))
-                .widgetSpan(2)
 
             let byStatus = TicketStats(tickets: tickets(.status)).byStatus
             WidgetCard(title: "By Status", isLoading: isLoading) {
@@ -148,7 +147,7 @@ struct TicketsWidgetsSection: View {
                     DonutWidget(slices: byStatus.map {
                         ChartSlice(label: $0.label, value: $0.value,
                                    color: shade(ticketStatusColor($0.label), $0.label, in: .status))
-                    }, size: 110) { toggle(.status, $0) }
+                    }, size: 110, adaptsToWidth: true) { toggle(.status, $0) }
                 }
             }
 
@@ -187,6 +186,7 @@ struct TicketsWidgetsSection: View {
                     bars: counts.map {
                         ChartBar(label: $0.label, value: $0.value, color: shade(color($0.label), $0.label, in: category))
                     },
+                    compact: true,
                     onSelect: category.map { category in { label in toggle(category, label) } }
                 )
             }
@@ -248,19 +248,26 @@ struct TicketKPITile {
     let action: () -> Void
 }
 
-/// Six small figures in a 3 × 2 grid, so they take one card's height instead
-/// of a column of full-width tiles. Each is a button.
+/// Six figures share one chart-width cell. At laptop widths the tiles use
+/// two compact columns; wider windows give them three. Each is a button.
 private struct TicketKPIGrid: View {
     let stats: TicketStats
     let loading: Bool
     let tiles: [TicketKPITile]
 
     var body: some View {
-        Grid(horizontalSpacing: 8, verticalSpacing: 8) {
-            ForEach(0..<2, id: \.self) { row in
+        ViewThatFits(in: .horizontal) {
+            grid(columns: 3).frame(minWidth: 330)
+            grid(columns: 2)
+        }
+    }
+
+    private func grid(columns: Int) -> some View {
+        Grid(horizontalSpacing: 6, verticalSpacing: 6) {
+            ForEach(0..<(6 / columns), id: \.self) { row in
                 GridRow {
-                    ForEach(0..<3, id: \.self) { col in
-                        tile(tiles[row * 3 + col])
+                    ForEach(0..<columns, id: \.self) { col in
+                        tile(tiles[row * columns + col])
                     }
                 }
             }
@@ -269,23 +276,22 @@ private struct TicketKPIGrid: View {
 
     private func tile(_ t: TicketKPITile) -> some View {
         Button(action: t.action) {
-            HStack(spacing: 8) {
-                Image(systemName: t.icon)
-                    .appFont(.body)
-                    .foregroundStyle(t.color)
-                    .frame(width: 20)
-                VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Image(systemName: t.icon).appFont(.caption).foregroundStyle(t.color)
                     if loading {
-                        SkeletonView(width: 36, height: 18, cornerRadius: 4)
+                        SkeletonView(width: 30, height: 16, cornerRadius: 4)
                     } else {
-                        Text(t.value, format: .number).appFont(.title3, weight: .bold).monospacedDigit()
+                        Text(t.value, format: .number).appFont(.title3, weight: .bold)
+                            .monospacedDigit().lineLimit(1).minimumScaleFactor(0.8)
                     }
-                    Text(t.title).appFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+                Text(t.title).appFont(.caption2).foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.8)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .background(t.isOn ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.06),
                         in: RoundedRectangle(cornerRadius: 10))
@@ -295,6 +301,7 @@ private struct TicketKPIGrid: View {
         }
         .buttonStyle(.plain)
         .help(t.help)
+        .accessibilityLabel("\(t.title): \(t.value)")
     }
 }
 

@@ -153,4 +153,52 @@ final class TdxWorkflowTests: XCTestCase {
             }
         }
     }
+    func testRestartUsesDefinitionIdAndOnePutWithQueryParameters() async throws {
+        var config = FleetMateConfig()
+        config.tdxBaseUrl = "https://tdx.example.edu/TDWebApi"
+        config.tdxTicketingAppId = 115
+        let body = #"{"ID":900,"WorkflowConfigurationID":12,"Name":"Review","IsComplete":true,"Status":1,"StartDateUtc":"2026-01-01T00:00:00Z"}"#
+        let expected = try JSONDecoder().decode(TdxWorkflow.self, from: Data(body.utf8))
+        StubURLProtocol.reset(stubs: [
+            .init(pathContains: "/workflow", method: "GET", body: body),
+            .init(pathContains: "/workflow", method: "PUT", body: #"{"ID":42}"#)
+        ])
+        let service = TdxService(config: config, sessionConfiguration: StubURLProtocol.sessionConfiguration())
+        service.setSsoToken("eyJ.synthetic.user", expiry: .distantFuture)
+        try await service.assignWorkflow(ticketId: 42, definitionId: expected.workflowConfigurationId!, expected: expected)
+        let writes = StubURLProtocol.apiCalls.filter { $0.method != "GET" }
+        XCTAssertEqual(writes.count, 1)
+        let call = try XCTUnwrap(writes.first)
+        XCTAssertEqual(call.method, "PUT")
+        let query = URLComponents(url: call.url, resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertTrue(query?.contains(URLQueryItem(name: "newWorkflowId", value: "12")) == true)
+        XCTAssertTrue(query?.contains(URLQueryItem(name: "allowRemoveExisting", value: "true")) == true)
+        XCTAssertNil(call.body)
+    }
+
+    func testChangedWorkflowBlocksReplacement() async throws {
+        let service = service(body: #"{"ID":900,"WorkflowConfigurationID":12,"Name":"Review","IsComplete":false,"Status":0}"#)
+        do {
+            try await service.assignWorkflow(ticketId: 42, definitionId: 12, expected: nil)
+            XCTFail("Concurrent assignment must not be overwritten")
+        } catch { }
+        XCTAssertTrue(StubURLProtocol.apiCalls.allSatisfy { $0.method == "GET" })
+    }
+
+    func testInitialAssignmentRefusesToRemoveExistingWorkflow() async throws {
+        var config = FleetMateConfig()
+        config.tdxBaseUrl = "https://tdx.example.edu/TDWebApi"
+        config.tdxTicketingAppId = 115
+        StubURLProtocol.reset(stubs: [
+            .init(pathContains: "/workflow", method: "GET", body: "null"),
+            .init(pathContains: "/workflow", method: "PUT", body: #"{"ID":42}"#)
+        ])
+        let service = TdxService(config: config, sessionConfiguration: StubURLProtocol.sessionConfiguration())
+        service.setSsoToken("eyJ.synthetic.user", expiry: .distantFuture)
+        try await service.assignWorkflow(ticketId: 42, definitionId: 12, expected: nil)
+        let call = try XCTUnwrap(StubURLProtocol.apiCalls.first { $0.method == "PUT" })
+        let query = URLComponents(url: call.url, resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertTrue(query?.contains(URLQueryItem(name: "allowRemoveExisting", value: "false")) == true)
+    }
+
 }

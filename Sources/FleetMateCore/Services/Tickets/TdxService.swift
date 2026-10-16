@@ -367,6 +367,164 @@ public class TdxService {
         return result
     }
 
+    /// Replacing a workflow is one PUT, never a remove followed by an assign.
+    public func assignWorkflow(ticketId: Int, definitionId: Int, expected: TdxWorkflow?) async throws {
+        guard definitionId > 0 else { throw TdxWorkflowError.actionFailed("Choose a workflow first.") }
+        let current = try await getWorkflow(ticketId: ticketId)
+        guard current == expected else {
+            throw TdxWorkflowError.actionFailed("The workflow changed while this window was open. Close it and review the current workflow.")
+        }
+        let headers = try workflowHeaders()
+        let updated = try await workflowResponse(activeSession.request(
+            config.tdxTicketsUrl("\(ticketId)/workflow"), method: .put,
+            parameters: ["newWorkflowId": String(definitionId), "allowRemoveExisting": expected == nil ? "false" : "true"],
+            encoding: URLEncoding.queryString, headers: headers), as: TdxTicket.self)
+        guard updated.id == ticketId else {
+            throw TdxWorkflowError.actionFailed("The server response could not be verified. Refresh the ticket before trying again.")
+        }
+    }
+
+    public func getTicketTasks(ticketId: Int, eligiblePredecessorsOnly: Bool = false) async throws -> [TdxTicketTask] {
+        let headers = try workflowHeaders()
+        let tasks = try await workflowResponse(activeSession.request(
+            config.tdxTicketsUrl("\(ticketId)/tasks"),
+            parameters: eligiblePredecessorsOnly ? ["isEligiblePredecessor": "true"] : nil,
+            headers: headers), as: [TdxTicketTask]?.self) ?? []
+        guard tasks.allSatisfy({ $0.ticketId == ticketId && $0.id > 0 }) else {
+            throw TdxWorkflowError.actionFailed("The server returned tasks for a different ticket. Refresh and try again.")
+        }
+        return tasks
+    }
+
+    public func getTicketTask(ticketId: Int, taskId: Int) async throws -> TdxTicketTask {
+        let headers = try workflowHeaders()
+        let task = try await workflowResponse(activeSession.request(
+            config.tdxTicketsUrl("\(ticketId)/tasks/\(taskId)"), headers: headers), as: TdxTicketTask.self)
+        guard task.id == taskId && task.ticketId == ticketId else {
+            throw TdxWorkflowError.actionFailed("The task is no longer available on this ticket.")
+        }
+        return task
+    }
+
+    public func getTicketTaskFeed(ticketId: Int, taskId: Int) async throws -> [TdxFeedEntry] {
+        let headers = try workflowHeaders()
+        return try await workflowResponse(activeSession.request(
+            config.tdxTicketsUrl("\(ticketId)/tasks/\(taskId)/feed"), headers: headers), as: [TdxFeedEntry]?.self) ?? []
+    }
+
+    public func getTaskGroups() async throws -> [TdxLookupItem] {
+        let headers = try workflowHeaders()
+        let body: [String: Any] = ["IsActive": true, "MaxResults": 1000]
+        let groups = try await workflowResponse(activeSession.request(
+            config.tdxGlobalUrl("groups/search"), method: .post,
+            parameters: body, encoding: JSONEncoding.default, headers: headers), as: [TdxGroupItem]?.self) ?? []
+        return lookupItems(groups.map { ($0.id, $0.name) })
+    }
+
+    public func searchTaskPeople(searchText: String) async throws -> [TdxPerson] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return [] }
+        let headers = try workflowHeaders()
+        return try await workflowResponse(activeSession.request(
+            config.tdxPeopleUrl("lookup"), parameters: ["searchText": query, "maxResults": "10"],
+            headers: headers), as: [TdxPerson]?.self) ?? []
+    }
+
+    public func getTaskFeedReplies(entryId: Int) async throws -> [TdxFeedEntry] {
+        let headers = try workflowHeaders()
+        let entry = try await workflowResponse(activeSession.request(
+            config.tdxGlobalUrl("feed/\(entryId)"), headers: headers), as: TdxFeedEntry.self)
+        guard entry.id == entryId else { throw TdxWorkflowError.actionFailed("The activity entry is no longer available.") }
+        return entry.replyList
+    }
+
+    @discardableResult
+    public func createTicketTask(ticketId: Int, values: TdxTaskValues) async throws -> TdxTicketTask {
+        try values.validate()
+        let headers = try workflowHeaders()
+        let task = try await workflowResponse(activeSession.request(
+            config.tdxTicketsUrl("\(ticketId)/tasks"), method: .post,
+            parameters: values, encoder: JSONParameterEncoder.default, headers: headers), as: TdxTicketTask.self)
+        guard task.ticketId == ticketId && task.id > 0 && task.isStandard else {
+            throw TdxWorkflowError.actionFailed("The created task response could not be verified. Refresh before trying again.")
+        }
+        return task
+    }
+
+    @discardableResult
+    public func editTicketTask(ticketId: Int, expected: TdxTicketTask, values: TdxTaskValues) async throws -> TdxTicketTask {
+        try values.validate()
+        guard expected.isStandard, values.predecessorId != expected.id else {
+            throw TdxWorkflowError.actionFailed("Only standard tasks can be edited, and a task cannot depend on itself.")
+        }
+        try await checkCurrentTask(ticketId: ticketId, expected: expected)
+        let headers = try workflowHeaders()
+        let task = try await workflowResponse(activeSession.request(
+            config.tdxTicketsUrl("\(ticketId)/tasks/\(expected.id)"), method: .put,
+            parameters: values, encoder: JSONParameterEncoder.default, headers: headers), as: TdxTicketTask.self)
+        guard task.id == expected.id && task.ticketId == ticketId else {
+            throw TdxWorkflowError.actionFailed("The updated task response could not be verified. Refresh before trying again.")
+        }
+        return task
+    }
+
+    public func updateTicketTask(ticketId: Int, expected: TdxTicketTask, update: TdxTaskUpdate) async throws {
+        try update.validate()
+        try await checkCurrentTask(ticketId: ticketId, expected: expected)
+        if update.percentComplete != nil && !expected.isActive && expected.percentComplete < 100 {
+            throw TdxWorkflowError.actionFailed("This task is waiting for its predecessor to finish.")
+        }
+        let headers = try workflowHeaders()
+        let entry = try await workflowResponse(activeSession.request(
+            config.tdxTicketsUrl("\(ticketId)/tasks/\(expected.id)/feed"), method: .post,
+            parameters: update, encoder: JSONParameterEncoder.default, headers: headers), as: TdxFeedEntry.self)
+        guard let id = entry.id, id > 0 else {
+            throw TdxWorkflowError.actionFailed("The task update could not be verified. Refresh before trying again.")
+        }
+    }
+
+    public func deleteTicketTask(ticketId: Int, expected: TdxTicketTask) async throws {
+        guard expected.isStandard else { throw TdxWorkflowError.actionFailed("Only standard tasks can be deleted.") }
+        try await checkCurrentTask(ticketId: ticketId, expected: expected)
+        let headers = try workflowHeaders()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            activeSession.request(config.tdxTicketsUrl("\(ticketId)/tasks/\(expected.id)"), method: .delete, headers: headers)
+                .validate().responseData { response in
+                    if let status = response.response?.statusCode, !(200..<300).contains(status) {
+                        continuation.resume(throwing: TdxWorkflowError.requestFailed(status))
+                    } else {
+                        continuation.resume(with: response.result.map { _ in () }.mapError { $0 as Error })
+                    }
+                }
+        }
+        let remaining = try await getTicketTasks(ticketId: ticketId)
+        guard !remaining.contains(where: { $0.id == expected.id }) else {
+            throw TdxWorkflowError.actionFailed("The task is still present. Refresh to review its current state.")
+        }
+    }
+
+    @discardableResult
+    public func applyTaskTemplate(ticketId: Int, request: TdxTaskTemplateRequest) async throws -> [TdxTicketTask] {
+        guard request.taskTemplateId > 0, (0...2).contains(request.startDateSource) else {
+            throw TdxWorkflowError.actionFailed("Choose a task template and start date source.")
+        }
+        let headers = try workflowHeaders()
+        let tasks = try await workflowResponse(activeSession.request(
+            config.tdxTicketsUrl("\(ticketId)/tasks/applytemplate"), method: .post,
+            parameters: request, encoder: JSONParameterEncoder.default, headers: headers), as: [TdxTicketTask]?.self) ?? []
+        guard tasks.allSatisfy({ $0.ticketId == ticketId && $0.id > 0 }) else {
+            throw TdxWorkflowError.actionFailed("The template response could not be verified. Refresh before trying again.")
+        }
+        return tasks
+    }
+
+    private func checkCurrentTask(ticketId: Int, expected: TdxTicketTask) async throws {
+        let current = try await getTicketTask(ticketId: ticketId, taskId: expected.id)
+        guard current == expected else {
+            throw TdxWorkflowError.actionFailed("This task changed while the window was open. Close it and review the current task.")
+        }
+    }
+
     private func workflowResponse<Value: Decodable & Sendable>(_ request: DataRequest, as type: Value.Type) async throws -> Value {
         try await withCheckedThrowingContinuation { continuation in
             request.validate().responseDecodable(of: type) { response in

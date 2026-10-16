@@ -179,6 +179,7 @@ struct TicketsView: View {
     // Detail editing state
     @State private var detailedTicket: TdxTicket? = nil
     @State private var isLoadingDetail = false
+    @State private var ticketActivityRevision = 0
     @State private var editTitle = ""
     @State private var editStatusId: Int? = nil
     @State private var editPriorityId: Int? = nil
@@ -1313,13 +1314,22 @@ struct TicketsView: View {
                             .padding(.top, 10)
                         if let ticketId = ticket.id {
                             Divider().padding(.vertical, 8)
-                            TicketWorkflowView(ticketId: ticketId, service: appState.tdxService) {
+                            TicketWorkflowView(ticketId: ticketId, service: appState.tdxService, refreshToken: ticketActivityRevision) {
                                 guard selectedTicket?.id == ticketId else { return }
                                 loadTicketDetail(ticketId: ticketId)
                                 loadTicketFeed(ticketId: ticketId)
                                 loadTickets()
                             }
-                            .id(ticketId)
+                            .id("workflow-\(ticketId)")
+                            Divider().padding(.vertical, 8)
+                            TicketTasksView(ticketId: ticketId, service: appState.tdxService,
+                                            refreshToken: ticketActivityRevision) {
+                                guard selectedTicket?.id == ticketId else { return }
+                                loadTicketDetail(ticketId: ticketId)
+                                loadTicketFeed(ticketId: ticketId)
+                                loadTickets()
+                            }
+                            .id("tasks-\(ticketId)")
                         }
                         if !ticket.attachmentList.isEmpty {
                             Divider().padding(.vertical, 8)
@@ -2266,6 +2276,7 @@ struct TicketsView: View {
     }
 
     private func loadTicketDetail(ticketId: Int) {
+        ticketActivityRevision += 1
         Task {
             isLoadingDetail = true
             defer { isLoadingDetail = false }

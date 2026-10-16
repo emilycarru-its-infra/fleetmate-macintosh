@@ -730,8 +730,8 @@ private struct ActivityHeatmap: View {
                 RectangleMark(
                     xStart: .value("Hour start", Double(cell.hour) - 0.45),
                     xEnd: .value("Hour end", Double(cell.hour) + 0.45),
-                    y: .value("Day", Self.weekdays[cell.weekday - 1]),
-                    height: .ratio(0.85)
+                    yStart: .value("Day start", Double(cell.weekday) - 0.42),
+                    yEnd: .value("Day end", Double(cell.weekday) + 0.42)
                 )
                 .foregroundStyle(InsightsPalette.commits.opacity(cell.commits == 0 ? 0.08 : 0.2 + 0.8 * Double(cell.commits) / Double(peak)))
                 .cornerRadius(2)
@@ -739,7 +739,16 @@ private struct ActivityHeatmap: View {
                 .accessibilityValue("\(cell.commits) commits")
             }
             .chartXScale(domain: -0.5...23.5)
-            .chartYScale(domain: Self.weekdays)
+            .chartYScale(domain: .automatic(includesZero: false, reversed: true, dataType: Double.self) {
+                $0 = [0.5, 7.5]
+            })
+            .chartYAxis {
+                AxisMarks(position: .leading, values: Array(1...7)) { value in
+                    AxisValueLabel {
+                        if let weekday = value.as(Int.self) { Text(Self.weekdays[weekday - 1]) }
+                    }
+                }
+            }
             .chartXAxis {
                 AxisMarks(values: [0, 3, 6, 9, 12, 15, 18, 21]) { value in
                     AxisValueLabel {
@@ -756,10 +765,10 @@ private struct ActivityHeatmap: View {
                             let frame = geometry[anchor]
                             guard frame.contains(location),
                                   let hour = proxy.value(atX: location.x - frame.minX, as: Double.self),
-                                  let day = proxy.value(atY: location.y - frame.minY, as: String.self),
-                                  let weekday = Self.weekdays.firstIndex(of: day) else { hovered = nil; return }
+                                  let day = proxy.value(atY: location.y - frame.minY, as: Double.self) else { hovered = nil; return }
                             let roundedHour = Int(hour.rounded())
-                            hovered = grid.first { $0.weekday == weekday + 1 && $0.hour == roundedHour }
+                            let weekday = Int(day.rounded())
+                            hovered = grid.first { $0.weekday == weekday && $0.hour == roundedHour }
                         }
                 }
             }

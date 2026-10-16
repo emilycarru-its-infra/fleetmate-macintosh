@@ -45,7 +45,7 @@ final class TdxTicketTaskTests: XCTestCase {
         XCTAssertEqual(body["PercentComplete"] as? Int, 100)
         XCTAssertEqual(body["Comments"] as? String, "Done")
         XCTAssertEqual(body["IsRichHtml"] as? Bool, false)
-        XCTAssertEqual(body["IsPrivate"] as? Bool, true)
+        XCTAssertEqual(body["IsPrivate"] as? Bool, false)
         XCTAssertNil(body["Title"])
         XCTAssertTrue(StubURLProtocol.apiCalls.allSatisfy { $0.headers.first(where: { $0.key.lowercased() == "authorization" })?.value == "Bearer eyJ.synthetic.user" })
     }
@@ -155,6 +155,26 @@ final class TdxTicketTaskTests: XCTestCase {
         let url = try XCTUnwrap(StubURLProtocol.apiCalls.first?.url)
         XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
                        [URLQueryItem(name: "isEligiblePredecessor", value: "true")])
+    }
+
+    func testTaskAssignmentLookupsUseUserSessionAndEncodeSearchQuery() async throws {
+        let service = service([
+            .init(pathContains: "/people/lookup", body: "[]"),
+            .init(pathContains: "/groups/search", method: "POST", body: #"[{"ID":4,"Name":"Review team"}]"#)
+        ])
+        _ = try await service.searchTaskPeople(searchText: "a+b&c@example.edu")
+        let groups = try await service.getTaskGroups()
+        XCTAssertEqual(groups.first?.name, "Review team")
+        let call = try XCTUnwrap(StubURLProtocol.apiCalls.first)
+        let query = URLComponents(url: call.url, resolvingAgainstBaseURL: false)?.queryItems
+        XCTAssertTrue(query?.contains(URLQueryItem(name: "searchText", value: "a+b&c@example.edu")) == true)
+        XCTAssertEqual(query?.count, 2)
+        XCTAssertTrue(StubURLProtocol.apiCalls.allSatisfy { $0.headers.first(where: { $0.key.lowercased() == "authorization" })?.value == "Bearer eyJ.synthetic.user" })
+        service.clearSsoToken()
+        let count = StubURLProtocol.recorded.count
+        do { _ = try await service.getTaskGroups(); XCTFail("Fell back to another identity") } catch is TdxAuthError { }
+        do { _ = try await service.searchTaskPeople(searchText: "review"); XCTFail("Fell back to another identity") } catch is TdxAuthError { }
+        XCTAssertEqual(StubURLProtocol.recorded.count, count)
     }
 
 }

@@ -132,7 +132,7 @@ public struct TdxTaskUpdate: Encodable, Sendable {
     public let isRichHtml = false
     public let notify: [String] = []
 
-    public init(percentComplete: Int? = nil, comments: String = "", isPrivate: Bool = true) {
+    public init(percentComplete: Int? = nil, comments: String = "", isPrivate: Bool = false) {
         self.percentComplete = percentComplete
         self.comments = comments
         self.isPrivate = isPrivate

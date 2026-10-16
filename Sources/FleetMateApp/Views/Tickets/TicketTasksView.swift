@@ -123,7 +123,7 @@ private struct TicketTaskDetail: View {
     @State private var replyError: String?
     @State private var progress = 0
     @State private var comments = ""
-    @State private var isPrivate = true
+    @State private var isPrivate = false
     @State private var isLoading = true
     @State private var isSubmitting = false
     @State private var didAttempt = false
@@ -299,69 +299,96 @@ private struct TicketTaskEditor: View {
             Text("Ticket #\(String(ticketId))").foregroundStyle(.secondary)
             if isLoading { ProgressView("Loading task details…") }
             ScrollView {
-                Form {
-                    TextField("Title", text: $values.title)
-                    LabeledContent("Description") {
-                        TextEditor(text: $descriptionText).frame(height: 90).border(.quaternary)
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Title").fontWeight(.medium)
+                        TextField("Task title", text: $values.title)
+                            .textFieldStyle(.roundedBorder).multilineTextAlignment(.leading)
                     }
-                    TextField("Estimated minutes", value: $values.estimatedMinutes, format: .number)
-                    Picker("Responsible group", selection: $values.responsibleGroupId) {
-                        Text("Unassigned").tag(0)
-                        if values.responsibleGroupId > 0 && !groups.contains(where: { $0.id == values.responsibleGroupId }) {
-                            Text(expected?.responsibleGroupName ?? "Current group").tag(values.responsibleGroupId)
-                        }
-                        ForEach(groups) { group in Text(group.name).tag(group.id) }
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Description").fontWeight(.medium)
+                        TextEditor(text: $descriptionText)
+                            .multilineTextAlignment(.leading)
+                            .frame(height: 100).border(.quaternary)
+                            .accessibilityLabel("Task description")
                     }
-                    LabeledContent("Responsible person") {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(personName)
-                                Spacer()
-                                Button("Assign to me") {
-                                    values.responsibleUid = service.authenticatedUserId
-                                    personName = service.authenticatedUserName ?? "Me"
-                                }.disabled(service.authenticatedUserId == nil)
-                                Button("Clear") { values.responsibleUid = nil; personName = "Unassigned" }
+                    HStack {
+                        Text("Estimated minutes")
+                        TextField("Estimated minutes", value: $values.estimatedMinutes, format: .number)
+                            .textFieldStyle(.roundedBorder).multilineTextAlignment(.leading).frame(width: 100)
+                    }
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Responsible group").fontWeight(.medium)
+                        Picker("Responsible group", selection: $values.responsibleGroupId) {
+                            Text("Unassigned").tag(0)
+                            if values.responsibleGroupId > 0 && !groups.contains(where: { $0.id == values.responsibleGroupId }) {
+                                Text(expected?.responsibleGroupName ?? "Current group").tag(values.responsibleGroupId)
                             }
-                            HStack {
-                                TextField("Find a person", text: $personSearch).onSubmit { Task { await searchPeople() } }
-                                Button("Search") { Task { await searchPeople() } }
-                                    .disabled(personSearch.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || isSearching)
-                            }
-                            if isSearching { ProgressView().controlSize(.small) }
-                            ForEach(people) { person in
-                                Button(person.fullName ?? person.primaryEmail ?? "Person") {
-                                    values.responsibleUid = person.uid
-                                    personName = person.fullName ?? person.primaryEmail ?? "Person"
-                                    people = []
-                                }.buttonStyle(.link)
-                            }
-                            if let lookupError { Text(lookupError).font(.caption).foregroundStyle(.red) }
+                            ForEach(groups) { group in Text(group.name).tag(group.id) }
+                        }.labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Responsible person").fontWeight(.medium)
+                        HStack {
+                            Text(personName).foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Assign to me") {
+                                values.responsibleUid = service.authenticatedUserId
+                                personName = service.authenticatedUserName ?? "Me"
+                            }.disabled(service.authenticatedUserId == nil)
+                            Button("Clear") { values.responsibleUid = nil; personName = "Unassigned" }
                         }
+                        HStack {
+                            TextField("Find a person", text: $personSearch)
+                                .textFieldStyle(.roundedBorder).multilineTextAlignment(.leading)
+                                .onSubmit { Task { await searchPeople() } }
+                            Button("Search") { Task { await searchPeople() } }
+                                .disabled(personSearch.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || isSearching)
+                        }
+                        if isSearching { ProgressView().controlSize(.small) }
+                        ForEach(people) { person in
+                            Button(person.fullName ?? person.primaryEmail ?? "Person") {
+                                values.responsibleUid = person.uid
+                                personName = person.fullName ?? person.primaryEmail ?? "Person"
+                                people = []
+                            }.buttonStyle(.link)
+                        }
+                        if let lookupError { Text(lookupError).font(.caption).foregroundStyle(.red) }
                     }
                     Toggle("Notify responsible when task becomes active", isOn: $values.notifyResponsible)
-                    Picker("Predecessor", selection: $values.predecessorId) {
-                        Text("None").tag(0)
-                        if values.predecessorId > 0 && !eligibleTasks.contains(where: { $0.id == values.predecessorId }) {
-                            Text(expected?.predecessorTitle ?? "Current predecessor").tag(values.predecessorId)
-                        }
-                        ForEach(eligibleTasks.filter { $0.id != task?.id }) { predecessor in
-                            Text(predecessor.title).tag(predecessor.id)
-                        }
+                        .toggleStyle(.checkbox)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Predecessor").fontWeight(.medium)
+                        Picker("Predecessor", selection: $values.predecessorId) {
+                            Text("None").tag(0)
+                            if values.predecessorId > 0 && !eligibleTasks.contains(where: { $0.id == values.predecessorId }) {
+                                Text(expected?.predecessorTitle ?? "Current predecessor").tag(values.predecessorId)
+                            }
+                            ForEach(eligibleTasks.filter { $0.id != task?.id }) { predecessor in
+                                Text(predecessor.title).tag(predecessor.id)
+                            }
+                        }.labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
                     }
                     Toggle("Start date", isOn: Binding(get: { values.startDate != nil }, set: { values.startDate = $0 ? Self.iso(Date()) : nil }))
+                        .toggleStyle(.checkbox)
                     if values.startDate != nil {
                         DatePicker("Starts", selection: Binding(get: { Self.date(values.startDate) }, set: { values.startDate = Self.iso($0) }))
                     }
                     Toggle("Due date", isOn: Binding(get: { values.endDate != nil }, set: { values.endDate = $0 ? Self.iso(Date()) : nil }))
+                        .toggleStyle(.checkbox)
                     if values.endDate != nil {
                         DatePicker("Due", selection: Binding(get: { Self.date(values.endDate) }, set: { values.endDate = Self.iso($0) }))
                     }
                     Toggle("Expected operational duration", isOn: Binding(get: { values.completeWithinMinutes != nil }, set: { values.completeWithinMinutes = $0 ? 60 : nil }))
+                        .toggleStyle(.checkbox)
                     if values.completeWithinMinutes != nil {
-                        TextField("Operational minutes", value: Binding(get: { values.completeWithinMinutes ?? 0 }, set: { values.completeWithinMinutes = $0 }), format: .number)
+                        HStack {
+                            Text("Operational minutes")
+                            TextField("Operational minutes", value: Binding(get: { values.completeWithinMinutes ?? 0 }, set: { values.completeWithinMinutes = $0 }), format: .number)
+                                .textFieldStyle(.roundedBorder).multilineTextAlignment(.leading).frame(width: 100)
+                        }
                     }
-                }.formStyle(.grouped)
+                }.padding(2).frame(maxWidth: .infinity, alignment: .leading)
             }.frame(maxHeight: 520).disabled(isLoading || didAttempt)
             if let errorMessage { Text(errorMessage).foregroundStyle(.red).textSelection(.enabled) }
             HStack {
@@ -399,7 +426,7 @@ private struct TicketTaskEditor: View {
             eligibleTasks = eligible
         } catch { if !Task.isCancelled { lookupError = "Couldn't load eligible predecessors. Existing dependencies are preserved." } }
         do {
-            let loaded = try await service.getGroups()
+            let loaded = try await service.getTaskGroups()
             try Task.checkCancellation()
             groups = loaded
         } catch { if !Task.isCancelled { lookupError = "Couldn't load groups. Existing assignments are preserved." } }
@@ -412,7 +439,7 @@ private struct TicketTaskEditor: View {
         lookupError = nil
         defer { isSearching = false }
         do {
-            let found = try await service.searchPeople(searchText: query)
+            let found = try await service.searchTaskPeople(searchText: query)
             try Task.checkCancellation()
             guard personSearch.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
             people = found.filter { $0.uid != nil }

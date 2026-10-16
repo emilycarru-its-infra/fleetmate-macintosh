@@ -26,13 +26,15 @@ struct WidgetsSection<Content: View>: View {
     /// Stretches every card in a row to the row's tallest, so a row reads as
     /// one band instead of cards of ragged heights.
     var equalHeights = false
+    var singleRow = false
     @ViewBuilder var content: Content
 
     @AppStorage private var collapsed: Bool
 
-    init(tab: AppTab, equalHeights: Bool = false, @ViewBuilder content: () -> Content) {
+    init(tab: AppTab, equalHeights: Bool = false, singleRow: Bool = false, @ViewBuilder content: () -> Content) {
         self.tab = tab
         self.equalHeights = equalHeights
+        self.singleRow = singleRow
         self.content = content()
         _collapsed = AppStorage(wrappedValue: false, tab.widgetsCollapsedKey)
     }
@@ -40,7 +42,7 @@ struct WidgetsSection<Content: View>: View {
     var body: some View {
         VStack(spacing: 0) {
             if !collapsed {
-                WidgetRowLayout(spacing: 12, minUnitWidth: 240, equalHeights: equalHeights) {
+                WidgetRowLayout(spacing: 12, minUnitWidth: 240, equalHeights: equalHeights, wraps: !singleRow) {
                     content
                 }
                 .padding(.horizontal, 16)
@@ -100,13 +102,16 @@ struct WidgetRowLayout: Layout {
     var minUnitWidth: CGFloat = 240
     /// Offer every card its row's tallest height (see WidgetsSection).
     var equalHeights = false
+    var wraps = true
 
     private struct Placement { var index: Int; var x: CGFloat; var y: CGFloat; var width: CGFloat; var rowHeight: CGFloat = 0 }
 
     private func arrange(width: CGFloat, subviews: Subviews) -> (placements: [Placement], height: CGFloat) {
         guard !subviews.isEmpty else { return ([], 0) }
         let spans = subviews.map { max(1, $0[WidgetSpan.self]) }
-        let unitsPerRow = max(1, Int((width + spacing) / (minUnitWidth + spacing)))
+        let unitsPerRow = wraps
+            ? max(1, Int((width + spacing) / (minUnitWidth + spacing)))
+            : spans.reduce(0, +)
 
         // Greedy rows by span.
         var rows: [[Int]] = [[]]
@@ -248,17 +253,24 @@ extension AppState {
 struct DonutWidget: View {
     let slices: [ChartSlice]
     var size: CGFloat = 130
+    var adaptsToWidth = false
     var onSelect: ((String) -> Void)? = nil
 
     var body: some View {
         let diameter = min(size, 150)
-        HStack(alignment: .center, spacing: 14) {
-            plot
-                .frame(width: diameter, height: diameter)
-            ChartLegendList(slices: slices, onSelect: onSelect)
-                .frame(minWidth: 110, maxWidth: .infinity, alignment: .leading)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 14) {
+                plot.frame(width: diameter, height: diameter)
+                ChartLegendList(slices: slices, onSelect: onSelect)
+                    .frame(minWidth: 110, maxWidth: .infinity, alignment: .leading)
+            }.frame(minHeight: diameter)
+            if adaptsToWidth {
+                VStack(alignment: .center, spacing: 8) {
+                    plot.frame(width: min(diameter, 90), height: min(diameter, 90))
+                    ChartLegendList(slices: slices, onSelect: onSelect)
+                }.frame(maxWidth: .infinity)
+            }
         }
-        .frame(minHeight: diameter)
     }
 
     private static func wedgeFraction(_ slice: ChartSlice, of slices: [ChartSlice]) -> Double {
@@ -326,6 +338,7 @@ struct DonutWidget: View {
 /// widest count and never truncates; the bar takes whatever is left.
 struct HorizontalBarList: View {
     let bars: [ChartBar]
+    var compact = false
     var onSelect: ((String) -> Void)? = nil
 
     @State private var hovered: UUID?
@@ -340,7 +353,7 @@ struct HorizontalBarList: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .frame(maxWidth: 160, alignment: .leading)
+                        .frame(maxWidth: compact ? 70 : 160, alignment: .leading)
                         .help(bar.label)
                         .modifier(BarRowInteraction(id: bar.id, label: bar.label, hovered: $hovered, onSelect: onSelect))
                     GeometryReader { geo in

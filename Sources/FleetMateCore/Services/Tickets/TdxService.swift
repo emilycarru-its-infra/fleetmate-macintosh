@@ -412,6 +412,24 @@ public class TdxService {
             config.tdxTicketsUrl("\(ticketId)/tasks/\(taskId)/feed"), headers: headers), as: [TdxFeedEntry]?.self) ?? []
     }
 
+    public func getTaskGroups() async throws -> [TdxLookupItem] {
+        let headers = try workflowHeaders()
+        let body: [String: Any] = ["IsActive": true, "MaxResults": 1000]
+        let groups = try await workflowResponse(activeSession.request(
+            config.tdxGlobalUrl("groups/search"), method: .post,
+            parameters: body, encoding: JSONEncoding.default, headers: headers), as: [TdxGroupItem]?.self) ?? []
+        return lookupItems(groups.map { ($0.id, $0.name) })
+    }
+
+    public func searchTaskPeople(searchText: String) async throws -> [TdxPerson] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return [] }
+        let headers = try workflowHeaders()
+        return try await workflowResponse(activeSession.request(
+            config.tdxPeopleUrl("lookup"), parameters: ["searchText": query, "maxResults": "10"],
+            headers: headers), as: [TdxPerson]?.self) ?? []
+    }
+
     public func getTaskFeedReplies(entryId: Int) async throws -> [TdxFeedEntry] {
         let headers = try workflowHeaders()
         let entry = try await workflowResponse(activeSession.request(

@@ -120,7 +120,7 @@ struct QueriesListView<MenuContent: View>: View {
     /// empty. Drives the empty state's wording and its Retry button.
     let loadError: String?
     let onRetry: () -> Void
-    @Binding var collapsedQueryIds: Set<String>
+    @Binding var expandedQueryIds: Set<String>
     @Binding var selectedTask: UnifiedTask?
     let onOpenQuery: (AdoSharedQuery) -> Void
     /// The block "Copy for Agent" hands over for a query and its row count.
@@ -169,7 +169,7 @@ struct QueriesListView<MenuContent: View>: View {
         showClosed: Bool,
         loadError: String?,
         onRetry: @escaping () -> Void,
-        collapsedQueryIds: Binding<Set<String>>,
+        expandedQueryIds: Binding<Set<String>>,
         selectedTask: Binding<UnifiedTask?>,
         onOpenQuery: @escaping (AdoSharedQuery) -> Void,
         queryContext: @escaping (AdoSharedQuery, Int) -> AgentContext = {
@@ -186,7 +186,7 @@ struct QueriesListView<MenuContent: View>: View {
         self.showClosed = showClosed
         self.loadError = loadError
         self.onRetry = onRetry
-        self._collapsedQueryIds = collapsedQueryIds
+        self._expandedQueryIds = expandedQueryIds
         self._selectedTask = selectedTask
         self.onOpenQuery = onOpenQuery
         self.queryContext = queryContext
@@ -453,7 +453,7 @@ struct QueriesListView<MenuContent: View>: View {
     private var flatVisibleTasks: [UnifiedTask] {
         visibleSections.flatMap { section in
             section.runs.flatMap { run, rows in
-                collapsedQueryIds.contains(run.id) ? [] : displayRows(rows).map(\.task)
+                expandedQueryIds.contains(run.id) ? displayRows(rows).map(\.task) : []
             }
         }
     }
@@ -488,7 +488,7 @@ struct QueriesListView<MenuContent: View>: View {
     @ViewBuilder
     private func querySection(_ pair: (QueryRunDisplay, [QueryDisplayRow])) -> some View {
         let (run, rows) = pair
-        let collapsed = collapsedQueryIds.contains(run.id)
+        let collapsed = !expandedQueryIds.contains(run.id)
 
         VStack(alignment: .leading, spacing: 0) {
             queryHeader(run, visibleCount: rows.count, collapsed: collapsed)
@@ -585,9 +585,9 @@ struct QueriesListView<MenuContent: View>: View {
         .agentContextDrag { queryContext(run.query, run.rows.count) }
         .onTapGesture {
             if collapsed {
-                collapsedQueryIds.remove(run.id)
+                expandedQueryIds.insert(run.id)
             } else {
-                collapsedQueryIds.insert(run.id)
+                expandedQueryIds.remove(run.id)
             }
         }
     }

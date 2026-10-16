@@ -221,6 +221,9 @@ public struct RepoStatsReport: Codable, Sendable {
 }
 
 public enum RepoStatistics {
+    /// Insights charts describe the remote mainline, independently of the checkout.
+    public static let insightsRef = "refs/remotes/origin/main"
+
     /// Aggregates `commits` into a report. Commits outside `since...until`
     /// are ignored. The timeline has one point per bucket from the first
     /// bucket (of `since`, or the oldest commit) to the bucket of `until`,
@@ -403,7 +406,7 @@ public struct RepoStatsSummary: Codable, Sendable {
                 authors: report.totals.authors,
                 added: report.totals.added,
                 removed: report.totals.removed,
-                lastCommit: input.commits.map(\.date).max() ?? status?.lastCommitAt,
+                lastCommit: input.commits.map(\.date).max(),
                 branch: status?.branch,
                 ahead: status?.ahead ?? 0,
                 behind: status?.behind ?? 0,
@@ -419,15 +422,15 @@ public struct RepoStatsSummary: Codable, Sendable {
 
 extension RepoManager {
     /// One repository's statistics over a period.
-    public func stats(for record: RepoRecord, since: Date?, until: Date = Date(), bucket: RepoStatsBucket? = nil, top: Int = 15) async throws -> RepoStatsReport {
-        let commits = try await workingCopy(for: record).churnLog(since: since, until: until)
+    public func stats(for record: RepoRecord, since: Date?, until: Date = Date(), bucket: RepoStatsBucket? = nil, top: Int = 15, ref: String? = nil) async throws -> RepoStatsReport {
+        let commits = try await workingCopy(for: record).churnLog(since: since, until: until, ref: ref)
         return RepoStatistics.report(commits, since: since, until: until, bucket: bucket, top: top)
     }
 
     /// Statistics across `records`, `settings.concurrency` at a time. A
     /// repository that fails to read becomes a row with its error; it never
     /// hides the others.
-    public func statsSummary(for records: [RepoRecord], since: Date?, until: Date = Date(), bucket: RepoStatsBucket? = nil, top: Int = 15) async -> RepoStatsSummary {
+    public func statsSummary(for records: [RepoRecord], since: Date?, until: Date = Date(), bucket: RepoStatsBucket? = nil, top: Int = 15, ref: String? = nil) async -> RepoStatsSummary {
         let limit = (try? settings().concurrency) ?? RepoSettings.default.concurrency
         let manager = self
         struct Loaded: Sendable {
@@ -440,7 +443,7 @@ extension RepoManager {
         let loaded = await boundedMap(records, limit: limit) { record -> Loaded in
             let status = await manager.status(for: record)
             do {
-                let commits = try await manager.workingCopy(for: record).churnLog(since: since, until: until)
+                let commits = try await manager.workingCopy(for: record).churnLog(since: since, until: until, ref: ref)
                 return Loaded(id: record.id, name: record.key.displayName, commits: commits, status: status, error: nil)
             } catch {
                 return Loaded(id: record.id, name: record.key.displayName, commits: [], status: status, error: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription)

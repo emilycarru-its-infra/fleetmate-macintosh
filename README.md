@@ -582,3 +582,11 @@ preserves it. Agent automation uses `FLEETMATE_SESSION`, a per-session JSON file
 names take precedence. `FLEETMATE_INSTRUCTIONS`, `FLEETMATE_WORKSPACE`,
 `FLEETMATE_AGENT_BRIEF`, and `FLEETMATE_CONTEXT` expose the guide, workspace, generated
 reference, and live context. Custom and remote launch wrappers keep their existing behavior.
+
+### Repository Insights
+
+Insights reads `origin/main` for the selected repository and for All Tracked, independently
+of the checked-out branch. Use Fetch to update that remote-tracking ref, then refresh Insights.
+A missing `origin/main` is reported as an error. The equivalent CLI report is
+`fleetmate repos stats <repository> --ref origin/main`; omitting `--ref` keeps the CLI's
+working-branch history behavior.

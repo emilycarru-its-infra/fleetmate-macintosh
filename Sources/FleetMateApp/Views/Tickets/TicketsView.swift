@@ -1320,7 +1320,7 @@ struct TicketsView: View {
                                 loadTicketFeed(ticketId: ticketId)
                                 loadTickets()
                             }
-                            .id(ticketId)
+                            .id("workflow-\(ticketId)")
                             Divider().padding(.vertical, 8)
                             TicketTasksView(ticketId: ticketId, service: appState.tdxService,
                                             refreshToken: ticketActivityRevision) {
@@ -1329,7 +1329,7 @@ struct TicketsView: View {
                                 loadTicketFeed(ticketId: ticketId)
                                 loadTickets()
                             }
-                            .id(ticketId)
+                            .id("tasks-\(ticketId)")
                         }
                         if !ticket.attachmentList.isEmpty {
                             Divider().padding(.vertical, 8)

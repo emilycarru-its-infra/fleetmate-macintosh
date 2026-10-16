@@ -251,6 +251,7 @@ private struct RepoReportCharts: View {
                     RankedBars(rows: report.areas.prefix(10).map { .init(label: $0.path, value: $0.commits, detail: "+\($0.added) −\($0.removed)") }, unit: "commits")
                 }
             }
+            .fixedSize(horizontal: false, vertical: true)
             InsightsCard(title: "Most-changed files") {
                 FileActivityList(files: report.files, openFile: openFile)
             }
@@ -332,6 +333,7 @@ private struct RepoSummaryCharts: View {
                     RankedBars(rows: summary.rows.filter { $0.behind > 0 }.sorted { $0.behind > $1.behind }.prefix(10).map { .init(label: $0.displayName, value: $0.behind, detail: $0.branch ?? "") }, unit: "commits behind")
                 }
             }
+            .fixedSize(horizontal: false, vertical: true)
             InsightsCard(title: "When commits happen") {
                 ActivityHeatmap(cells: summary.combined.activity)
             }
@@ -397,7 +399,7 @@ private struct InsightsCard<Content: View>: View {
             content
         }
         .padding(14)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.18)))
     }
@@ -500,21 +502,59 @@ private struct ChurnChart: View {
     let points: [RepoStatsReport.TimelinePoint]
     let bucket: RepoStatsBucket
     @State private var hovered: Date?
+    @State private var scale = RepoChurnScale.automatic
+
+    private var effectiveScale: RepoChurnScale {
+        scale == .automatic ? .recommended(for: points) : scale
+    }
+
+    private var compressedTicks: [Double] {
+        let peak = max(points.map { max($0.added, $0.removed) }.max() ?? 0, 1)
+        var ticks = [0.0]
+        for magnitude in RepoChurnScale.tickMagnitudes(peak: peak) {
+            let position = RepoChurnScale.compressed.position(magnitude)
+            ticks.append(contentsOf: [-position, position])
+        }
+        return ticks.sorted()
+    }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Picker("Scale", selection: $scale) {
+                    Text("Automatic").tag(RepoChurnScale.automatic)
+                    Text("Linear").tag(RepoChurnScale.linear)
+                    Text("Compressed").tag(RepoChurnScale.compressed)
+                }
+                .fixedSize()
+                .controlSize(.small)
+                Text(effectiveScale == .compressed ? "Compressed scale · all line counts retained" : "Linear scale")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .help("Compressed uses a signed logarithmic scale so large changes do not flatten ordinary activity. Hover shows exact line counts.")
+            chart
+        }
+    }
+
+    private var chart: some View {
         let selected = point(at: hovered, in: points)
-        Chart {
+        let resolvedScale = effectiveScale
+        let compressed = resolvedScale == .compressed
+        return Chart {
             ForEach(points) { point in
                 BarMark(
                     x: .value("Period", point.start, unit: bucket.calendarUnit),
-                    y: .value("Lines", point.added)
+                    y: .value("Lines", resolvedScale.position(point.added))
                 )
                 .foregroundStyle(by: .value("Change", "Added"))
+                .accessibilityValue("\(point.added) lines added")
                 BarMark(
                     x: .value("Period", point.start, unit: bucket.calendarUnit),
-                    y: .value("Lines", -point.removed)
+                    y: .value("Lines", resolvedScale.position(-point.removed))
                 )
                 .foregroundStyle(by: .value("Change", "Removed"))
+                .accessibilityValue("\(point.removed) lines removed")
             }
             RuleMark(y: .value("Lines", 0))
                 .foregroundStyle(Color.secondary.opacity(0.5))
@@ -531,17 +571,28 @@ private struct ChurnChart: View {
         .chartForegroundStyleScale(["Added": InsightsPalette.added, "Removed": InsightsPalette.removed])
         .chartLegend(position: .bottom, alignment: .leading)
         .chartYAxis {
-            AxisMarks { value in
-                AxisGridLine()
-                AxisValueLabel {
-                    if let lines = value.as(Int.self) { Text(abs(lines).formatted(.number.notation(.compactName))) }
+            if compressed {
+                AxisMarks(values: compressedTicks) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let position = value.as(Double.self) {
+                            Text((pow(10, abs(position)) - 1).rounded().formatted(.number.notation(.compactName)))
+                        }
+                    }
+                }
+            } else {
+                AxisMarks(values: .automatic(desiredCount: 5)) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let lines = value.as(Double.self) { Text(abs(lines).formatted(.number.notation(.compactName))) }
+                    }
                 }
             }
         }
         .chartXSelection(value: $hovered)
-        .chartYAxisLabel("Lines")
+        .chartYAxisLabel(compressed ? "Lines (compressed)" : "Lines")
         .frame(height: 200)
-        .accessibilityLabel("Lines added and removed per \(bucket.rawValue)")
+        .accessibilityLabel("Lines added and removed per \(bucket.rawValue), \(compressed ? "compressed" : "linear") scale")
     }
 }
 
@@ -589,6 +640,7 @@ private struct RankedBars: View {
                             .truncationMode(.middle)
                             .frame(maxWidth: 200, alignment: .leading)
                             .help(row.label)
+                            .frame(maxHeight: .infinity)
                         GeometryReader { geo in
                             RoundedRectangle(cornerRadius: 3)
                                 .fill(InsightsPalette.commits)
@@ -597,15 +649,18 @@ private struct RankedBars: View {
                         }
                         .frame(minWidth: 40, maxWidth: .infinity)
                         .frame(height: 12)
+                        .frame(maxHeight: .infinity)
                         Text(row.value, format: .number)
                             .appFont(.callout, weight: .medium)
                             .monospacedDigit()
                             .gridColumnAlignment(.trailing)
+                            .frame(maxHeight: .infinity)
                         Text(row.detail)
                             .appFont(.caption)
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            .frame(maxHeight: .infinity)
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("\(row.label): \(row.value) \(unit), \(row.detail)")
@@ -663,32 +718,65 @@ private struct FileActivityList: View {
 /// Commits by weekday and hour, darker for more. One hue, light to dark.
 private struct ActivityHeatmap: View {
     let cells: [RepoStatsReport.ActivityCell]
+    @State private var hovered: RepoStatsReport.ActivityCell?
 
     private static let weekdays = Calendar.current.shortWeekdaySymbols
 
     var body: some View {
+        let grid = RepoStatsReport.ActivityCell.grid(cells)
         let peak = max(cells.map(\.commits).max() ?? 1, 1)
-        Chart(cells) { cell in
-            RectangleMark(
-                x: .value("Hour", cell.hour),
-                y: .value("Day", Self.weekdays[(cell.weekday - 1 + 7) % 7]),
-                width: .ratio(0.9),
-                height: .ratio(0.85)
-            )
-            .foregroundStyle(InsightsPalette.commits.opacity(0.2 + 0.8 * Double(cell.commits) / Double(peak)))
-            .cornerRadius(2)
-            .accessibilityValue("\(cell.commits) commits")
-        }
-        .chartXScale(domain: -0.5...23.5)
-        .chartYScale(domain: Self.weekdays)
-        .chartXAxis {
-            AxisMarks(values: [0, 3, 6, 9, 12, 15, 18, 21]) { value in
-                AxisValueLabel {
-                    if let hour = value.as(Int.self) { Text(String(format: "%02d:00", hour)) }
+        VStack(alignment: .leading, spacing: 6) {
+            Chart(grid) { cell in
+                RectangleMark(
+                    xStart: .value("Hour start", Double(cell.hour) - 0.45),
+                    xEnd: .value("Hour end", Double(cell.hour) + 0.45),
+                    yStart: .value("Day start", Double(cell.weekday) - 0.42),
+                    yEnd: .value("Day end", Double(cell.weekday) + 0.42)
+                )
+                .foregroundStyle(InsightsPalette.commits.opacity(cell.commits == 0 ? 0.08 : 0.2 + 0.8 * Double(cell.commits) / Double(peak)))
+                .cornerRadius(2)
+                .accessibilityLabel("\(Self.weekdays[cell.weekday - 1]) \(String(format: "%02d:00", cell.hour))")
+                .accessibilityValue("\(cell.commits) commits")
+            }
+            .chartXScale(domain: -0.5...23.5)
+            .chartYScale(domain: .automatic(includesZero: false, reversed: true, dataType: Double.self) {
+                $0 = [0.5, 7.5]
+            })
+            .chartYAxis {
+                AxisMarks(position: .leading, values: Array(1...7)) { value in
+                    AxisValueLabel {
+                        if let weekday = value.as(Int.self) { Text(Self.weekdays[weekday - 1]) }
+                    }
                 }
             }
+            .chartXAxis {
+                AxisMarks(values: [0, 3, 6, 9, 12, 15, 18, 21]) { value in
+                    AxisValueLabel {
+                        if let hour = value.as(Int.self) { Text(String(format: "%02d:00", hour)) }
+                    }
+                }
+            }
+            .chartOverlay { proxy in
+                GeometryReader { geometry in
+                    Color.clear.contentShape(Rectangle())
+                        .onContinuousHover { phase in
+                            guard case let .active(location) = phase,
+                                  let anchor = proxy.plotFrame else { hovered = nil; return }
+                            let frame = geometry[anchor]
+                            guard frame.contains(location),
+                                  let hour = proxy.value(atX: location.x - frame.minX, as: Double.self),
+                                  let day = proxy.value(atY: location.y - frame.minY, as: Double.self) else { hovered = nil; return }
+                            let roundedHour = Int(hour.rounded())
+                            let weekday = Int(day.rounded())
+                            hovered = grid.first { $0.weekday == weekday && $0.hour == roundedHour }
+                        }
+                }
+            }
+            .frame(height: 190)
+            .accessibilityLabel("Commits by weekday and hour")
+            Text(hovered.map { "\(Self.weekdays[$0.weekday - 1]) \(String(format: "%02d:00", $0.hour)) · \($0.commits) commit\($0.commits == 1 ? "" : "s")" } ?? "Hover an hour to see its exact commit count")
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
         }
-        .frame(height: 190)
-        .accessibilityLabel("Commits by weekday and hour")
     }
 }

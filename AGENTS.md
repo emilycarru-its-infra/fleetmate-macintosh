@@ -110,3 +110,10 @@ TicketsMate is the same app limited to the Tickets tab. Add `EDITION=ticketsmate
 - **No interactive SSO popups** — All web auth must be silent/headless. Never show browser login sheets to the user. If silent SSO fails, mark auth as failed.
 - **No Xcode GUI** — Everything is SPM-driven from the command line.
 - **macOS 14+ target** — Platform is macOS only, minimum deployment target is macOS 14 (Sonoma).
+
+## Layout conventions
+
+Adjacent summary cards must share the height of the tallest card. Let ranked
+rows distribute through the available vertical space so shorter lists fill
+their card naturally. Use native, content-driven layout rather than fixed
+card heights or invented placeholder rows.

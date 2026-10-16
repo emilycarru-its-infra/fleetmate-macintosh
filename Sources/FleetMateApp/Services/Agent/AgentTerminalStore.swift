@@ -482,13 +482,12 @@ final class AgentTerminalStore: ObservableObject {
         try? PrivateFile.ensureDirectory(dir.path)
         contextPath = dir.appendingPathComponent("agent-context.json").path
         brief = AgentBriefStore(directory: dir)
+        // Clear the previous run before a session can open. Doing this in
+        // the detached refresh could remove a newly created session's brief.
+        try? FileManager.default.removeItem(at: brief.sessionDirectory)
         // Generate ahead of the first session; open() checks again.
         let brief = brief
-        Task.detached(priority: .utility) {
-            brief.refresh()
-            // Session briefs left by the last run; this run has none yet.
-            try? FileManager.default.removeItem(at: brief.sessionDirectory)
-        }
+        Task.detached(priority: .utility) { brief.refresh() }
         updater.start()
         // Follow the app's text size as it changes (Settings, View › Zoom).
         appliedFontSize = fontSize

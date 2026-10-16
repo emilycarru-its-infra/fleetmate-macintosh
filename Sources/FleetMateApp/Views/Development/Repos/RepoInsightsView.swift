@@ -207,7 +207,7 @@ struct RepoInsightsView: View {
         let cli = insights.scope == .all
             ? "fleetmate repos stats --since \(insights.period.rawValue)"
             : "fleetmate repos stats \(model.selected?.key.displayName ?? "<repo>") --since \(insights.period.rawValue)"
-        return "origin/main · Merge commits excluded · \(cli) --ref origin/main"
+        return "origin/main · Merge commits excluded · \(cli) --ref \(RepoStatistics.insightsRef)"
     }
 
     private func openFile(_ path: String) {

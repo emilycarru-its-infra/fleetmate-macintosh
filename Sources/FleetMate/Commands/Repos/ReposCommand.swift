@@ -712,7 +712,7 @@ struct ReposStatsCommand: AsyncParsableCommand {
         most-changed files and top-level folders, and commits by weekday and hour.
         With none (or several): one row per repository with commits, churn, ahead,
         behind and open changes, plus the combined statistics. Merge commits are
-        left out; renames count as a delete plus an add. Use --ref origin/main to
+        left out; renames count as a delete plus an add. Use --ref refs/remotes/origin/main to
         reproduce Insights, which always reads the remote mainline.
         """
     )
@@ -726,7 +726,7 @@ struct ReposStatsCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Timeline bucket: day, week or month (default: chosen from the period)")
     var by: RepoStatsBucket?
 
-    @Option(name: .long, help: "History ref (default: HEAD; use origin/main for Insights)")
+    @Option(name: .long, help: "History ref (default: HEAD; use refs/remotes/origin/main for Insights)")
     var ref: String?
 
     @Option(name: .long, help: "How many files, folders and authors to list")

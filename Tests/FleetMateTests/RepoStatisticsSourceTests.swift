@@ -43,7 +43,8 @@ final class RepoStatisticsSourceTests: XCTestCase {
     }
 
     func testFeatureBranchDoesNotEnterSingleOrCombinedInsights() async throws {
-        try await git(["checkout", "-q", "-b", "feature/example"])
+        // This local branch also shadows Git's short spelling of the remote ref.
+        try await git(["checkout", "-q", "-b", "origin/main"])
         try await commit("feature.txt", contents: String(repeating: "local\n", count: 100), date: "2026-03-01T12:00:00Z")
         let report = try await manager.stats(for: record, since: nil, ref: RepoStatistics.insightsRef)
         let summary = await manager.statsSummary(for: [record], since: nil, ref: RepoStatistics.insightsRef)

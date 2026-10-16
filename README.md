@@ -588,5 +588,5 @@ reference, and live context. Custom and remote launch wrappers keep their existi
 Insights reads `origin/main` for the selected repository and for All Tracked, independently
 of the checked-out branch. Use Fetch to update that remote-tracking ref, then refresh Insights.
 A missing `origin/main` is reported as an error. The equivalent CLI report is
-`fleetmate repos stats <repository> --ref origin/main`; omitting `--ref` keeps the CLI's
+`fleetmate repos stats <repository> --ref refs/remotes/origin/main`; omitting `--ref` keeps the CLI's
 working-branch history behavior.

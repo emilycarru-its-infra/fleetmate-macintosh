@@ -712,7 +712,8 @@ struct ReposStatsCommand: AsyncParsableCommand {
         most-changed files and top-level folders, and commits by weekday and hour.
         With none (or several): one row per repository with commits, churn, ahead,
         behind and open changes, plus the combined statistics. Merge commits are
-        left out; renames count as a delete plus an add.
+        left out; renames count as a delete plus an add. Use --ref refs/remotes/origin/main to
+        reproduce Insights, which always reads the remote mainline.
         """
     )
 
@@ -724,6 +725,9 @@ struct ReposStatsCommand: AsyncParsableCommand {
 
     @Option(name: .long, help: "Timeline bucket: day, week or month (default: chosen from the period)")
     var by: RepoStatsBucket?
+
+    @Option(name: .long, help: "History ref (default: HEAD; use refs/remotes/origin/main for Insights)")
+    var ref: String?
 
     @Option(name: .long, help: "How many files, folders and authors to list")
     var top: Int = 10
@@ -744,14 +748,14 @@ struct ReposStatsCommand: AsyncParsableCommand {
             }
             let records = try manager.resolveLocal(repos)
             if records.count == 1 {
-                let report = try await manager.stats(for: records[0], since: start, bucket: by, top: top)
+                let report = try await manager.stats(for: records[0], since: start, bucket: by, top: top, ref: ref)
                 if json { try ReposCLI.printJSON(report); return }
                 print("\n" + records[0].key.displayName.bold + "  " + ReposStatsCommand.period(start).lightBlack)
                 ReposStatsCommand.printReport(report, top: top)
                 return
             }
             if records.isEmpty { print("No tracked repositories. Name one, or track some with 'fleetmate repos track'."); return }
-            let summary = await manager.statsSummary(for: records, since: start, bucket: by, top: top)
+            let summary = await manager.statsSummary(for: records, since: start, bucket: by, top: top, ref: ref)
             if json { try ReposCLI.printJSON(summary); return }
             print("\n" + "Tracked repositories".bold + "  " + ReposStatsCommand.period(start).lightBlack + "\n")
             print(["Repository".col(44), "Commits".col(8), "+lines".col(9), "-lines".col(9), "Ahead".col(6), "Behind".col(7), "Open"].joined(separator: " ").lightBlack)

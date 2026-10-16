@@ -85,7 +85,7 @@ final class RepoInsightsModel: ObservableObject {
         case .repository:
             guard let selected else { report = nil; shownKey = key; return }
             do {
-                let result = try await manager.stats(for: selected, since: since, bucket: bucket, top: 12)
+                let result = try await manager.stats(for: selected, since: since, bucket: bucket, top: 12, ref: RepoStatistics.insightsRef)
                 guard key == self.key(selected: selected, tracked: tracked) else { return }
                 report = result
                 error = nil
@@ -94,7 +94,7 @@ final class RepoInsightsModel: ObservableObject {
                 self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
         case .all:
-            let result = await manager.statsSummary(for: tracked, since: since, bucket: bucket, top: 12)
+            let result = await manager.statsSummary(for: tracked, since: since, bucket: bucket, top: 12, ref: RepoStatistics.insightsRef)
             guard key == self.key(selected: selected, tracked: tracked) else { return }
             summary = result
             error = nil
@@ -195,7 +195,7 @@ struct RepoInsightsView: View {
                 Image(systemName: "arrow.clockwise")
             }
             .buttonStyle(.borderless)
-            .help("Read the history again")
+            .help("Read origin/main again. Use Fetch to update the remote-tracking branch.")
             .accessibilityLabel("Refresh Insights")
         }
         .controlSize(.small)
@@ -207,7 +207,7 @@ struct RepoInsightsView: View {
         let cli = insights.scope == .all
             ? "fleetmate repos stats --since \(insights.period.rawValue)"
             : "fleetmate repos stats \(model.selected?.key.displayName ?? "<repo>") --since \(insights.period.rawValue)"
-        return "Merge commits excluded · \(cli)"
+        return "origin/main · Merge commits excluded · \(cli) --ref \(RepoStatistics.insightsRef)"
     }
 
     private func openFile(_ path: String) {

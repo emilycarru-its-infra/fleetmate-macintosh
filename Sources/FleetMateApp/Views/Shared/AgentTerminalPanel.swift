@@ -187,9 +187,7 @@ struct AgentTerminalPanel: View {
     private var sectionNameEditor: some View {
         AgentNamePopover(title: editingSection == nil ? "New Section" : "Rename Section",
                          name: $sectionName,
-                         canSave: !sectionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            && (!store.sections.contains(sectionName.trimmingCharacters(in: .whitespacesAndNewlines))
-                                || sectionName == editingSection),
+                         existingNames: store.sections.filter { $0 != editingSection },
                          save: {
                              if let editingSection { store.renameSection(editingSection, to: sectionName) }
                              else { store.addSection(sectionName) }
@@ -303,7 +301,6 @@ private struct SessionRow: View {
         }
         .popover(isPresented: $renaming, arrowEdge: .trailing) {
             AgentNamePopover(title: "Rename Session", name: $name,
-                             canSave: !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                              save: { session.customTitle = name; renaming = false },
                              cancel: { renaming = false })
         }
@@ -337,18 +334,20 @@ private struct SessionRow: View {
 private struct AgentNamePopover: View {
     let title: String
     @Binding var name: String
-    let canSave: Bool
+    var existingNames: [String] = []
     let save: () -> Void
     let cancel: () -> Void
-    @FocusState private var nameFocused: Bool
+
+    private var canSave: Bool {
+        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !value.isEmpty && !existingNames.contains(value)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title).font(.headline)
-            TextField("Name", text: $name)
-                .textFieldStyle(.roundedBorder)
-                .focused($nameFocused)
-                .onSubmit { if canSave { save() } }
+            AgentNameField(name: $name, submit: { if canSave { save() } }, cancel: cancel)
+                .frame(height: 24)
             HStack {
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
@@ -359,7 +358,70 @@ private struct AgentNamePopover: View {
         }
         .padding(14)
         .frame(width: 260)
-        .onAppear { nameFocused = true }
         .onExitCommand(perform: cancel)
+    }
+}
+
+/// SwiftUI can leave the terminal as first responder when its context menu
+/// closes. Focus the native field after the popover has a window instead.
+private struct AgentNameField: NSViewRepresentable {
+    @Binding var name: String
+    let submit: () -> Void
+    let cancel: () -> Void
+
+    final class Field: NSTextField {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let self, let window, self.window === window else { return }
+                window.makeKey()
+                window.makeFirstResponder(self)
+                currentEditor()?.selectAll(nil)
+            }
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: AgentNameField
+
+        init(_ parent: AgentNameField) { self.parent = parent }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            parent.name = field.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            if selector == #selector(NSResponder.insertNewline(_:)) {
+                parent.submit()
+                return true
+            }
+            if selector == #selector(NSResponder.cancelOperation(_:)) {
+                parent.cancel()
+                return true
+            }
+            return false
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> Field {
+        let field = Field()
+        field.isBezeled = true
+        field.bezelStyle = .roundedBezel
+        field.isEditable = true
+        field.isSelectable = true
+        field.placeholderString = "Name"
+        field.setAccessibilityLabel("Name")
+        field.delegate = context.coordinator
+        field.stringValue = name
+        return field
+    }
+
+    func updateNSView(_ field: Field, context: Context) {
+        context.coordinator.parent = self
+        if field.stringValue != name { field.stringValue = name }
     }
 }

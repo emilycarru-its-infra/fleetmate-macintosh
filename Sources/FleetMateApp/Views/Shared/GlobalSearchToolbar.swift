@@ -74,6 +74,11 @@ struct GlobalSearchToolbarField: View {
     @State private var everything = false
     @FocusState private var focused: Bool
 
+    private var isTicketsOnly: Bool { AppEdition.current.isTicketsOnly }
+    private var searchPrompt: String {
+        searchingEverything ? (isTicketsOnly ? "Search tickets" : "Search everything") : tabSearch?.prompt ?? ""
+    }
+
     private var tabSearch: TabSearchRegistration? { appState.tabSearch }
     private var searchingEverything: Bool { everything || tabSearch == nil }
 
@@ -93,10 +98,10 @@ struct GlobalSearchToolbarField: View {
                     .foregroundStyle(focused ? Color.accentColor : .secondary)
                     .onTapGesture { focused = true }
             }
-            if let tabSearch {
+            if let tabSearch, !isTicketsOnly {
                 scopeChip(tabSearch)
             }
-            TextField("", text: text, prompt: Text(searchingEverything ? "Search everything" : tabSearch?.prompt ?? "").foregroundStyle(.secondary))
+            TextField("", text: text, prompt: Text(searchPrompt).foregroundStyle(.secondary))
                 .textFieldStyle(.plain)
                 .focused($focused)
                 .onSubmit(submit)
@@ -125,7 +130,7 @@ struct GlobalSearchToolbarField: View {
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(focused ? Color.accentColor : Color.secondary.opacity(0.35), lineWidth: focused ? 1.5 : 1)
         )
-        .help(searchingEverything ? "Search everything (⌘K)" : "Filter this tab (⌘F) · search everything (⌘K)")
+        .help(isTicketsOnly ? "Filter tickets (⌘F) · search tickets (⌘K)" : searchingEverything ? "Search everything (⌘K)" : "Filter this tab (⌘F) · search everything (⌘K)")
         // ⌘K (Edit › Search Everything) puts the cursor here from any tab.
         .onChange(of: appState.globalSearchFocusRequest) { _, _ in
             everything = true

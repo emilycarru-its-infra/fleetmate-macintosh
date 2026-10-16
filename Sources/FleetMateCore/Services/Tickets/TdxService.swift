@@ -384,10 +384,12 @@ public class TdxService {
         }
     }
 
-    public func getTicketTasks(ticketId: Int) async throws -> [TdxTicketTask] {
+    public func getTicketTasks(ticketId: Int, eligiblePredecessorsOnly: Bool = false) async throws -> [TdxTicketTask] {
         let headers = try workflowHeaders()
         let tasks = try await workflowResponse(activeSession.request(
-            config.tdxTicketsUrl("\(ticketId)/tasks"), headers: headers), as: [TdxTicketTask]?.self) ?? []
+            config.tdxTicketsUrl("\(ticketId)/tasks"),
+            parameters: eligiblePredecessorsOnly ? ["isEligiblePredecessor": "true"] : nil,
+            headers: headers), as: [TdxTicketTask]?.self) ?? []
         guard tasks.allSatisfy({ $0.ticketId == ticketId && $0.id > 0 }) else {
             throw TdxWorkflowError.actionFailed("The server returned tasks for a different ticket. Refresh and try again.")
         }

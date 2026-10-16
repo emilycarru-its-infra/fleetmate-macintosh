@@ -149,4 +149,12 @@ final class TdxTicketTaskTests: XCTestCase {
         } catch { }
     }
 
+    func testEligiblePredecessorsAreRequestedFromServer() async throws {
+        let service = service([.init(pathContains: "/tasks", body: "[]")])
+        _ = try await service.getTicketTasks(ticketId: 42, eligiblePredecessorsOnly: true)
+        let url = try XCTUnwrap(StubURLProtocol.apiCalls.first?.url)
+        XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+                       [URLQueryItem(name: "isEligiblePredecessor", value: "true")])
+    }
+
 }

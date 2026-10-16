@@ -51,7 +51,7 @@ struct TicketTasksView: View {
                 TicketTaskTemplateSheet(ticketId: ticketId, service: service,
                                         config: appState.config)
             } else if selected.mode == .create || selected.mode == .edit {
-                TicketTaskEditor(ticketId: ticketId, task: selected.task, tasks: tasks,
+                TicketTaskEditor(ticketId: ticketId, task: selected.task,
                                  service: service)
             } else if let task = selected.task {
                 TicketTaskDetail(ticketId: ticketId, task: task, service: service,
@@ -275,13 +275,13 @@ private struct TicketTaskEditor: View {
     @Environment(\.dismiss) private var dismiss
     let ticketId: Int
     let task: TdxTicketTask?
-    let tasks: [TdxTicketTask]
     let service: TdxService
 
     @State private var expected: TdxTicketTask?
     @State private var values = TdxTaskValues()
     @State private var descriptionText = ""
     @State private var originalDescriptionText = ""
+    @State private var eligibleTasks: [TdxTicketTask] = []
     @State private var groups: [TdxLookupItem] = []
     @State private var people: [TdxPerson] = []
     @State private var personSearch = ""
@@ -342,10 +342,10 @@ private struct TicketTaskEditor: View {
                     Toggle("Notify responsible when task becomes active", isOn: $values.notifyResponsible)
                     Picker("Predecessor", selection: $values.predecessorId) {
                         Text("None").tag(0)
-                        if values.predecessorId > 0 && !tasks.contains(where: { $0.id == values.predecessorId }) {
+                        if values.predecessorId > 0 && !eligibleTasks.contains(where: { $0.id == values.predecessorId }) {
                             Text(expected?.predecessorTitle ?? "Current predecessor").tag(values.predecessorId)
                         }
-                        ForEach(tasks.filter { $0.id != task?.id }) { predecessor in
+                        ForEach(eligibleTasks.filter { $0.id != task?.id }) { predecessor in
                             Text(predecessor.title).tag(predecessor.id)
                         }
                     }
@@ -393,6 +393,11 @@ private struct TicketTaskEditor: View {
         } catch {
             if !Task.isCancelled { errorMessage = error.localizedDescription; didAttempt = true }
         }
+        do {
+            let eligible = try await service.getTicketTasks(ticketId: ticketId, eligiblePredecessorsOnly: true)
+            try Task.checkCancellation()
+            eligibleTasks = eligible
+        } catch { if !Task.isCancelled { lookupError = "Couldn't load eligible predecessors. Existing dependencies are preserved." } }
         do {
             let loaded = try await service.getGroups()
             try Task.checkCancellation()

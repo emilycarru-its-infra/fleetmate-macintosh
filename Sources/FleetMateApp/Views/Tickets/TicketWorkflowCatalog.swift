@@ -44,8 +44,13 @@ final class TicketWorkflowCatalog: NSObject, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard let url = webView.url, let expected = pickerURL,
-              url.host == expected.host, url.path == expected.path else {
-            finish(.failure(TdxWorkflowError.actionFailed("Available \(choiceLabel) require a signed-in TeamDynamix web session. Refresh your sign-in and try again.")))
+              url.scheme == expected.scheme, url.host == expected.host, url.port == expected.port,
+              url.path.caseInsensitiveCompare(expected.path) == .orderedSame,
+              URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.filter({ $0.name.lowercased() == "ticketid" })
+                == URLComponents(url: expected, resolvingAgainstBaseURL: false)?.queryItems?.filter({ $0.name.lowercased() == "ticketid" }) else {
+            // The shared web session may silently follow SSO redirects. Never
+            // read a login page, and let the bounded timeout handle any page
+            // that requires interaction.
             return
         }
         Task {

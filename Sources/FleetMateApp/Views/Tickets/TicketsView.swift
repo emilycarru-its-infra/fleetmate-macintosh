@@ -1263,11 +1263,13 @@ struct TicketsView: View {
                 }
                 Spacer(minLength: 0)
             }
-            .frame(width: width - 12, alignment: .leading)
             .padding(.leading, 10)
             .padding(.trailing, 2)
+            .frame(width: max(0, width - 10), height: 32, alignment: .leading)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityValue(sortField == field ? (sortAscending ? "Ascending" : "Descending") : "Not sorted")
     }
 
     /// Toggle sort on a column

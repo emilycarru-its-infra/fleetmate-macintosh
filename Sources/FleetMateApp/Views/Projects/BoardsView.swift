@@ -162,11 +162,11 @@ struct BoardsView: View {
         get { appState.projects.queryRuns }
         nonmutating set { appState.projects.queryRuns = newValue }
     }
-    /// Collapse state as a Binding for the queries list.
-    private var collapsedQueryIdsBinding: Binding<Set<String>> {
+    /// Expansion state as a Binding for the queries list.
+    private var expandedQueryIdsBinding: Binding<Set<String>> {
         Binding(
-            get: { appState.projects.collapsedQueryIds },
-            set: { appState.projects.collapsedQueryIds = $0 }
+            get: { appState.projects.expandedQueryIds },
+            set: { appState.projects.expandedQueryIds = $0 }
         )
     }
     private var selectedTaskBinding: Binding<UnifiedTask?> {
@@ -912,7 +912,7 @@ struct BoardsView: View {
                 showClosed: showClosed,
                 loadError: appState.projects.queriesLoadError,
                 onRetry: { retryQueries() },
-                collapsedQueryIds: collapsedQueryIdsBinding,
+                expandedQueryIds: expandedQueryIdsBinding,
                 selectedTask: selectedTaskBinding,
                 onOpenQuery: { query in
                     let urlString = appState.devOpsService.storedQueryWebUrl(queryId: query.id)

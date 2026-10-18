@@ -200,52 +200,66 @@ final class RepoDiscoveryScanTests: XCTestCase {
         XCTAssertEqual(GitWorkingCopy.withSafeDiffOptions(["status"]), ["status"])
     }
 
-    func testCommandConfigKeysOutsideTheAllowlistAreFlagged() {
-        let config = """
-        [core]
-        \trepositoryformatversion = 0
-        \tfsmonitor = true
-        \tbare = false
-        [core]
-        \tsshCommand = ssh -i key
-        \tpager = less
-        \teditor = vim
-        \thooksPath = .husky
-        \tworktree = ../elsewhere
-        [remote "origin"]
-        \turl = https://github.com/owner-a/one.git
-        \tuploadpack = sh -c evil
-        [credential "https://example.com"]
-        \thelper = store
-        [diff "img"]
-        \ttextconv = exiftool
-        [filter "lfs"]
-        \tprocess = git-lfs filter-process
-        [protocol "ext"]
-        \tallow = always
-        [include]
-        \tpath = ../shared.gitconfig
-        [includeIf "gitdir:~/work/"]
-        \tpath = work.gitconfig
-        [extensions]
-        \tworktreeConfig = true
-        [submodule "lib"]
-        \turl = https://github.com/owner-a/lib.git
-        \tupdate = !sh -c evil
-        [submodule "docs"]
-        \tupdate = rebase
-        [somethingnew]
-        \tvalue = 1
-        [branch "main"]
-        \tremote = origin
-        ; [core] pager = commented out
-        """
-        XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: config), [
-            "core.fsmonitor", "core.sshcommand", "core.pager", "core.editor", "core.hookspath", "core.worktree",
-            "remote.origin.uploadpack", "credential.https://example.com.helper", "diff.img.textconv",
-            "filter.lfs.process", "protocol.ext.allow", "include.path", "includeif.gitdir:~/work/.path",
-            "extensions.worktreeconfig", "submodule.lib.update", "somethingnew.value",
-        ])
+    /// Each case is a whole config and whether it must be flagged. The same
+    /// table runs on Windows; it includes every bypass reviews found.
+    static let configCases: [(name: String, config: String, flagged: Bool)] = [
+        ("typical clone", "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n\tlogallrefupdates = true\n[remote \"origin\"]\n\turl = https://github.com/owner-a/one.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n", false),
+        ("crlf line endings", "[core]\r\n\tbare = false\r\n", false),
+        ("bare boolean key", "[core]\n\tbare\n", false),
+        ("comment lines", "# note\n; note\n[core]\n\tbare = false\n", false),
+        ("editor branch notes", "[branch \"feature/x\"]\n\tvscode-merge-base = origin/main\n", false),
+        ("submodule update rebase", "[submodule \"lib\"]\n\turl = https://github.com/owner-a/lib.git\n\tupdate = rebase\n", false),
+        ("fsmonitor false", "[core]\n\tfsmonitor = false\n", false),
+        ("fsmonitor program", "[core]\n\tfsmonitor = ./watch.sh\n", true),
+        ("fsmonitor true", "[core]\n\tfsmonitor = true\n", true),
+        ("hooksPath", "[core]\n\thooksPath = .husky\n", true),
+        ("sshCommand", "[core]\n\tsshCommand = ssh -i key\n", true),
+        ("pager", "[core]\n\tpager = less\n", true),
+        ("core.worktree", "[core]\n\tworktree = /elsewhere\n", true),
+        ("credential helper", "[credential]\n\thelper = store\n", true),
+        ("textconv", "[diff \"img\"]\n\ttextconv = exiftool\n", true),
+        ("filter", "[filter \"lfs\"]\n\tprocess = git-lfs filter-process\n", true),
+        ("uploadpack", "[remote \"origin\"]\n\turl = /tmp/x\n\tuploadpack = sh -c x\n", true),
+        ("protocol allow", "[protocol \"ext\"]\n\tallow = always\n", true),
+        ("include", "[include]\n\tpath = other\n", true),
+        ("includeIf", "[includeIf \"gitdir:/work/\"]\n\tpath = other\n", true),
+        ("worktreeConfig", "[extensions]\n\tworktreeConfig = true\n", true),
+        ("unknown section", "[somethingnew]\n\tvalue = 1\n", true),
+        ("remote key without subsection", "[remote]\n\turl = x\n", true),
+        ("submodule update command", "[submodule \"lib\"]\n\tupdate = !sh -c x\n", true),
+        ("submodule update quoted empty then command", "[submodule \"lib\"]\n\tupdate = \"\"!sh -c x\n", true),
+        ("submodule update other value", "[submodule \"lib\"]\n\tupdate = merge-ish\n", true),
+        ("continuation backslash", "[user]\n\tname = Someone \\\n[core]\n\tpager = less\n", true),
+        ("quoted value", "[user]\n\tname = \"Some one\"\n", true),
+        ("quote spanning lines", "[user]\n\tname = \"Some\n\tone\"\n", true),
+        ("inline comment", "[core]\n\tbare = false # note\n", true),
+        ("bare carriage return splits a line", "[user]\n\tname = x\r\tpager = less\n[core]\n", true),
+        ("unicode line separator", "[user]\n\tname = x\u{2028}[core]\n\tpager = less\n", true),
+        ("unicode paragraph separator", "[user]\n\tname = x\u{2029}\n", true),
+        ("non-ascii value", "[user]\n\tname = Zoë\n", true),
+        ("control character", "[user]\n\tname = x\u{0B}y\n", true),
+        ("nul byte", "[user]\n\tname = x\u{0}\n", true),
+        ("key outside a section", "name = x\n", true),
+        ("malformed header", "[core\n\tbare = false\n", true),
+        ("bad key name", "[user]\n\tna me = x\n", true),
+        ("bad section name", "[us!er]\n\tname = x\n", true),
+        ("escaped quote in subsection", "[branch \"a\\\"b\"]\n\tremote = origin\n", true),
+    ]
+
+    func testConfigReviewTable() {
+        for c in Self.configCases {
+            let flagged = !RepoDiscovery.commandConfigKeys(inConfig: c.config).isEmpty
+            XCTAssertEqual(flagged, c.flagged, "\(c.name): \(RepoDiscovery.commandConfigKeys(inConfig: c.config))")
+        }
+    }
+
+    func testInvalidUTF8IsFlagged() {
+        XCTAssertFalse(RepoDiscovery.configReview(Data([0x5B, 0x63, 0x5D, 0x0A, 0xC3, 0x28])).isEmpty)
+    }
+
+    func testFlaggedKeysAreNamed() {
+        XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: "[core]\n\tpager = less\n[diff \"img\"]\n\ttextconv = x\n"),
+                       ["core.pager", "diff.img.textconv"])
     }
 
     func testPlainConfigIsNotFlagged() {
@@ -284,27 +298,6 @@ final class RepoDiscoveryScanTests: XCTestCase {
         XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: config), [])
     }
 
-    func testLinesTheParserCannotReadExactlyFailClosed() {
-        // A continuation line can carry a key past a line reader.
-        let continued = "[user]\n\tname = Someone \\\n[core]\n\tpager = less\n"
-        XCTAssertTrue(RepoDiscovery.commandConfigKeys(inConfig: continued).contains("(continuation line)"))
-        // A quoted value that runs over lines likewise.
-        let spanning = "[user]\n\tname = \"Some\n\tone\"\n"
-        XCTAssertTrue(RepoDiscovery.commandConfigKeys(inConfig: spanning).contains("(unbalanced quotes)"))
-        // Names git would not accept.
-        XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: "[user]\n\tna me = x\n"), ["(unparsable line)"])
-        XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: "[us!er]\n\tname = x\n"), ["(unparsable line)"])
-        XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: "name = x\n"), ["(unparsable line)"])
-        XCTAssertTrue(RepoDiscovery.commandConfigKeys(inConfig: "[core\n\tbare = false\n").contains("(unparsable section header)"))
-    }
-
-    func testEscapesThatAreBalancedAreFine() {
-        let config = "[user]\n\tname = \"Some \\\"Nick\\\" One\"\n\temail = a\\\\b@example.com\n[branch \"feature/x\"]\n\tremote = origin\n"
-        XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: config), [])
-        XCTAssertFalse(RepoDiscovery.endsInUnescapedBackslash("value = a\\\\"))
-        XCTAssertTrue(RepoDiscovery.endsInUnescapedBackslash("value = a\\"))
-    }
-
     private func gitDir(_ relative: String) throws -> URL {
         let url = root.appendingPathComponent(relative).appendingPathComponent(".git")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -336,10 +329,10 @@ final class RepoDiscoveryScanTests: XCTestCase {
     func testUnreadableConfigFailsClosed() throws {
         let dir = try gitDir("garbled")
         try Data([0xFF, 0xFE, 0x00, 0xC3, 0x28]).write(to: dir.appendingPathComponent("config"))
-        XCTAssertEqual(RepoDiscovery.commandConfig(checkout: root.appendingPathComponent("garbled").path), ["config (unreadable)"])
+        XCTAssertEqual(RepoDiscovery.commandConfig(checkout: root.appendingPathComponent("garbled").path), ["(characters outside plain ASCII)"])
         let worktreeConfig = try gitDir("garbled-worktree")
         try Data([0xC3, 0x28]).write(to: worktreeConfig.appendingPathComponent("config.worktree"))
-        XCTAssertEqual(RepoDiscovery.commandConfig(checkout: root.appendingPathComponent("garbled-worktree").path), ["config.worktree (unreadable)"])
+        XCTAssertEqual(RepoDiscovery.commandConfig(checkout: root.appendingPathComponent("garbled-worktree").path), ["(characters outside plain ASCII)"])
     }
 
     func testCommondirIsFlaggedAndItsConfigRead() throws {

@@ -256,142 +256,142 @@ public enum RepoDiscovery {
         return texts.isEmpty ? nil : texts.joined(separator: "\n")
     }
 
-    /// Whether a config entry is known to be data only. Anything else is
-    /// treated as able to run a command: the list of keys git (and its
-    /// helpers) will execute keeps growing, so this is an allowlist.
-    /// `section` and `key` are lowercased as git compares them; the
-    /// subsection keeps its case.
-    static func isDataOnlyKey(section: String, subsection: String?, key: String, value: String) -> Bool {
-        let falsy: Set<String> = ["false", "no", "off", "0"]
-        switch section {
-        case "core":
-            guard subsection == nil else { return false }
-            if key == "fsmonitor" { return falsy.contains(value.lowercased()) }
-            return ["repositoryformatversion", "filemode", "bare", "logallrefupdates", "ignorecase", "precomposeunicode",
-                    "symlinks", "autocrlf", "eol", "safecrlf", "longpaths", "quotepath", "checkstat", "trustctime",
-                    "sparsecheckout", "sparsecheckoutcone", "untrackedcache", "splitindex"].contains(key)
-        case "remote":
-            return subsection != nil && ["url", "fetch", "pushurl", "push", "tagopt", "prune", "prunetags", "mirror", "skipdefaultupdate"].contains(key)
-        case "branch":
-            guard subsection != nil else { return false }
-            // Editors keep their own per-branch notes here.
-            return ["remote", "merge", "rebase", "pushremote", "description"].contains(key)
-                || key.hasPrefix("vscode-") || key.hasPrefix("github-pr-")
-        case "user", "pull", "color", "column", "advice", "i18n":
-            return true
-        case "fetch":
-            return subsection == nil && ["prune", "prunetags", "writecommitgraph", "parallel"].contains(key)
-        case "init":
-            return subsection == nil && key == "defaultbranch"
-        case "lfs":
-            if subsection == nil { return key == "repositoryformatversion" }
-            return ["access", "locksverify"].contains(key)
-        case "extensions":
-            return subsection == nil && ["objectformat", "refstorage"].contains(key)
-        case "submodule":
-            guard subsection != nil else { return key == "active" }
-            if key == "update" { return !value.hasPrefix("!") }
-            return ["url", "active", "branch", "fetchrecursesubmodules", "ignore", "shallow"].contains(key)
-        case "push":
-            return subsection == nil && ["default", "autosetupremote", "followtags"].contains(key)
-        case "merge":
-            return subsection == nil && ["ff", "conflictstyle"].contains(key)
-        case "rebase":
-            return subsection == nil && ["autostash", "autosquash", "updaterefs"].contains(key)
-        case "gc":
-            return subsection == nil && ["auto", "autodetach"].contains(key)
-        default:
-            return false
-        }
-    }
+    // MARK: - Is a found clone's config plain data?
 
-    /// `section[.subsection].key` names in git config text that are not
-    /// known to be data only, in file order, each once.
-    public static func commandConfigKeys(inConfig text: String) -> [String] {
+    /// A config counts as plain data only when it matches this strict shape
+    /// exactly. Nothing is decoded the way git decodes it (no escapes, no
+    /// quotes, no continuation lines), so there is no reading of the file
+    /// for git and this check to disagree on: whatever does not match is
+    /// flagged for review. Flagged only means unticked by default; adding a
+    /// clone stays the person's decision either way.
+    ///
+    /// - Bytes: printable ASCII, tab and newline, and a carriage return only
+    ///   right before a newline or at the end. Lines split on `\n` only.
+    /// - Lines: blank, a `#` or `;` comment, a header `[name]` or
+    ///   `[name "sub"]`, `key = value` with no quote, backslash, `;` or `#`
+    ///   in the value, or a bare boolean `key`.
+    /// - Keys: on `dataOnlyKeys`; `submodule.<x>.update` only as checkout,
+    ///   rebase, merge or none; `core.fsmonitor` only as false.
+    public static func configReview(_ data: Data) -> [String] {
+        var found: [String] = []
+        func flag(_ reason: String) { if !found.contains(reason) { found.append(reason) } }
+
+        let bytes = [UInt8](data)
+        for (index, byte) in bytes.enumerated() {
+            switch byte {
+            case 0x20...0x7E, 0x0A, 0x09: continue
+            case 0x0D where index == bytes.count - 1 || bytes[index + 1] == 0x0A: continue
+            default:
+                return ["(characters outside plain ASCII)"]
+            }
+        }
+
         var section = ""
         var subsection: String?
-        var found: [String] = []
-        func flag(_ name: String) { if !found.contains(name) { found.append(name) } }
-        for rawLine in text.split(whereSeparator: \.isNewline) {
-            var line = rawLine.trimmingCharacters(in: .whitespaces)
-            if line.hasPrefix("#") || line.hasPrefix(";") || line.isEmpty { continue }
-            // Anything this line reader cannot read exactly as git would
-            // flags the clone: a continuation line or a quoted value that
-            // spans lines could carry a key past it.
-            if endsInUnescapedBackslash(line) { flag("(continuation line)"); continue }
-            if hasUnbalancedQuotes(line) { flag("(unbalanced quotes)"); continue }
-            if line.hasPrefix("[") {
-                guard let close = line.firstIndex(of: "]") else {
-                    flag("(unparsable section header)")
-                    continue
-                }
-                let header = line[line.index(after: line.startIndex)..<close].trimmingCharacters(in: .whitespaces)
-                if let quote = header.firstIndex(of: "\"") {
-                    section = header[..<quote].trimmingCharacters(in: .whitespaces).lowercased()
-                    subsection = header[header.index(after: quote)...].trimmingCharacters(in: CharacterSet(charactersIn: "\" "))
-                } else if let dot = header.firstIndex(of: ".") {
-                    section = header[..<dot].lowercased()
-                    subsection = String(header[header.index(after: dot)...])
+        // Split the bytes, not a String: Swift reads "\r\n" as one
+        // character, and only `\n` may end a line here.
+        for rawLine in bytes.split(separator: 0x0A, omittingEmptySubsequences: false) {
+            var lineBytes = Array(rawLine)
+            if lineBytes.last == 0x0D { lineBytes.removeLast() }
+            let line = Substring(String(decoding: lineBytes, as: UTF8.self))
+            let trimmed = line.trimmingCharacters(in: CharacterSet(charactersIn: " \t"))
+            if trimmed.isEmpty || trimmed.hasPrefix("#") || trimmed.hasPrefix(";") { continue }
+
+            if let header = trimmed.wholeMatch(of: headerPattern) {
+                let name = String(header.1)
+                if let quoted = header.2 {
+                    section = name.lowercased()
+                    subsection = String(quoted)
+                } else if let dot = name.firstIndex(of: ".") {
+                    section = name[..<dot].lowercased()
+                    subsection = String(name[name.index(after: dot)...]).lowercased()
                 } else {
-                    section = header.lowercased()
+                    section = name.lowercased()
                     subsection = nil
                 }
-                line = line[line.index(after: close)...].trimmingCharacters(in: .whitespaces)
-                if line.isEmpty || line.hasPrefix("#") || line.hasPrefix(";") { continue }
+                continue
             }
-            let name: String
+
+            let key: String
             let value: String
-            if let equals = line.firstIndex(of: "=") {
-                name = line[..<equals].trimmingCharacters(in: .whitespaces).lowercased()
-                value = line[line.index(after: equals)...].trimmingCharacters(in: .whitespaces)
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            if let entry = line.wholeMatch(of: entryPattern) {
+                key = entry.1.lowercased()
+                value = entry.2.trimmingCharacters(in: CharacterSet(charactersIn: " \t"))
+            } else if let bare = line.wholeMatch(of: bareKeyPattern) {
+                key = bare.1.lowercased()
+                value = "true"
             } else {
-                name = line.split(separator: " ").first.map { $0.lowercased() } ?? ""
-                value = ""
-            }
-            let full = ([section] + (subsection.map { [$0] } ?? []) + [name]).joined(separator: ".")
-            guard isConfigName(name), isConfigName(section, allowDots: true) else {
-                flag("(unparsable line)")
+                flag("(line not in the plain form)")
                 continue
             }
-            guard !name.isEmpty, !section.isEmpty else {
-                flag(full.isEmpty ? "(key outside a section)" : full)
-                continue
+            guard !section.isEmpty else { flag("(key outside a section)"); continue }
+            if !isDataOnlyKey(section: section, subsection: subsection, key: key, value: value) {
+                flag(([section] + (subsection.map { [$0] } ?? []) + [key]).joined(separator: "."))
             }
-            if !isDataOnlyKey(section: section, subsection: subsection, key: name, value: value) { flag(full) }
         }
         return found
     }
 
-    /// An odd number of backslashes at the end continues the value on the
-    /// next line.
-    static func endsInUnescapedBackslash(_ line: String) -> Bool {
-        line.reversed().prefix { $0 == "\\" }.count % 2 == 1
+    /// `configReview` for text, as tests and callers holding a string use it.
+    public static func commandConfigKeys(inConfig text: String) -> [String] {
+        configReview(Data(text.utf8))
     }
 
-    /// Double quotes not escaped by a backslash, counted across the line;
-    /// an odd count means a quoted value runs on.
-    static func hasUnbalancedQuotes(_ line: String) -> Bool {
-        var quotes = 0
-        var escaped = false
-        for character in line {
-            if escaped { escaped = false; continue }
-            if character == "\\" { escaped = true; continue }
-            if character == "\"" { quotes += 1 }
+    nonisolated(unsafe) static let headerPattern = #/\[([A-Za-z0-9.-]+)(?: "([^"\x5C]*)")?\]/#
+    nonisolated(unsafe) static let entryPattern = #/[ \t]*([A-Za-z][A-Za-z0-9-]*)[ \t]*=[ \t]*([^"\x5C;#]*)/#
+    nonisolated(unsafe) static let bareKeyPattern = #/[ \t]*([A-Za-z][A-Za-z0-9-]*)[ \t]*/#
+
+    /// Section → keys that hold data only. `*` allows every key in the
+    /// section. Keys are lowercased; whether a subsection is required is in
+    /// `isDataOnlyKey`.
+    static let dataOnlyKeys: [String: Set<String>] = [
+        "core": ["repositoryformatversion", "filemode", "bare", "logallrefupdates", "ignorecase", "precomposeunicode",
+                 "symlinks", "autocrlf", "eol", "safecrlf", "longpaths", "quotepath", "checkstat", "trustctime",
+                 "sparsecheckout", "sparsecheckoutcone", "untrackedcache", "splitindex"],
+        "remote": ["url", "fetch", "pushurl", "push", "tagopt", "prune", "prunetags", "mirror", "skipdefaultupdate"],
+        "branch": ["remote", "merge", "rebase", "pushremote", "description"],
+        "user": ["*"], "pull": ["*"], "color": ["*"], "column": ["*"], "advice": ["*"], "i18n": ["*"],
+        "fetch": ["prune", "prunetags", "writecommitgraph", "parallel"],
+        "init": ["defaultbranch"],
+        "extensions": ["objectformat", "refstorage"],
+        "submodule": ["url", "active", "branch", "fetchrecursesubmodules", "ignore", "shallow"],
+        "push": ["default", "autosetupremote", "followtags"],
+        "merge": ["ff", "conflictstyle"],
+        "rebase": ["autostash", "autosquash", "updaterefs"],
+        "gc": ["auto", "autodetach"],
+    ]
+
+    /// Sections whose keys need a subsection (`remote "origin"`), and ones
+    /// that must not have one.
+    static let subsectionSections: Set<String> = ["remote", "branch"]
+
+    static func isDataOnlyKey(section: String, subsection: String?, key: String, value: String) -> Bool {
+        switch (section, subsection, key) {
+        case ("core", nil, "fsmonitor"):
+            return ["false", "no", "off", "0"].contains(value.lowercased())
+        case ("lfs", nil, "repositoryformatversion"):
+            return true
+        case ("lfs", .some, "access"), ("lfs", .some, "locksverify"):
+            return true
+        case ("submodule", nil, "active"):
+            return true
+        case ("submodule", .some, "update"):
+            return ["checkout", "rebase", "merge", "none"].contains(value)
+        case ("branch", .some, _) where key.hasPrefix("vscode-") || key.hasPrefix("github-pr-"):
+            return true
+        default:
+            break
         }
-        return quotes % 2 == 1
+        guard let keys = dataOnlyKeys[section] else { return false }
+        let needsSubsection = subsectionSections.contains(section) || section == "submodule"
+        if needsSubsection != (subsection != nil) && !keys.contains("*") { return false }
+        return keys.contains("*") || keys.contains(key)
     }
 
-    /// A git config section or key name: letters, digits and `-`, starting
-    /// with a letter (sections may also hold `.` in the legacy form).
-    static func isConfigName(_ name: String, allowDots: Bool = false) -> Bool {
-        guard let first = name.unicodeScalars.first, CharacterSet.letters.contains(first), first.isASCII else { return false }
-        return name.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "-" || (allowDots && $0 == ".")) }
-    }
-
-    /// Why a clone's own settings could run commands, or empty when they
-    /// are plain data. Fails closed: a config file that exists but cannot be
-    /// read, a shared `commondir`, and any executable hook all count.
+    /// Why a clone's own settings need review, or empty when they are plain
+    /// data. Fails closed: a config that is not in the strict plain form
+    /// (`configReview`), one that cannot be read, a `commondir`, and any
+    /// executable hook that is not a sample all count. No git runs.
     public static func commandConfig(checkout: String) -> [String] {
         guard let gitDir = gitDirectory(of: checkout) else {
             return FileManager.default.fileExists(atPath: (checkout as NSString).appendingPathComponent(".git"))
@@ -416,11 +416,11 @@ public enum RepoDiscovery {
             for name in ["config", "config.worktree"] {
                 let file = (dir as NSString).appendingPathComponent(name)
                 guard fm.fileExists(atPath: file) else { continue }
-                guard let text = try? String(contentsOfFile: file, encoding: .utf8) else {
+                guard let data = fm.contents(atPath: file) else {
                     reasons.append("\(name) (unreadable)")
                     continue
                 }
-                for key in commandConfigKeys(inConfig: text) where !reasons.contains(key) { reasons.append(key) }
+                for key in configReview(data) where !reasons.contains(key) { reasons.append(key) }
             }
             let hooks = (dir as NSString).appendingPathComponent("hooks")
             for hook in ((try? fm.contentsOfDirectory(atPath: hooks)) ?? []).sorted() where !hook.hasSuffix(".sample") {

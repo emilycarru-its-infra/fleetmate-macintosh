@@ -41,6 +41,7 @@ public enum WidgetRowPacking {
             used += s
         }
         guard rowCount > 1 else { return [items] }
+        guard rowCount < n else { return items.map { [$0] } }
 
         let mean = Double(spans.reduce(0, +)) / Double(rowCount)
         var prefix = [0]
@@ -51,7 +52,8 @@ public enum WidgetRowPacking {
         var cut = Array(repeating: Array(repeating: 0, count: n + 1), count: rowCount + 1)
         cost[0][0] = 0
         for k in 1...rowCount {
-            for i in 1...n {
+            // k rows need at least k cards.
+            for i in k...n {
                 for j in (k - 1)..<i {
                     let units = prefix[i] - prefix[j]
                     guard units <= cap, cost[k - 1][j] < inf else { continue }

@@ -79,6 +79,13 @@ struct ContentView: View {
                 if #available(macOS 26.0, *) {
                     ToolbarSpacer(.flexible, placement: .primaryAction)
                 }
+                if !AppEdition.current.isTicketsOnly {
+                    // Agent leads the trailing controls as the app's main action,
+                    // ahead of Graphs, Recent Activity and Authentication.
+                    ToolbarItem(placement: .primaryAction) {
+                        AgentModeToolbarToggle(terminals: terminals, defaultLaunch: appState.agentDefaultLaunch)
+                    }
+                }
                 if selectedTab.hasWidgets {
                     ToolbarItem(placement: .primaryAction) {
                         GraphsToolbarButton(tab: selectedTab).id(selectedTab)
@@ -86,13 +93,6 @@ struct ContentView: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     RecentActivityToolbarButton()
-                }
-                if !AppEdition.current.isTicketsOnly {
-                    // Agent is a mode, not one more glyph: a labelled toggle
-                    // that stays pressed while the terminal is open.
-                    ToolbarItem(placement: .primaryAction) {
-                        AgentModeToolbarToggle(terminals: terminals, defaultLaunch: appState.agentDefaultLaunch)
-                    }
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: { showAuthPopover.toggle() }) {

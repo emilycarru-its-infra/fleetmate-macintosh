@@ -292,24 +292,28 @@ struct AgentSessionListMenuItem: View {
     }
 }
 
-/// The toolbar's Agent control: icon and name, pressed while the terminal is
-/// open. ⌘J (View › Show Agent) and ⌃` toggle it from anywhere.
+/// The toolbar's Agent control: the first trailing item, filled with the
+/// accent colour so it reads as the app's main action rather than one more
+/// glyph. ⌘J (View › Show Agent) and ⌃` toggle it from anywhere; while the
+/// terminal is open the icon becomes a check so the state is still visible.
 struct AgentModeToolbarToggle: View {
     @ObservedObject var terminals: AgentTerminalStore
     let defaultLaunch: AgentLaunch
 
     var body: some View {
-        Toggle(isOn: Binding(
-            get: { terminals.isShowing },
-            set: { _ in terminals.toggle(defaultLaunch: defaultLaunch) }
-        )) {
-            Label("Agent", systemImage: ContentView.agentSymbol)
+        Button {
+            terminals.toggle(defaultLaunch: defaultLaunch)
+        } label: {
+            Label("Agent", systemImage: terminals.isShowing ? "checkmark" : ContentView.agentSymbol)
+                .fontWeight(.semibold)
         }
-        .toggleStyle(.button)
+        .buttonStyle(.borderedProminent)
+        .tint(.accentColor)
         .labelStyle(.titleAndIcon)
         .keyboardShortcut("`", modifiers: .control)
         .help(terminals.isShowing ? "Hide the agent terminal (⌘J or ⌃`)" : "Work with the agent in the terminal (⌘J or ⌃`)")
         .accessibilityLabel("Agent")
         .accessibilityValue(terminals.isShowing ? "On" : "Off")
+        .accessibilityAddTraits(terminals.isShowing ? .isSelected : [])
     }
 }

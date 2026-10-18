@@ -175,6 +175,7 @@ struct FleetMateCommands: Commands {
                 }
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
                 AgentWorkspaceMenuItems(terminals: appState.terminals)
+                AgentSessionListMenuItem(terminals: appState.terminals)
 
                 Divider()
             }

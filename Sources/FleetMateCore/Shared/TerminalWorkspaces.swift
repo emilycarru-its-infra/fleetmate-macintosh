@@ -50,6 +50,12 @@ public struct TerminalWorkspaceFile: Codable, Equatable, Sendable {
         }
     }
 
+    /// The workspace generated from Repos, by its mark or else its name.
+    public var baselineIndex: Int? {
+        workspaces.firstIndex { $0.source == TerminalWorkspaceBaseline.source }
+            ?? workspaces.firstIndex { $0.name.caseInsensitiveCompare(TerminalWorkspaceBaseline.name) == .orderedSame }
+    }
+
     public mutating func remove(named name: String) {
         workspaces.removeAll { $0.name.caseInsensitiveCompare(name) == .orderedSame }
         if let launch = openAtLaunch, launch.caseInsensitiveCompare(name) == .orderedSame { openAtLaunch = nil }
@@ -58,6 +64,9 @@ public struct TerminalWorkspaceFile: Codable, Equatable, Sendable {
 
 public struct TerminalWorkspace: Codable, Equatable, Sendable {
     public var name: String
+    /// "repos" for the workspace FleetMate generated from the Repos tab, so
+    /// Add Missing Repos finds it after a rename; nil for the person's own.
+    public var source: String?
     /// Show the terminal when the workspace opens. Default true.
     public var show: Bool?
     /// Open the terminal filling the window rather than split.
@@ -74,6 +83,7 @@ public struct TerminalWorkspace: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decode(String.self, forKey: .name)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
         show = try container.decodeIfPresent(Bool.self, forKey: .show)
         fullWindow = try container.decodeIfPresent(Bool.self, forKey: .fullWindow)
         sections = try container.decodeIfPresent([Section].self, forKey: .sections) ?? []

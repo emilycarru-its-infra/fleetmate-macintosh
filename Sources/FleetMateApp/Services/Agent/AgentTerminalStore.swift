@@ -474,7 +474,11 @@ final class AgentTerminalStore: ObservableObject {
         didSet { if isVisible { UserDefaults.standard.set(isMaximized, forKey: AgentSettingsKey.lastFullWindow) } }
     }
     /// Whether the terminal was last used filling the window rather than split.
-    var lastUsedFullWindow: Bool { UserDefaults.standard.bool(forKey: AgentSettingsKey.lastFullWindow) }
+    /// Full window until the person has used it split: the terminal is a mode
+    /// to work in, not a strip under the tab.
+    var lastUsedFullWindow: Bool {
+        UserDefaults.standard.object(forKey: AgentSettingsKey.lastFullWindow) as? Bool ?? true
+    }
     /// What ⌘T opens. Kept current by the window from the person's settings.
     var defaultLaunch: AgentLaunch = .shell
     /// What to tell a new session about where it is, given its directory.
@@ -781,7 +785,8 @@ final class AgentTerminalStore: ObservableObject {
 
     func reloadWorkspaces() {
         do {
-            workspaceFile = try TerminalWorkspaceStore.load()
+            let file = try TerminalWorkspaceStore.load()
+            if file != workspaceFile { workspaceFile = file }
             workspaceFileError = nil
         } catch {
             workspaceFileError = "Could not read \(TerminalWorkspaceStore.abbreviate(TerminalWorkspaceStore.defaultPath)): \(error.localizedDescription)"
@@ -840,6 +845,67 @@ final class AgentTerminalStore: ObservableObject {
     /// Open a workspace's sessions beside any already open. A session already
     /// open with the same name, command and folder is not opened twice, so
     /// opening a workspace again only fills in what was closed.
+    /// Show the Repos tab, where a repository is cloned. Set by AppState.
+    var showRepos: (() -> Void)?
+    /// The View menu asked to save the open sessions; the session list asks for the name.
+    @Published var savingWorkspaceRequested = false
+    /// The session list collapsed to its status dots; nil follows the
+    /// number of sessions until toggled.
+    @Published var listCollapsedOverride: Bool?
+
+    /// The checkouts the Repos tab knows, with their activity.
+    private func repoCheckouts() -> [TerminalWorkspaceBaseline.Checkout] {
+        guard let document = try? RepoRegistryStore().load() else { return [] }
+        return TerminalWorkspaceBaseline.checkouts(from: document)
+    }
+
+    /// The first time, with no workspaces file yet, write a Repos workspace
+    /// from the checkouts on this Mac. With nothing checked out, write
+    /// nothing, so the next launch tries again once a repository is cloned.
+    func seedBaselineWorkspaceIfNeeded() {
+        guard !FileManager.default.fileExists(atPath: TerminalWorkspaceStore.defaultPath),
+              let baseline = TerminalWorkspaceBaseline.make(from: repoCheckouts(), command: defaultLaunch.command)
+        else { return }
+        writeWorkspaces { $0.upsert(baseline) }
+    }
+
+    /// Whether any repository is checked out, for the empty Workspaces menu.
+    var hasRepoCheckouts: Bool { !repoCheckouts().isEmpty }
+
+    /// Rebuild the Repos workspace from the checkouts now, keeping its name
+    /// and place; every other workspace is left alone.
+    func regenerateBaselineWorkspace() {
+        guard var baseline = TerminalWorkspaceBaseline.make(from: repoCheckouts(), command: defaultLaunch.command) else {
+            workspaceFileError = "No repositories are checked out yet. Clone one in Development › Repos."
+            return
+        }
+        writeWorkspaces { file in
+            if let index = file.baselineIndex {
+                baseline.name = file.workspaces[index].name
+                file.workspaces[index] = baseline
+            } else {
+                file.upsert(baseline)
+            }
+        }
+    }
+
+    /// Add checkouts the Repos workspace lacks, keeping every edit to it.
+    func addMissingReposToBaseline() {
+        let checkouts = repoCheckouts()
+        guard !checkouts.isEmpty else {
+            workspaceFileError = "No repositories are checked out yet. Clone one in Development › Repos."
+            return
+        }
+        let command = defaultLaunch.command
+        writeWorkspaces { file in
+            if let index = file.baselineIndex {
+                TerminalWorkspaceBaseline.addMissing(checkouts, to: &file.workspaces[index], command: command)
+            } else if let baseline = TerminalWorkspaceBaseline.make(from: checkouts, command: command) {
+                file.upsert(baseline)
+            }
+        }
+    }
+
     func open(workspace: TerminalWorkspace, show: Bool? = nil) {
         let selectedBefore = selectedId
         var first: AgentTerminalSession?
@@ -916,6 +982,8 @@ enum AgentSettingsKey {
     /// The terminal was last open filling the window rather than split.
     static let lastFullWindow = "agentTerminalLastFullWindow"
     /// Session list filters, sort and search in the terminal's sidebar.
+    /// The session list's width, dragged at its divider.
+    static let listWidth = "agentTerminalListWidth"
     static let filterActive = "agentTerminalFilterActive"
     static let filterRunning = "agentTerminalFilterRunning"
     static let filterPaused = "agentTerminalFilterPaused"

@@ -210,7 +210,8 @@ struct AgentTerminalStrip: View {
     }
 }
 
-/// View › Show/Hide Agent Terminal, titled by what it will do.
+/// View › Show/Hide Agent (⌘J), titled by what it will do. ⌃` does the
+/// same from the toolbar control and from inside a terminal.
 struct AgentTerminalMenuItems: View {
     @ObservedObject var terminals: AgentTerminalStore
     let defaultLaunch: () -> AgentLaunch
@@ -223,10 +224,10 @@ struct AgentTerminalMenuItems: View {
                 terminals.expand(defaultLaunch: defaultLaunch())
             }
         } label: {
-            Label(terminals.isShowing ? "Hide Agent Terminal" : "Show Agent Terminal",
+            Label(terminals.isShowing ? "Hide Agent" : "Show Agent",
                   systemImage: ContentView.agentSymbol)
         }
-        .keyboardShortcut("`", modifiers: .control)
+        .keyboardShortcut("j", modifiers: .command)
     }
 }
 
@@ -261,21 +262,54 @@ private struct StripIconButton: View {
     }
 }
 
-/// View › Terminal Workspaces: open a saved workspace, or edit the file.
-/// Saving the open sessions is in the session list, where it can ask for a name.
+/// View › Terminal Workspaces: the same menu as the session list's. Saving
+/// opens the terminal so the session list can ask for the name.
 struct AgentWorkspaceMenuItems: View {
     @ObservedObject var terminals: AgentTerminalStore
 
     var body: some View {
         Menu("Terminal Workspaces") {
-            let workspaces = terminals.workspaceFile.workspaces
-            if workspaces.isEmpty { Text("No Saved Workspaces") }
-            ForEach(workspaces, id: \.name) { workspace in
-                Button(workspace.name) { terminals.open(workspace: workspace, show: true) }
+            AgentWorkspaceMenuContent(store: terminals) {
+                terminals.isVisible = true
+                terminals.savingWorkspaceRequested = true
             }
-            Divider()
-            Button("Edit Workspaces File") { AgentTerminalPanel.openWorkspacesFile(reveal: false) }
-            Button("Show Workspaces File in Finder") { AgentTerminalPanel.openWorkspacesFile(reveal: true) }
         }
+        .onAppear(perform: terminals.reloadWorkspaces)
+    }
+}
+
+/// View › Show/Hide Session List, ⌃⌘S as in any Mac sidebar.
+struct AgentSessionListMenuItem: View {
+    @ObservedObject var terminals: AgentTerminalStore
+
+    var body: some View {
+        let collapsed = terminals.listCollapsedOverride ?? (terminals.sessions.count < 2)
+        Button(collapsed ? "Show Terminal Session List" : "Hide Terminal Session List") {
+            terminals.listCollapsedOverride = !collapsed
+        }
+        .keyboardShortcut("s", modifiers: [.control, .command])
+        .disabled(!terminals.isShowing)
+    }
+}
+
+/// The toolbar's Agent control: icon and name, pressed while the terminal is
+/// open. ⌘J (View › Show Agent) and ⌃` toggle it from anywhere.
+struct AgentModeToolbarToggle: View {
+    @ObservedObject var terminals: AgentTerminalStore
+    let defaultLaunch: AgentLaunch
+
+    var body: some View {
+        Toggle(isOn: Binding(
+            get: { terminals.isShowing },
+            set: { _ in terminals.toggle(defaultLaunch: defaultLaunch) }
+        )) {
+            Label("Agent", systemImage: ContentView.agentSymbol)
+        }
+        .toggleStyle(.button)
+        .labelStyle(.titleAndIcon)
+        .keyboardShortcut("`", modifiers: .control)
+        .help(terminals.isShowing ? "Hide the agent terminal (⌘J or ⌃`)" : "Work with the agent in the terminal (⌘J or ⌃`)")
+        .accessibilityLabel("Agent")
+        .accessibilityValue(terminals.isShowing ? "On" : "Off")
     }
 }

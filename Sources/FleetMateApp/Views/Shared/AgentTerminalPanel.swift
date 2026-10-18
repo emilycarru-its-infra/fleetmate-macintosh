@@ -64,7 +64,10 @@ struct AgentTerminalPanel: View {
     let repos: [String]
     let defaultLaunch: AgentLaunch
     /// A hand toggle, kept until the number of sessions changes.
-    @State private var listOverride: Bool?
+    /// The expanded list's width, dragged at its divider and remembered.
+    @AppStorage(AgentSettingsKey.listWidth) private var listWidth: Double = 250
+    @State private var listDragStart: Double?
+    static let listWidthRange: ClosedRange<Double> = 180...520
     @State private var sectionEditor = false
     @State private var editingSection: String?
     @State private var sectionName = ""
@@ -82,13 +85,13 @@ struct AgentTerminalPanel: View {
     /// Rows drag as this private type, so a row dropped on a terminal is not pasted as text.
     static let sessionDragType = UTType(exportedAs: "app.fleetmate.terminal-session")
 
-    private var listCollapsed: Bool { listOverride ?? (store.sessions.count < 2) }
+    private var listCollapsed: Bool { store.listCollapsedOverride ?? (store.sessions.count < 2) }
 
     var body: some View {
         HStack(spacing: 0) {
             sessionList
-                .frame(width: listCollapsed ? 34 : 250)
-            Divider()
+                .frame(width: listCollapsed ? 34 : CGFloat(min(max(listWidth, Self.listWidthRange.lowerBound), Self.listWidthRange.upperBound)))
+            listDivider
             HStack(spacing: 0) {
                 if let session = store.selected {
                     pane(session)
@@ -105,7 +108,7 @@ struct AgentTerminalPanel: View {
                 Text(error).font(.caption).padding(6).background(.regularMaterial)
             }
         }
-        .onChange(of: store.sessions.count) { _, _ in listOverride = nil }
+        .onChange(of: store.sessions.count) { _, _ in store.listCollapsedOverride = nil }
         .onAppear(perform: store.reloadWorkspaces)
         // Back from editing the file by hand: read it again.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -135,7 +138,7 @@ struct AgentTerminalPanel: View {
                     .buttonStyle(.borderless)
                     .help(store.splitId == nil ? "Split (⌘D)" : "Unsplit (⌘D)")
                 }
-                Button(action: { listOverride = !listCollapsed }) {
+                Button(action: { store.listCollapsedOverride = !listCollapsed }) {
                     Label("Collapse", systemImage: listCollapsed ? "sidebar.left" : "sidebar.squares.left")
                         .labelStyle(.iconOnly)
                 }
@@ -175,6 +178,20 @@ struct AgentTerminalPanel: View {
             }
         }
         .background(SwiftUI.Color.secondary.opacity(0.05))
+        .popover(isPresented: $savingWorkspace, arrowEdge: .top) {
+            AgentNamePopover(title: "Save Workspace", name: $workspaceName,
+                             save: {
+                                 store.saveWorkspace(named: workspaceName)
+                                 savingWorkspace = false
+                             },
+                             cancel: { savingWorkspace = false })
+        }
+        // View › Save Sessions as Workspace… asks here, where the name popover can anchor.
+        .onChange(of: store.savingWorkspaceRequested) { _, requested in
+            guard requested else { return }
+            store.savingWorkspaceRequested = false
+            beginSavingWorkspace()
+        }
     }
 
     private var sortMode: TerminalSessionSort { TerminalSessionSort(rawValue: sortModeRaw) ?? .manual }
@@ -239,41 +256,7 @@ struct AgentTerminalPanel: View {
 
     private var workspacesMenu: some View {
         Menu {
-            let file = store.workspaceFile
-            if file.workspaces.isEmpty {
-                Text("No Saved Workspaces")
-            } else {
-                Section("Open Workspace") {
-                    ForEach(file.workspaces, id: \.name) { workspace in
-                        Button("\(workspace.name) — \(workspace.sessionCount == 1 ? "1 session" : "\(workspace.sessionCount) sessions")") {
-                            store.open(workspace: workspace, show: true)
-                        }
-                    }
-                }
-            }
-            Divider()
-            Button("Save Sessions as Workspace…") {
-                workspaceName = file.launchWorkspace?.name ?? ""
-                savingWorkspace = true
-            }
-            .disabled(store.sessions.isEmpty)
-            if !file.workspaces.isEmpty {
-                Picker("Open at Launch", selection: Binding(
-                    get: { file.launchWorkspace?.name ?? "" },
-                    set: { store.setOpenAtLaunch($0.isEmpty ? nil : $0) }
-                )) {
-                    Text("None").tag("")
-                    ForEach(file.workspaces, id: \.name) { Text($0.name).tag($0.name) }
-                }
-                Menu("Delete Workspace") {
-                    ForEach(file.workspaces, id: \.name) { workspace in
-                        Button(workspace.name) { store.deleteWorkspace(named: workspace.name) }
-                    }
-                }
-            }
-            Divider()
-            Button("Edit Workspaces File") { Self.openWorkspacesFile(reveal: false) }
-            Button("Show Workspaces File in Finder") { Self.openWorkspacesFile(reveal: true) }
+            AgentWorkspaceMenuContent(store: store, saveSessions: beginSavingWorkspace)
         } label: {
             Label("Workspaces", systemImage: "square.stack.3d.up").labelStyle(.iconOnly)
         }
@@ -282,14 +265,45 @@ struct AgentTerminalPanel: View {
         .fixedSize()
         .help("Open, save and choose the workspace FleetMate opens at launch")
         .accessibilityLabel("Workspaces")
-        .popover(isPresented: $savingWorkspace, arrowEdge: .bottom) {
-            AgentNamePopover(title: "Save Workspace", name: $workspaceName,
-                             save: {
-                                 store.saveWorkspace(named: workspaceName)
-                                 savingWorkspace = false
-                             },
-                             cancel: { savingWorkspace = false })
-        }
+    }
+
+    private func beginSavingWorkspace() {
+        workspaceName = store.workspaceFile.launchWorkspace?.name ?? ""
+        savingWorkspace = true
+    }
+
+    /// Drag to widen or narrow the session list; double-click collapses or
+    /// expands it, as the sidebar button and View › Show Session List do.
+    private var listDivider: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor))
+            .frame(width: 1)
+            .contentShape(Rectangle().inset(by: -3))
+            .onHover { inside in
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        if listCollapsed {
+                            store.listCollapsedOverride = false
+                        }
+                        let start = listDragStart ?? (listCollapsed ? Self.listWidthRange.lowerBound : listWidth)
+                        listDragStart = start
+                        listWidth = min(max(start + value.translation.width, Self.listWidthRange.lowerBound),
+                                        Self.listWidthRange.upperBound)
+                    }
+                    .onEnded { _ in listDragStart = nil }
+            )
+            .onTapGesture(count: 2) { store.listCollapsedOverride = !listCollapsed }
+            .help("Drag to resize the session list; double-click to collapse or expand it")
+            .accessibilityElement()
+            .accessibilityLabel("Session list divider")
+            .accessibilityValue(listCollapsed ? "Collapsed" : "\(Int(listWidth)) points")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(named: listCollapsed ? "Expand Session List" : "Collapse Session List") {
+                store.listCollapsedOverride = !listCollapsed
+            }
     }
 
     /// Open the workspaces file in its editor, or show it in Finder, writing
@@ -467,7 +481,7 @@ struct AgentTerminalPanel: View {
         editingSection = nil
         sectionName = ""
         sectionEditor = true
-        listOverride = false
+        store.listCollapsedOverride = false
     }
 
     private var newSessionMenu: some View {
@@ -594,6 +608,58 @@ private struct SessionRow: View {
         case .exited: color = .secondary.opacity(0.2)
         }
         return Circle().fill(color).frame(width: 7, height: 7).frame(width: 12)
+    }
+}
+
+/// The Workspaces menu, in the session list and under View › Terminal Workspaces.
+struct AgentWorkspaceMenuContent: View {
+    @ObservedObject var store: AgentTerminalStore
+    let saveSessions: () -> Void
+
+    var body: some View {
+        let file = store.workspaceFile
+        if file.workspaces.isEmpty {
+            Text("No Saved Workspaces")
+            if store.hasRepoCheckouts {
+                Button("Create Workspace from Repos") { store.regenerateBaselineWorkspace() }
+            } else {
+                // Someone with nothing cloned yet: the way to get started.
+                Button("Clone a Repository in Repos…") { store.showRepos?() }
+            }
+        } else {
+            Section("Open Workspace") {
+                ForEach(file.workspaces, id: \.name) { workspace in
+                    Button("\(workspace.name) — \(workspace.sessionCount == 1 ? "1 session" : "\(workspace.sessionCount) sessions")") {
+                        store.open(workspace: workspace, show: true)
+                    }
+                }
+            }
+        }
+        Divider()
+        Button("Save Sessions as Workspace…", action: saveSessions)
+            .disabled(store.sessions.isEmpty)
+        if !file.workspaces.isEmpty {
+            Picker("Open at Launch", selection: Binding(
+                get: { file.launchWorkspace?.name ?? "" },
+                set: { store.setOpenAtLaunch($0.isEmpty ? nil : $0) }
+            )) {
+                Text("None").tag("")
+                ForEach(file.workspaces, id: \.name) { Text($0.name).tag($0.name) }
+            }
+            Menu("Delete Workspace") {
+                ForEach(file.workspaces, id: \.name) { workspace in
+                    Button(workspace.name) { store.deleteWorkspace(named: workspace.name) }
+                }
+            }
+        }
+        Divider()
+        Button("Add Missing Repos") { store.addMissingReposToBaseline() }
+            .help("Add checked-out repositories the Repos workspace lacks, keeping your edits")
+        Button("Regenerate Repos Workspace") { store.regenerateBaselineWorkspace() }
+            .help("Rebuild the Repos workspace from your active checkouts; other workspaces are left alone")
+        Divider()
+        Button("Edit Workspaces File") { AgentTerminalPanel.openWorkspacesFile(reveal: false) }
+        Button("Show Workspaces File in Finder") { AgentTerminalPanel.openWorkspacesFile(reveal: true) }
     }
 }
 

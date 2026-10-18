@@ -88,11 +88,10 @@ struct ContentView: View {
                     RecentActivityToolbarButton()
                 }
                 if !AppEdition.current.isTicketsOnly {
+                    // Agent is a mode, not one more glyph: a labelled toggle
+                    // that stays pressed while the terminal is open.
                     ToolbarItem(placement: .primaryAction) {
-                        Button(action: { terminals.toggle(defaultLaunch: appState.agentDefaultLaunch) }) {
-                            Label("Agent", systemImage: Self.agentSymbol)
-                        }
-                        .help("Show or hide the agent terminal (⌃`)")
+                        AgentModeToolbarToggle(terminals: terminals, defaultLaunch: appState.agentDefaultLaunch)
                     }
                 }
                 ToolbarItem(placement: .primaryAction) {
@@ -143,6 +142,7 @@ struct ContentView: View {
                 terminals.defaultLaunch = appState.agentDefaultLaunch
                 // A saved workspace named to open at launch takes the place
                 // of the single session that otherwise starts.
+                if !AppEdition.current.isTicketsOnly { terminals.seedBaselineWorkspaceIfNeeded() }
                 terminals.reloadWorkspaces()
                 if !AppEdition.current.isTicketsOnly, terminals.sessions.isEmpty,
                    let workspace = terminals.workspaceFile.launchWorkspace {

@@ -68,4 +68,33 @@ final class TerminalWorkspaceBaselineTests: XCTestCase {
         file.upsert(generated)
         XCTAssertEqual(file.baselineIndex, 1)
     }
+    func testReposHiddenInTheSidebarAreLeftOut() throws {
+        let root = NSTemporaryDirectory() + UUID().uuidString
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        let shown = RepoKey(provider: .gitHub, owner: "owner-a", name: "shown")
+        let hidden = RepoKey(provider: .azureDevOps, owner: "org", project: "Proj", name: "Hidden")
+        var repos: [String: RepoRegistryEntry] = [:]
+        for key in [shown, hidden] {
+            let path = root + "/" + key.name
+            try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+            repos[key.id] = RepoRegistryEntry(key: key, path: path, tracked: true)
+        }
+        let document = RepoRegistryDocument(repos: repos)
+
+        let registry = Data("""
+        {"version": 1, "repos": {
+          "\(shown.id)": {"path": "x", "tracked": true},
+          "\(hidden.id)": {"path": "y", "tracked": true, "hidden": true}
+        }}
+        """.utf8)
+        let hiddenIds = TerminalWorkspaceBaseline.hiddenRepoIds(inRegistry: registry)
+        XCTAssertEqual(hiddenIds, [hidden.id])
+        XCTAssertEqual(TerminalWorkspaceBaseline.hiddenRepoIds(inRegistry: Data("not json".utf8)), [])
+
+        XCTAssertEqual(TerminalWorkspaceBaseline.checkouts(from: document).count, 2)
+        let checkouts = TerminalWorkspaceBaseline.checkouts(from: document, excluding: hiddenIds)
+        XCTAssertEqual(checkouts.map(\.displayName), ["owner-a/shown"])
+        let workspace = try XCTUnwrap(TerminalWorkspaceBaseline.make(from: checkouts, command: "codex", now: now))
+        XCTAssertEqual(workspace.sections.map(\.name), ["GitHub"])
+    }
 }

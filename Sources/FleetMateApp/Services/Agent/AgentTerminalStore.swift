@@ -853,10 +853,12 @@ final class AgentTerminalStore: ObservableObject {
     /// number of sessions until toggled.
     @Published var listCollapsedOverride: Bool?
 
-    /// The checkouts the Repos tab knows, with their activity.
+    /// The checkouts the Repos tab knows and shows, with their activity.
     private func repoCheckouts() -> [TerminalWorkspaceBaseline.Checkout] {
-        guard let document = try? RepoRegistryStore().load() else { return [] }
-        return TerminalWorkspaceBaseline.checkouts(from: document)
+        let store = RepoRegistryStore()
+        guard let document = try? store.load() else { return [] }
+        return TerminalWorkspaceBaseline.checkouts(
+            from: document, excluding: TerminalWorkspaceBaseline.hiddenRepoIds(registryPath: store.registryPath))
     }
 
     /// The first time, with no workspaces file yet, write a Repos workspace

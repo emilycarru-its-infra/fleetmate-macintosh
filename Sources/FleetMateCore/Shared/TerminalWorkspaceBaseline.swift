@@ -122,10 +122,13 @@ public enum TerminalWorkspaceBaseline {
     }
 
     /// The registry's tracked checkouts that exist on disk (every registered
-    /// one when none is marked tracked), with their activity read.
-    public static func checkouts(from document: RepoRegistryDocument) -> [Checkout] {
-        let tracked = document.trackedEntries
-        let entries = tracked.isEmpty ? document.entries : tracked
+    /// one when none is marked tracked), with their activity read. Repos in
+    /// `hidden` (registry ids, `RepoKey.id`) are left out: the person hid
+    /// them from the Repos sidebar, so they stay out of the workspace too.
+    public static func checkouts(from document: RepoRegistryDocument, excluding hidden: Set<String> = []) -> [Checkout] {
+        let visible = document.entries.filter { !hidden.contains($0.key.id) }
+        let tracked = visible.filter(\.tracked)
+        let entries = tracked.isEmpty ? visible : tracked
         return entries.compactMap { entry in
             let path = RepoSettings.expand(entry.path)
             guard FileManager.default.fileExists(atPath: path) else { return nil }
@@ -133,6 +136,24 @@ public enum TerminalWorkspaceBaseline {
                             displayName: entry.key.displayName, path: path,
                             lastActivity: lastActivity(ofCheckout: path))
         }
+    }
+}
+
+extension TerminalWorkspaceBaseline {
+    /// The registry ids of the repos hidden from the Repos sidebar: those
+    /// whose entry in `repos.json` carries `"hidden": true`. Read straight
+    /// from the file so it matches whatever the sidebar wrote, whichever
+    /// build wrote it. Empty when the file is missing or unreadable.
+    public static func hiddenRepoIds(registryPath: String = RepoRegistryStore.defaultRegistryPath) -> Set<String> {
+        guard let data = FileManager.default.contents(atPath: registryPath) else { return [] }
+        return hiddenRepoIds(inRegistry: data)
+    }
+
+    public static func hiddenRepoIds(inRegistry data: Data) -> Set<String> {
+        struct Flag: Decodable { var hidden: Bool? }
+        struct Registry: Decodable { var repos: [String: Flag]? }
+        guard let registry = try? JSONDecoder().decode(Registry.self, from: data) else { return [] }
+        return Set((registry.repos ?? [:]).filter { $0.value.hidden == true }.keys)
     }
 }
 

@@ -772,13 +772,15 @@ private struct DevelopmentContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Pull-request widgets say nothing about a checkout being edited.
-            if model.segment != .repos {
-                DevelopmentWidgetsSection(model: model)
-            }
+            // Each segment's own graphs: Repos carries the repository
+            // statistics, the others summarise the list below them.
+            DevelopmentWidgetsSection(model: model, knowledge: appState.knowledge)
             HStack(spacing: 0) {
+                // Leading-aligned and clipped: content wider than the column
+                // must never centre itself and push the list off the window.
                 leftPane
-                    .frame(width: listWidth)
+                    .frame(width: listWidth, alignment: .leading)
+                    .clipped()
                 Divider()
                 detailPane
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -5,7 +5,7 @@ import FleetMateCore
 
 // MARK: - Model
 
-/// What the Insights panel shows and the statistics behind it. The numbers
+/// What the Repos graphs show and the statistics behind it. The numbers
 /// come from `RepoManager.stats` / `statsSummary` — the same code behind
 /// `fleetmate repos stats` — so the app and agents always agree.
 @MainActor
@@ -103,14 +103,21 @@ final class RepoInsightsModel: ObservableObject {
     }
 }
 
-// MARK: - View
+// MARK: - Graphs strip
 
-/// Charts of a repository's history, or of every tracked repository: commits
-/// and lines changed over time, who commits, where the changes land, and when.
-struct RepoInsightsView: View {
+/// The Repos segment's graphs: a repository's history, or every tracked
+/// repository's, as cards in the Development tab's Graphs strip — commits
+/// and lines changed over time, who commits, where the changes land, and
+/// when. Shown and hidden with the toolbar's Graphs button like every
+/// other tab's widgets; the statistics load only while it is shown.
+struct RepoInsightsWidgets: View {
     @ObservedObject var model: RepoWorkspaceModel
     @ObservedObject private var insights: RepoInsightsModel
     @State private var refreshToken = 0
+
+    /// Cards in the strip are capped; charts are sized to sit inside them.
+    static let chartHeight: CGFloat = 130
+    private static let cardHeight: CGFloat = 270
 
     init(model: RepoWorkspaceModel) {
         self.model = model
@@ -122,45 +129,163 @@ struct RepoInsightsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        WidgetsSection(tab: .development) {
             controls
-            Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    if let error = insights.error {
-                        Label(error, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.orange)
-                    }
-                    switch insights.scope {
-                    case .repository:
-                        if let report = insights.report {
-                            RepoReportCharts(report: report, openFile: openFile)
-                        } else if !insights.isLoading {
-                            ContentUnavailableView("No history", systemImage: "chart.bar", description: Text("Select a repository with commits."))
-                        }
-                    case .all:
-                        if let summary = insights.summary {
-                            RepoSummaryCharts(summary: summary) { id in
-                                model.selectedId = id
-                                insights.scope = .repository
-                            }
-                        }
-                    }
+                .widgetSpan(Self.fullRow)
+                .task(id: loadKey) {
+                    await insights.load(manager: model.manager, selected: model.selected, tracked: model.tracked)
                 }
-                .padding(16)
-                .frame(maxWidth: 1400, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if let error = insights.error {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .widgetSpan(Self.fullRow)
             }
-            .overlay {
-                if insights.isLoading, insights.shownKey == nil {
-                    ProgressView("Reading history…")
+            switch insights.scope {
+            case .repository:
+                if let report = insights.report {
+                    repositoryCards(report)
+                } else {
+                    placeholder(insights.isLoading ? nil : "Select a repository with commits.")
+                }
+            case .all:
+                if let summary = insights.summary {
+                    summaryCards(summary)
+                } else {
+                    placeholder(nil)
                 }
             }
-        }
-        .task(id: loadKey) {
-            await insights.load(manager: model.manager, selected: model.selected, tracked: model.tracked)
         }
     }
+
+    /// Wider than any row, so the layout gives it the whole row.
+    private static let fullRow = 99
+
+    @ViewBuilder
+    private func placeholder(_ message: String?) -> some View {
+        Group {
+            if let message {
+                WidgetEmptyState(message)
+            } else {
+                ProgressView("Reading history…").frame(maxWidth: .infinity).padding(.vertical, 20)
+            }
+        }
+        .widgetSpan(Self.fullRow)
+    }
+
+    // MARK: One repository
+
+    @ViewBuilder
+    private func repositoryCards(_ report: RepoStatsReport) -> some View {
+        WidgetCard(title: "Totals", maxHeight: Self.cardHeight) {
+            StatTiles(totals: report.totals)
+        }
+        WidgetCard(title: "Commits per \(report.bucket.rawValue)", maxHeight: Self.cardHeight) {
+            CommitsTimelineChart(points: report.timeline, bucket: report.bucket, height: Self.chartHeight)
+        }
+        .widgetSpan(2)
+        WidgetCard(title: "Lines changed per \(report.bucket.rawValue)", maxHeight: Self.cardHeight) {
+            ChurnChart(points: report.timeline, bucket: report.bucket, height: Self.chartHeight)
+        }
+        .widgetSpan(2)
+        WidgetCard(title: "Authors", maxHeight: Self.cardHeight) {
+            RankedBars(rows: report.contributors.prefix(8).map { .init(label: $0.name, value: $0.commits, detail: "+\($0.added) −\($0.removed)") }, unit: "commits")
+        }
+        WidgetCard(title: "Top-level folders", maxHeight: Self.cardHeight) {
+            RankedBars(rows: report.areas.prefix(8).map { .init(label: $0.path, value: $0.commits, detail: "+\($0.added) −\($0.removed)") }, unit: "commits")
+        }
+        WidgetCard(title: "Most-changed files", maxHeight: Self.cardHeight) {
+            FileActivityList(files: Array(report.files.prefix(8)), openFile: openFile)
+        }
+        .widgetSpan(2)
+        WidgetCard(title: "When commits happen", maxHeight: Self.cardHeight) {
+            ActivityHeatmap(cells: report.activity, height: Self.chartHeight)
+        }
+        .widgetSpan(2)
+    }
+
+    // MARK: All repositories
+
+    private struct StackPoint: Identifiable {
+        let start: Date
+        let series: String
+        let commits: Int
+        var id: String { "\(series)|\(start.timeIntervalSince1970)" }
+    }
+
+    /// The busiest repositories by name, the rest as Other.
+    private func seriesNames(_ summary: RepoStatsSummary) -> [String] {
+        Array(summary.rows.filter { $0.commits > 0 }.prefix(InsightsPalette.categorical.count).map(\.displayName))
+    }
+
+    private func stacked(_ summary: RepoStatsSummary) -> [StackPoint] {
+        let named = Set(seriesNames(summary))
+        var points: [StackPoint] = []
+        var other = Array(repeating: 0, count: summary.bucketStarts.count)
+        for row in summary.rows {
+            if named.contains(row.displayName) {
+                for (i, count) in row.timeline.enumerated() where count > 0 {
+                    points.append(StackPoint(start: summary.bucketStarts[i], series: row.displayName, commits: count))
+                }
+            } else {
+                for (i, count) in row.timeline.enumerated() { other[i] += count }
+            }
+        }
+        for (i, count) in other.enumerated() where count > 0 {
+            points.append(StackPoint(start: summary.bucketStarts[i], series: "Other", commits: count))
+        }
+        return points
+    }
+
+    @ViewBuilder
+    private func summaryCards(_ summary: RepoStatsSummary) -> some View {
+        let names = seriesNames(summary)
+        let hasOther = summary.rows.filter { $0.commits > 0 }.count > names.count
+        let domain = names + (hasOther ? ["Other"] : [])
+        let range = Array(InsightsPalette.categorical.prefix(names.count)) + (hasOther ? [InsightsPalette.other] : [])
+        WidgetCard(title: "Totals", maxHeight: Self.cardHeight) {
+            StatTiles(totals: summary.combined.totals)
+        }
+        WidgetCard(title: "Commits per \(summary.bucket.rawValue) by repository", maxHeight: Self.cardHeight) {
+            Chart(stacked(summary)) { point in
+                BarMark(
+                    x: .value("Period", point.start, unit: summary.bucket.calendarUnit),
+                    y: .value("Commits", point.commits)
+                )
+                .foregroundStyle(by: .value("Repository", point.series))
+            }
+            .chartForegroundStyleScale(domain: domain, range: range)
+            .chartLegend(position: .bottom, alignment: .leading)
+            .frame(height: Self.chartHeight + 40)
+            .accessibilityLabel("Commits per \(summary.bucket.rawValue), stacked by repository")
+        }
+        .widgetSpan(2)
+        WidgetCard(title: "Lines changed per \(summary.bucket.rawValue)", maxHeight: Self.cardHeight) {
+            ChurnChart(points: summary.combined.timeline, bucket: summary.bucket, height: Self.chartHeight)
+        }
+        .widgetSpan(2)
+        WidgetCard(title: "Authors", maxHeight: Self.cardHeight) {
+            RankedBars(rows: summary.combined.contributors.prefix(8).map { .init(label: $0.name, value: $0.commits, detail: "+\($0.added) −\($0.removed)") }, unit: "commits")
+        }
+        WidgetCard(title: "Behind upstream", maxHeight: Self.cardHeight) {
+            RankedBars(rows: summary.rows.filter { $0.behind > 0 }.sorted { $0.behind > $1.behind }.prefix(8).map { .init(label: $0.displayName, value: $0.behind, detail: $0.branch ?? "") }, unit: "commits behind")
+        }
+        WidgetCard(title: "Repositories", maxHeight: Self.cardHeight) {
+            ScrollView {
+                RepoSummaryTable(rows: summary.rows) { id in
+                    model.selectedId = id
+                    insights.scope = .repository
+                }
+            }
+        }
+        .widgetSpan(2)
+        WidgetCard(title: "When commits happen", maxHeight: Self.cardHeight) {
+            ActivityHeatmap(cells: summary.combined.activity, height: Self.chartHeight)
+        }
+        .widgetSpan(2)
+    }
+
+    // MARK: Controls
 
     private var controls: some View {
         HStack(spacing: 12) {
@@ -183,12 +308,13 @@ struct RepoInsightsView: View {
             .fixedSize()
 
             if insights.isLoading { ProgressView().controlSize(.small) }
-            Spacer()
+            Spacer(minLength: 8)
             Text(caption)
                 .appFont(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .textSelection(.enabled)
             Button {
                 refreshToken += 1
             } label: {
@@ -196,11 +322,9 @@ struct RepoInsightsView: View {
             }
             .buttonStyle(.borderless)
             .help("Read origin/main again. Use Fetch to update the remote-tracking branch.")
-            .accessibilityLabel("Refresh Insights")
+            .accessibilityLabel("Refresh Repository Statistics")
         }
         .controlSize(.small)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
     }
 
     private var caption: String {
@@ -216,6 +340,7 @@ struct RepoInsightsView: View {
     }
 }
 
+
 // MARK: - Palette
 
 /// Series colours in a fixed order, never cycled and never red: identity
@@ -226,119 +351,6 @@ enum InsightsPalette {
     static let added = Color.teal
     static let removed = Color.orange
     static let commits = Color.accentColor
-}
-
-// MARK: - One repository
-
-private struct RepoReportCharts: View {
-    let report: RepoStatsReport
-    let openFile: (String) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            StatTiles(totals: report.totals)
-            InsightsCard(title: "Commits per \(report.bucket.rawValue)") {
-                CommitsTimelineChart(points: report.timeline, bucket: report.bucket)
-            }
-            InsightsCard(title: "Lines changed per \(report.bucket.rawValue)") {
-                ChurnChart(points: report.timeline, bucket: report.bucket)
-            }
-            HStack(alignment: .top, spacing: 14) {
-                InsightsCard(title: "Authors") {
-                    RankedBars(rows: report.contributors.prefix(10).map { .init(label: $0.name, value: $0.commits, detail: "+\($0.added) −\($0.removed)") }, unit: "commits")
-                }
-                InsightsCard(title: "Top-level folders") {
-                    RankedBars(rows: report.areas.prefix(10).map { .init(label: $0.path, value: $0.commits, detail: "+\($0.added) −\($0.removed)") }, unit: "commits")
-                }
-            }
-            .fixedSize(horizontal: false, vertical: true)
-            InsightsCard(title: "Most-changed files") {
-                FileActivityList(files: report.files, openFile: openFile)
-            }
-            InsightsCard(title: "When commits happen") {
-                ActivityHeatmap(cells: report.activity)
-            }
-        }
-    }
-}
-
-// MARK: - All repositories
-
-private struct RepoSummaryCharts: View {
-    let summary: RepoStatsSummary
-    let select: (String) -> Void
-
-    private struct StackPoint: Identifiable {
-        let start: Date
-        let series: String
-        let commits: Int
-        var id: String { "\(series)|\(start.timeIntervalSince1970)" }
-    }
-
-    /// The busiest repositories by name, the rest as Other.
-    private var seriesNames: [String] {
-        Array(summary.rows.filter { $0.commits > 0 }.prefix(InsightsPalette.categorical.count).map(\.displayName))
-    }
-
-    private var stacked: [StackPoint] {
-        let named = Set(seriesNames)
-        var points: [StackPoint] = []
-        var other = Array(repeating: 0, count: summary.bucketStarts.count)
-        for row in summary.rows {
-            if named.contains(row.displayName) {
-                for (i, count) in row.timeline.enumerated() where count > 0 {
-                    points.append(StackPoint(start: summary.bucketStarts[i], series: row.displayName, commits: count))
-                }
-            } else {
-                for (i, count) in row.timeline.enumerated() { other[i] += count }
-            }
-        }
-        for (i, count) in other.enumerated() where count > 0 {
-            points.append(StackPoint(start: summary.bucketStarts[i], series: "Other", commits: count))
-        }
-        return points
-    }
-
-    var body: some View {
-        let names = seriesNames
-        let hasOther = summary.rows.filter { $0.commits > 0 }.count > names.count
-        let domain = names + (hasOther ? ["Other"] : [])
-        let range = Array(InsightsPalette.categorical.prefix(names.count)) + (hasOther ? [InsightsPalette.other] : [])
-        VStack(alignment: .leading, spacing: 14) {
-            StatTiles(totals: summary.combined.totals)
-            InsightsCard(title: "Commits per \(summary.bucket.rawValue) by repository") {
-                Chart(stacked) { point in
-                    BarMark(
-                        x: .value("Period", point.start, unit: summary.bucket.calendarUnit),
-                        y: .value("Commits", point.commits)
-                    )
-                    .foregroundStyle(by: .value("Repository", point.series))
-                }
-                .chartForegroundStyleScale(domain: domain, range: range)
-                .chartLegend(position: .bottom, alignment: .leading)
-                .frame(height: 220)
-                .accessibilityLabel("Commits per \(summary.bucket.rawValue), stacked by repository")
-            }
-            InsightsCard(title: "Lines changed per \(summary.bucket.rawValue)") {
-                ChurnChart(points: summary.combined.timeline, bucket: summary.bucket)
-            }
-            InsightsCard(title: "Repositories") {
-                RepoSummaryTable(rows: summary.rows, select: select)
-            }
-            HStack(alignment: .top, spacing: 14) {
-                InsightsCard(title: "Authors") {
-                    RankedBars(rows: summary.combined.contributors.prefix(10).map { .init(label: $0.name, value: $0.commits, detail: "+\($0.added) −\($0.removed)") }, unit: "commits")
-                }
-                InsightsCard(title: "Behind upstream") {
-                    RankedBars(rows: summary.rows.filter { $0.behind > 0 }.sorted { $0.behind > $1.behind }.prefix(10).map { .init(label: $0.displayName, value: $0.behind, detail: $0.branch ?? "") }, unit: "commits behind")
-                }
-            }
-            .fixedSize(horizontal: false, vertical: true)
-            InsightsCard(title: "When commits happen") {
-                ActivityHeatmap(cells: summary.combined.activity)
-            }
-        }
-    }
 }
 
 private struct RepoSummaryTable: View {
@@ -389,27 +401,11 @@ private struct RepoSummaryTable: View {
 
 // MARK: - Pieces
 
-private struct InsightsCard<Content: View>: View {
-    let title: String
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).appFont(.headline)
-            content
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.18)))
-    }
-}
-
 private struct StatTiles: View {
     let totals: RepoStatsReport.Totals
 
     var body: some View {
-        HStack(spacing: 10) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
             tile("Commits", totals.commits.formatted(), "point.3.connected.trianglepath.dotted")
             tile("Authors", totals.authors.formatted(), "person.2")
             tile("Lines added", "+" + totals.added.formatted(), "plus.forwardslash.minus")
@@ -426,18 +422,18 @@ private struct StatTiles: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Text(value)
-                .appFont(.title2, weight: .semibold)
+                .appFont(.title3, weight: .semibold)
                 .monospacedDigit()
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .textSelection(.enabled)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.18)))
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.18)))
         .accessibilityElement(children: .combine)
     }
 }
@@ -469,6 +465,7 @@ private func point(at date: Date?, in points: [RepoStatsReport.TimelinePoint]) -
 private struct CommitsTimelineChart: View {
     let points: [RepoStatsReport.TimelinePoint]
     let bucket: RepoStatsBucket
+    var height: CGFloat = 200
     @State private var hovered: Date?
 
     var body: some View {
@@ -493,7 +490,7 @@ private struct CommitsTimelineChart: View {
         }
         .chartXSelection(value: $hovered)
         .chartYAxisLabel("Commits")
-        .frame(height: 200)
+        .frame(height: height)
         .accessibilityLabel("Commits per \(bucket.rawValue)")
     }
 }
@@ -501,6 +498,7 @@ private struct CommitsTimelineChart: View {
 private struct ChurnChart: View {
     let points: [RepoStatsReport.TimelinePoint]
     let bucket: RepoStatsBucket
+    var height: CGFloat = 200
     @State private var hovered: Date?
     @State private var scale = RepoChurnScale.automatic
 
@@ -591,7 +589,7 @@ private struct ChurnChart: View {
         }
         .chartXSelection(value: $hovered)
         .chartYAxisLabel(compressed ? "Lines (compressed)" : "Lines")
-        .frame(height: 200)
+        .frame(height: height)
         .accessibilityLabel("Lines added and removed per \(bucket.rawValue), \(compressed ? "compressed" : "linear") scale")
     }
 }
@@ -638,7 +636,7 @@ private struct RankedBars: View {
                             .appFont(.callout)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                            .frame(maxWidth: 200, alignment: .leading)
+                            .frame(maxWidth: 120, alignment: .leading)
                             .help(row.label)
                             .frame(maxHeight: .infinity)
                         GeometryReader { geo in
@@ -718,6 +716,7 @@ private struct FileActivityList: View {
 /// Commits by weekday and hour, darker for more. One hue, light to dark.
 private struct ActivityHeatmap: View {
     let cells: [RepoStatsReport.ActivityCell]
+    var height: CGFloat = 190
     @State private var hovered: RepoStatsReport.ActivityCell?
 
     private static let weekdays = Calendar.current.shortWeekdaySymbols
@@ -772,7 +771,7 @@ private struct ActivityHeatmap: View {
                         }
                 }
             }
-            .frame(height: 190)
+            .frame(height: height)
             .accessibilityLabel("Commits by weekday and hour")
             Text(hovered.map { "\(Self.weekdays[$0.weekday - 1]) \(String(format: "%02d:00", $0.hour)) · \($0.commits) commit\($0.commits == 1 ? "" : "s")" } ?? "Hover an hour to see its exact commit count")
                 .appFont(.caption)

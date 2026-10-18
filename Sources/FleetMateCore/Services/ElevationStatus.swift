@@ -32,7 +32,7 @@ public enum ElevationStatus: Sendable, Equatable {
         case .idle: return "Idle"
         case .starting: return "Starting"
         case .ready: return "Ready"
-        case .expired: return "Expired"
+        case .expired: return "Stopped"
         case .unknown: return "Unknown"
         }
     }

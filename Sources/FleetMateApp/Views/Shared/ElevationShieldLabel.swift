@@ -33,8 +33,9 @@ struct ElevationShieldLabel: View {
     private func tint(_ status: ElevationStatus) -> Color {
         switch status {
         case .ready: return .green
-        case .starting, .expired: return .orange
-        case .idle, .unknown: return .secondary
+        // A stopped session is not a sign-in problem: the next action
+        // restarts it, and the popover reports it as valid.
+        case .starting, .expired, .idle, .unknown: return .secondary
         }
     }
 

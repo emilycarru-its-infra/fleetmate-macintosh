@@ -271,7 +271,8 @@ public enum RepoDiscovery {
     ///   `[name "sub"]`, `key = value` with no quote, backslash, `;` or `#`
     ///   in the value, or a bare boolean `key`.
     /// - Keys: on `dataOnlyKeys`; `submodule.<x>.update` only as checkout,
-    ///   rebase, merge or none; `core.fsmonitor` only as false.
+    ///   rebase, merge or none; `core.fsmonitor` only as false;
+    ///   `commit.gpgsign` only as true or false.
     public static func configReview(_ data: Data) -> [String] {
         var found: [String] = []
         func flag(_ reason: String) { if !found.contains(reason) { found.append(reason) } }
@@ -353,7 +354,7 @@ public enum RepoDiscovery {
                  "sparsecheckout", "sparsecheckoutcone", "untrackedcache", "splitindex"],
         "remote": ["url", "fetch", "pushurl", "push", "tagopt", "prune", "prunetags", "mirror", "skipdefaultupdate"],
         "branch": ["remote", "merge", "rebase", "pushremote", "description"],
-        "user": ["*"], "pull": ["*"], "color": ["*"], "column": ["*"], "advice": ["*"], "i18n": ["*"],
+        "user": ["name", "email", "useconfigonly"], "pull": ["*"], "color": ["*"], "column": ["*"], "advice": ["*"], "i18n": ["*"],
         "fetch": ["prune", "prunetags", "writecommitgraph", "parallel"],
         "init": ["defaultbranch"],
         "extensions": ["objectformat", "refstorage"],
@@ -372,6 +373,11 @@ public enum RepoDiscovery {
         switch (section, subsection, key) {
         case ("core", nil, "fsmonitor"):
             return ["false", "no", "off", "0"].contains(value.lowercased())
+        case ("commit", nil, "gpgsign"):
+            // Only whether to sign. The program and key that do the signing
+            // (gpg.program, gpg.format, gpg.ssh.*, user.signingkey) stay off
+            // the list, so a clone that names one is still flagged.
+            return ["true", "false"].contains(value.lowercased())
         case ("lfs", nil, "repositoryformatversion"):
             return true
         case ("lfs", .some, "access"), ("lfs", .some, "locksverify"):

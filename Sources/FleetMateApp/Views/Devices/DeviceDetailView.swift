@@ -117,8 +117,6 @@ private struct IntuneDeviceSections: View {
             }
             deviceSummarySection
             Divider()
-            groupMembershipSection
-            Divider()
             enrollmentSection
             Divider()
             if !availableSecrets.isEmpty {
@@ -126,6 +124,8 @@ private struct IntuneDeviceSections: View {
                 Divider()
             }
             hardwareSection
+            Divider()
+            groupMembershipSection
             Divider()
             complianceSection
             Divider()

@@ -53,7 +53,17 @@ final class RepoWorkspaceModel: ObservableObject {
     }
 
     // Repository list
+    /// Tracked repositories the sidebar shows: hidden ones are left out.
     @Published private(set) var tracked: [RepoRecord] = []
+    /// Every tracked repository, hidden or not, for the sidebar's Edit mode.
+    @Published private(set) var allTracked: [RepoRecord] = []
+    /// The sidebar's Edit mode: visibility toggles and removal on each row.
+    @Published var isEditing = false
+    /// A Choose Folder scan or the launch pick-up of new clones is running.
+    @Published private(set) var isScanning = false
+    /// A clone whose deletion waits on the person's confirmation, with what
+    /// deleting it would lose.
+    @Published var pendingRemoval: (record: RepoRecord, check: CloneRemovalCheck)?
     @Published private(set) var statuses: [String: RepoStatus] = [:]
     @Published private(set) var isRefreshing = false
     @Published private(set) var isFetching: Set<String> = []
@@ -81,7 +91,7 @@ final class RepoWorkspaceModel: ObservableObject {
     @Published private(set) var actionErrorTitle = "Action failed"
     @Published private(set) var notice: String?
 
-    var selected: RepoRecord? { tracked.first { $0.id == selectedId } }
+    var selected: RepoRecord? { allTracked.first { $0.id == selectedId } }
     var selectedPath: String? { selected?.local?.path }
     var selectedStatus: RepoStatus? { selectedId.flatMap { statuses[$0] } }
 
@@ -92,13 +102,165 @@ final class RepoWorkspaceModel: ObservableObject {
     /// Rereads the registry. Cheap: one JSON file and the catalog cache.
     func reloadRecords() {
         do {
-            tracked = try manager.records().filter(\.isTracked)
+            allTracked = try manager.records().filter(\.isTracked)
                 .sorted { $0.key.displayName.localizedStandardCompare($1.key.displayName) == .orderedAscending }
+            tracked = allTracked.filter { !$0.isHidden }
         } catch {
             report(error)
         }
-        if let selectedId, !tracked.contains(where: { $0.id == selectedId }) { self.selectedId = nil }
+        if allTracked.isEmpty { isEditing = false }
+        let listed = isEditing ? allTracked : tracked
+        if let selectedId, !listed.contains(where: { $0.id == selectedId }) { self.selectedId = nil }
         if selectedId == nil { selectedId = tracked.first?.id }
+    }
+
+    /// What the sidebar lists: everything tracked while editing, otherwise
+    /// only what is not hidden.
+    var listed: [RepoRecord] { isEditing ? allTracked : tracked }
+
+    // MARK: - Folders and auto-tracking
+
+    /// Common code folders on this Mac that hold clones, offered in the
+    /// empty sidebar before any folder was chosen.
+    @Published private(set) var suggestedRoots: [String] = []
+
+    func loadSuggestedRoots() async {
+        guard let settings = try? manager.settings(), !settings.rootsChosen else {
+            suggestedRoots = []
+            return
+        }
+        suggestedRoots = await Task.detached(priority: .utility) {
+            RepoDiscovery.existingCommonLocations().filter { root in
+                !RepoDiscovery.findCheckouts(roots: [root], maxDepth: settings.scanDepth, skip: settings.skipDirectories).isEmpty
+            }
+        }.value
+    }
+
+    /// Asks for one or more folders, then tracks every clone in them. No
+    /// further questions: picking the folder is the decision.
+    func chooseFolders() async {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Choose"
+        panel.message = "Choose the folder where you keep your code. FleetMate tracks every git clone inside it."
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        await trackFolders(panel.urls.map(\.path))
+    }
+
+    func trackFolders(_ paths: [String]) async {
+        isScanning = true
+        defer { isScanning = false }
+        do {
+            let results = try await manager.trackFolders(paths)
+            let found = results.filter { $0.action == .linked || $0.action == .alreadyLinked }.count
+            registryChanged()
+            if found == 0 {
+                report(title: "No clones found", "There are no git clones in \(paths.map(repoAbbreviatedPath).joined(separator: ", ")). Clone a repository there, or choose another folder.")
+            } else {
+                flash("Tracking \(found) \(found == 1 ? "repository" : "repositories")")
+            }
+        } catch {
+            report(title: "Could not scan the folder", error)
+        }
+    }
+
+    /// Clones that appeared in the watched folders and wait for the person
+    /// to add or ignore them. Never tracked unasked: a clone's own config
+    /// is not trusted until someone chooses to work in it.
+    @Published private(set) var newClones: [DiscoveredCheckout] = []
+
+    /// Looks for new clones, when Settings has that on. Runs no git.
+    func findNewClones() async {
+        guard !isScanning else { return }
+        newClones = (try? await manager.newClones()) ?? []
+    }
+
+    /// "3 new repositories found in ~/Code", or the folders when several.
+    var newClonesSummary: String {
+        let roots = Set(newClones.compactMap { manager.scanRoot(containing: $0.path) }).sorted()
+        let count = newClones.count
+        let what = count == 1 ? "1 new repository" : "\(count) new repositories"
+        return roots.isEmpty ? "\(what) found" : "\(what) found in \(roots.joined(separator: ", "))"
+    }
+
+    func addNewClones() {
+        let found = newClones
+        newClones = []
+        do {
+            try manager.register(found, track: true)
+            registryChanged()
+            flash("Tracking \(found.count) \(found.count == 1 ? "repository" : "repositories")")
+        } catch {
+            report(error)
+        }
+    }
+
+    /// Links them untracked so they are not offered again; Settings ›
+    /// Repositories can still track any of them.
+    func ignoreNewClones() {
+        let found = newClones
+        newClones = []
+        do {
+            try manager.ignore(found)
+            NotificationCenter.default.post(name: .repoRegistryChanged, object: nil)
+        } catch {
+            report(error)
+        }
+    }
+
+    // MARK: - Edit mode
+
+    func setHidden(_ record: RepoRecord, _ hidden: Bool) {
+        do {
+            _ = try manager.setHidden(record.id, hidden)
+            registryChanged()
+        } catch {
+            report(error)
+        }
+    }
+
+    /// Untracks without touching the folder.
+    func stopTracking(_ record: RepoRecord) {
+        do {
+            _ = try manager.setTracked(record.id, false)
+            registryChanged()
+            flash("Stopped tracking \(record.key.displayName). The folder is still on disk.")
+        } catch {
+            report(error)
+        }
+    }
+
+    /// Checks the clone, then asks for confirmation with what would be lost.
+    func requestRemoval(_ record: RepoRecord) async {
+        do {
+            pendingRemoval = (record, try await manager.removalCheck(record.id))
+        } catch {
+            report(title: "Could not check \(record.key.displayName)", error)
+        }
+    }
+
+    /// After the person confirmed, with the losses in front of them.
+    func confirmRemoval() async {
+        guard let pending = pendingRemoval else { return }
+        pendingRemoval = nil
+        do {
+            try await manager.removeClone(pending.record.id, force: true)
+            if selectedId == pending.record.id { selectedId = nil }
+            registryChanged()
+            flash("Moved \(pending.record.key.name) to the Trash")
+        } catch {
+            report(title: "Could not delete \(pending.record.key.displayName)", error)
+        }
+    }
+
+    /// Reloads here and tells Settings and any other listener.
+    private func registryChanged() {
+        reloadRecords()
+        NotificationCenter.default.post(name: .repoRegistryChanged, object: nil)
+        Task { await refreshStatuses() }
     }
 
     /// Local status of every tracked repository: no network.
@@ -106,12 +268,12 @@ final class RepoWorkspaceModel: ObservableObject {
         guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
-        let results = await manager.status(for: tracked)
+        let results = await manager.status(for: allTracked)
         statuses = Dictionary(results.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     }
 
     func fetch(_ ids: [String]) async {
-        let records = tracked.filter { ids.contains($0.id) }
+        let records = allTracked.filter { ids.contains($0.id) }
         isFetching.formUnion(ids)
         let results = await manager.run(.fetch, on: records)
         isFetching.subtract(ids)

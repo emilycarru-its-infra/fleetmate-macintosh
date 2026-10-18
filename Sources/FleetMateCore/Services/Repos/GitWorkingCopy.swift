@@ -302,8 +302,27 @@ public struct GitWorkingCopy: Sendable {
 
     /// Runs git in this checkout. Prompts are disabled: with no terminal to
     /// answer them, a credential prompt would otherwise hang the call.
+    ///
+    /// Every call turns off `core.fsmonitor`, which a clone's own config can
+    /// point at any program. Reads and background refreshes also send hooks
+    /// to the null device; only the commands someone runs on purpose (commit,
+    /// push, pull, merge, rebase, switch, checkout) keep the clone's hooks,
+    /// since teams rely on those.
     public func git(_ arguments: [String], extraEnvironment: [String: String] = [:]) async -> ProcessOutput {
-        await GitWorkingCopy.runGit(["-C", path] + arguments, extraEnvironment: extraEnvironment)
+        await GitWorkingCopy.runGit(["-C", path] + Self.safetyConfig(for: arguments) + arguments, extraEnvironment: extraEnvironment)
+    }
+
+    /// Commands that keep the clone's hooks.
+    static let hookCommands: Set<String> = ["commit", "push", "pull", "merge", "rebase", "switch", "checkout", "am", "cherry-pick", "revert"]
+
+    /// `-c` options that stop a clone's config from running code during
+    /// inspection.
+    static func safetyConfig(for arguments: [String]) -> [String] {
+        var config = ["-c", "core.fsmonitor=false"]
+        if !hookCommands.contains(arguments.first ?? "") {
+            config += ["-c", "core.hooksPath=/dev/null"]
+        }
+        return config
     }
 
     static func runGit(_ arguments: [String], extraEnvironment: [String: String] = [:]) async -> ProcessOutput {

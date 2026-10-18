@@ -11,6 +11,7 @@ enum OnboardingStep: String, Identifiable {
     case tdx
     case devops
     case development
+    case repositories
     case manage
     case summary
 
@@ -25,6 +26,7 @@ enum OnboardingStep: String, Identifiable {
         case .tdx:             "Tickets"
         case .devops:          "Projects"
         case .development:     "Development"
+        case .repositories:    "Repositories"
         case .manage:          "Manage"
         case .summary:         "Summary"
         }
@@ -77,8 +79,17 @@ class OnboardingWizardState: ObservableObject {
     // Development: where repositories are cloned and found, and which GitHub
     // owners beyond your own memberships to list.
     @Published var repoCloneRoot = RepoSettings.default.cloneRoot
-    @Published var repoScanRoot = RepoSettings.default.scanRoots.first ?? ""
     @Published var repoGitHubOwners = ""
+
+    // Repositories: the folders that hold clones, what they hold, and which
+    // of those the person unticked. Paths, since a clone is one folder.
+    @Published var repoRoots: [String] = []
+    @Published var repoPreview: [DiscoveredCheckout] = []
+    @Published var repoDeselected: Set<String> = []
+    @Published var isScanningRepos = false
+    @Published var catalogRepos: [CatalogRepo] = []
+    @Published var catalogToClone: Set<String> = []
+    var repoRootsPrepared = false
 
     // Graph fields
     @Published var graphTenantId = ""
@@ -128,7 +139,7 @@ class OnboardingWizardState: ObservableObject {
         if enableSnipe  { s.append(.snipe) }
         if enableTdx    { s.append(.tdx) }
         if enableDevOps { s.append(.devops) }
-        if enableDevelopment { s.append(.development) }
+        if enableDevelopment { s.append(.development); s.append(.repositories) }
         if enableManage { s.append(.manage) }
         s.append(.summary)
         return s
@@ -205,7 +216,6 @@ class OnboardingWizardState: ObservableObject {
     /// Pre-fill Development from the repository settings already saved.
     func populate(repoSettings: RepoSettings) {
         repoCloneRoot = repoSettings.cloneRoot
-        repoScanRoot = repoSettings.scanRoots.first ?? repoScanRoot
         repoGitHubOwners = repoSettings.gitHubOwners.joined(separator: ", ")
     }
 
@@ -363,6 +373,8 @@ struct OnboardingWizardView: View {
                     OnboardingDevOpsStep()
                 case .development:
                     OnboardingDevelopmentStep()
+                case .repositories:
+                    OnboardingRepositoriesStep()
                 case .summary:
                     OnboardingSummaryStep(onFinish: finish)
                 }
@@ -463,16 +475,15 @@ struct OnboardingWizardView: View {
     /// `fleetmate repos` and Settings ▸ Repositories use.
     private func saveRepoSettings() {
         let clone = wizardState.repoCloneRoot.trimmingCharacters(in: .whitespaces)
-        let scan = wizardState.repoScanRoot.trimmingCharacters(in: .whitespaces)
         let owners = wizardState.repoGitHubOwners
             .split(whereSeparator: { $0 == "," || $0.isWhitespace })
             .map(String.init)
         do {
             try RepoManager().updateSettings { settings in
                 if !clone.isEmpty { settings.cloneRoot = clone }
-                if !scan.isEmpty, !settings.scanRoots.contains(scan) { settings.scanRoots.insert(scan, at: 0) }
                 settings.gitHubOwners = owners
             }
+            wizardState.saveRepositories()
             NotificationCenter.default.post(name: .repoRegistryChanged, object: nil)
         } catch {
             dbg.error("[Wizard] Saving repository settings failed: \(error.localizedDescription)", category: "wizard")

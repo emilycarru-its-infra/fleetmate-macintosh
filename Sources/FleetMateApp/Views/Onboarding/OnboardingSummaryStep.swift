@@ -53,7 +53,9 @@ struct OnboardingSummaryStep: View {
                             icon: FleetModule.development.icon,
                             title: "Development",
                             rows: [("Clone into", wizardState.repoCloneRoot),
-                                   ("Find checkouts in", wizardState.repoScanRoot)]
+                                   ("Watch folders", wizardState.repoRoots.isEmpty ? "None yet" : wizardState.repoRoots.joined(separator: ", ")),
+                                   ("Track", "\(wizardState.selectedPreviewCount) of \(wizardState.repoPreview.count) clones"
+                                        + (wizardState.catalogToClone.isEmpty ? "" : ", clone \(wizardState.catalogToClone.count) more"))]
                         )
                     }
                     if wizardState.enableManage {

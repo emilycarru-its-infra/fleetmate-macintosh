@@ -317,6 +317,8 @@ public enum RepoError: LocalizedError, Equatable {
     case gitFailed(command: String, message: String)
     case nothingToCommit
     case invalidArgument(String)
+    /// Deleting the clone would lose the listed work.
+    case wouldLoseWork(String, [String])
 
     public var errorDescription: String? {
         switch self {
@@ -340,6 +342,8 @@ public enum RepoError: LocalizedError, Equatable {
             "Nothing to commit."
         case .invalidArgument(let message):
             message
+        case .wouldLoseWork(let name, let losses):
+            "Deleting \(name) would lose:\n  " + losses.joined(separator: "\n  ") + "\nCommit and push first, or pass --force to move it to the Trash anyway."
         }
     }
 }

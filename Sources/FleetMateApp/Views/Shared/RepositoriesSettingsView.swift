@@ -177,11 +177,17 @@ final class RepositoriesSettingsModel: ObservableObject {
         }
     }
 
-    func saveSettings() {
-        let updated = settings
+    /// Saving the locations is choosing them: from then on, with the toggle
+    /// on, the Repos sidebar offers new clones in the watched folders.
+    func saveSettings() async {
+        var updated = settings
+        updated.scanRoots = updated.scanRoots.map(RepoSettings.abbreviate)
+        updated.rootsChosen = true
         do {
             try manager.updateSettings { $0 = updated }
+            settings = updated
             savedSettings = updated
+            registryChanged()
         } catch {
             self.error = message(error)
         }
@@ -253,8 +259,10 @@ struct RepositoriesSettingsView: View {
                     .buttonStyle(.borderless)
                 }
             }
+            Toggle("Look for new clones in these folders", isOn: $model.settings.autoTrackNewClones)
+                .help("When Repos opens, clones that appeared in a watched folder are offered in the sidebar to add. Nothing is tracked until you add it.")
             HStack {
-                TextField("Folder to scan for clones", text: $newScanRoot)
+                TextField("Folder to watch for clones", text: $newScanRoot)
                     .onSubmit(addScanRoot)
                 Button("Add", action: addScanRoot)
                     .disabled(newScanRoot.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -278,16 +286,16 @@ struct RepositoriesSettingsView: View {
                 }
                 if model.isDiscovering { ProgressView().controlSize(.small) }
                 Spacer()
-                Button("Save") { model.saveSettings() }
-                    .disabled(model.settings == model.savedSettings)
+                Button("Save") { Task { await model.saveSettings() } }
+                    .disabled(model.settings == model.savedSettings && model.settings.rootsChosen)
             }
             if let summary = model.discoverySummary {
                 Text(summary).appFont(.caption).foregroundStyle(.secondary)
             }
         } header: {
-            Text("Locations")
+            Text("Watched Folders")
         } footer: {
-            Text("New clones go to <clone root>/AzDevOps/<Project>/<Repo> or <clone root>/GitHub/<owner>/<repo>. Finding clones scans the folders above \(model.settings.scanDepth) levels deep and links each checkout by its origin. The same settings drive `fleetmate repos`.")
+            Text("New clones go to <clone root>/AzDevOps/<Project>/<Repo> or <clone root>/GitHub/<owner>/<repo>. Watched folders are scanned \(model.settings.scanDepth) levels deep, skipping build output, package folders and worktrees; each clone is linked by its origin, and folders listed in VS Code workspace files are included. The same settings drive `fleetmate repos`.")
                 .settingsFooter()
         }
     }

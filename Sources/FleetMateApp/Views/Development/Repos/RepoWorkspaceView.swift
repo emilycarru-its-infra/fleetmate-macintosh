@@ -85,7 +85,10 @@ struct ReposListView: View {
         .labelsHidden()
         .controlSize(.regular)
         switch style {
-        case .segmented: picker.pickerStyle(.segmented).fixedSize()
+        // Ideal width stays the labels' width, so ViewThatFits can still
+        // fall back to the menu; when it fits, the control fills the
+        // column and the segments share it equally.
+        case .segmented: picker.pickerStyle(.segmented).frame(maxWidth: .infinity)
         case .menu: picker.pickerStyle(.menu).frame(maxWidth: .infinity)
         }
     }

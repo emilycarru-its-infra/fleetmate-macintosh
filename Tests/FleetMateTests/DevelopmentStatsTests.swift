@@ -78,4 +78,18 @@ final class DevelopmentStatsTests: XCTestCase {
         let days = DevelopmentStats.runsPerDay(runs, days: 7, now: now, calendar: calendar)
         XCTAssertEqual(days.reduce(0) { $0 + $1.value }, 2)
     }
+
+    func testWeekdaysFollowTheCalendarsFirstDay() {
+        var monday = calendar
+        monday.firstWeekday = 2
+        let days = DevelopmentStats.weekdays([now], calendar: monday)
+        XCTAssertEqual(days.count, 7)
+        XCTAssertEqual(days.first?.label, monday.shortWeekdaySymbols[1])
+        XCTAssertEqual(days.reduce(0) { $0 + $1.value }, 1)
+    }
+
+    func testPerWeekIsContinuous() {
+        let weeks = DevelopmentStats.perWeek([now, now.addingTimeInterval(-14 * 86_400)], weeks: 4, now: now, calendar: calendar)
+        XCTAssertEqual(weeks.map(\.value), [0, 1, 0, 1])
+    }
 }

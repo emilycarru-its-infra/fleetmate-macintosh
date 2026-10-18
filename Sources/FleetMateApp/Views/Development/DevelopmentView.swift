@@ -771,10 +771,14 @@ private struct DevelopmentContent: View {
     private var listWidth: CGFloat { model.segment == .repos ? 280 : 470 }
 
     var body: some View {
+        GeometryReader { geometry in
         VStack(spacing: 0) {
             // Each segment's own graphs: Repos carries the repository
-            // statistics, the others summarise the list below them.
-            DevelopmentWidgetsSection(model: model, knowledge: appState.knowledge)
+            // statistics, the others summarise the list below them. The
+            // workspace owns the screen: the strip takes at most two fifths
+            // of the tab and scrolls past that.
+            DevelopmentWidgetsSection(model: model, knowledge: appState.knowledge,
+                                      maxHeight: max(180, geometry.size.height * 0.4))
             HStack(spacing: 0) {
                 // Leading-aligned and clipped: content wider than the column
                 // must never centre itself and push the list off the window.
@@ -785,6 +789,7 @@ private struct DevelopmentContent: View {
                 detailPane
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
         }
         .toolbar { developmentToolbar }
         // Filters the list in view by title, repository, author, branch or

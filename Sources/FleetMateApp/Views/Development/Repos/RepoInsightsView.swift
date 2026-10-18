@@ -113,15 +113,19 @@ final class RepoInsightsModel: ObservableObject {
 struct RepoInsightsWidgets: View {
     @ObservedObject var model: RepoWorkspaceModel
     @ObservedObject private var insights: RepoInsightsModel
+    /// The strip never takes more than this, so the workspace keeps the screen.
+    let maxHeight: CGFloat?
     @State private var refreshToken = 0
+    @Environment(\.appFontScale) private var fontScale
 
-    /// Cards in the strip are capped; charts are sized to sit inside them.
+    /// The least a chart is given; a taller row gives it more.
     static let chartHeight: CGFloat = 130
-    private static let cardHeight: CGFloat = 270
+    private static let cardHeight: CGFloat = 320
 
-    init(model: RepoWorkspaceModel) {
+    init(model: RepoWorkspaceModel, maxHeight: CGFloat? = nil) {
         self.model = model
         self.insights = model.insights
+        self.maxHeight = maxHeight
     }
 
     private var loadKey: String {
@@ -129,9 +133,9 @@ struct RepoInsightsWidgets: View {
     }
 
     var body: some View {
-        WidgetsSection(tab: .development) {
+        WidgetsSection(tab: .development, maxHeight: maxHeight) {
             controls
-                .widgetSpan(Self.fullRow)
+                .widgetFullRow()
                 .task(id: loadKey) {
                     await insights.load(manager: model.manager, selected: model.selected, tracked: model.tracked)
                 }
@@ -139,7 +143,7 @@ struct RepoInsightsWidgets: View {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .widgetSpan(Self.fullRow)
+                    .widgetFullRow()
             }
             switch insights.scope {
             case .repository:
@@ -158,9 +162,6 @@ struct RepoInsightsWidgets: View {
         }
     }
 
-    /// Wider than any row, so the layout gives it the whole row.
-    private static let fullRow = 99
-
     @ViewBuilder
     private func placeholder(_ message: String?) -> some View {
         Group {
@@ -170,7 +171,7 @@ struct RepoInsightsWidgets: View {
                 ProgressView("Reading history…").frame(maxWidth: .infinity).padding(.vertical, 20)
             }
         }
-        .widgetSpan(Self.fullRow)
+        .widgetFullRow()
     }
 
     // MARK: One repository
@@ -180,6 +181,7 @@ struct RepoInsightsWidgets: View {
         WidgetCard(title: "Totals", maxHeight: Self.cardHeight) {
             StatTiles(totals: report.totals)
         }
+        .widgetSpan(2)
         WidgetCard(title: "Commits per \(report.bucket.rawValue)", maxHeight: Self.cardHeight) {
             CommitsTimelineChart(points: report.timeline, bucket: report.bucket, height: Self.chartHeight)
         }
@@ -246,6 +248,7 @@ struct RepoInsightsWidgets: View {
         WidgetCard(title: "Totals", maxHeight: Self.cardHeight) {
             StatTiles(totals: summary.combined.totals)
         }
+        .widgetSpan(2)
         WidgetCard(title: "Commits per \(summary.bucket.rawValue) by repository", maxHeight: Self.cardHeight) {
             Chart(stacked(summary)) { point in
                 BarMark(
@@ -255,9 +258,22 @@ struct RepoInsightsWidgets: View {
                 .foregroundStyle(by: .value("Repository", point.series))
             }
             .chartForegroundStyleScale(domain: domain, range: range)
-            .chartLegend(position: .bottom, alignment: .leading)
-            .frame(height: Self.chartHeight + 40)
+            .chartLegend(.hidden)
+            .chartXAxis {
+                AxisMarks { _ in
+                    AxisGridLine()
+                    AxisValueLabel().font(AppTextStyle.chartLabel(fontScale))
+                }
+            }
+            .chartYAxis {
+                AxisMarks { _ in
+                    AxisGridLine()
+                    AxisValueLabel().font(AppTextStyle.chartLabel(fontScale))
+                }
+            }
+            .frame(minHeight: Self.chartHeight)
             .accessibilityLabel("Commits per \(summary.bucket.rawValue), stacked by repository")
+            WidgetChartLegend(items: Array(zip(domain, range)).map { ($0.0, $0.1) })
         }
         .widgetSpan(2)
         WidgetCard(title: "Lines changed per \(summary.bucket.rawValue)", maxHeight: Self.cardHeight) {
@@ -405,14 +421,19 @@ private struct StatTiles: View {
     let totals: RepoStatsReport.Totals
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)], spacing: 6) {
-            tile("Commits", totals.commits.formatted(), "point.3.connected.trianglepath.dotted")
-            tile("Authors", totals.authors.formatted(), "person.2")
-            tile("Lines added", "+" + totals.added.formatted(), "plus.forwardslash.minus")
-            tile("Lines removed", "−" + totals.removed.formatted(), "minus")
-            tile("Files touched", totals.filesTouched.formatted(), "doc.on.doc")
-            tile("Last commit", totals.lastCommit.map { $0.formatted(.relative(presentation: .named)) } ?? "—", "clock")
+        Grid(horizontalSpacing: 6, verticalSpacing: 6) {
+            GridRow {
+                tile("Commits", totals.commits.formatted(), "point.3.connected.trianglepath.dotted")
+                tile("Authors", totals.authors.formatted(), "person.2")
+                tile("Files touched", totals.filesTouched.formatted(), "doc.on.doc")
+            }
+            GridRow {
+                tile("Lines added", "+" + totals.added.formatted(), "plus.forwardslash.minus")
+                tile("Lines removed", "−" + totals.removed.formatted(), "minus")
+                tile("Last commit", totals.lastCommit.map { $0.formatted(.relative(presentation: .named)) } ?? "—", "clock")
+            }
         }
+        .frame(maxHeight: .infinity)
     }
 
     private func tile(_ title: String, _ value: String, _ icon: String) -> some View {
@@ -426,12 +447,11 @@ private struct StatTiles: View {
                 .monospacedDigit()
                 .foregroundStyle(.primary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
                 .textSelection(.enabled)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.18)))
         .accessibilityElement(children: .combine)
@@ -467,6 +487,7 @@ private struct CommitsTimelineChart: View {
     let bucket: RepoStatsBucket
     var height: CGFloat = 200
     @State private var hovered: Date?
+    @Environment(\.appFontScale) private var fontScale
 
     var body: some View {
         let selected = point(at: hovered, in: points)
@@ -489,8 +510,19 @@ private struct CommitsTimelineChart: View {
             }
         }
         .chartXSelection(value: $hovered)
-        .chartYAxisLabel("Commits")
-        .frame(height: height)
+        .chartXAxis {
+            AxisMarks { _ in
+                AxisGridLine()
+                AxisValueLabel().font(AppTextStyle.chartLabel(fontScale))
+            }
+        }
+        .chartYAxis {
+            AxisMarks { _ in
+                AxisGridLine()
+                AxisValueLabel().font(AppTextStyle.chartLabel(fontScale))
+            }
+        }
+        .frame(minHeight: height)
         .accessibilityLabel("Commits per \(bucket.rawValue)")
     }
 }
@@ -501,6 +533,7 @@ private struct ChurnChart: View {
     var height: CGFloat = 200
     @State private var hovered: Date?
     @State private var scale = RepoChurnScale.automatic
+    @Environment(\.appFontScale) private var fontScale
 
     private var effectiveScale: RepoChurnScale {
         scale == .automatic ? .recommended(for: points) : scale
@@ -532,6 +565,7 @@ private struct ChurnChart: View {
             }
             .help("Compressed uses a signed logarithmic scale so large changes do not flatten ordinary activity. Hover shows exact line counts.")
             chart
+            WidgetChartLegend(items: [("Added", InsightsPalette.added), ("Removed", InsightsPalette.removed)])
         }
     }
 
@@ -567,7 +601,13 @@ private struct ChurnChart: View {
             }
         }
         .chartForegroundStyleScale(["Added": InsightsPalette.added, "Removed": InsightsPalette.removed])
-        .chartLegend(position: .bottom, alignment: .leading)
+        .chartLegend(.hidden)
+        .chartXAxis {
+            AxisMarks { _ in
+                AxisGridLine()
+                AxisValueLabel().font(AppTextStyle.chartLabel(fontScale))
+            }
+        }
         .chartYAxis {
             if compressed {
                 AxisMarks(values: compressedTicks) { value in
@@ -575,6 +615,7 @@ private struct ChurnChart: View {
                     AxisValueLabel {
                         if let position = value.as(Double.self) {
                             Text((pow(10, abs(position)) - 1).rounded().formatted(.number.notation(.compactName)))
+                                .font(AppTextStyle.chartLabel(fontScale))
                         }
                     }
                 }
@@ -582,14 +623,15 @@ private struct ChurnChart: View {
                 AxisMarks(values: .automatic(desiredCount: 5)) { value in
                     AxisGridLine()
                     AxisValueLabel {
-                        if let lines = value.as(Double.self) { Text(abs(lines).formatted(.number.notation(.compactName))) }
+                        if let lines = value.as(Double.self) {
+                            Text(abs(lines).formatted(.number.notation(.compactName))).font(AppTextStyle.chartLabel(fontScale))
+                        }
                     }
                 }
             }
         }
         .chartXSelection(value: $hovered)
-        .chartYAxisLabel(compressed ? "Lines (compressed)" : "Lines")
-        .frame(height: height)
+        .frame(minHeight: height)
         .accessibilityLabel("Lines added and removed per \(bucket.rawValue), \(compressed ? "compressed" : "linear") scale")
     }
 }
@@ -718,6 +760,7 @@ private struct ActivityHeatmap: View {
     let cells: [RepoStatsReport.ActivityCell]
     var height: CGFloat = 190
     @State private var hovered: RepoStatsReport.ActivityCell?
+    @Environment(\.appFontScale) private var fontScale
 
     private static let weekdays = Calendar.current.shortWeekdaySymbols
 
@@ -744,14 +787,14 @@ private struct ActivityHeatmap: View {
             .chartYAxis {
                 AxisMarks(position: .leading, values: Array(1...7)) { value in
                     AxisValueLabel {
-                        if let weekday = value.as(Int.self) { Text(Self.weekdays[weekday - 1]) }
+                        if let weekday = value.as(Int.self) { Text(Self.weekdays[weekday - 1]).font(AppTextStyle.chartLabel(fontScale)) }
                     }
                 }
             }
             .chartXAxis {
                 AxisMarks(values: [0, 3, 6, 9, 12, 15, 18, 21]) { value in
                     AxisValueLabel {
-                        if let hour = value.as(Int.self) { Text(String(format: "%02d:00", hour)) }
+                        if let hour = value.as(Int.self) { Text(String(format: "%02d:00", hour)).font(AppTextStyle.chartLabel(fontScale)) }
                     }
                 }
             }
@@ -771,7 +814,7 @@ private struct ActivityHeatmap: View {
                         }
                 }
             }
-            .frame(height: height)
+            .frame(minHeight: height)
             .accessibilityLabel("Commits by weekday and hour")
             Text(hovered.map { "\(Self.weekdays[$0.weekday - 1]) \(String(format: "%02d:00", $0.hour)) · \($0.commits) commit\($0.commits == 1 ? "" : "s")" } ?? "Hover an hour to see its exact commit count")
                 .appFont(.caption)

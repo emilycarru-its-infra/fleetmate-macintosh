@@ -87,6 +87,32 @@ public enum DevelopmentStats {
         }
     }
 
+    /// Counts by weekday, in the calendar's week order (Monday first where
+    /// the week starts on Monday), every day present.
+    public static func weekdays(_ dates: [Date], calendar: Calendar = .current) -> [Count] {
+        var counts = Array(repeating: 0, count: 7)
+        for date in dates { counts[calendar.component(.weekday, from: date) - 1] += 1 }
+        let symbols = calendar.shortWeekdaySymbols
+        return (0..<7).map { offset in
+            let index = (calendar.firstWeekday - 1 + offset) % 7
+            return Count(label: symbols[index], value: counts[index])
+        }
+    }
+
+    /// One entry per week for the last `weeks` weeks, oldest first, keyed by
+    /// the week's first day; empty weeks included.
+    public static func perWeek(_ dates: [Date], weeks: Int, now: Date = Date(), calendar: Calendar = .current) -> [DayCount] {
+        guard let thisWeek = calendar.dateInterval(of: .weekOfYear, for: now)?.start else { return [] }
+        var counts: [Date: Int] = [:]
+        for date in dates {
+            guard let start = calendar.dateInterval(of: .weekOfYear, for: date)?.start else { continue }
+            counts[start, default: 0] += 1
+        }
+        return (0..<weeks).reversed().compactMap { offset in
+            calendar.date(byAdding: .weekOfYear, value: -offset, to: thisWeek).map { DayCount(day: $0, value: counts[$0] ?? 0) }
+        }
+    }
+
     // MARK: Pipelines
 
     /// A run's result as the graphs group it: queued and running together,

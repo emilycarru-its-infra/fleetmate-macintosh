@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// A persistent top-edge strip holds labeled visibility and size controls.
+/// A persistent top-edge strip holds icon controls for visibility and size.
 /// The terminal and strip behave as one split: drag the divider down to the
 /// bottom and the terminal folds into the strip, drag the strip up (or click
 /// it) and it opens at the height it had. Double-clicking the divider closes
@@ -80,9 +80,10 @@ struct AgentTerminalDock: View {
     }
 }
 
-/// The bar on the terminal's top edge: the agent, the sessions, and the
-/// controls to show, hide or fill the window with the terminal. Plain text
-/// throughout; nothing here is a badge.
+/// The bar on the terminal's top edge: icon controls to split, fill the
+/// window or hide, then the agent and its sessions. Clicking anywhere on the
+/// bar while the terminal is closed opens it in the mode it was last used
+/// in. Plain text throughout; nothing here is a badge.
 struct AgentTerminalStrip: View {
     @ObservedObject var store: AgentTerminalStore
     let defaultLaunch: AgentLaunch
@@ -102,11 +103,12 @@ struct AgentTerminalStrip: View {
         .background(hovered && !store.isShowing ? Color.secondary.opacity(0.08) : Color.secondary.opacity(0.04))
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
+        .onTapGesture { if !store.isShowing { store.expand(defaultLaunch: defaultLaunch) } }
         .gesture(
             DragGesture(minimumDistance: 4)
                 .onEnded { value in
                     if value.translation.height < -8, !store.isShowing {
-                        store.show(defaultLaunch: defaultLaunch)
+                        store.expand(defaultLaunch: defaultLaunch)
                     } else if value.translation.height > 8, store.isShowing {
                         store.hide()
                     }
@@ -115,12 +117,16 @@ struct AgentTerminalStrip: View {
         .help(store.isShowing ? "" : "Show the Agent Terminal (⌃`) — click or drag up")
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Agent Terminal, \(status)")
+        .accessibilityAction(named: store.isShowing ? "Hide Agent Terminal" : "Show Agent Terminal", toggleShown)
     }
 
     private func stripContent(details: Bool) -> some View {
         HStack(spacing: 8) {
+            controls
+            Divider().frame(height: 14)
             Image(systemName: ContentView.agentSymbol)
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             if details { Text("Agent").appFont(.caption, weight: .semibold).fixedSize() }
             if details {
                 Text(defaultLaunch.label).appFont(.caption).foregroundStyle(.secondary).fixedSize()
@@ -141,35 +147,45 @@ struct AgentTerminalStrip: View {
             .accessibilityLabel(store.isShowing ? "Collapse terminal" : "Open terminal")
             .help("Click to show or hide the terminal; drag to open or close")
             Spacer(minLength: 8)
-            Button("Split View") {
-                store.show(defaultLaunch: defaultLaunch)
-                store.isMaximized = false
-                panelHeight = max(120, ((NSApp.keyWindow?.contentLayoutRect.height ?? 800) - 36) / 2)
-            }
-            .help("Show FleetMate and the terminal at half height")
-            Button(action: toggleFullWindow) {
-                Label(isFullWindow ? "Restore" : "Full Window",
-                      systemImage: isFullWindow ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-            }
-            .help(isFullWindow ? "Restore the terminal to its height (⇧⌘↩)" : "Fill the window with the terminal (⇧⌘↩)")
-            Button(action: toggleShown) {
-                Label(store.isShowing ? "Hide Terminal" : "Show Terminal",
-                      systemImage: store.isShowing ? "chevron.down" : "chevron.up")
-            }
-            .help(store.isShowing ? "Hide the Agent Terminal (⌃`)" : "Show the Agent Terminal (⌃`)")
         }
-        .labelStyle(.titleAndIcon)
         .fixedSize(horizontal: false, vertical: true)
         .buttonStyle(.borderless)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
         .frame(height: Self.height - 1)
     }
 
+    /// Split, full window and show/hide as icon buttons. The mode the
+    /// terminal is in is drawn in the accent colour, as a panel toggle is.
+    private var controls: some View {
+        HStack(spacing: 2) {
+            StripIconButton(symbol: "rectangle.split.1x2",
+                            label: "Split View",
+                            help: "Show FleetMate and the terminal at half height",
+                            isOn: store.isShowing && !store.isMaximized,
+                            action: splitView)
+            StripIconButton(symbol: isFullWindow ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                            label: isFullWindow ? "Restore Terminal Height" : "Full Window",
+                            help: isFullWindow ? "Restore the terminal to its height (⇧⌘↩)" : "Fill the window with the terminal (⇧⌘↩)",
+                            isOn: isFullWindow,
+                            action: toggleFullWindow)
+            StripIconButton(symbol: store.isShowing ? "chevron.down" : "chevron.up",
+                            label: store.isShowing ? "Hide Terminal" : "Show Terminal",
+                            help: store.isShowing ? "Hide the Agent Terminal (⌃`)" : "Show the Agent Terminal in its last mode (⌃`)",
+                            isOn: false,
+                            action: toggleShown)
+        }
+    }
 
     private var isFullWindow: Bool { store.isShowing && store.isMaximized }
 
+    private func splitView() {
+        store.show(defaultLaunch: defaultLaunch)
+        store.isMaximized = false
+        panelHeight = max(120, ((NSApp.keyWindow?.contentLayoutRect.height ?? 800) - 36) / 2)
+    }
+
     private func toggleShown() {
-        if store.isShowing { store.hide() } else { store.show(defaultLaunch: defaultLaunch) }
+        if store.isShowing { store.hide() } else { store.expand(defaultLaunch: defaultLaunch) }
     }
 
     private func toggleFullWindow() {
@@ -204,12 +220,43 @@ struct AgentTerminalMenuItems: View {
             if terminals.isShowing {
                 terminals.hide()
             } else {
-                terminals.show(defaultLaunch: defaultLaunch())
+                terminals.expand(defaultLaunch: defaultLaunch())
             }
         } label: {
             Label(terminals.isShowing ? "Hide Agent Terminal" : "Show Agent Terminal",
                   systemImage: ContentView.agentSymbol)
         }
         .keyboardShortcut("`", modifiers: .control)
+    }
+}
+
+/// A borderless icon button on the strip, with its name as tooltip and
+/// accessibility label. `isOn` marks the mode the terminal is in.
+private struct StripIconButton: View {
+    let symbol: String
+    let label: String
+    let help: String
+    let isOn: Bool
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .appFont(.caption, weight: .medium)
+                .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                .frame(width: 24, height: 22)
+                .background(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(isOn ? Color.accentColor.opacity(0.15)
+                              : hovered ? Color.primary.opacity(0.08) : .clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .help(help)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 }

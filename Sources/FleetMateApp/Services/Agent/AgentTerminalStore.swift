@@ -94,8 +94,77 @@ final class FleetMateTerminalView: LocalProcessTerminalView {
     var onShortcut: ((TerminalShortcut) -> Void)?
 
     override func dataReceived(slice: ArraySlice<UInt8>) {
+        let requests = colorRequests.scan(slice)
         super.dataReceived(slice: slice)
+        for request in requests { handleColorRequest(request) }
         onOutput?()
+    }
+
+    // MARK: Colours
+
+    /// Requests in the output that SwiftTerm does not answer itself.
+    private var colorRequests = TerminalColorSchemeRequests()
+    /// Whether the program asked (mode 2031) to hear when the scheme changes.
+    private var reportsColorScheme = false
+    /// The scheme the terminal is drawn and reports in; nil until first applied.
+    private(set) var colorScheme: TerminalColorScheme?
+    private var appAppearanceObservation: NSKeyValueObservation?
+
+    /// Draw in the app's light or dark appearance, and follow it from now on.
+    /// A hidden session follows too, so a program asking while it is out of
+    /// sight still hears the colours the person will see.
+    func followAppearance() {
+        let terminal = getTerminal()
+        // Programs pick 256-colour indices expecting xterm's values; the
+        // palette derived from the background inverts them on a light one.
+        terminal.ansi256PaletteStrategy = .xterm
+        applyColorScheme()
+        appAppearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
+            Task { @MainActor in self?.applyColorScheme() }
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyColorScheme()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyColorScheme()
+    }
+
+    /// Set the background, foreground and ANSI colours for the current
+    /// appearance. SwiftTerm answers OSC 10 and 11 queries from these, so a
+    /// program asking after a switch hears the new colours; one that turned on
+    /// mode 2031 is also told the scheme changed.
+    func applyColorScheme() {
+        let appearance = window?.effectiveAppearance ?? NSApp.effectiveAppearance
+        let scheme: TerminalColorScheme = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .dark : .light
+        guard scheme != colorScheme else { return }
+        let changed = colorScheme != nil
+        colorScheme = scheme
+        var background = NSColor.white, foreground = NSColor.black
+        appearance.performAsCurrentDrawingAppearance {
+            background = NSColor.textBackgroundColor.usingColorSpace(.deviceRGB) ?? background
+            foreground = NSColor.textColor.usingColorSpace(.deviceRGB) ?? foreground
+        }
+        nativeBackgroundColor = background
+        nativeForegroundColor = foreground
+        layer?.backgroundColor = background.cgColor
+        installColors(scheme.ansiPalette.map {
+            SwiftTerm.Color(red: UInt16($0.red) * 257, green: UInt16($0.green) * 257, blue: UInt16($0.blue) * 257)
+        })
+        if changed, reportsColorScheme { send(txt: scheme.report) }
+        needsDisplay = true
+    }
+
+    private func handleColorRequest(_ request: TerminalColorSchemeRequests.Request) {
+        switch request {
+        case .subscribe: reportsColorScheme = true
+        case .unsubscribe: reportsColorScheme = false
+        case .query: if let colorScheme { send(txt: colorScheme.report) }
+        }
     }
 
     override func bell(source: Terminal) {
@@ -291,8 +360,7 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         view.installInputHandling()
         view.getTerminal().changeHistorySize(50_000)
         view.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        view.nativeBackgroundColor = .textBackgroundColor
-        view.nativeForegroundColor = .textColor
+        view.followAppearance()
         view.onOutput = { [weak self] in
             Task { @MainActor in self?.noteOutput() }
         }
@@ -337,6 +405,9 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         env["COLORTERM"] = "truecolor"
         env["LANG"] = env["LANG"] ?? "en_US.UTF-8"
         env["TERM_PROGRAM"] = "FleetMate"
+        // Read by programs that pick light or dark colours at start without
+        // asking the terminal; they hear changes through OSC 11 and mode 2031.
+        env["COLORFGBG"] = (view.colorScheme ?? .light).colorFgBg
         // How an agent sees what the person is looking at in FleetMate.
         env[AgentBrief.contextVariable] = contextPath
         // What FleetMate is and every `fleetmate` command, for any agent.

@@ -200,49 +200,51 @@ final class RepoDiscoveryScanTests: XCTestCase {
         XCTAssertEqual(GitWorkingCopy.withSafeDiffOptions(["status"]), ["status"])
     }
 
-    func testCommandConfigKeysAreFlagged() {
+    func testCommandConfigKeysOutsideTheAllowlistAreFlagged() {
         let config = """
         [core]
         \trepositoryformatversion = 0
         \tfsmonitor = true
         \tbare = false
         [core]
-        \tFSMonitor = ./watch.sh
         \tsshCommand = ssh -i key
         \tpager = less
         \teditor = vim
         \thooksPath = .husky
+        \tworktree = ../elsewhere
         [remote "origin"]
         \turl = https://github.com/owner-a/one.git
         \tuploadpack = sh -c evil
         [credential "https://example.com"]
         \thelper = store
-        [credential]
-        \thelper = osxkeychain
-        [diff]
-        \texternal = difftool
         [diff "img"]
         \ttextconv = exiftool
         [filter "lfs"]
         \tprocess = git-lfs filter-process
-        \trequired = true
         [protocol "ext"]
         \tallow = always
-        [protocol "https"]
-        \tallow = user
         [include]
         \tpath = ../shared.gitconfig
         [includeIf "gitdir:~/work/"]
         \tpath = work.gitconfig
+        [extensions]
+        \tworktreeConfig = true
+        [submodule "lib"]
+        \turl = https://github.com/owner-a/lib.git
+        \tupdate = !sh -c evil
+        [submodule "docs"]
+        \tupdate = rebase
+        [somethingnew]
+        \tvalue = 1
         [branch "main"]
         \tremote = origin
         ; [core] pager = commented out
         """
         XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: config), [
-            "core.fsmonitor", "core.sshcommand", "core.pager", "core.editor", "core.hookspath",
-            "remote.origin.uploadpack", "credential.https://example.com.helper", "credential.helper",
-            "diff.external", "diff.img.textconv", "filter.lfs.process", "filter.lfs.required",
-            "protocol.ext.allow", "include.path", "includeif.gitdir:~/work/.path",
+            "core.fsmonitor", "core.sshcommand", "core.pager", "core.editor", "core.hookspath", "core.worktree",
+            "remote.origin.uploadpack", "credential.https://example.com.helper", "diff.img.textconv",
+            "filter.lfs.process", "protocol.ext.allow", "include.path", "includeif.gitdir:~/work/.path",
+            "extensions.worktreeconfig", "submodule.lib.update", "somethingnew.value",
         ])
     }
 
@@ -251,6 +253,10 @@ final class RepoDiscoveryScanTests: XCTestCase {
         [core]
         \trepositoryformatversion = 0
         \tfilemode = true
+        \tbare = false
+        \tlogallrefupdates = true
+        \tignorecase = true
+        \tprecomposeunicode = true
         \tfsmonitor = false
         [remote "origin"]
         \turl = https://github.com/owner-a/one.git
@@ -258,8 +264,84 @@ final class RepoDiscoveryScanTests: XCTestCase {
         [branch "main"]
         \tremote = origin
         \tmerge = refs/heads/main
+        \tvscode-merge-base = origin/main
+        [submodule]
+        \tactive = .
+        [submodule "lib"]
+        \turl = https://github.com/owner-a/lib.git
+        \tactive = true
+        [user]
+        \tname = Someone
+        [pull]
+        \trebase = true
+        [lfs]
+        \trepositoryformatversion = 0
+        [extensions]
+        \tobjectformat = sha256
+        [init]
+        \tdefaultBranch = main
         """
         XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: config), [])
+    }
+
+    private func gitDir(_ relative: String) throws -> URL {
+        let url = root.appendingPathComponent(relative).appendingPathComponent(".git")
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try "[core]\n\tbare = false\n".write(to: url.appendingPathComponent("config"), atomically: true, encoding: .utf8)
+        return url
+    }
+
+    func testPlainCloneHasNoReasons() throws {
+        let dir = try gitDir("plain")
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("hooks"), withIntermediateDirectories: true)
+        let sample = dir.appendingPathComponent("hooks/pre-commit.sample")
+        try "#!/bin/sh\n".write(to: sample, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: sample.path)
+        let notExecutable = dir.appendingPathComponent("hooks/post-merge")
+        try "#!/bin/sh\n".write(to: notExecutable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: notExecutable.path)
+        XCTAssertEqual(RepoDiscovery.commandConfig(checkout: root.appendingPathComponent("plain").path), [])
+    }
+
+    func testExecutableHooksAreFlagged() throws {
+        let dir = try gitDir("hooked")
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("hooks"), withIntermediateDirectories: true)
+        let hook = dir.appendingPathComponent("hooks/post-checkout")
+        try "#!/bin/sh\n".write(to: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hook.path)
+        XCTAssertEqual(RepoDiscovery.commandConfig(checkout: root.appendingPathComponent("hooked").path), ["hooks/post-checkout"])
+    }
+
+    func testUnreadableConfigFailsClosed() throws {
+        let dir = try gitDir("garbled")
+        try Data([0xFF, 0xFE, 0x00, 0xC3, 0x28]).write(to: dir.appendingPathComponent("config"))
+        XCTAssertEqual(RepoDiscovery.commandConfig(checkout: root.appendingPathComponent("garbled").path), ["config (unreadable)"])
+        let worktreeConfig = try gitDir("garbled-worktree")
+        try Data([0xC3, 0x28]).write(to: worktreeConfig.appendingPathComponent("config.worktree"))
+        XCTAssertEqual(RepoDiscovery.commandConfig(checkout: root.appendingPathComponent("garbled-worktree").path), ["config.worktree (unreadable)"])
+    }
+
+    func testCommondirIsFlaggedAndItsConfigRead() throws {
+        let shared = try gitDir("shared")
+        try "[core]\n\tpager = less\n".write(to: shared.appendingPathComponent("config"), atomically: true, encoding: .utf8)
+        let linked = try gitDir("linked")
+        try "../../shared/.git\n".write(to: linked.appendingPathComponent("commondir"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(RepoDiscovery.commandConfig(checkout: root.appendingPathComponent("linked").path), ["commondir", "core.pager"])
+    }
+
+    func testWorktreeConfigIncludeAndCoreWorktreeAreFlagged() throws {
+        for (name, text) in [("wtc", "[extensions]\n\tworktreeConfig = true\n"),
+                             ("inc", "[include]\n\tpath = other\n"),
+                             ("incif", "[includeIf \"onbranch:main\"]\n\tpath = other\n"),
+                             ("cwt", "[core]\n\tworktree = /elsewhere\n")] {
+            let dir = try gitDir(name)
+            try text.write(to: dir.appendingPathComponent("config"), atomically: true, encoding: .utf8)
+            XCTAssertFalse(RepoDiscovery.commandConfig(checkout: root.appendingPathComponent(name).path).isEmpty, name)
+        }
+        let dir = try gitDir("wtc2")
+        try "[extensions]\n\tworktreeConfig = true\n".write(to: dir.appendingPathComponent("config"), atomically: true, encoding: .utf8)
+        try "[core]\n\tsshCommand = x\n".write(to: dir.appendingPathComponent("config.worktree"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(RepoDiscovery.commandConfig(checkout: root.appendingPathComponent("wtc2").path), ["extensions.worktreeconfig", "core.sshcommand"])
     }
 
     func testDiscoveryFlagsAClonesCommandConfig() async throws {

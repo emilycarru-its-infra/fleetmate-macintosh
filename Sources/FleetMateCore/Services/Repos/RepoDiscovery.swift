@@ -8,9 +8,11 @@ public struct DiscoveredCheckout: Codable, Sendable, Hashable {
     /// Found only because a VS Code workspace file names it. Such a clone is
     /// offered for the person to tick, never tracked on its own.
     public let fromWorkspace: Bool
-    /// Keys in the clone's own config that make git run a program
-    /// (`core.fsmonitor`, `filter.lfs.process`, …). Such a clone is flagged
-    /// and starts unselected wherever it is offered.
+    /// Why the clone's own settings could run a program: config keys outside
+    /// the known data-only set (`core.fsmonitor`, `filter.lfs.process`, …),
+    /// executable hooks, a shared `commondir`, or a config that could not be
+    /// read. Such a clone is flagged and starts unselected wherever it is
+    /// offered.
     public let commandConfig: [String]
 
     /// The clone's settings can run commands.
@@ -254,45 +256,70 @@ public enum RepoDiscovery {
         return texts.isEmpty ? nil : texts.joined(separator: "\n")
     }
 
-    /// Config keys that make git run a program the config names. Matched on
-    /// `section.key` with any subsection, all lowercased as git compares them.
-    static func isCommandKey(section: String, subsection: String?, key: String, value: String) -> Bool {
-        let boolean: Set<String> = ["", "true", "false", "yes", "no", "on", "off", "0", "1"]
-        switch (section, key) {
-        case ("core", "fsmonitor"):
-            // true and false choose the built-in daemon or nothing; any other
-            // value is a program.
-            return !boolean.contains(value.lowercased())
-        case ("core", "hookspath"), ("core", "sshcommand"), ("core", "pager"), ("core", "editor"),
-             ("core", "askpass"), ("core", "gitproxy"), ("sequence", "editor"), ("diff", "external"),
-             ("gpg", "program"), ("include", "path"), ("includeif", "path"), ("core", "alternaterefscommand"),
-             ("remote", "uploadpack"), ("remote", "receivepack"):
+    /// Whether a config entry is known to be data only. Anything else is
+    /// treated as able to run a command: the list of keys git (and its
+    /// helpers) will execute keeps growing, so this is an allowlist.
+    /// `section` and `key` are lowercased as git compares them; the
+    /// subsection keeps its case.
+    static func isDataOnlyKey(section: String, subsection: String?, key: String, value: String) -> Bool {
+        let falsy: Set<String> = ["false", "no", "off", "0"]
+        switch section {
+        case "core":
+            guard subsection == nil else { return false }
+            if key == "fsmonitor" { return falsy.contains(value.lowercased()) }
+            return ["repositoryformatversion", "filemode", "bare", "logallrefupdates", "ignorecase", "precomposeunicode",
+                    "symlinks", "autocrlf", "eol", "safecrlf", "longpaths", "quotepath", "checkstat", "trustctime",
+                    "sparsecheckout", "sparsecheckoutcone", "untrackedcache", "splitindex"].contains(key)
+        case "remote":
+            return subsection != nil && ["url", "fetch", "pushurl", "push", "tagopt", "prune", "prunetags", "mirror", "skipdefaultupdate"].contains(key)
+        case "branch":
+            guard subsection != nil else { return false }
+            // Editors keep their own per-branch notes here.
+            return ["remote", "merge", "rebase", "pushremote", "description"].contains(key)
+                || key.hasPrefix("vscode-") || key.hasPrefix("github-pr-")
+        case "user", "pull", "color", "column", "advice", "i18n":
             return true
-        case ("credential", "helper"):
-            return true
-        case ("diff", "textconv"), ("diff", "command"), ("merge", "driver"), ("gpg", _) where key == "program":
-            return true
-        case ("filter", _):
-            return true
-        case ("protocol", "allow"):
-            return value.lowercased() == "always"
-        case ("pager", _):
-            return true
+        case "fetch":
+            return subsection == nil && ["prune", "prunetags", "writecommitgraph", "parallel"].contains(key)
+        case "init":
+            return subsection == nil && key == "defaultbranch"
+        case "lfs":
+            if subsection == nil { return key == "repositoryformatversion" }
+            return ["access", "locksverify"].contains(key)
+        case "extensions":
+            return subsection == nil && ["objectformat", "refstorage"].contains(key)
+        case "submodule":
+            guard subsection != nil else { return key == "active" }
+            if key == "update" { return !value.hasPrefix("!") }
+            return ["url", "active", "branch", "fetchrecursesubmodules", "ignore", "shallow"].contains(key)
+        case "push":
+            return subsection == nil && ["default", "autosetupremote", "followtags"].contains(key)
+        case "merge":
+            return subsection == nil && ["ff", "conflictstyle"].contains(key)
+        case "rebase":
+            return subsection == nil && ["autostash", "autosquash", "updaterefs"].contains(key)
+        case "gc":
+            return subsection == nil && ["auto", "autodetach"].contains(key)
         default:
             return false
         }
     }
 
-    /// `section[.subsection].key` names in git config text whose values git
-    /// would run as programs, in file order.
+    /// `section[.subsection].key` names in git config text that are not
+    /// known to be data only, in file order, each once.
     public static func commandConfigKeys(inConfig text: String) -> [String] {
         var section = ""
         var subsection: String?
         var found: [String] = []
+        func flag(_ name: String) { if !found.contains(name) { found.append(name) } }
         for rawLine in text.split(whereSeparator: \.isNewline) {
             var line = rawLine.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("#") || line.hasPrefix(";") || line.isEmpty { continue }
-            if line.hasPrefix("["), let close = line.firstIndex(of: "]") {
+            if line.hasPrefix("[") {
+                guard let close = line.firstIndex(of: "]") else {
+                    flag("(unparsable section header)")
+                    continue
+                }
                 let header = line[line.index(after: line.startIndex)..<close].trimmingCharacters(in: .whitespaces)
                 if let quote = header.firstIndex(of: "\"") {
                     section = header[..<quote].trimmingCharacters(in: .whitespaces).lowercased()
@@ -317,13 +344,60 @@ public enum RepoDiscovery {
                 name = line.split(separator: " ").first.map { $0.lowercased() } ?? ""
                 value = ""
             }
-            guard !name.isEmpty, !section.isEmpty else { continue }
-            if isCommandKey(section: section, subsection: subsection, key: name, value: value) {
-                let full = ([section] + (subsection.map { [$0] } ?? []) + [name]).joined(separator: ".")
-                if !found.contains(full) { found.append(full) }
+            let full = ([section] + (subsection.map { [$0] } ?? []) + [name]).joined(separator: ".")
+            guard !name.isEmpty, !section.isEmpty else {
+                flag(full.isEmpty ? "(key outside a section)" : full)
+                continue
             }
+            if !isDataOnlyKey(section: section, subsection: subsection, key: name, value: value) { flag(full) }
         }
         return found
+    }
+
+    /// Why a clone's own settings could run commands, or empty when they
+    /// are plain data. Fails closed: a config file that exists but cannot be
+    /// read, a shared `commondir`, and any executable hook all count.
+    public static func commandConfig(checkout: String) -> [String] {
+        guard let gitDir = gitDirectory(of: checkout) else {
+            return FileManager.default.fileExists(atPath: (checkout as NSString).appendingPathComponent(".git"))
+                ? ["(unreadable .git)"] : []
+        }
+        let fm = FileManager.default
+        var reasons: [String] = []
+        var gitDirs = [gitDir]
+
+        let commondirFile = (gitDir as NSString).appendingPathComponent("commondir")
+        if fm.fileExists(atPath: commondirFile) {
+            reasons.append("commondir")
+            if let text = try? String(contentsOfFile: commondirFile, encoding: .utf8) {
+                let target = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if isPlainLocalPath(target) {
+                    gitDirs.append(target.hasPrefix("/") ? target : URL(fileURLWithPath: gitDir).appendingPathComponent(target).standardizedFileURL.path)
+                }
+            }
+        }
+
+        for dir in gitDirs {
+            for name in ["config", "config.worktree"] {
+                let file = (dir as NSString).appendingPathComponent(name)
+                guard fm.fileExists(atPath: file) else { continue }
+                guard let text = try? String(contentsOfFile: file, encoding: .utf8) else {
+                    reasons.append("\(name) (unreadable)")
+                    continue
+                }
+                for key in commandConfigKeys(inConfig: text) where !reasons.contains(key) { reasons.append(key) }
+            }
+            let hooks = (dir as NSString).appendingPathComponent("hooks")
+            for hook in ((try? fm.contentsOfDirectory(atPath: hooks)) ?? []).sorted() where !hook.hasSuffix(".sample") {
+                let path = (hooks as NSString).appendingPathComponent(hook)
+                var isDirectory: ObjCBool = false
+                if fm.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue, fm.isExecutableFile(atPath: path) {
+                    let reason = "hooks/\(hook)"
+                    if !reasons.contains(reason) { reasons.append(reason) }
+                }
+            }
+        }
+        return reasons
     }
 
     static func gitDirectory(of checkout: String) -> String? {
@@ -405,7 +479,7 @@ public enum RepoDiscovery {
             let config = readConfig(checkout: path)
             let origin = config.flatMap { originURL(inConfig: $0) }
             return DiscoveredCheckout(path: path, remoteUrl: origin, key: origin.flatMap(RepoRemoteURL.parse),
-                                      fromWorkspace: fromWorkspace, commandConfig: config.map(commandConfigKeys(inConfig:)) ?? [])
+                                      fromWorkspace: fromWorkspace, commandConfig: commandConfig(checkout: path))
         }
         var found = result.checkouts.map { checkout($0, fromWorkspace: false) }
         if includeWorkspaceFolders { found += result.workspaceCheckouts.map { checkout($0, fromWorkspace: true) } }

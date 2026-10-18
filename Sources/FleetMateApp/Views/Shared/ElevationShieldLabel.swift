@@ -2,18 +2,14 @@ import SwiftUI
 import FleetMateCore
 
 /// The toolbar's authentication shield, carrying the elevated sessions'
-/// state: a spinner and "Elevation starting…" while a container starts (the
-/// slow first action of the day), a green dot and "Elevation ready" while one
-/// runs, and a quiet grey dot when they are stopped, since the next action
-/// restarts them. The text drops out on narrow windows so the item stays
-/// compact; the tooltip lists each domain with its time left. Re-derived
-/// every 30 seconds so an expiry shows on time without polling Azure.
+/// state: a spinner while a container starts (the slow first action of the
+/// day), a green dot while one runs, and a quiet grey dot when they are
+/// stopped, since the next action restarts them. The toolbar shows no text;
+/// the popover's Azure CLI card spells the state out, and the tooltip lists
+/// each domain with its time left. Re-derived every 30 seconds so an expiry
+/// shows on time without polling Azure.
 struct ElevationShieldLabel: View {
     @EnvironmentObject var appState: AppState
-    /// False on narrow windows: the shield and dot alone.
-    var showsText = true
-    /// Window width under which the toolbar drops the text.
-    static let textHiddenBelow: CGFloat = 1100
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -28,13 +24,6 @@ struct ElevationShieldLabel: View {
                         Circle()
                             .fill(tint(status))
                             .frame(width: 6, height: 6)
-                    }
-                    if showsText, let text = ElevationWording.toolbarText(status) {
-                        Text(text)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .fixedSize()
                     }
                 }
             }

@@ -292,7 +292,7 @@ struct AgentSessionListMenuItem: View {
     }
 }
 
-/// The toolbar's Agent control: the first trailing item, filled with the
+/// The toolbar's Agent control: the first item at the far left, filled with the
 /// accent colour so it reads as the app's main action rather than one more
 /// glyph. ⌘J (View › Show Agent) and ⌃` toggle it from anywhere; while the
 /// terminal is open the icon becomes a check so the state is still visible.

@@ -47,6 +47,13 @@ struct ContentView: View {
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
             .background(ToolbarPriorityBridge { appState.globalSearchFocusRequest += 1 })
             .toolbar {
+                // Agent is the app's core action, so it sits at the far left,
+                // ahead of history, on every tab.
+                if !AppEdition.current.isTicketsOnly {
+                    ToolbarItem(placement: .navigation) {
+                        AgentModeToolbarToggle(terminals: terminals, defaultLaunch: appState.agentDefaultLaunch)
+                    }
+                }
                 // Browser-style history, mirrored on ⌘[ / ⌘].
                 ToolbarItemGroup(placement: .navigation) {
                     Button {
@@ -78,13 +85,6 @@ struct ContentView: View {
                 // the right of the toolbar empty and search short of the edge.
                 if #available(macOS 26.0, *) {
                     ToolbarSpacer(.flexible, placement: .primaryAction)
-                }
-                if !AppEdition.current.isTicketsOnly {
-                    // Agent leads the trailing controls as the app's main action,
-                    // ahead of Graphs, Recent Activity and Authentication.
-                    ToolbarItem(placement: .primaryAction) {
-                        AgentModeToolbarToggle(terminals: terminals, defaultLaunch: appState.agentDefaultLaunch)
-                    }
                 }
                 if selectedTab.hasWidgets {
                     ToolbarItem(placement: .primaryAction) {

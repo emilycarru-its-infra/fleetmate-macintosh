@@ -17,19 +17,15 @@ public struct WorkItemStats: Equatable, Sendable {
     public static let staleDays = 30
 
     public init(_ items: [WorkItem], now: Date = Date()) {
-        let week = now.addingTimeInterval(-7 * 86_400)
-        let staleCutoff = now.addingTimeInterval(-Double(Self.staleDays) * 86_400)
         for item in items {
-            guard let f = item.fields else { continue }
+            guard item.fields != nil else { continue }
             open += 1
-            let state = (f.state ?? "").lowercased()
-            if !state.isEmpty, state != "new", state != "to do", state != "proposed" { inProgress += 1 }
-            if let created = Self.date(f.createdDate), created >= week { newThisWeek += 1 }
-            let changed = Self.date(f.changedDate)
-            if let changed, changed >= week { updatedThisWeek += 1 }
-            if let changed, changed < staleCutoff { stale += 1 }
-            if Self.isBlocked(f) { blocked += 1 }
-            if let due = Self.date(f.dueDate), due < now { overdue += 1 }
+            if WorkItemTile.inProgress.matches(item, now: now) { inProgress += 1 }
+            if WorkItemTile.newThisWeek.matches(item, now: now) { newThisWeek += 1 }
+            if WorkItemTile.updatedThisWeek.matches(item, now: now) { updatedThisWeek += 1 }
+            if WorkItemTile.stale.matches(item, now: now) { stale += 1 }
+            if WorkItemTile.blocked.matches(item, now: now) { blocked += 1 }
+            if WorkItemTile.overdue.matches(item, now: now) { overdue += 1 }
         }
     }
 
@@ -51,5 +47,54 @@ public struct WorkItemStats: Equatable, Sendable {
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return fractional.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
+    }
+}
+
+/// One of the Projects strip's tiles, as a filter: the set of the signed-in
+/// user's work items the tile counts. The tile figure and the filtered list
+/// use the same test, so they always agree.
+public enum WorkItemTile: String, CaseIterable, Sendable, Identifiable {
+    case assignedToMe, inProgress, newThisWeek, updatedThisWeek, blocked, overdue, stale, gitHubIssues
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .assignedToMe: "Assigned to Me"
+        case .inProgress: "In Progress"
+        case .newThisWeek: "New This Week"
+        case .updatedThisWeek: "Updated This Week"
+        case .blocked: "Blocked"
+        case .overdue: "Overdue"
+        case .stale: "No Change in \(WorkItemStats.staleDays) Days"
+        case .gitHubIssues: "GitHub Issues"
+        }
+    }
+
+    /// Whether the work item is in this tile's set. GitHub issues are not
+    /// work items, so that tile matches none.
+    public func matches(_ item: WorkItem, now: Date = Date()) -> Bool {
+        guard let f = item.fields else { return false }
+        let week = now.addingTimeInterval(-7 * 86_400)
+        switch self {
+        case .assignedToMe:
+            return true
+        case .inProgress:
+            let state = (f.state ?? "").lowercased()
+            return !state.isEmpty && state != "new" && state != "to do" && state != "proposed"
+        case .newThisWeek:
+            return WorkItemStats.date(f.createdDate).map { $0 >= week } ?? false
+        case .updatedThisWeek:
+            return WorkItemStats.date(f.changedDate).map { $0 >= week } ?? false
+        case .stale:
+            let cutoff = now.addingTimeInterval(-Double(WorkItemStats.staleDays) * 86_400)
+            return WorkItemStats.date(f.changedDate).map { $0 < cutoff } ?? false
+        case .blocked:
+            return WorkItemStats.isBlocked(f)
+        case .overdue:
+            return WorkItemStats.date(f.dueDate).map { $0 < now } ?? false
+        case .gitHubIssues:
+            return false
+        }
     }
 }

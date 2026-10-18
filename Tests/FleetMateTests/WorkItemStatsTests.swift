@@ -37,4 +37,24 @@ final class WorkItemStatsTests: XCTestCase {
         ]
         XCTAssertEqual(WorkItemStats.ranked(items) { $0.workItemType }.map(\.label), ["Task", "Bug"])
     }
+    func testEachTileFiltersToTheItemsItCounts() throws {
+        let items = [
+            try item(1, ["System.State": "New", "System.CreatedDate": "2026-10-16T09:00:00.123Z",
+                         "System.ChangedDate": "2026-10-17T09:00:00Z"]),
+            try item(2, ["System.State": "Active", "System.CreatedDate": "2026-01-01T00:00:00Z",
+                         "System.ChangedDate": "2026-08-01T00:00:00Z", "System.Tags": "Infra; Blocked",
+                         "Microsoft.VSTS.Scheduling.DueDate": "2026-10-01T00:00:00Z"]),
+            try item(3, ["System.State": "In Progress", "System.BoardColumn": "Blocked",
+                         "System.ChangedDate": "2026-10-18T08:00:00Z"]),
+        ]
+        func ids(_ tile: WorkItemTile) -> [Int] { items.filter { tile.matches($0, now: now) }.map(\.id) }
+        XCTAssertEqual(ids(.assignedToMe), [1, 2, 3])
+        XCTAssertEqual(ids(.inProgress), [2, 3])
+        XCTAssertEqual(ids(.newThisWeek), [1])
+        XCTAssertEqual(ids(.updatedThisWeek), [1, 3])
+        XCTAssertEqual(ids(.blocked), [2, 3])
+        XCTAssertEqual(ids(.overdue), [2])
+        XCTAssertEqual(ids(.stale), [2])
+        XCTAssertEqual(ids(.gitHubIssues), [])
+    }
 }

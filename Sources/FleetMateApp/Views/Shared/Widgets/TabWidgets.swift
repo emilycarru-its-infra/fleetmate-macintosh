@@ -321,6 +321,8 @@ struct WidgetKPIGrid: View {
         .buttonStyle(.plain)
         .help(t.help)
         .accessibilityLabel("\(t.title): \(t.value)")
+        .accessibilityAddTraits(t.isOn ? .isSelected : [])
+        .accessibilityHint(t.help)
     }
 }
 
@@ -355,6 +357,8 @@ struct ProjectsWidgetsSection: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var metrics: WidgetMetrics
     @ObservedObject var tasks: DashboardTasksModel
+    /// The tile filtering the Projects list, if any.
+    @Binding var selection: WorkItemTile?
 
     var body: some View {
         let items = appState.cachedMyWorkItems
@@ -406,25 +410,26 @@ struct ProjectsWidgetsSection: View {
         }
     }
 
+    /// Each tile filters the Projects list to the items it counts; clicking
+    /// the lit tile again, or Clear Filters, shows everything again.
     private func tiles(_ stats: WorkItemStats) -> [TicketKPITile] {
-        let none = {}
+        func tile(_ kind: WorkItemTile, _ value: Int, _ icon: String, _ color: Color, _ help: String) -> TicketKPITile {
+            let isOn = selection == kind
+            return TicketKPITile(title: kind.title, value: value, icon: icon, color: color, isOn: isOn,
+                                 help: isOn ? "Show every item again" : help) {
+                selection = isOn ? nil : kind
+            }
+        }
         return [
-            TicketKPITile(title: "Assigned to Me", value: stats.open, icon: "list.bullet.rectangle", color: .indigo,
-                          isOn: false, help: "Your open work items", action: none),
-            TicketKPITile(title: "In Progress", value: stats.inProgress, icon: "play.circle", color: .blue,
-                          isOn: false, help: "Open and past New", action: none),
-            TicketKPITile(title: "New This Week", value: stats.newThisWeek, icon: "sparkles", color: .green,
-                          isOn: false, help: "Created in the last 7 days", action: none),
-            TicketKPITile(title: "Updated This Week", value: stats.updatedThisWeek, icon: "clock.arrow.circlepath", color: .teal,
-                          isOn: false, help: "Changed in the last 7 days", action: none),
-            TicketKPITile(title: "Blocked", value: stats.blocked, icon: "hand.raised", color: .orange,
-                          isOn: false, help: "Tagged Blocked, or on a Blocked column or state", action: none),
-            TicketKPITile(title: "Overdue", value: stats.overdue, icon: "calendar.badge.exclamationmark", color: .purple,
-                          isOn: false, help: "Past their due date", action: none),
-            TicketKPITile(title: "No Change in \(WorkItemStats.staleDays) Days", value: stats.stale, icon: "hourglass", color: .gray,
-                          isOn: false, help: "Not changed in \(WorkItemStats.staleDays) days", action: none),
-            TicketKPITile(title: "GitHub Issues", value: tasks.issues.count, icon: "exclamationmark.circle", color: .indigo,
-                          isOn: false, help: "Open GitHub issues in your list", action: none),
+            tile(.assignedToMe, stats.open, "list.bullet.rectangle", .indigo, "Show your open work items"),
+            tile(.inProgress, stats.inProgress, "play.circle", .blue, "Show items open and past New"),
+            tile(.newThisWeek, stats.newThisWeek, "sparkles", .green, "Show items created in the last 7 days"),
+            tile(.updatedThisWeek, stats.updatedThisWeek, "clock.arrow.circlepath", .teal,
+                 "Show items changed in the last 7 days"),
+            tile(.blocked, stats.blocked, "hand.raised", .orange, "Show items tagged Blocked, or on a Blocked column or state"),
+            tile(.overdue, stats.overdue, "calendar.badge.exclamationmark", .purple, "Show items past their due date"),
+            tile(.stale, stats.stale, "hourglass", .gray, "Show items not changed in \(WorkItemStats.staleDays) days"),
+            tile(.gitHubIssues, tasks.issues.count, "exclamationmark.circle", .indigo, "Show the open GitHub issues in your list"),
         ]
     }
 }

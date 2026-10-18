@@ -8,15 +8,23 @@ public struct DiscoveredCheckout: Codable, Sendable, Hashable {
     /// Found only because a VS Code workspace file names it. Such a clone is
     /// offered for the person to tick, never tracked on its own.
     public let fromWorkspace: Bool
+    /// Keys in the clone's own config that make git run a program
+    /// (`core.fsmonitor`, `filter.lfs.process`, …). Such a clone is flagged
+    /// and starts unselected wherever it is offered.
+    public let commandConfig: [String]
 
-    public init(path: String, remoteUrl: String?, key: RepoKey?, fromWorkspace: Bool = false) {
+    /// The clone's settings can run commands.
+    public var runsCommands: Bool { !commandConfig.isEmpty }
+
+    public init(path: String, remoteUrl: String?, key: RepoKey?, fromWorkspace: Bool = false, commandConfig: [String] = []) {
         self.path = path
         self.remoteUrl = remoteUrl
         self.key = key
         self.fromWorkspace = fromWorkspace
+        self.commandConfig = commandConfig
     }
 
-    enum CodingKeys: String, CodingKey { case path, remoteUrl, key, fromWorkspace }
+    enum CodingKeys: String, CodingKey { case path, remoteUrl, key, fromWorkspace, commandConfig }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -24,6 +32,7 @@ public struct DiscoveredCheckout: Codable, Sendable, Hashable {
         remoteUrl = try c.decodeIfPresent(String.self, forKey: .remoteUrl)
         key = try c.decodeIfPresent(RepoKey.self, forKey: .key)
         fromWorkspace = try c.decodeIfPresent(Bool.self, forKey: .fromWorkspace) ?? false
+        commandConfig = try c.decodeIfPresent([String].self, forKey: .commandConfig) ?? []
     }
 }
 
@@ -233,10 +242,88 @@ public enum RepoDiscovery {
     /// git process (and none of the clone's config) runs. Follows a `.git`
     /// file to the real git folder for a submodule.
     public static func readOrigin(checkout: String) -> String? {
-        guard let gitDir = gitDirectory(of: checkout),
-              let text = try? String(contentsOfFile: (gitDir as NSString).appendingPathComponent("config"), encoding: .utf8)
-        else { return nil }
-        return originURL(inConfig: text)
+        readConfig(checkout: checkout).flatMap { originURL(inConfig: $0) }
+    }
+
+    /// The clone's `config` (and `config.worktree`) as text, or nil.
+    static func readConfig(checkout: String) -> String? {
+        guard let gitDir = gitDirectory(of: checkout) else { return nil }
+        let texts = ["config", "config.worktree"].compactMap {
+            try? String(contentsOfFile: (gitDir as NSString).appendingPathComponent($0), encoding: .utf8)
+        }
+        return texts.isEmpty ? nil : texts.joined(separator: "\n")
+    }
+
+    /// Config keys that make git run a program the config names. Matched on
+    /// `section.key` with any subsection, all lowercased as git compares them.
+    static func isCommandKey(section: String, subsection: String?, key: String, value: String) -> Bool {
+        let boolean: Set<String> = ["", "true", "false", "yes", "no", "on", "off", "0", "1"]
+        switch (section, key) {
+        case ("core", "fsmonitor"):
+            // true and false choose the built-in daemon or nothing; any other
+            // value is a program.
+            return !boolean.contains(value.lowercased())
+        case ("core", "hookspath"), ("core", "sshcommand"), ("core", "pager"), ("core", "editor"),
+             ("core", "askpass"), ("core", "gitproxy"), ("sequence", "editor"), ("diff", "external"),
+             ("gpg", "program"), ("include", "path"), ("includeif", "path"), ("core", "alternaterefscommand"),
+             ("remote", "uploadpack"), ("remote", "receivepack"):
+            return true
+        case ("credential", "helper"):
+            return true
+        case ("diff", "textconv"), ("diff", "command"), ("merge", "driver"), ("gpg", _) where key == "program":
+            return true
+        case ("filter", _):
+            return true
+        case ("protocol", "allow"):
+            return value.lowercased() == "always"
+        case ("pager", _):
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// `section[.subsection].key` names in git config text whose values git
+    /// would run as programs, in file order.
+    public static func commandConfigKeys(inConfig text: String) -> [String] {
+        var section = ""
+        var subsection: String?
+        var found: [String] = []
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            var line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.hasPrefix("#") || line.hasPrefix(";") || line.isEmpty { continue }
+            if line.hasPrefix("["), let close = line.firstIndex(of: "]") {
+                let header = line[line.index(after: line.startIndex)..<close].trimmingCharacters(in: .whitespaces)
+                if let quote = header.firstIndex(of: "\"") {
+                    section = header[..<quote].trimmingCharacters(in: .whitespaces).lowercased()
+                    subsection = header[header.index(after: quote)...].trimmingCharacters(in: CharacterSet(charactersIn: "\" "))
+                } else if let dot = header.firstIndex(of: ".") {
+                    section = header[..<dot].lowercased()
+                    subsection = String(header[header.index(after: dot)...])
+                } else {
+                    section = header.lowercased()
+                    subsection = nil
+                }
+                line = line[line.index(after: close)...].trimmingCharacters(in: .whitespaces)
+                if line.isEmpty || line.hasPrefix("#") || line.hasPrefix(";") { continue }
+            }
+            let name: String
+            let value: String
+            if let equals = line.firstIndex(of: "=") {
+                name = line[..<equals].trimmingCharacters(in: .whitespaces).lowercased()
+                value = line[line.index(after: equals)...].trimmingCharacters(in: .whitespaces)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+            } else {
+                name = line.split(separator: " ").first.map { $0.lowercased() } ?? ""
+                value = ""
+            }
+            guard !name.isEmpty, !section.isEmpty else { continue }
+            if isCommandKey(section: section, subsection: subsection, key: name, value: value) {
+                let full = ([section] + (subsection.map { [$0] } ?? []) + [name]).joined(separator: ".")
+                if !found.contains(full) { found.append(full) }
+            }
+        }
+        return found
     }
 
     static func gitDirectory(of checkout: String) -> String? {
@@ -315,8 +402,10 @@ public enum RepoDiscovery {
     public static func discover(settings: RepoSettings, includeWorkspaceFolders: Bool = false) async -> [DiscoveredCheckout] {
         let result = scan(roots: settings.scanRoots, maxDepth: settings.scanDepth, skip: settings.skipDirectories)
         func checkout(_ path: String, fromWorkspace: Bool) -> DiscoveredCheckout {
-            let origin = readOrigin(checkout: path)
-            return DiscoveredCheckout(path: path, remoteUrl: origin, key: origin.flatMap(RepoRemoteURL.parse), fromWorkspace: fromWorkspace)
+            let config = readConfig(checkout: path)
+            let origin = config.flatMap { originURL(inConfig: $0) }
+            return DiscoveredCheckout(path: path, remoteUrl: origin, key: origin.flatMap(RepoRemoteURL.parse),
+                                      fromWorkspace: fromWorkspace, commandConfig: config.map(commandConfigKeys(inConfig:)) ?? [])
         }
         var found = result.checkouts.map { checkout($0, fromWorkspace: false) }
         if includeWorkspaceFolders { found += result.workspaceCheckouts.map { checkout($0, fromWorkspace: true) } }

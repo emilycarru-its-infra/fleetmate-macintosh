@@ -154,12 +154,13 @@ final class RepoWorkspaceModel: ObservableObject {
         isScanning = true
         defer { isScanning = false }
         do {
-            let results = try await manager.trackFolders(paths)
+            let (results, review) = try await manager.trackFolders(paths)
             let found = results.filter { $0.action == .linked || $0.action == .alreadyLinked }.count
             registryChanged()
-            if found == 0 {
+            if !review.isEmpty { offer(review) }
+            if found == 0 && review.isEmpty {
                 report(title: "No clones found", "There are no git clones in \(paths.map(repoAbbreviatedPath).joined(separator: ", ")). Clone a repository there, or choose another folder.")
-            } else {
+            } else if found > 0 {
                 flash("Tracking \(found) \(found == 1 ? "repository" : "repositories")")
             }
         } catch {
@@ -171,11 +172,27 @@ final class RepoWorkspaceModel: ObservableObject {
     /// to add or ignore them. Never tracked unasked: a clone's own config
     /// is not trusted until someone chooses to work in it.
     @Published private(set) var newClones: [DiscoveredCheckout] = []
+    /// Paths of offered clones the person has ticked in the review list.
+    /// Ones whose config can run commands start unticked.
+    @Published var newClonesSelected: Set<String> = []
 
     /// Looks for new clones, when Settings has that on. Runs no git.
     func findNewClones() async {
         guard !isScanning else { return }
-        newClones = (try? await manager.newClones()) ?? []
+        let found = (try? await manager.newClones()) ?? []
+        let held = newClones.filter { $0.runsCommands && !found.contains($0) }
+        offer(found + held, replacing: true)
+    }
+
+    private func offer(_ clones: [DiscoveredCheckout], replacing: Bool = false) {
+        var seen = Set<String>()
+        let merged = (replacing ? clones : newClones + clones).filter { seen.insert($0.path).inserted }
+        let before = Set(newClones.map(\.path))
+        newClones = merged
+        for clone in merged where !before.contains(clone.path) && !clone.runsCommands {
+            newClonesSelected.insert(clone.path)
+        }
+        newClonesSelected.formIntersection(merged.map(\.path))
     }
 
     /// "3 new repositories found in ~/Code", or the folders when several.
@@ -186,11 +203,15 @@ final class RepoWorkspaceModel: ObservableObject {
         return roots.isEmpty ? "\(what) found" : "\(what) found in \(roots.joined(separator: ", "))"
     }
 
+    /// Tracks the ticked clones; the person ticked any flagged one knowing
+    /// its settings can run commands. The rest stay offered.
     func addNewClones() {
-        let found = newClones
-        newClones = []
+        let found = newClones.filter { newClonesSelected.contains($0.path) }
+        guard !found.isEmpty else { return }
+        newClones.removeAll { newClonesSelected.contains($0.path) }
+        newClonesSelected.subtract(found.map(\.path))
         do {
-            try manager.register(found, track: true)
+            try manager.register(found, track: true, trustCommandConfig: true)
             registryChanged()
             flash("Tracking \(found.count) \(found.count == 1 ? "repository" : "repositories")")
         } catch {
@@ -203,6 +224,7 @@ final class RepoWorkspaceModel: ObservableObject {
     func ignoreNewClones() {
         let found = newClones
         newClones = []
+        newClonesSelected = []
         do {
             try manager.ignore(found)
             NotificationCenter.default.post(name: .repoRegistryChanged, object: nil)

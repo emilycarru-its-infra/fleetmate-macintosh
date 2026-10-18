@@ -123,6 +123,13 @@ struct OnboardingRepositoriesStep: View {
                                             .appFont(.caption).foregroundStyle(.secondary)
                                             .lineLimit(1).truncationMode(.middle)
                                     }
+                                    let risky = wizardState.commandConfig(record)
+                                    if !risky.isEmpty {
+                                        Label("This repository's settings can run commands: \(risky.joined(separator: ", "))",
+                                              systemImage: "exclamationmark.triangle")
+                                            .appFont(.caption).foregroundStyle(.orange)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
                                 }
                             }
                             .toggleStyle(.checkbox)
@@ -238,9 +245,14 @@ extension OnboardingWizardState {
         }
         // A clone named only by a workspace file starts unticked: the file
         // came from somewhere, the folders it lists are the person's call.
-        for checkout in repoPreview where checkout.fromWorkspace && !previous.contains(checkout.path) {
+        // So does one whose own git config can run commands.
+        for checkout in repoPreview where (checkout.fromWorkspace || checkout.runsCommands) && !previous.contains(checkout.path) {
             repoDeselected.insert(checkout.path)
         }
+    }
+
+    func commandConfig(_ record: RepoRecord) -> [String] {
+        repoPreview.first { $0.path == record.local?.path }?.commandConfig ?? []
     }
 
     func isFromWorkspace(_ record: RepoRecord) -> Bool {
@@ -298,7 +310,7 @@ extension OnboardingWizardState {
                 settings.scanRoots = roots
                 settings.rootsChosen = true
             }
-            try manager.register(selected, track: true)
+            try manager.register(selected, track: true, trustCommandConfig: true)
             try manager.register(deselected)
             for checkout in deselected {
                 if let id = checkout.key?.id { _ = try? manager.setTracked(id, false) }

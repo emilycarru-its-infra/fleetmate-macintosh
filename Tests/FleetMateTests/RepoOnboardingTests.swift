@@ -189,10 +189,89 @@ final class RepoDiscoveryScanTests: XCTestCase {
         XCTAssertNil(RepoDiscovery.readOrigin(checkout: root.path))
     }
 
-    func testInspectionGitCallsDisableFsmonitorAndHooks() {
-        XCTAssertEqual(GitWorkingCopy.safetyConfig(for: ["status"]), ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"])
-        XCTAssertEqual(GitWorkingCopy.safetyConfig(for: ["worktree", "list"]).count, 4)
-        XCTAssertEqual(GitWorkingCopy.safetyConfig(for: ["commit", "-m", "x"]), ["-c", "core.fsmonitor=false"], "commit keeps the team's hooks")
+    func testInspectionGitCallsDisableFsmonitorPagerAndHooks() {
+        XCTAssertEqual(GitWorkingCopy.safetyConfig(for: ["status"]),
+                       ["-c", "core.fsmonitor=false", "-c", "core.pager=cat", "-c", "core.hooksPath=/dev/null"])
+        XCTAssertEqual(GitWorkingCopy.safetyConfig(for: ["commit", "-m", "x"]),
+                       ["-c", "core.fsmonitor=false", "-c", "core.pager=cat"], "commit keeps the team's hooks")
+        XCTAssertEqual(GitWorkingCopy.withSafeDiffOptions(["diff", "HEAD"]), ["diff", "--no-ext-diff", "--no-textconv", "HEAD"])
+        XCTAssertEqual(GitWorkingCopy.withSafeDiffOptions(["log", "-n", "1"]), ["log", "--no-ext-diff", "--no-textconv", "-n", "1"])
+        XCTAssertEqual(GitWorkingCopy.withSafeDiffOptions(["grep", "x"]), ["grep", "--no-textconv", "x"])
+        XCTAssertEqual(GitWorkingCopy.withSafeDiffOptions(["status"]), ["status"])
+    }
+
+    func testCommandConfigKeysAreFlagged() {
+        let config = """
+        [core]
+        \trepositoryformatversion = 0
+        \tfsmonitor = true
+        \tbare = false
+        [core]
+        \tFSMonitor = ./watch.sh
+        \tsshCommand = ssh -i key
+        \tpager = less
+        \teditor = vim
+        \thooksPath = .husky
+        [remote "origin"]
+        \turl = https://github.com/owner-a/one.git
+        \tuploadpack = sh -c evil
+        [credential "https://example.com"]
+        \thelper = store
+        [credential]
+        \thelper = osxkeychain
+        [diff]
+        \texternal = difftool
+        [diff "img"]
+        \ttextconv = exiftool
+        [filter "lfs"]
+        \tprocess = git-lfs filter-process
+        \trequired = true
+        [protocol "ext"]
+        \tallow = always
+        [protocol "https"]
+        \tallow = user
+        [include]
+        \tpath = ../shared.gitconfig
+        [includeIf "gitdir:~/work/"]
+        \tpath = work.gitconfig
+        [branch "main"]
+        \tremote = origin
+        ; [core] pager = commented out
+        """
+        XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: config), [
+            "core.fsmonitor", "core.sshcommand", "core.pager", "core.editor", "core.hookspath",
+            "remote.origin.uploadpack", "credential.https://example.com.helper", "credential.helper",
+            "diff.external", "diff.img.textconv", "filter.lfs.process", "filter.lfs.required",
+            "protocol.ext.allow", "include.path", "includeif.gitdir:~/work/.path",
+        ])
+    }
+
+    func testPlainConfigIsNotFlagged() {
+        let config = """
+        [core]
+        \trepositoryformatversion = 0
+        \tfilemode = true
+        \tfsmonitor = false
+        [remote "origin"]
+        \turl = https://github.com/owner-a/one.git
+        \tfetch = +refs/heads/*:refs/remotes/origin/*
+        [branch "main"]
+        \tremote = origin
+        \tmerge = refs/heads/main
+        """
+        XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: config), [])
+    }
+
+    func testDiscoveryFlagsAClonesCommandConfig() async throws {
+        let path = try checkout("owner/risky")
+        try "[remote \"origin\"]\n\turl = https://github.com/owner-a/risky.git\n[core]\n\tfsmonitor = ./x.sh\n"
+            .write(toFile: path + "/.git/config", atomically: true, encoding: .utf8)
+        var settings = RepoSettings.default
+        settings.scanRoots = [root.path]
+        let found = await RepoDiscovery.discover(settings: settings)
+        XCTAssertEqual(found.count, 1)
+        XCTAssertEqual(found[0].commandConfig, ["core.fsmonitor"])
+        XCTAssertTrue(found[0].runsCommands)
     }
 
     func testFsmonitorInAClonesConfigNeverRuns() async throws {
@@ -292,6 +371,37 @@ final class RepoRegistrySettingsCompatibilityTests: XCTestCase {
         XCTAssertEqual(doc.repos[known.id]?.tracked, false, "a repository the person untracked stays untracked")
         XCTAssertEqual(doc.repos[known.id]?.hidden, true)
         XCTAssertEqual(doc.repos[fresh.id]?.tracked, true)
+    }
+
+    func testCloneWhoseConfigRunsCommandsIsNotTrackedUnlessTrusted() throws {
+        let manager = RepoManager(store: store)
+        let key = RepoKey(provider: .gitHub, owner: "owner-a", name: "risky")
+        let risky = DiscoveredCheckout(path: "/tmp/risky", remoteUrl: nil, key: key, commandConfig: ["core.fsmonitor"])
+        let results = try manager.register([risky], track: true)
+        XCTAssertEqual(results.map(\.action), [.needsReview])
+        XCTAssertEqual(try store.load().repos[key.id]?.tracked, false)
+        try manager.register([risky], track: true, trustCommandConfig: true)
+        XCTAssertEqual(try store.load().repos[key.id]?.tracked, true)
+    }
+
+    func testTrackFoldersHoldsRiskyClonesForReview() async throws {
+        let manager = RepoManager(store: store)
+        let code = directory.appendingPathComponent("code")
+        for (name, extra) in [("plain", ""), ("risky", "[filter \"x\"]\n\tclean = run-me\n")] {
+            let git = code.appendingPathComponent("\(name)/.git")
+            try FileManager.default.createDirectory(at: git, withIntermediateDirectories: true)
+            try "[remote \"origin\"]\n\turl = https://github.com/owner-a/\(name).git\n\(extra)"
+                .write(to: git.appendingPathComponent("config"), atomically: true, encoding: .utf8)
+        }
+        let (results, review) = try await manager.trackFolders([code.path])
+        XCTAssertEqual(results.compactMap(\.displayName), ["owner-a/plain"])
+        XCTAssertEqual(review.compactMap { $0.key?.name }, ["risky"])
+        let doc = try store.load()
+        XCTAssertEqual(doc.trackedEntries.map(\.key.name), ["plain"])
+        XCTAssertNil(doc.repos["github:owner-a/risky"], "held clones are not registered")
+        XCTAssertTrue(doc.settings.rootsChosen)
+        let offered = try await manager.newClones()
+        XCTAssertEqual(offered?.compactMap { $0.key?.name }, ["risky"], "and are offered for review")
     }
 
     func testSetHidden() throws {

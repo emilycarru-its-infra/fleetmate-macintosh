@@ -12,6 +12,9 @@ public struct DiscoveryResult: Codable, Sendable {
         case duplicate
         /// No origin remote, or one that could not be parsed.
         case noRemote
+        /// Its config can run commands, so it was linked without being
+        /// tracked; tracking it is the person's call.
+        case needsReview
     }
 
     public let path: String
@@ -188,8 +191,12 @@ public struct RepoManager: Sendable {
 
     /// Registers checkouts found by `preview` or `RepoDiscovery`, under the
     /// same rules as `discover`.
+    ///
+    /// A clone whose config can run commands is never tracked here unless
+    /// `trustCommandConfig` says the person ticked it knowing that; it is
+    /// linked untracked and reported as `needsReview`.
     @discardableResult
-    public func register(_ found: [DiscoveredCheckout], track: Bool = false, trackNew: Bool = false) throws -> [DiscoveryResult] {
+    public func register(_ found: [DiscoveredCheckout], track: Bool = false, trackNew: Bool = false, trustCommandConfig: Bool = false) throws -> [DiscoveryResult] {
         let catalog = Dictionary((cachedCatalog()?.repos ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
 
         return try store.update { doc in
@@ -201,9 +208,10 @@ public struct RepoManager: Sendable {
                 }
                 let catalogEntry = catalog[key.id]
                 let canonicalKey = catalogEntry?.key ?? key
+                let held = checkout.runsCommands && !trustCommandConfig
                 if let existing = doc.repos[key.id] {
                     if existing.path == checkout.path {
-                        if track { doc.repos[key.id]?.tracked = true }
+                        if track && !held { doc.repos[key.id]?.tracked = true }
                         results.append(DiscoveryResult(path: checkout.path, id: key.id, displayName: canonicalKey.displayName, inCatalog: catalogEntry != nil, action: .alreadyLinked, registeredPath: nil))
                         continue
                     }
@@ -213,35 +221,45 @@ public struct RepoManager: Sendable {
                     }
                 }
                 let previous = doc.repos[key.id]
+                let wantsTracking = track || (previous?.tracked ?? trackNew)
                 doc.repos[key.id] = RepoRegistryEntry(
                     key: canonicalKey,
                     path: checkout.path,
-                    tracked: track || (previous?.tracked ?? trackNew),
+                    tracked: wantsTracking && !held,
                     remoteUrl: checkout.remoteUrl,
                     defaultBranch: catalogEntry?.defaultBranch,
                     hidden: previous?.hidden ?? false
                 )
-                results.append(DiscoveryResult(path: checkout.path, id: key.id, displayName: canonicalKey.displayName, inCatalog: catalogEntry != nil, action: .linked, registeredPath: nil))
+                results.append(DiscoveryResult(path: checkout.path, id: key.id, displayName: canonicalKey.displayName, inCatalog: catalogEntry != nil,
+                                               action: wantsTracking && held ? .needsReview : .linked, registeredPath: nil))
             }
             return results
         }
     }
 
     /// Adds `folders` to the scan roots, marks the roots as chosen, and
-    /// tracks every clone found in them. What the Repos sidebar's Choose
-    /// Folder does, with no further questions.
+    /// tracks every clone found in them: what the Repos sidebar's Choose
+    /// Folder does, with no further questions. Clones whose config can run
+    /// commands are left unregistered and returned for review instead.
     @discardableResult
-    public func trackFolders(_ folders: [String]) async throws -> [DiscoveryResult] {
+    public func trackFolders(_ folders: [String]) async throws -> (results: [DiscoveryResult], review: [DiscoveredCheckout]) {
         let roots = folders.map(RepoSettings.abbreviate)
         try addScanRoots(roots)
         var settings = try self.settings()
         settings.scanRoots = roots
-        return try await discover(track: true, settings: settings)
+        let found = await RepoDiscovery.discover(settings: settings)
+        let known = try store.load().repos
+        let review = found.filter { $0.runsCommands && ($0.key.map { known[$0.id]?.tracked != true } ?? false) }
+        let reviewPaths = Set(review.map(\.path))
+        return (try register(found.filter { !reviewPaths.contains($0.path) }, track: true), review)
     }
 
     /// Adds roots (deduplicated, stored as `~/…`) and marks them as chosen.
+    /// Until roots were chosen the list is only the default guess, so the
+    /// first choice replaces it rather than adding to it.
     public func addScanRoots(_ folders: [String]) throws {
         try updateSettings { settings in
+            if !settings.rootsChosen { settings.scanRoots = [] }
             for root in folders.map(RepoSettings.abbreviate) where !settings.scanRoots.contains(where: { RepoSettings.abbreviate($0) == root }) {
                 settings.scanRoots.append(root)
             }

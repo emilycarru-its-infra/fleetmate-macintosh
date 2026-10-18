@@ -316,6 +316,7 @@ struct ReposDiscoverCommand: AsyncParsableCommand {
             let known = results.filter { $0.action == .alreadyLinked }
             let duplicates = results.filter { $0.action == .duplicate }
             let noRemote = results.filter { $0.action == .noRemote }
+            let review = results.filter { $0.action == .needsReview }
             print("\nScanned " + settings.scanRoots.joined(separator: ", ") + " (depth \(settings.scanDepth)): \(results.count) checkouts\n")
             for r in linked {
                 let note: String = r.inCatalog ? "" : "  (not in catalog)".yellow
@@ -327,7 +328,14 @@ struct ReposDiscoverCommand: AsyncParsableCommand {
                 let note: String = "  (already at \(r.registeredPath ?? ""))"
                 print("  = ".yellow + name + " " + r.path.lightBlack + note)
             }
+            for r in review {
+                let name: String = (r.displayName ?? "").col(44)
+                print("  ! ".yellow + name + " " + r.path.lightBlack + "  (its settings can run commands; linked, not tracked)".yellow)
+            }
             print("\n\(linked.count) linked, \(known.count) already linked, \(duplicates.count) duplicate copies, \(noRemote.count) without a usable origin")
+            if !review.isEmpty {
+                print("\(review.count) not tracked because their git config runs commands. Check them, then 'fleetmate repos track <repo>'.".yellow)
+            }
         } catch {
             throw ReposCLI.fail(error)
         }

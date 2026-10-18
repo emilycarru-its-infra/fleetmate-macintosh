@@ -17,6 +17,7 @@ struct ReposListView: View {
     /// Collapsed section and group ids, newline-separated. Collapsed rather
     /// than expanded is stored so a newly tracked project starts open.
     @AppStorage("repos.sidebar.collapsed") private var collapsedStorage = ""
+    @State private var reviewingNewClones = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -93,18 +94,17 @@ struct ReposListView: View {
     /// ignores them.
     private var newClonesBar: some View {
         HStack(spacing: 8) {
-            Image(systemName: "plus.rectangle.on.folder")
-                .foregroundStyle(.tint)
+            Image(systemName: model.newClones.contains(where: \.runsCommands) ? "exclamationmark.triangle" : "plus.rectangle.on.folder")
+                .foregroundStyle(model.newClones.contains(where: \.runsCommands) ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint))
             Text(model.newClonesSummary)
                 .appFont(.callout)
                 .lineLimit(2)
-                .help(model.newClones.compactMap { $0.key?.displayName }.joined(separator: "\n"))
             Spacer(minLength: 4)
-            Button("Ignore") { model.ignoreNewClones() }
-                .help("Do not offer these again. Settings › Repositories can still track them.")
-            Button("Add") { model.addNewClones() }
-                .buttonStyle(.borderedProminent)
-                .help("Track \(model.newClones.compactMap { $0.key?.displayName }.joined(separator: ", "))")
+            Button("Review…") { reviewingNewClones = true }
+                .help("Choose which of them to track")
+                .popover(isPresented: $reviewingNewClones, arrowEdge: .bottom) {
+                    NewClonesReview(model: model) { reviewingNewClones = false }
+                }
         }
         .controlSize(.small)
         .padding(.horizontal, 10)
@@ -356,6 +356,64 @@ struct ReposListView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+    }
+}
+
+/// The new clones offered in the sidebar, each with a checkbox. A clone
+/// whose git config can run commands is flagged and starts unticked; adding
+/// one is choosing to trust it.
+private struct NewClonesReview: View {
+    @ObservedObject var model: RepoWorkspaceModel
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(model.newClonesSummary).appFont(.headline)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(model.newClones, id: \.path) { clone in
+                        Toggle(isOn: Binding(
+                            get: { model.newClonesSelected.contains(clone.path) },
+                            set: { on in
+                                if on { model.newClonesSelected.insert(clone.path) } else { model.newClonesSelected.remove(clone.path) }
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(clone.key?.displayName ?? (clone.path as NSString).lastPathComponent)
+                                Text(repoAbbreviatedPath(clone.path))
+                                    .appFont(.caption).foregroundStyle(.secondary)
+                                    .lineLimit(1).truncationMode(.middle)
+                                if clone.runsCommands {
+                                    Label("This repository's settings can run commands: \(clone.commandConfig.joined(separator: ", "))",
+                                          systemImage: "exclamationmark.triangle")
+                                        .appFont(.caption)
+                                        .foregroundStyle(.orange)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 320)
+            HStack {
+                Button("Ignore All") { model.ignoreNewClones(); dismiss() }
+                    .help("Do not offer these again. Settings › Repositories can still track them.")
+                Spacer()
+                Button("Cancel", role: .cancel, action: dismiss)
+                    .keyboardShortcut(.cancelAction)
+                Button("Add \(model.newClonesSelected.count)") {
+                    model.addNewClones()
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.newClonesSelected.isEmpty)
+            }
+        }
+        .padding(14)
+        .frame(width: 380)
     }
 }
 

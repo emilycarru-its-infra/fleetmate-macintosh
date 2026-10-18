@@ -141,6 +141,17 @@ struct FleetMateCommands: Commands {
 
             Divider()
 
+            // Development › Pulls grouped by repository. The model lives on
+            // AppState, so these act on it directly.
+            if !AppEdition.current.isTicketsOnly {
+                Button("Expand All Groups") { appState.development.setAllPullGroups(collapsed: false) }
+                    .disabled(selectedTab != .development)
+                Button("Collapse All Groups") { appState.development.setAllPullGroups(collapsed: true) }
+                    .disabled(selectedTab != .development)
+
+                Divider()
+            }
+
             Button("Show Filters") { appState.perform(.toggleFilters) }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
                 .disabled(!hasFilterPanel)

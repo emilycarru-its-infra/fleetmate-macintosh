@@ -284,6 +284,27 @@ final class RepoDiscoveryScanTests: XCTestCase {
         XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: config), [])
     }
 
+    func testLinesTheParserCannotReadExactlyFailClosed() {
+        // A continuation line can carry a key past a line reader.
+        let continued = "[user]\n\tname = Someone \\\n[core]\n\tpager = less\n"
+        XCTAssertTrue(RepoDiscovery.commandConfigKeys(inConfig: continued).contains("(continuation line)"))
+        // A quoted value that runs over lines likewise.
+        let spanning = "[user]\n\tname = \"Some\n\tone\"\n"
+        XCTAssertTrue(RepoDiscovery.commandConfigKeys(inConfig: spanning).contains("(unbalanced quotes)"))
+        // Names git would not accept.
+        XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: "[user]\n\tna me = x\n"), ["(unparsable line)"])
+        XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: "[us!er]\n\tname = x\n"), ["(unparsable line)"])
+        XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: "name = x\n"), ["(unparsable line)"])
+        XCTAssertTrue(RepoDiscovery.commandConfigKeys(inConfig: "[core\n\tbare = false\n").contains("(unparsable section header)"))
+    }
+
+    func testEscapesThatAreBalancedAreFine() {
+        let config = "[user]\n\tname = \"Some \\\"Nick\\\" One\"\n\temail = a\\\\b@example.com\n[branch \"feature/x\"]\n\tremote = origin\n"
+        XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: config), [])
+        XCTAssertFalse(RepoDiscovery.endsInUnescapedBackslash("value = a\\\\"))
+        XCTAssertTrue(RepoDiscovery.endsInUnescapedBackslash("value = a\\"))
+    }
+
     private func gitDir(_ relative: String) throws -> URL {
         let url = root.appendingPathComponent(relative).appendingPathComponent(".git")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)

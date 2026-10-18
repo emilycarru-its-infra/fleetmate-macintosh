@@ -315,6 +315,11 @@ public enum RepoDiscovery {
         for rawLine in text.split(whereSeparator: \.isNewline) {
             var line = rawLine.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("#") || line.hasPrefix(";") || line.isEmpty { continue }
+            // Anything this line reader cannot read exactly as git would
+            // flags the clone: a continuation line or a quoted value that
+            // spans lines could carry a key past it.
+            if endsInUnescapedBackslash(line) { flag("(continuation line)"); continue }
+            if hasUnbalancedQuotes(line) { flag("(unbalanced quotes)"); continue }
             if line.hasPrefix("[") {
                 guard let close = line.firstIndex(of: "]") else {
                     flag("(unparsable section header)")
@@ -345,6 +350,10 @@ public enum RepoDiscovery {
                 value = ""
             }
             let full = ([section] + (subsection.map { [$0] } ?? []) + [name]).joined(separator: ".")
+            guard isConfigName(name), isConfigName(section, allowDots: true) else {
+                flag("(unparsable line)")
+                continue
+            }
             guard !name.isEmpty, !section.isEmpty else {
                 flag(full.isEmpty ? "(key outside a section)" : full)
                 continue
@@ -352,6 +361,32 @@ public enum RepoDiscovery {
             if !isDataOnlyKey(section: section, subsection: subsection, key: name, value: value) { flag(full) }
         }
         return found
+    }
+
+    /// An odd number of backslashes at the end continues the value on the
+    /// next line.
+    static func endsInUnescapedBackslash(_ line: String) -> Bool {
+        line.reversed().prefix { $0 == "\\" }.count % 2 == 1
+    }
+
+    /// Double quotes not escaped by a backslash, counted across the line;
+    /// an odd count means a quoted value runs on.
+    static func hasUnbalancedQuotes(_ line: String) -> Bool {
+        var quotes = 0
+        var escaped = false
+        for character in line {
+            if escaped { escaped = false; continue }
+            if character == "\\" { escaped = true; continue }
+            if character == "\"" { quotes += 1 }
+        }
+        return quotes % 2 == 1
+    }
+
+    /// A git config section or key name: letters, digits and `-`, starting
+    /// with a letter (sections may also hold `.` in the legacy form).
+    static func isConfigName(_ name: String, allowDots: Bool = false) -> Bool {
+        guard let first = name.unicodeScalars.first, CharacterSet.letters.contains(first), first.isASCII else { return false }
+        return name.unicodeScalars.allSatisfy { $0.isASCII && (CharacterSet.alphanumerics.contains($0) || $0 == "-" || (allowDots && $0 == ".")) }
     }
 
     /// Why a clone's own settings could run commands, or empty when they

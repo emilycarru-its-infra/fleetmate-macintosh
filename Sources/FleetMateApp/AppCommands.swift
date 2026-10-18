@@ -141,6 +141,15 @@ struct FleetMateCommands: Commands {
 
             Divider()
 
+            if !AppEdition.current.isTicketsOnly {
+                Menu("Sort Queries By") {
+                    QuerySortMenuItems()
+                }
+                .disabled(selectedTab != .projects || !appState.config.isDevOpsConfigured)
+
+                Divider()
+            }
+
             Button("Show Filters") { appState.perform(.toggleFilters) }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
                 .disabled(!hasFilterPanel)

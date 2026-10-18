@@ -158,8 +158,20 @@ private struct AuthSettingsContent: View {
 
     /// One row's status under the shared model.
     private func displayStatus(_ system: AuthSystemStatus) -> AuthDisplayStatus {
-        if isStartingElevation(system) { return .checking("Starting elevation session…") }
-        return AuthDisplayStatus(state: system.state, lastChecked: system.lastChecked)
+        if isStartingElevation(system) { return .checking("Starting elevated session…") }
+        let status = AuthDisplayStatus(state: system.state, lastChecked: system.lastChecked)
+        // A verified system that runs through an elevated session reads as
+        // that session: Ready while it runs, a grey Stopped when it has
+        // stopped. A stopped container is not a credential problem.
+        guard status == .valid,
+              let domain = AuthProviderGrouping.elevationDomain(for: system.systemId, config: appState.config)
+        else { return status }
+        switch appState.elevationStatus(domain) {
+        case .ready: return .ready
+        case .idle, .expired: return .standby
+        case .starting: return .checking("Starting…")
+        case .unknown: return .valid
+        }
     }
 
     /// The CLI account's own status, for the providers that have one.
@@ -202,6 +214,9 @@ private struct AuthSettingsContent: View {
                 if let outcome = cliSignInResult[.azureCli] {
                     detailRow(outcome.succeeded ? "az login" : "Sign-in error", outcome.message)
                 }
+            }
+            if appState.config.graphUsesAze {
+                elevatedSessionsBlock
             }
         case .githubCli:
             detailGrid {
@@ -333,8 +348,7 @@ private struct AuthSettingsContent: View {
         case .intune, .graph, .entra:
             detailGrid {
                 if let domain = AuthProviderGrouping.elevationDomain(for: system.systemId, config: cfg) {
-                    detailRow("Runs as", "\(ElevationSession().identity(for: domain)) (managed identity)")
-                    elevationRow(domain)
+                    detailRow("Runs through", "\(domain.rawValue.capitalized) elevated session")
                 }
                 if case .failed(let msg) = system.state {
                     errorRow(msg)
@@ -478,24 +492,110 @@ private struct AuthSettingsContent: View {
         }
     }
 
-    /// The elevation session behind a system: idle, starting, ready (with its
-    /// expiry), expired.
+    // MARK: - Elevated sessions
+
+    /// One row per domain container the app rides on: its state, the managed
+    /// identity it runs as, and a Start or Check Again action. Lives in the
+    /// Azure CLI card because that sign-in is what authorizes starting them.
+    private var elevatedSessionsBlock: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            VStack(alignment: .leading, spacing: 6) {
+                Text(ElevationWording.title)
+                    .appFont(fixed: 12, weight: .semibold)
+                    .padding(.top, 6)
+                Text(ElevationWording.explainer)
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(AppState.elevationDomains.enumerated()), id: \.element) { index, domain in
+                        if index > 0 { Divider() }
+                        elevatedSessionRow(domain, at: context.date)
+                    }
+                }
+                .background(Color(NSColor.windowBackgroundColor).opacity(0.6))
+                .cornerRadius(6)
+            }
+            .help(ElevationWording.explainer)
+        }
+    }
+
+    private func elevationStatus(_ domain: GraphDomain, at now: Date) -> ElevationStatus {
+        auth.startingElevation.contains(domain) ? .starting : appState.elevationStatus(domain, at: now)
+    }
+
+    private func elevatedSessionRow(_ domain: GraphDomain, at now: Date) -> some View {
+        let status = elevationStatus(domain, at: now)
+        return HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 8) {
+                    Text(ElevationWording.domainTitle(domain))
+                        .appFont(fixed: 12, weight: .medium)
+                    sessionPill(status)
+                }
+                Text(ElevationWording.detail(status, at: now))
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Runs as \(ElevationSession().identity(for: domain)) (managed identity)")
+                    .appFont(.caption, design: .monospaced)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+            Spacer(minLength: 8)
+            sessionAction(domain, status: status)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .contain)
+    }
+
+    /// Green while running, blue while starting, grey when stopped. Never red.
+    private func sessionPill(_ status: ElevationStatus) -> some View {
+        let tint: Color = switch status {
+        case .ready: .green
+        case .starting: .blue
+        case .idle, .expired, .unknown: .gray
+        }
+        return HStack(spacing: 4) {
+            if status == .starting {
+                ProgressView().controlSize(.mini).tint(.blue)
+            } else {
+                Circle().fill(tint).frame(width: 7, height: 7)
+            }
+            Text(ElevationWording.stateLabel(status))
+                .appFont(.caption)
+                .foregroundColor(tint == .gray ? .secondary : tint)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(tint.opacity(0.1))
+        .cornerRadius(4)
+        .accessibilityElement(children: .combine)
+    }
+
     @ViewBuilder
-    private func elevationRow(_ domain: GraphDomain) -> some View {
-        let status = auth.startingElevation.contains(domain) ? .starting : appState.elevationStatus(domain)
+    private func sessionAction(_ domain: GraphDomain, status: ElevationStatus) -> some View {
         switch status {
-        case .ready(let expires?):
-            detailRow("Elevation session", "Session ready until \(expires.formatted(date: .omitted, time: .shortened))")
-        case .ready:
-            detailRow("Elevation session", "Session ready")
         case .starting:
-            detailRow("Elevation session", "Starting (a cold start takes about a minute)")
-        case .idle:
-            detailRow("Elevation session", "Idle. Starts on first use.")
-        case .expired:
-            detailRow("Elevation session", "Stopped. Restarts on next use.")
-        case .unknown:
-            detailRow("Elevation session", "Unknown")
+            EmptyView()
+        case .ready:
+            Button {
+                Task { await appState.refreshElevationInfo() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .controlSize(.small)
+            .help("Check this session again")
+            .accessibilityLabel("Check \(domain.rawValue) session again")
+        case .idle, .expired, .unknown:
+            Button("Start") {
+                Task { await appState.startElevationSession(domain) }
+            }
+            .controlSize(.small)
+            .help("Start the \(domain.rawValue) session now, so the next action does not wait for it")
         }
     }
 

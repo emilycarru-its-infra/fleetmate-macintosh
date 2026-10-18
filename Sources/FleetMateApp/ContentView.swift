@@ -102,7 +102,7 @@ struct ContentView: View {
                         Label {
                             Text("Authentication")
                         } icon: {
-                            ElevationShieldLabel()
+                            ElevationShieldLabel(showsText: windowWidth >= ElevationShieldLabel.textHiddenBelow)
                         }
                     }
                     .popover(isPresented: $showAuthPopover, arrowEdge: .bottom) {

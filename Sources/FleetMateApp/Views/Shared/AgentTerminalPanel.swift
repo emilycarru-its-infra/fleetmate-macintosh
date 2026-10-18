@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftTerm
+import UniformTypeIdentifiers
 import FleetMateCore
 
 /// Hosts a session's terminal and hands it keyboard focus once it is
@@ -72,6 +73,14 @@ struct AgentTerminalPanel: View {
     @AppStorage(AgentSettingsKey.filterPaused) private var filterPaused = false
     @AppStorage(AgentSettingsKey.sortMode) private var sortModeRaw = TerminalSessionSort.manual.rawValue
     @State private var searchText = ""
+    @State private var savingWorkspace = false
+    @State private var workspaceName = ""
+    /// The session being dragged in the list, and the row or section it is over.
+    @State private var draggingId: AgentTerminalSession.ID?
+    @State private var dropTarget: String?
+
+    /// Rows drag as this private type, so a row dropped on a terminal is not pasted as text.
+    static let sessionDragType = UTType(exportedAs: "app.fleetmate.terminal-session")
 
     private var listCollapsed: Bool { listOverride ?? (store.sessions.count < 2) }
 
@@ -92,11 +101,16 @@ struct AgentTerminalPanel: View {
         }
         .background(SwiftUI.Color(nsColor: .textBackgroundColor))
         .overlay(alignment: .top) {
-            if let error = store.workspaceError {
+            if let error = store.workspaceError ?? store.workspaceFileError {
                 Text(error).font(.caption).padding(6).background(.regularMaterial)
             }
         }
         .onChange(of: store.sessions.count) { _, _ in listOverride = nil }
+        .onAppear(perform: store.reloadWorkspaces)
+        // Back from editing the file by hand: read it again.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            store.reloadWorkspaces()
+        }
     }
 
     private func pane(_ session: AgentTerminalSession) -> some View {
@@ -112,6 +126,7 @@ struct AgentTerminalPanel: View {
                     Text("Sessions").appFont(.caption, weight: .semibold).foregroundStyle(.secondary)
                     Text("\(store.sessions.count)").appFont(.caption2).monospacedDigit().foregroundStyle(.tertiary)
                     Spacer(minLength: 4)
+                    workspacesMenu
                     newSessionMenu
                     Button(action: store.toggleSplit) {
                         Label("Split", systemImage: store.splitId == nil ? "rectangle.split.2x1" : "rectangle")
@@ -185,6 +200,116 @@ struct AgentTerminalPanel: View {
                    move: { store.move(session, to: $0) },
                    select: { store.select(session.id) },
                    close: { store.close(session.id) })
+        // Drag a row onto another to put it there, in that row's section.
+        .onDrag {
+            draggingId = session.id
+            let provider = NSItemProvider()
+            provider.registerDataRepresentation(forTypeIdentifier: Self.sessionDragType.identifier, visibility: .ownProcess) { done in
+                done(Data(session.id.uuidString.utf8), nil)
+                return nil
+            }
+            return provider
+        }
+        .onDrop(of: [Self.sessionDragType], isTargeted: dropBinding("row:\(session.id)")) { _ in
+            drop(before: session.id, in: session.section)
+        }
+        .overlay(alignment: .top) { dropLine(dropTarget == "row:\(session.id)") }
+    }
+
+    private func dropBinding(_ key: String) -> Binding<Bool> {
+        Binding(get: { dropTarget == key },
+                set: { inside in
+                    if inside { dropTarget = key } else if dropTarget == key { dropTarget = nil }
+                })
+    }
+
+    private func drop(before target: AgentTerminalSession.ID?, in section: String) -> Bool {
+        defer { draggingId = nil; dropTarget = nil }
+        guard let id = draggingId else { return false }
+        store.moveSession(id, before: target, in: section)
+        return true
+    }
+
+    private func dropLine(_ shown: Bool) -> some View {
+        Rectangle().fill(Color.accentColor).frame(height: 2).opacity(shown ? 1 : 0)
+            .allowsHitTesting(false)
+    }
+
+    // MARK: Workspaces
+
+    private var workspacesMenu: some View {
+        Menu {
+            let file = store.workspaceFile
+            if file.workspaces.isEmpty {
+                Text("No Saved Workspaces")
+            } else {
+                Section("Open Workspace") {
+                    ForEach(file.workspaces, id: \.name) { workspace in
+                        Button("\(workspace.name) — \(workspace.sessionCount == 1 ? "1 session" : "\(workspace.sessionCount) sessions")") {
+                            store.open(workspace: workspace, show: true)
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button("Save Sessions as Workspace…") {
+                workspaceName = file.launchWorkspace?.name ?? ""
+                savingWorkspace = true
+            }
+            .disabled(store.sessions.isEmpty)
+            if !file.workspaces.isEmpty {
+                Picker("Open at Launch", selection: Binding(
+                    get: { file.launchWorkspace?.name ?? "" },
+                    set: { store.setOpenAtLaunch($0.isEmpty ? nil : $0) }
+                )) {
+                    Text("None").tag("")
+                    ForEach(file.workspaces, id: \.name) { Text($0.name).tag($0.name) }
+                }
+                Menu("Delete Workspace") {
+                    ForEach(file.workspaces, id: \.name) { workspace in
+                        Button(workspace.name) { store.deleteWorkspace(named: workspace.name) }
+                    }
+                }
+            }
+            Divider()
+            Button("Edit Workspaces File") { Self.openWorkspacesFile(reveal: false) }
+            Button("Show Workspaces File in Finder") { Self.openWorkspacesFile(reveal: true) }
+        } label: {
+            Label("Workspaces", systemImage: "square.stack.3d.up").labelStyle(.iconOnly)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Open, save and choose the workspace FleetMate opens at launch")
+        .accessibilityLabel("Workspaces")
+        .popover(isPresented: $savingWorkspace, arrowEdge: .bottom) {
+            AgentNamePopover(title: "Save Workspace", name: $workspaceName,
+                             save: {
+                                 store.saveWorkspace(named: workspaceName)
+                                 savingWorkspace = false
+                             },
+                             cancel: { savingWorkspace = false })
+        }
+    }
+
+    /// Open the workspaces file in its editor, or show it in Finder, writing
+    /// an empty one first so there is something to edit.
+    static func openWorkspacesFile(reveal: Bool) {
+        let path = TerminalWorkspaceStore.defaultPath
+        if !FileManager.default.fileExists(atPath: path) {
+            try? TerminalWorkspaceStore.save(TerminalWorkspaceFile(), to: path)
+        }
+        let url = URL(fileURLWithPath: path)
+        if reveal {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            // JSON may have no default app; TextEdit always opens it.
+            let editor = NSWorkspace.shared.urlForApplication(toOpen: url)
+                ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.TextEdit")
+            if let editor {
+                NSWorkspace.shared.open([url], withApplicationAt: editor, configuration: NSWorkspace.OpenConfiguration())
+            }
+        }
     }
 
     /// Sessions under their section headers. Filtered, sections with no
@@ -313,7 +438,17 @@ struct AgentTerminalPanel: View {
                 Button("Remove Section") { store.removeSection(section) }
             }
             Button("New Section…", action: newSection)
+            Divider()
+            Button("Move Section Up") { store.moveSection(section, by: -1) }
+                .disabled(store.sections.first == section)
+            Button("Move Section Down") { store.moveSection(section, by: 1) }
+                .disabled(store.sections.last == section)
         }
+        // A row dropped on the header goes to the end of the section.
+        .onDrop(of: [Self.sessionDragType], isTargeted: dropBinding("section:\(section)")) { _ in
+            drop(before: nil, in: section)
+        }
+        .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(dropTarget == "section:\(section)" ? 0.15 : 0)))
     }
 
     private var sectionNameEditor: some View {

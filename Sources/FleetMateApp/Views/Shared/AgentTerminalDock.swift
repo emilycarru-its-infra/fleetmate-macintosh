@@ -260,3 +260,22 @@ private struct StripIconButton: View {
         .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 }
+
+/// View › Terminal Workspaces: open a saved workspace, or edit the file.
+/// Saving the open sessions is in the session list, where it can ask for a name.
+struct AgentWorkspaceMenuItems: View {
+    @ObservedObject var terminals: AgentTerminalStore
+
+    var body: some View {
+        Menu("Terminal Workspaces") {
+            let workspaces = terminals.workspaceFile.workspaces
+            if workspaces.isEmpty { Text("No Saved Workspaces") }
+            ForEach(workspaces, id: \.name) { workspace in
+                Button(workspace.name) { terminals.open(workspace: workspace, show: true) }
+            }
+            Divider()
+            Button("Edit Workspaces File") { AgentTerminalPanel.openWorkspacesFile(reveal: false) }
+            Button("Show Workspaces File in Finder") { AgentTerminalPanel.openWorkspacesFile(reveal: true) }
+        }
+    }
+}

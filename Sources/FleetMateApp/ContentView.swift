@@ -141,7 +141,13 @@ struct ContentView: View {
             .onAppear {
                 appState.wireAgentTerminal()
                 terminals.defaultLaunch = appState.agentDefaultLaunch
-                if appState.agentAutoStart && terminals.sessions.isEmpty {
+                // A saved workspace named to open at launch takes the place
+                // of the single session that otherwise starts.
+                terminals.reloadWorkspaces()
+                if !AppEdition.current.isTicketsOnly, terminals.sessions.isEmpty,
+                   let workspace = terminals.workspaceFile.launchWorkspace {
+                    terminals.open(workspace: workspace)
+                } else if appState.agentAutoStart && terminals.sessions.isEmpty {
                     terminals.open(appState.agentDefaultLaunch, focus: false, show: false)
                 }
                 writeAgentContext()

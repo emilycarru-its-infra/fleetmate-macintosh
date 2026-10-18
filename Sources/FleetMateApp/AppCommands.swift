@@ -174,6 +174,7 @@ struct FleetMateCommands: Commands {
                     terminals.isMaximized.toggle()
                 }
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
+                AgentWorkspaceMenuItems(terminals: appState.terminals)
 
                 Divider()
             }

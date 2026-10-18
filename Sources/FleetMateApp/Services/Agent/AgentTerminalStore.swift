@@ -746,6 +746,132 @@ final class AgentTerminalStore: ObservableObject {
         collapsedSections.remove(name)
     }
 
+    // MARK: - Reordering
+
+    /// Move a section up or down the list.
+    func moveSection(_ name: String, by offset: Int) {
+        guard let index = sections.firstIndex(of: name) else { return }
+        let target = index + offset
+        guard sections.indices.contains(target) else { return }
+        sections.swapAt(index, target)
+    }
+
+    /// Drop a session on another: it takes that one's place and section.
+    /// With no target it goes to the end of `section`.
+    func moveSession(_ id: AgentTerminalSession.ID, before target: AgentTerminalSession.ID?, in section: String) {
+        guard id != target, sections.contains(section),
+              let from = sessions.firstIndex(where: { $0.id == id }) else { return }
+        let session = sessions.remove(at: from)
+        session.section = section
+        if let target, let to = sessions.firstIndex(where: { $0.id == target }) {
+            sessions.insert(session, at: to)
+        } else if let last = sessions.lastIndex(where: { $0.section == section }) {
+            sessions.insert(session, at: last + 1)
+        } else {
+            sessions.append(session)
+        }
+    }
+
+    // MARK: - Saved workspaces
+
+    /// The saved workspaces, read from the file again whenever a menu opens
+    /// so hand edits apply without a relaunch.
+    @Published private(set) var workspaceFile = TerminalWorkspaceFile()
+    @Published private(set) var workspaceFileError: String?
+
+    func reloadWorkspaces() {
+        do {
+            workspaceFile = try TerminalWorkspaceStore.load()
+            workspaceFileError = nil
+        } catch {
+            workspaceFileError = "Could not read \(TerminalWorkspaceStore.abbreviate(TerminalWorkspaceStore.defaultPath)): \(error.localizedDescription)"
+        }
+    }
+
+    private func writeWorkspaces(_ change: (inout TerminalWorkspaceFile) -> Void) {
+        reloadWorkspaces()
+        guard workspaceFileError == nil else { return }
+        var file = workspaceFile
+        change(&file)
+        do {
+            try TerminalWorkspaceStore.save(file)
+            workspaceFile = file
+        } catch {
+            workspaceFileError = "Could not save the workspaces: \(error.localizedDescription)"
+        }
+    }
+
+    /// The sessions open now, by section, as a workspace named `name`. A
+    /// session keeps its name only when the person gave it one, so the rest
+    /// follow their program's title next time.
+    func snapshot(named name: String) -> TerminalWorkspace {
+        let sections = sections.map { section in
+            TerminalWorkspace.Section(
+                name: section,
+                collapsed: collapsedSections.contains(section) ? true : nil,
+                sessions: sessions.filter { $0.section == section }.map { session in
+                    let custom = session.customTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return TerminalWorkspace.Session(
+                        name: custom.isEmpty ? nil : custom,
+                        command: session.launch.command,
+                        directory: TerminalWorkspaceStore.abbreviate(session.directory))
+                })
+        }
+        return TerminalWorkspace(name: name, show: true, fullWindow: isMaximized && isVisible ? true : nil, sections: sections)
+    }
+
+    /// Save the open sessions as `name`, replacing a workspace of that name.
+    func saveWorkspace(named name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let workspace = snapshot(named: name)
+        writeWorkspaces { $0.upsert(workspace) }
+    }
+
+    func deleteWorkspace(named name: String) {
+        writeWorkspaces { $0.remove(named: name) }
+    }
+
+    /// Name the workspace to open when FleetMate starts, or none.
+    func setOpenAtLaunch(_ name: String?) {
+        writeWorkspaces { $0.openAtLaunch = name }
+    }
+
+    /// Open a workspace's sessions beside any already open. A session already
+    /// open with the same name, command and folder is not opened twice, so
+    /// opening a workspace again only fills in what was closed.
+    func open(workspace: TerminalWorkspace, show: Bool? = nil) {
+        let selectedBefore = selectedId
+        var first: AgentTerminalSession?
+        for section in workspace.sections {
+            let name = section.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            addSection(name)
+            if section.collapsed == true { collapsedSections.insert(name) } else { collapsedSections.remove(name) }
+            for entry in section.sessions {
+                let command = entry.command ?? ""
+                let directory = entry.directory.map { TerminalWorkspaceStore.expand($0) }
+                let title = entry.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let alreadyOpen = sessions.contains { session in
+                    session.launch.command == command
+                        && session.customTitle == title
+                        && (directory == nil || session.launch.directory.map { TerminalWorkspaceStore.expand($0) } == directory)
+                }
+                if alreadyOpen { continue }
+                let session = open(AgentLaunch(command: command, directory: directory), focus: false, show: false)
+                session.customTitle = title
+                session.section = name
+                if first == nil { first = session }
+            }
+        }
+        selectedId = first?.id ?? selectedBefore ?? sessions.first?.id
+        if show ?? workspace.show ?? true, !sessions.isEmpty {
+            isVisible = true
+            isMaximized = workspace.fullWindow ?? false
+            selected?.wantsFocus = true
+        }
+    }
+
     func terminateAll() {
         sessions.forEach { $0.terminate() }
         try? FileManager.default.removeItem(at: brief.sessionDirectory)

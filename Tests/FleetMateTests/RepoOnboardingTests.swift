@@ -248,6 +248,7 @@ final class RepoDiscoveryScanTests: XCTestCase {
     ]
 
     func testConfigReviewTable() {
+        XCTAssertEqual(Self.configCases.count, 42, "the Windows table holds the same cases")
         for c in Self.configCases {
             let flagged = !RepoDiscovery.commandConfigKeys(inConfig: c.config).isEmpty
             XCTAssertEqual(flagged, c.flagged, "\(c.name): \(RepoDiscovery.commandConfigKeys(inConfig: c.config))")

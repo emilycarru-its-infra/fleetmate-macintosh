@@ -295,6 +295,9 @@ public enum RepoDiscovery {
             if lineBytes.last == 0x0D { lineBytes.removeLast() }
             let line = Substring(String(decoding: lineBytes, as: UTF8.self))
             let trimmed = line.trimmingCharacters(in: CharacterSet(charactersIn: " \t"))
+            // A trailing backslash continues the line in git's reading; never
+            // let one through, whatever the patterns below would say.
+            if lineBytes.last == 0x5C { flag("(continuation line)"); continue }
             if trimmed.isEmpty || trimmed.hasPrefix("#") || trimmed.hasPrefix(";") { continue }
 
             if let header = trimmed.wholeMatch(of: headerPattern) {

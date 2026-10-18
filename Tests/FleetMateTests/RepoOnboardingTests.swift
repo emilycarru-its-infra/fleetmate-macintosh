@@ -229,6 +229,7 @@ final class RepoDiscoveryScanTests: XCTestCase {
         ("submodule update command", "[submodule \"lib\"]\n\tupdate = !sh -c x\n", true),
         ("submodule update quoted empty then command", "[submodule \"lib\"]\n\tupdate = \"\"!sh -c x\n", true),
         ("submodule update other value", "[submodule \"lib\"]\n\tupdate = merge-ish\n", true),
+        ("url continuation hiding a header", "[remote \"origin\"]\n\turl = x \\\n[user]\n\tpager = less\n", true),
         ("continuation backslash", "[user]\n\tname = Someone \\\n[core]\n\tpager = less\n", true),
         ("quoted value", "[user]\n\tname = \"Some one\"\n", true),
         ("quote spanning lines", "[user]\n\tname = \"Some\n\tone\"\n", true),
@@ -255,6 +256,12 @@ final class RepoDiscoveryScanTests: XCTestCase {
 
     func testInvalidUTF8IsFlagged() {
         XCTAssertFalse(RepoDiscovery.configReview(Data([0x5B, 0x63, 0x5D, 0x0A, 0xC3, 0x28])).isEmpty)
+    }
+
+    func testEntryPatternRejectsBackslash() {
+        XCTAssertNil("\turl = x \\".wholeMatch(of: RepoDiscovery.entryPattern))
+        XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: "[remote \"origin\"]\n\turl = x \\\n[user]\n\tpager = less\n"),
+                       ["(continuation line)"])
     }
 
     func testFlaggedKeysAreNamed() {

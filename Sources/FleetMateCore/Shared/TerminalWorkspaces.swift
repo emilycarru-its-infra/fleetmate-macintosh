@@ -86,6 +86,11 @@ public struct TerminalWorkspace: Codable, Equatable, Sendable {
     /// folder listed here and missing from the sessions was removed by the
     /// person, so it is not added again; one no longer tracked is taken out.
     public var generated: [String]?
+    /// For the Repos workspace: true once its generated sessions store no
+    /// command and run the default agent from Settings › Agent when they
+    /// start. Nil on a file written before that, whose sessions carry the
+    /// command baked in when they were generated; `sync` clears it once.
+    public var sessionsFollowDefault: Bool?
 
     public init(name: String, show: Bool? = nil, fullWindow: Bool? = nil, sections: [Section]) {
         self.name = name
@@ -102,6 +107,7 @@ public struct TerminalWorkspace: Codable, Equatable, Sendable {
         fullWindow = try container.decodeIfPresent(Bool.self, forKey: .fullWindow)
         sections = try container.decodeIfPresent([Section].self, forKey: .sections) ?? []
         generated = try container.decodeIfPresent([String].self, forKey: .generated)
+        sessionsFollowDefault = try container.decodeIfPresent(Bool.self, forKey: .sessionsFollowDefault)
     }
 
     public var sessionCount: Int { sections.reduce(0) { $0 + $1.sessions.count } }
@@ -132,7 +138,9 @@ public struct TerminalWorkspace: Codable, Equatable, Sendable {
         /// The row's name until the program sets a title, such as the
         /// repository's name for a session generated from Repos.
         public var label: String?
-        /// What it runs: "codex", "claude", any command; nil or "" is the login shell.
+        /// What it runs: "codex", "claude", any command; nil or "" is the login
+        /// shell. In the Repos workspace nil runs the default agent from
+        /// Settings › Agent, read when the session starts, and "" the shell.
         public var command: String?
         /// Where it starts; "~" is the home folder. Nil is the default start folder.
         public var directory: String?

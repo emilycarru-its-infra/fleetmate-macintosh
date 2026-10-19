@@ -10,7 +10,7 @@ final class TerminalWorkspaceBaselineTests: XCTestCase {
     }
 
     func testNoCheckoutsMakesNoWorkspace() {
-        XCTAssertNil(TerminalWorkspaceBaseline.make(from: [], command: "codex", now: now))
+        XCTAssertNil(TerminalWorkspaceBaseline.make(from: [], now: now))
     }
 
     func testAFewCheckoutsAreAllIncludedGroupedByHost() throws {
@@ -18,13 +18,15 @@ final class TerminalWorkspaceBaselineTests: XCTestCase {
             checkout(.gitHub, "zed", "b", daysAgo: 400),
             checkout(.azureDevOps, "Proj", "a", daysAgo: nil),
             checkout(.gitHub, "alpha", "c", daysAgo: 1),
-        ], command: "codex", now: now))
+        ], now: now))
         XCTAssertEqual(workspace.source, TerminalWorkspaceBaseline.source)
         XCTAssertEqual(workspace.sections.map(\.name), ["Azure DevOps", "GitHub"])
         XCTAssertEqual(workspace.sections[1].sessions.map(\.label), ["alpha/c", "zed/b"])
         // The repository's name is a label, so the program's title can replace it.
         XCTAssertEqual(workspace.sections[1].sessions.map(\.name), [nil, nil])
-        XCTAssertEqual(workspace.sections[0].sessions.first?.command, "codex")
+        // No command: each runs the default agent as it is when it starts.
+        XCTAssertNil(workspace.sections[0].sessions.first?.command)
+        XCTAssertEqual(workspace.sessionsFollowDefault, true)
     }
 
     func testManyCheckoutsKeepOnlyTheActiveOnes() {
@@ -43,12 +45,12 @@ final class TerminalWorkspaceBaselineTests: XCTestCase {
 
     func testAddMissingKeepsEditsAndAddsOnlyNewFolders() throws {
         var workspace = try XCTUnwrap(TerminalWorkspaceBaseline.make(
-            from: [checkout(.gitHub, "o", "a", daysAgo: 1)], command: "codex", now: now))
+            from: [checkout(.gitHub, "o", "a", daysAgo: 1)], now: now))
         workspace.sections[0].sessions[0].command = "claude"
         workspace.sections.append(.init(name: "Mine", sessions: []))
         let added = TerminalWorkspaceBaseline.addMissing(
             [checkout(.gitHub, "o", "a", daysAgo: 1), checkout(.azureDevOps, "P", "b", daysAgo: 1)],
-            to: &workspace, command: "codex", now: now)
+            to: &workspace, now: now)
         XCTAssertEqual(added, 1)
         XCTAssertEqual(workspace.sections[0].sessions[0].command, "claude")
         XCTAssertEqual(workspace.sections.map(\.name), ["GitHub", "Mine", "Azure DevOps"])
@@ -96,7 +98,7 @@ final class TerminalWorkspaceBaselineTests: XCTestCase {
         XCTAssertEqual(TerminalWorkspaceBaseline.checkouts(from: document).count, 2)
         let checkouts = TerminalWorkspaceBaseline.checkouts(from: document, excluding: hiddenIds)
         XCTAssertEqual(checkouts.map(\.displayName), ["owner-a/shown"])
-        let workspace = try XCTUnwrap(TerminalWorkspaceBaseline.make(from: checkouts, command: "codex", now: now))
+        let workspace = try XCTUnwrap(TerminalWorkspaceBaseline.make(from: checkouts, now: now))
         XCTAssertEqual(workspace.sections.map(\.name), ["GitHub"])
     }
 
@@ -115,27 +117,24 @@ final class TerminalWorkspaceBaselineTests: XCTestCase {
         // The case that left a person with "No Saved Workspaces": the file
         // existed, empty, before the generated workspace was first written.
         var file = TerminalWorkspaceFile()
-        XCTAssertTrue(file.syncBaseline(with: [tracked(.azureDevOps, "Cloud", "Vantage"), tracked(.gitHub, "o", "a")],
-                                        command: "codex", now: now))
+        XCTAssertTrue(file.syncBaseline(with: [tracked(.azureDevOps, "Cloud", "Vantage"), tracked(.gitHub, "o", "a")], now: now))
         XCTAssertEqual(file.baseline?.sections.map(\.name), ["Azure DevOps", "GitHub"])
         XCTAssertEqual(file.baseline?.sections.first?.sessions.first?.directory, "/src/Cloud/Vantage")
-        XCTAssertFalse(file.syncBaseline(with: [tracked(.azureDevOps, "Cloud", "Vantage"), tracked(.gitHub, "o", "a")],
-                                         command: "codex", now: now))
+        XCTAssertFalse(file.syncBaseline(with: [tracked(.azureDevOps, "Cloud", "Vantage"), tracked(.gitHub, "o", "a")], now: now))
     }
 
     func testADeletedReposWorkspaceIsNotWrittenAgain() {
         var file = TerminalWorkspaceFile()
-        file.syncBaseline(with: [tracked(.gitHub, "o", "a")], command: "codex", now: now)
+        file.syncBaseline(with: [tracked(.gitHub, "o", "a")], now: now)
         file.remove(named: TerminalWorkspaceBaseline.name)
         XCTAssertEqual(file.generateFromRepos, false)
-        XCTAssertFalse(file.syncBaseline(with: [tracked(.gitHub, "o", "a")], command: "codex", now: now))
+        XCTAssertFalse(file.syncBaseline(with: [tracked(.gitHub, "o", "a")], now: now))
         XCTAssertNil(file.baseline)
     }
 
     func testSyncAddsNewRemovesUntrackedAndKeepsEdits() throws {
         var workspace = try XCTUnwrap(TerminalWorkspaceBaseline.make(
-            from: [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "b"), tracked(.azureDevOps, "P", "c")],
-            command: "codex", now: now))
+            from: [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "b"), tracked(.azureDevOps, "P", "c")], now: now))
         // The person renames a, moves it to their own section, and removes b.
         var a = workspace.sections[1].sessions.removeFirst()
         a.name = "Mine"
@@ -144,8 +143,7 @@ final class TerminalWorkspaceBaselineTests: XCTestCase {
 
         // c stops being tracked (or is hidden); d is newly tracked; b still is.
         let change = TerminalWorkspaceBaseline.sync(
-            &workspace, with: [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "b"), tracked(.gitHub, "o", "d")],
-            command: "codex", now: now)
+            &workspace, with: [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "b"), tracked(.gitHub, "o", "d")], now: now)
         XCTAssertEqual(change.added, ["/src/o/d"])
         XCTAssertEqual(change.removed, ["/src/p/c"])
         XCTAssertEqual(workspace.sections.map(\.name), ["GitHub", "Focus"])
@@ -155,10 +153,9 @@ final class TerminalWorkspaceBaselineTests: XCTestCase {
         XCTAssertFalse(workspace.sections.flatMap(\.sessions).contains { $0.directory == "/src/o/b" })
 
         // Untracked then tracked again, it comes back.
-        TerminalWorkspaceBaseline.sync(&workspace, with: [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "d")],
-                                       command: "codex", now: now)
+        TerminalWorkspaceBaseline.sync(&workspace, with: [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "d")], now: now)
         TerminalWorkspaceBaseline.sync(&workspace, with: [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "b"),
-                                                          tracked(.gitHub, "o", "d")], command: "codex", now: now)
+                                                          tracked(.gitHub, "o", "d")], now: now)
         XCTAssertTrue(workspace.sections.flatMap(\.sessions).contains { $0.directory == "/src/o/b" })
     }
 
@@ -168,9 +165,52 @@ final class TerminalWorkspaceBaselineTests: XCTestCase {
             .init(name: "Release prep", command: "codex", directory: "/src/o/b"),
         ])])
         workspace.source = TerminalWorkspaceBaseline.source
-        TerminalWorkspaceBaseline.sync(&workspace, with: [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "b")],
-                                       command: "codex", now: now)
+        TerminalWorkspaceBaseline.sync(&workspace, with: [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "b")], now: now)
         XCTAssertEqual(workspace.sections[0].sessions.map(\.name), [nil, "Release prep"])
         XCTAssertEqual(workspace.sections[0].sessions.first?.label, "o/a")
+    }
+
+    func testGeneratedSessionsStoreNoCommand() throws {
+        var file = TerminalWorkspaceFile()
+        file.syncBaseline(with: [tracked(.gitHub, "o", "a")], defaultCommand: "codex", now: now)
+        // A repository tracked later is added the same way, whatever the default.
+        file.syncBaseline(with: [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "b")],
+                          defaultCommand: "claude", now: now)
+        let sessions = try XCTUnwrap(file.baseline).sections.flatMap(\.sessions)
+        XCTAssertEqual(sessions.count, 2)
+        XCTAssertTrue(sessions.allSatisfy { $0.command == nil })
+    }
+
+    func testBakedCommandsFollowTheDefaultOnceMigrated() throws {
+        // As an older build wrote it: the default baked into each generated session.
+        var workspace = TerminalWorkspace(name: "Repos", sections: [.init(name: "GitHub", sessions: [
+            .init(label: "o/a", command: "codex", directory: "/src/o/a"),
+            .init(label: "o/b", command: "my-agent --fast", directory: "/src/o/b"),
+            .init(label: "o/c", command: "claude --model x", directory: "/src/o/c"),
+            .init(name: "Mine", command: "codex", directory: "/src/elsewhere"),
+        ])])
+        workspace.source = TerminalWorkspaceBaseline.source
+        workspace.generated = ["/src/o/a", "/src/o/b", "/src/o/c"]
+        let checkouts = [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "b"), tracked(.gitHub, "o", "c")]
+        TerminalWorkspaceBaseline.sync(&workspace, with: checkouts, defaultCommand: "my-agent --fast", now: now)
+        let commands = workspace.sections[0].sessions.map(\.command)
+        // Placed and still a command FleetMate could have written: follows the
+        // default. Edited by hand, or added by the person: kept.
+        XCTAssertEqual(commands, [nil, nil, "claude --model x", "codex"])
+        XCTAssertEqual(workspace.sessionsFollowDefault, true)
+
+        // Once migrated, a command the person sets later stays.
+        workspace.sections[0].sessions[0].command = "codex"
+        TerminalWorkspaceBaseline.sync(&workspace, with: checkouts, defaultCommand: "codex", now: now)
+        XCTAssertEqual(workspace.sections[0].sessions[0].command, "codex")
+    }
+
+    func testTheMigrationMarkRoundTrips() throws {
+        var workspace = try XCTUnwrap(TerminalWorkspaceBaseline.make(from: [tracked(.gitHub, "o", "a")], now: now))
+        workspace.sections[0].sessions[0].command = ""
+        let data = try JSONEncoder().encode(workspace)
+        let decoded = try JSONDecoder().decode(TerminalWorkspace.self, from: data)
+        XCTAssertEqual(decoded.sessionsFollowDefault, true)
+        XCTAssertEqual(decoded.sections[0].sessions[0].command, "")
     }
 }

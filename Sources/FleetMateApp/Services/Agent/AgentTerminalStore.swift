@@ -232,7 +232,12 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
     enum Activity { case idle, busy, attention, exited }
 
     let id: UUID
-    let launch: AgentLaunch
+    /// What the session runs. A row that follows the default has its command
+    /// filled in by the store just before it starts.
+    private(set) var launch: AgentLaunch
+    /// A Repos row with no command of its own: it runs the default agent
+    /// from Settings › Agent as it is when the row starts.
+    let followsDefault: Bool
     let view: FleetMateTerminalView
     /// The terminal title as the program last set it (OSC 0 or 2).
     @Published private(set) var programTitle: String?
@@ -299,8 +304,9 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
     /// current, so they skip their own update checks.
     /// A session that starts nothing until `start` is called.
     init(id: UUID, launch: AgentLaunch, directory start: String, sessionDirectory: URL, fontSize: CGFloat,
-         label: String? = nil, repoDirectory: String? = nil) {
+         label: String? = nil, repoDirectory: String? = nil, followsDefault: Bool = false) {
         self.id = id
+        self.followsDefault = followsDefault
         self.metadataPath = sessionDirectory.appendingPathComponent(id.uuidString + ".json").path
         self.launch = launch
         self.directory = start
@@ -317,6 +323,12 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
     /// own brief, with where it opened at the top. `cliUpdatesManaged` is true
     /// when FleetMate keeps the agent CLIs current, so they skip their own
     /// update checks.
+    /// Settle a row that follows the default on the command it runs.
+    func resolveDefault(_ command: String) {
+        guard followsDefault, !isStarted else { return }
+        launch.command = command
+    }
+
     func start(contextPath: String, briefPath: String, codexValuePath: String, cliUpdatesManaged: Bool) {
         guard !isStarted else { return }
         isStarted = true
@@ -534,7 +546,11 @@ final class AgentTerminalStore: ObservableObject {
         UserDefaults.standard.object(forKey: AgentSettingsKey.lastFullWindow) as? Bool ?? true
     }
     /// What ⌘T opens. Kept current by the window from the person's settings.
-    var defaultLaunch: AgentLaunch = .shell
+    /// What a new session runs, read each time so a change in Settings ›
+    /// Agent reaches the next session and every Repos row not yet started.
+    var defaultLaunch: AgentLaunch { resolveDefaultLaunch?() ?? .shell }
+    /// Set by the app: the default from Settings, the managed default or Codex.
+    var resolveDefaultLaunch: (() -> AgentLaunch)?
     /// What to tell a new session about where it is, given its directory.
     /// Set by AppState; nil until then.
     var whereabouts: ((String) -> AgentWhereabouts)?
@@ -600,7 +616,7 @@ final class AgentTerminalStore: ObservableObject {
 
     /// A session ready to start, in the list but running nothing yet.
     private func makeSession(_ launch: AgentLaunch, label: String? = nil,
-                             repoDirectory: String? = nil) -> AgentTerminalSession {
+                             repoDirectory: String? = nil, followsDefault: Bool = false) -> AgentTerminalSession {
         let id = UUID()
         var directory = launch.directory.map { ($0 as NSString).expandingTildeInPath }
             ?? startDirectory?() ?? Self.workspaceDirectory()
@@ -614,7 +630,8 @@ final class AgentTerminalStore: ObservableObject {
         }
         let session = AgentTerminalSession(id: id, launch: launch, directory: directory,
                                            sessionDirectory: brief.sessionDirectory, fontSize: fontSize,
-                                           label: label, repoDirectory: repoDirectory)
+                                           label: label, repoDirectory: repoDirectory,
+                                           followsDefault: followsDefault)
         session.breadcrumbRoots = breadcrumbRoots
         session.onSectionChange = { [weak self, weak session] name in
             guard let self, let session else { return }
@@ -640,6 +657,8 @@ final class AgentTerminalStore: ObservableObject {
         } catch {
             workspaceError = "Could not prepare the agent workspace: \(error.localizedDescription)"
         }
+        // A Repos row with no command of its own runs the default as it is now.
+        session.resolveDefault(defaultLaunch.command)
         let directory = session.directory
         let place = whereabouts?(directory) ?? AgentWhereabouts(module: "FleetMate", workingDirectory: directory)
         let paths = brief.writeSessionBrief(id: session.id.uuidString, whereabouts: place)
@@ -679,7 +698,10 @@ final class AgentTerminalStore: ObservableObject {
         session.terminate()
         brief.removeSessionBrief(id: id.uuidString)
         if keepsRow, let directory = session.repoDirectory {
-            let fresh = makeSession(session.launch, label: session.label, repoDirectory: directory)
+            var launch = session.launch
+            if session.followsDefault { launch.command = "" }
+            let fresh = makeSession(launch, label: session.label, repoDirectory: directory,
+                                    followsDefault: session.followsDefault)
             fresh.customTitle = session.customTitle
             fresh.section = session.section
             fresh.pinned = session.pinned
@@ -991,9 +1013,6 @@ final class AgentTerminalStore: ObservableObject {
         didSet { for session in sessions { session.breadcrumbRoots = breadcrumbRoots } }
     }
 
-    /// What a session generated from Repos runs: the person's default.
-    private var baselineCommand: String { defaultLaunch.command }
-
     /// The folders of the Repos workspace's sessions, as compared.
     private var baselineDirectories: Set<String> {
         Set((workspaceFile.baseline?.sections ?? []).flatMap(\.sessions).compactMap(\.directory)
@@ -1010,7 +1029,7 @@ final class AgentTerminalStore: ObservableObject {
         reloadWorkspaces()
         guard workspaceFileError == nil else { return }
         var file = workspaceFile
-        if file.syncBaseline(with: repoCheckouts(), command: baselineCommand) {
+        if file.syncBaseline(with: repoCheckouts(), defaultCommand: defaultLaunch.command) {
             do {
                 try TerminalWorkspaceStore.save(file)
                 workspaceFile = file
@@ -1043,9 +1062,11 @@ final class AgentTerminalStore: ObservableObject {
                 guard let directory = entry.directory else { continue }
                 let key = TerminalWorkspaceBaseline.normalized(directory)
                 guard !sessions.contains(where: { $0.repoDirectory == key }) else { continue }
+                // No command of its own: it runs the default when it starts.
                 let session = makeSession(AgentLaunch(command: entry.command ?? "",
                                                       directory: TerminalWorkspaceStore.expand(directory)),
-                                          label: entry.label, repoDirectory: key)
+                                          label: entry.label, repoDirectory: key,
+                                          followsDefault: entry.command == nil)
                 session.customTitle = entry.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 session.pinned = entry.pinned == true
                 session.resume = entry.resume == true
@@ -1126,7 +1147,7 @@ final class AgentTerminalStore: ObservableObject {
     /// Rebuild the Repos workspace from the checkouts now, keeping its name
     /// and place; every other workspace is left alone.
     func regenerateBaselineWorkspace() {
-        guard var baseline = TerminalWorkspaceBaseline.make(from: repoCheckouts(), command: baselineCommand) else {
+        guard var baseline = TerminalWorkspaceBaseline.make(from: repoCheckouts()) else {
             workspaceFileError = "No repositories are checked out yet. Clone one in Development › Repos."
             return
         }
@@ -1156,12 +1177,11 @@ final class AgentTerminalStore: ObservableObject {
             workspaceFileError = "No repositories are checked out yet. Clone one in Development › Repos."
             return
         }
-        let command = baselineCommand
         writeWorkspaces { file in
             file.generateFromRepos = nil
             if let index = file.baselineIndex {
-                TerminalWorkspaceBaseline.addMissing(checkouts, to: &file.workspaces[index], command: command)
-            } else if let baseline = TerminalWorkspaceBaseline.make(from: checkouts, command: command) {
+                TerminalWorkspaceBaseline.addMissing(checkouts, to: &file.workspaces[index])
+            } else if let baseline = TerminalWorkspaceBaseline.make(from: checkouts) {
                 file.workspaces.insert(baseline, at: 0)
             }
         }
@@ -1187,9 +1207,11 @@ final class AgentTerminalStore: ObservableObject {
             for entry in section.sessions {
                 let command = entry.command ?? ""
                 let directory = entry.directory.map { TerminalWorkspaceStore.expand($0) }
-                // A repository's row: it resumes when next chosen.
+                // A repository's row: it resumes when next chosen. One that
+                // follows the default resumes whatever the default is then.
                 if let directory, let row = sessions.first(where: {
-                    $0.repoDirectory == TerminalWorkspaceBaseline.normalized(directory) && $0.launch.command == command
+                    $0.repoDirectory == TerminalWorkspaceBaseline.normalized(directory)
+                        && ($0.followsDefault || $0.launch.command == command)
                 }) {
                     row.resume = entry.resume == true
                     continue
@@ -1246,11 +1268,13 @@ final class AgentTerminalStore: ObservableObject {
             addSection(name)
             if section.collapsed == true { collapsedSections.insert(name) } else { collapsedSections.remove(name) }
             for entry in section.sessions {
-                let command = entry.command ?? ""
+                // In the Repos workspace a session with no command runs the default.
+                let command = entry.command
+                    ?? (workspace.source == TerminalWorkspaceBaseline.source ? defaultLaunch.command : "")
                 let directory = entry.directory.map { TerminalWorkspaceStore.expand($0) }
                 let title = entry.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let alreadyOpen = sessions.contains { session in
-                    session.launch.command == command
+                    (session.followsDefault && !session.isStarted ? defaultLaunch.command : session.launch.command) == command
                         && session.customTitle == title
                         && (directory == nil || session.launch.directory.map { TerminalWorkspaceStore.expand($0) } == directory)
                 }

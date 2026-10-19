@@ -62,12 +62,15 @@ public enum TerminalWorkspaceBaseline {
     }
 
     /// The baseline workspace, or nil when there is nothing checked out.
-    public static func make(from checkouts: [Checkout], command: String, now: Date = Date()) -> TerminalWorkspace? {
+    /// Its sessions store no command: each runs the default agent from
+    /// Settings › Agent as it is when the session starts.
+    public static func make(from checkouts: [Checkout], now: Date = Date()) -> TerminalWorkspace? {
         let chosen = activeCheckouts(checkouts, now: now)
         guard !chosen.isEmpty else { return nil }
         var workspace = TerminalWorkspace(name: name, show: true, sections: [])
         workspace.source = source
-        add(chosen, to: &workspace, command: command)
+        workspace.sessionsFollowDefault = true
+        add(chosen, to: &workspace)
         workspace.generated = chosen.map { normalized($0.path) }.sorted()
         return workspace
     }
@@ -85,10 +88,13 @@ public enum TerminalWorkspaceBaseline {
     /// longer tracked, is hidden or is gone is taken out. Everything else
     /// stays as arranged: renamed, moved, reordered and re-pointed sessions,
     /// sessions the person added, and the absence of one they removed.
+    /// `defaultCommand` is the default agent now, used only to recognize a
+    /// command baked into a session by an older build (`migrateCommands`).
     @discardableResult
     public static func sync(_ workspace: inout TerminalWorkspace, with checkouts: [Checkout],
-                            command: String, now: Date = Date()) -> Change {
+                            defaultCommand: String? = nil, now: Date = Date()) -> Change {
         migrateNames(&workspace)
+        migrateCommands(&workspace, defaultCommand: defaultCommand)
         let wanted = activeCheckouts(checkouts, now: now)
         let wantedPaths = Set(wanted.map { normalized($0.path) })
         // A workspace from before `generated` existed: what it holds was placed.
@@ -113,7 +119,7 @@ public enum TerminalWorkspaceBaseline {
 
         let present = Set(workspace.sections.flatMap(\.sessions).compactMap(\.directory).map(normalized))
         let fresh = wanted.filter { !placed.contains(normalized($0.path)) && !present.contains(normalized($0.path)) }
-        add(fresh, to: &workspace, command: command)
+        add(fresh, to: &workspace)
         change.added = fresh.map { normalized($0.path) }
         placed.formUnion(change.added)
         // A folder the person already had in the workspace counts as placed too.
@@ -141,26 +147,55 @@ public enum TerminalWorkspaceBaseline {
         }
     }
 
+    /// The commands an older build could have baked into a generated
+    /// session: every agent Settings › Agent offers, and the shell.
+    public static let bakedCommands: Set<String> = ["", "claude", "codex", "claude-remote", "codex-remote"]
+
+    /// Older builds wrote the default agent into each generated session, so
+    /// changing it in Settings never reached them. Once per workspace, a
+    /// session FleetMate placed (its folder is in `generated`) whose command
+    /// is still one that build could have written (`bakedCommands` or the
+    /// default now) drops it and follows the default from then on. A command
+    /// the person wrote in by hand stays.
+    static func migrateCommands(_ workspace: inout TerminalWorkspace, defaultCommand: String?) {
+        guard workspace.sessionsFollowDefault != true else { return }
+        let placed = Set(workspace.generated
+            ?? workspace.sections.flatMap(\.sessions).compactMap(\.directory).map(normalized))
+        var baked = bakedCommands
+        if let defaultCommand { baked.insert(defaultCommand.trimmingCharacters(in: .whitespaces)) }
+        for s in workspace.sections.indices {
+            for i in workspace.sections[s].sessions.indices {
+                let session = workspace.sections[s].sessions[i]
+                guard let directory = session.directory, placed.contains(normalized(directory)),
+                      let command = session.command,
+                      baked.contains(command.trimmingCharacters(in: .whitespaces)) else { continue }
+                workspace.sections[s].sessions[i].command = nil
+            }
+        }
+        workspace.sessionsFollowDefault = true
+    }
+
     /// Add the checkouts not already in `workspace` (matched by folder) to
     /// their host's section, leaving every existing session and section as
     /// the person arranged it. Returns how many were added.
     @discardableResult
     public static func addMissing(_ checkouts: [Checkout], to workspace: inout TerminalWorkspace,
-                                  command: String, now: Date = Date()) -> Int {
+                                  now: Date = Date()) -> Int {
         let present = Set(workspace.sections.flatMap(\.sessions).compactMap(\.directory).map(normalized))
         let missing = activeCheckouts(checkouts, now: now).filter { !present.contains(normalized($0.path)) }
-        add(missing, to: &workspace, command: command)
+        add(missing, to: &workspace)
         return missing.count
     }
 
-    private static func add(_ checkouts: [Checkout], to workspace: inout TerminalWorkspace, command: String) {
+    /// Each session stores no command, so it runs the default when it starts.
+    private static func add(_ checkouts: [Checkout], to workspace: inout TerminalWorkspace) {
         let ordered = checkouts.sorted {
             ($0.provider.order, $0.scope.lowercased(), $0.displayName.lowercased())
                 < ($1.provider.order, $1.scope.lowercased(), $1.displayName.lowercased())
         }
         for checkout in ordered {
             let title = sectionTitle(checkout.provider)
-            let session = TerminalWorkspace.Session(label: checkout.displayName, command: command,
+            let session = TerminalWorkspace.Session(label: checkout.displayName,
                                                     directory: TerminalWorkspaceStore.abbreviate(checkout.path))
             if let index = workspace.sections.firstIndex(where: { $0.name == title }) {
                 workspace.sections[index].sessions.append(session)
@@ -240,15 +275,15 @@ extension TerminalWorkspaceFile {
     /// even an empty one, gets it too), then synced. Nothing is written once
     /// the person deleted it. Returns whether the file changed.
     @discardableResult
-    public mutating func syncBaseline(with checkouts: [TerminalWorkspaceBaseline.Checkout], command: String,
+    public mutating func syncBaseline(with checkouts: [TerminalWorkspaceBaseline.Checkout], defaultCommand: String? = nil,
                                       now: Date = Date()) -> Bool {
         if let index = baselineIndex {
             let before = workspaces[index]
-            TerminalWorkspaceBaseline.sync(&workspaces[index], with: checkouts, command: command, now: now)
+            TerminalWorkspaceBaseline.sync(&workspaces[index], with: checkouts, defaultCommand: defaultCommand, now: now)
             return workspaces[index] != before
         }
         guard generateFromRepos != false,
-              let baseline = TerminalWorkspaceBaseline.make(from: checkouts, command: command, now: now) else { return false }
+              let baseline = TerminalWorkspaceBaseline.make(from: checkouts, now: now) else { return false }
         workspaces.insert(baseline, at: 0)
         return true
     }

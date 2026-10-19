@@ -147,7 +147,7 @@ struct ContentView: View {
             }
             .onAppear {
                 appState.wireAgentTerminal()
-                terminals.defaultLaunch = appState.agentDefaultLaunch
+                terminals.resolveDefaultLaunch = { [weak appState] in appState?.agentDefaultLaunch ?? .shell }
                 // The tracked repositories as rows in the session list, then
                 // the sessions open at the last quit, both waiting to start.
                 // A saved workspace named to open at launch takes the place

@@ -304,15 +304,16 @@ struct AgentModeToolbarToggle: View {
         Button {
             terminals.toggle(defaultLaunch: defaultLaunch)
         } label: {
-            // The window toolbar strips bordered-prominent tint, so the fill
-            // is drawn here: white on the accent colour, in light and dark.
+            // The window toolbar strips bordered-prominent tint, so the
+            // capsule is drawn here. Closed, it is accent-tinted glass that
+            // calls for attention; open, it goes neutral and shows a check.
             Label("Agent", systemImage: terminals.isShowing ? "checkmark" : ContentView.agentSymbol)
                 .labelStyle(.titleAndIcon)
                 .font(.body.weight(.semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(terminals.isShowing ? Color.primary : Color.white)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 5)
-                .background(Capsule().fill(Color.accentColor))
+                .modifier(AgentButtonSurface(active: terminals.isShowing))
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -321,5 +322,23 @@ struct AgentModeToolbarToggle: View {
         .accessibilityLabel("Agent")
         .accessibilityValue(terminals.isShowing ? "On" : "Off")
         .accessibilityAddTraits(terminals.isShowing ? .isSelected : [])
+    }
+}
+
+/// Liquid Glass on macOS 26, a plain filled capsule before it.
+private struct AgentButtonSurface: ViewModifier {
+    let active: Bool
+
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.glassEffect(
+                active ? .regular.interactive() : .regular.tint(.accentColor).interactive(),
+                in: .capsule
+            )
+        } else {
+            content.background(
+                Capsule().fill(active ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Color.accentColor))
+            )
+        }
     }
 }

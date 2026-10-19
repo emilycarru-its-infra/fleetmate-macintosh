@@ -1,20 +1,22 @@
 import Foundation
 
-/// The starting workspace FleetMate writes from the repositories the person
-/// has checked out: one section per host (Azure DevOps, GitHub, other), a
-/// session per repository named `Project/Repo` or `owner/repo`, ordered by
-/// project or owner. Nothing about any organization is built in; it is all
+/// The workspace FleetMate keeps from the repositories the person tracks:
+/// one section per host (Azure DevOps, GitHub, other), a session per
+/// repository labelled `Project/Repo` or `owner/repo`, ordered by project or
+/// owner, kept in step as repositories are tracked, hidden or removed. Nothing about any organization is built in; it is all
 /// read from the registry the Repos tab and `fleetmate repos` share.
 public enum TerminalWorkspaceBaseline {
     /// The generated workspace's name, and the mark that it came from Repos.
     public static let name = "Repos"
     public static let source = "repos"
 
-    /// With this many checkouts or fewer, every one is included: someone with
-    /// a handful of repositories wants all of them a click away.
+    /// Tracked checkouts are always all included: tracking is how the person
+    /// says which repositories they work in. When none is tracked, every
+    /// registered checkout is a candidate, and with this many or fewer they
+    /// all go in.
     public static let includeAllUpTo = 8
-    /// Beyond that, a checkout counts as active when its HEAD moved (a commit,
-    /// checkout, merge, pull or rebase) within this many days.
+    /// Beyond that, an untracked checkout counts as active when its HEAD
+    /// moved (a commit, checkout, merge, pull or rebase) within this many days.
     public static let activeWithinDays = 14
 
     /// One checkout as the baseline needs it.
@@ -26,20 +28,24 @@ public enum TerminalWorkspaceBaseline {
         public var path: String
         /// When HEAD last moved; nil when unknown.
         public var lastActivity: Date?
+        /// Marked tracked in the registry.
+        public var tracked: Bool
 
-        public init(provider: RepoProvider, scope: String, displayName: String, path: String, lastActivity: Date?) {
+        public init(provider: RepoProvider, scope: String, displayName: String, path: String,
+                    lastActivity: Date?, tracked: Bool = false) {
             self.provider = provider
             self.scope = scope
             self.displayName = displayName
             self.path = path
             self.lastActivity = lastActivity
+            self.tracked = tracked
         }
     }
 
-    /// The checkouts that go in: all of them when there are few, otherwise
-    /// the active ones, or the most recent few when none is active.
+    /// The checkouts that go in: every one when all are tracked or there are
+    /// few, otherwise the active ones, or the most recent few when none is.
     public static func activeCheckouts(_ checkouts: [Checkout], now: Date = Date()) -> [Checkout] {
-        guard checkouts.count > includeAllUpTo else { return checkouts }
+        guard checkouts.count > includeAllUpTo, !checkouts.allSatisfy(\.tracked) else { return checkouts }
         let cutoff = now.addingTimeInterval(-Double(activeWithinDays) * 86_400)
         let active = checkouts.filter { ($0.lastActivity ?? .distantPast) >= cutoff }
         if !active.isEmpty { return active }
@@ -62,7 +68,77 @@ public enum TerminalWorkspaceBaseline {
         var workspace = TerminalWorkspace(name: name, show: true, sections: [])
         workspace.source = source
         add(chosen, to: &workspace, command: command)
+        workspace.generated = chosen.map { normalized($0.path) }.sorted()
         return workspace
+    }
+
+    /// What `sync` changed.
+    public struct Change: Equatable, Sendable {
+        public var added: [String] = []
+        public var removed: [String] = []
+        public var isEmpty: Bool { added.isEmpty && removed.isEmpty }
+    }
+
+    /// Bring the Repos workspace in step with the checkouts, the way the
+    /// person left it otherwise. A checkout never placed before is added to
+    /// its host's section. A session FleetMate placed whose repository is no
+    /// longer tracked, is hidden or is gone is taken out. Everything else
+    /// stays as arranged: renamed, moved, reordered and re-pointed sessions,
+    /// sessions the person added, and the absence of one they removed.
+    @discardableResult
+    public static func sync(_ workspace: inout TerminalWorkspace, with checkouts: [Checkout],
+                            command: String, now: Date = Date()) -> Change {
+        migrateNames(&workspace)
+        let wanted = activeCheckouts(checkouts, now: now)
+        let wantedPaths = Set(wanted.map { normalized($0.path) })
+        // A workspace from before `generated` existed: what it holds was placed.
+        var placed = Set(workspace.generated
+            ?? workspace.sections.flatMap(\.sessions).compactMap(\.directory).map(normalized))
+        var change = Change()
+
+        let stale = placed.subtracting(wantedPaths)
+        var emptied = Set<Int>()
+        for index in workspace.sections.indices {
+            let before = workspace.sections[index].sessions.count
+            workspace.sections[index].sessions.removeAll { session in
+                guard let directory = session.directory.map(normalized), stale.contains(directory) else { return false }
+                change.removed.append(directory)
+                return true
+            }
+            if before > 0, workspace.sections[index].sessions.isEmpty { emptied.insert(index) }
+        }
+        // Take out sections this removal emptied, never one the person left empty.
+        for index in emptied.sorted(by: >) { workspace.sections.remove(at: index) }
+        placed.subtract(stale)
+
+        let present = Set(workspace.sections.flatMap(\.sessions).compactMap(\.directory).map(normalized))
+        let fresh = wanted.filter { !placed.contains(normalized($0.path)) && !present.contains(normalized($0.path)) }
+        add(fresh, to: &workspace, command: command)
+        change.added = fresh.map { normalized($0.path) }
+        placed.formUnion(change.added)
+        // A folder the person already had in the workspace counts as placed too.
+        placed.formUnion(present.intersection(wantedPaths))
+        workspace.generated = placed.sorted()
+        return change
+    }
+
+    /// Sessions written before `label` existed carried the repository's
+    /// name as their own, which would hold back the program's title. Where
+    /// it is still exactly the generated `Project/Repo`, it becomes the label.
+    static func migrateNames(_ workspace: inout TerminalWorkspace) {
+        guard workspace.generated == nil else { return }
+        for s in workspace.sections.indices {
+            for i in workspace.sections[s].sessions.indices {
+                let session = workspace.sections[s].sessions[i]
+                guard session.label == nil, let name = session.name, name.contains("/"),
+                      let directory = session.directory,
+                      name.split(separator: "/").last.map(String.init)?.lowercased()
+                        == (TerminalWorkspaceStore.expand(directory) as NSString).lastPathComponent.lowercased()
+                else { continue }
+                workspace.sections[s].sessions[i].label = name
+                workspace.sections[s].sessions[i].name = nil
+            }
+        }
     }
 
     /// Add the checkouts not already in `workspace` (matched by folder) to
@@ -84,7 +160,7 @@ public enum TerminalWorkspaceBaseline {
         }
         for checkout in ordered {
             let title = sectionTitle(checkout.provider)
-            let session = TerminalWorkspace.Session(name: checkout.displayName, command: command,
+            let session = TerminalWorkspace.Session(label: checkout.displayName, command: command,
                                                     directory: TerminalWorkspaceStore.abbreviate(checkout.path))
             if let index = workspace.sections.firstIndex(where: { $0.name == title }) {
                 workspace.sections[index].sessions.append(session)
@@ -94,7 +170,8 @@ public enum TerminalWorkspaceBaseline {
         }
     }
 
-    private static func normalized(_ path: String) -> String {
+    /// A folder as compared: home expanded, no trailing slash, any case.
+    public static func normalized(_ path: String) -> String {
         let expanded = TerminalWorkspaceStore.expand(path)
         return (expanded.hasSuffix("/") ? String(expanded.dropLast()) : expanded).lowercased()
     }
@@ -134,7 +211,7 @@ public enum TerminalWorkspaceBaseline {
             guard FileManager.default.fileExists(atPath: path) else { return nil }
             return Checkout(provider: entry.key.provider, scope: entry.key.scope,
                             displayName: entry.key.displayName, path: path,
-                            lastActivity: lastActivity(ofCheckout: path))
+                            lastActivity: lastActivity(ofCheckout: path), tracked: entry.tracked)
         }
     }
 }
@@ -155,6 +232,29 @@ extension TerminalWorkspaceBaseline {
         guard let registry = try? JSONDecoder().decode(Registry.self, from: data) else { return [] }
         return Set((registry.repos ?? [:]).filter { $0.value.hidden == true }.keys)
     }
+}
+
+extension TerminalWorkspaceFile {
+    /// Keep the Repos workspace in step with the checkouts: written the first
+    /// time there is something checked out (an existing file without one,
+    /// even an empty one, gets it too), then synced. Nothing is written once
+    /// the person deleted it. Returns whether the file changed.
+    @discardableResult
+    public mutating func syncBaseline(with checkouts: [TerminalWorkspaceBaseline.Checkout], command: String,
+                                      now: Date = Date()) -> Bool {
+        if let index = baselineIndex {
+            let before = workspaces[index]
+            TerminalWorkspaceBaseline.sync(&workspaces[index], with: checkouts, command: command, now: now)
+            return workspaces[index] != before
+        }
+        guard generateFromRepos != false,
+              let baseline = TerminalWorkspaceBaseline.make(from: checkouts, command: command, now: now) else { return false }
+        workspaces.insert(baseline, at: 0)
+        return true
+    }
+
+    /// The Repos workspace, when there is one.
+    public var baseline: TerminalWorkspace? { baselineIndex.map { workspaces[$0] } }
 }
 
 private extension RepoProvider {

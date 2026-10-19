@@ -21,7 +21,9 @@ final class TerminalWorkspaceBaselineTests: XCTestCase {
         ], command: "codex", now: now))
         XCTAssertEqual(workspace.source, TerminalWorkspaceBaseline.source)
         XCTAssertEqual(workspace.sections.map(\.name), ["Azure DevOps", "GitHub"])
-        XCTAssertEqual(workspace.sections[1].sessions.map(\.name), ["alpha/c", "zed/b"])
+        XCTAssertEqual(workspace.sections[1].sessions.map(\.label), ["alpha/c", "zed/b"])
+        // The repository's name is a label, so the program's title can replace it.
+        XCTAssertEqual(workspace.sections[1].sessions.map(\.name), [nil, nil])
         XCTAssertEqual(workspace.sections[0].sessions.first?.command, "codex")
     }
 
@@ -96,5 +98,79 @@ final class TerminalWorkspaceBaselineTests: XCTestCase {
         XCTAssertEqual(checkouts.map(\.displayName), ["owner-a/shown"])
         let workspace = try XCTUnwrap(TerminalWorkspaceBaseline.make(from: checkouts, command: "codex", now: now))
         XCTAssertEqual(workspace.sections.map(\.name), ["GitHub"])
+    }
+
+    private func tracked(_ provider: RepoProvider, _ scope: String, _ name: String) -> TerminalWorkspaceBaseline.Checkout {
+        var c = checkout(provider, scope, name, daysAgo: 300)
+        c.tracked = true
+        return c
+    }
+
+    func testEveryTrackedCheckoutIsIncludedHoweverIdle() {
+        let all = (0..<20).map { tracked(.gitHub, "o", "r\($0)") }
+        XCTAssertEqual(TerminalWorkspaceBaseline.activeCheckouts(all, now: now).count, 20)
+    }
+
+    func testAnEmptyFileGetsTheReposWorkspace() {
+        // The case that left a person with "No Saved Workspaces": the file
+        // existed, empty, before the generated workspace was first written.
+        var file = TerminalWorkspaceFile()
+        XCTAssertTrue(file.syncBaseline(with: [tracked(.azureDevOps, "Cloud", "Vantage"), tracked(.gitHub, "o", "a")],
+                                        command: "codex", now: now))
+        XCTAssertEqual(file.baseline?.sections.map(\.name), ["Azure DevOps", "GitHub"])
+        XCTAssertEqual(file.baseline?.sections.first?.sessions.first?.directory, "/src/Cloud/Vantage")
+        XCTAssertFalse(file.syncBaseline(with: [tracked(.azureDevOps, "Cloud", "Vantage"), tracked(.gitHub, "o", "a")],
+                                         command: "codex", now: now))
+    }
+
+    func testADeletedReposWorkspaceIsNotWrittenAgain() {
+        var file = TerminalWorkspaceFile()
+        file.syncBaseline(with: [tracked(.gitHub, "o", "a")], command: "codex", now: now)
+        file.remove(named: TerminalWorkspaceBaseline.name)
+        XCTAssertEqual(file.generateFromRepos, false)
+        XCTAssertFalse(file.syncBaseline(with: [tracked(.gitHub, "o", "a")], command: "codex", now: now))
+        XCTAssertNil(file.baseline)
+    }
+
+    func testSyncAddsNewRemovesUntrackedAndKeepsEdits() throws {
+        var workspace = try XCTUnwrap(TerminalWorkspaceBaseline.make(
+            from: [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "b"), tracked(.azureDevOps, "P", "c")],
+            command: "codex", now: now))
+        // The person renames a, moves it to their own section, and removes b.
+        var a = workspace.sections[1].sessions.removeFirst()
+        a.name = "Mine"
+        workspace.sections[1].sessions.removeAll { $0.directory == "/src/o/b" }
+        workspace.sections.append(.init(name: "Focus", sessions: [a]))
+
+        // c stops being tracked (or is hidden); d is newly tracked; b still is.
+        let change = TerminalWorkspaceBaseline.sync(
+            &workspace, with: [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "b"), tracked(.gitHub, "o", "d")],
+            command: "codex", now: now)
+        XCTAssertEqual(change.added, ["/src/o/d"])
+        XCTAssertEqual(change.removed, ["/src/p/c"])
+        XCTAssertEqual(workspace.sections.map(\.name), ["GitHub", "Focus"])
+        XCTAssertEqual(workspace.sections[0].sessions.map(\.directory), ["/src/o/d"])
+        XCTAssertEqual(workspace.sections[1].sessions.first?.name, "Mine")
+        // Removed by the person: not added back while it stays tracked.
+        XCTAssertFalse(workspace.sections.flatMap(\.sessions).contains { $0.directory == "/src/o/b" })
+
+        // Untracked then tracked again, it comes back.
+        TerminalWorkspaceBaseline.sync(&workspace, with: [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "d")],
+                                       command: "codex", now: now)
+        TerminalWorkspaceBaseline.sync(&workspace, with: [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "b"),
+                                                          tracked(.gitHub, "o", "d")], command: "codex", now: now)
+        XCTAssertTrue(workspace.sections.flatMap(\.sessions).contains { $0.directory == "/src/o/b" })
+    }
+
+    func testANameStillTheGeneratedOneBecomesTheLabel() {
+        var workspace = TerminalWorkspace(name: "Repos", sections: [.init(name: "GitHub", sessions: [
+            .init(name: "o/a", command: "codex", directory: "/src/o/a"),
+            .init(name: "Release prep", command: "codex", directory: "/src/o/b"),
+        ])])
+        workspace.source = TerminalWorkspaceBaseline.source
+        TerminalWorkspaceBaseline.sync(&workspace, with: [tracked(.gitHub, "o", "a"), tracked(.gitHub, "o", "b")],
+                                       command: "codex", now: now)
+        XCTAssertEqual(workspace.sections[0].sessions.map(\.name), [nil, "Release prep"])
+        XCTAssertEqual(workspace.sections[0].sessions.first?.label, "o/a")
     }
 }

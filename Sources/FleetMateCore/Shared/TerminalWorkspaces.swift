@@ -22,6 +22,12 @@ public struct TerminalWorkspaceFile: Codable, Equatable, Sendable {
     /// The workspace opened at launch, by name (case-insensitive); nil opens none.
     public var openAtLaunch: String?
     public var workspaces: [TerminalWorkspace]
+    /// False once the person deleted the workspace generated from Repos, so
+    /// it is not written again behind their back. Nil or true keeps it.
+    public var generateFromRepos: Bool?
+    /// The sessions open when FleetMate last quit, put back in the session
+    /// list at the next launch. Written by FleetMate; nil when none.
+    public var restore: TerminalWorkspace?
 
     public init(openAtLaunch: String? = nil, workspaces: [TerminalWorkspace] = []) {
         self.openAtLaunch = openAtLaunch
@@ -32,6 +38,8 @@ public struct TerminalWorkspaceFile: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         openAtLaunch = try container.decodeIfPresent(String.self, forKey: .openAtLaunch)
         workspaces = try container.decodeIfPresent([TerminalWorkspace].self, forKey: .workspaces) ?? []
+        generateFromRepos = try container.decodeIfPresent(Bool.self, forKey: .generateFromRepos)
+        restore = try container.decodeIfPresent(TerminalWorkspace.self, forKey: .restore)
     }
 
     public func workspace(named name: String) -> TerminalWorkspace? {
@@ -57,6 +65,8 @@ public struct TerminalWorkspaceFile: Codable, Equatable, Sendable {
     }
 
     public mutating func remove(named name: String) {
+        if let index = baselineIndex,
+           workspaces[index].name.caseInsensitiveCompare(name) == .orderedSame { generateFromRepos = false }
         workspaces.removeAll { $0.name.caseInsensitiveCompare(name) == .orderedSame }
         if let launch = openAtLaunch, launch.caseInsensitiveCompare(name) == .orderedSame { openAtLaunch = nil }
     }
@@ -72,6 +82,10 @@ public struct TerminalWorkspace: Codable, Equatable, Sendable {
     /// Open the terminal filling the window rather than split.
     public var fullWindow: Bool?
     public var sections: [Section]
+    /// For the Repos workspace: every folder FleetMate has put in it. A
+    /// folder listed here and missing from the sessions was removed by the
+    /// person, so it is not added again; one no longer tracked is taken out.
+    public var generated: [String]?
 
     public init(name: String, show: Bool? = nil, fullWindow: Bool? = nil, sections: [Section]) {
         self.name = name
@@ -87,6 +101,7 @@ public struct TerminalWorkspace: Codable, Equatable, Sendable {
         show = try container.decodeIfPresent(Bool.self, forKey: .show)
         fullWindow = try container.decodeIfPresent(Bool.self, forKey: .fullWindow)
         sections = try container.decodeIfPresent([Section].self, forKey: .sections) ?? []
+        generated = try container.decodeIfPresent([String].self, forKey: .generated)
     }
 
     public var sessionCount: Int { sections.reduce(0) { $0 + $1.sessions.count } }
@@ -111,17 +126,30 @@ public struct TerminalWorkspace: Codable, Equatable, Sendable {
     }
 
     public struct Session: Codable, Equatable, Sendable {
-        /// The session's name in the list; nil takes the program's own title.
+        /// The name the person gave the session. It wins over every
+        /// automatic name; nil follows the program's own title.
         public var name: String?
+        /// The row's name until the program sets a title, such as the
+        /// repository's name for a session generated from Repos.
+        public var label: String?
         /// What it runs: "codex", "claude", any command; nil or "" is the login shell.
         public var command: String?
         /// Where it starts; "~" is the home folder. Nil is the default start folder.
         public var directory: String?
+        /// Listed under Pinned at the top of the session list.
+        public var pinned: Bool?
+        /// Resume the agent's last conversation in this folder when the
+        /// session next starts (`claude --continue`, `codex resume --last`).
+        public var resume: Bool?
 
-        public init(name: String? = nil, command: String? = nil, directory: String? = nil) {
+        public init(name: String? = nil, label: String? = nil, command: String? = nil, directory: String? = nil,
+                    pinned: Bool? = nil, resume: Bool? = nil) {
             self.name = name
+            self.label = label
             self.command = command
             self.directory = directory
+            self.pinned = pinned
+            self.resume = resume
         }
     }
 }

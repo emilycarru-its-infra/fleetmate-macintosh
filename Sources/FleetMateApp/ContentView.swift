@@ -148,14 +148,17 @@ struct ContentView: View {
             .onAppear {
                 appState.wireAgentTerminal()
                 terminals.defaultLaunch = appState.agentDefaultLaunch
+                // The tracked repositories as rows in the session list, then
+                // the sessions open at the last quit, both waiting to start.
                 // A saved workspace named to open at launch takes the place
                 // of the single session that otherwise starts.
-                if !AppEdition.current.isTicketsOnly { terminals.seedBaselineWorkspaceIfNeeded() }
+                terminals.syncBaseline()
+                terminals.restoreLastSessions()
                 terminals.reloadWorkspaces()
-                if !AppEdition.current.isTicketsOnly, terminals.sessions.isEmpty,
+                if !AppEdition.current.isTicketsOnly, !terminals.hasOwnSessions,
                    let workspace = terminals.workspaceFile.launchWorkspace {
                     terminals.open(workspace: workspace)
-                } else if appState.agentAutoStart && terminals.sessions.isEmpty {
+                } else if appState.agentAutoStart && !terminals.hasOwnSessions {
                     terminals.open(appState.agentDefaultLaunch, focus: false, show: false)
                 }
                 writeAgentContext()

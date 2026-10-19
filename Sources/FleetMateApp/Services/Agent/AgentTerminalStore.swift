@@ -234,12 +234,28 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
     let id: UUID
     let launch: AgentLaunch
     let view: FleetMateTerminalView
-    /// What the program running in the session calls it: an agent's session
-    /// name (Claude's /rename), or the shell's title.
+    /// The terminal title as the program last set it (OSC 0 or 2).
     @Published private(set) var programTitle: String?
+    /// The task named in that title, without its status glyph.
+    @Published private(set) var titleTask: String?
+    /// The title's glyph says the agent is working (a spinner frame).
+    @Published private(set) var titleWorking = false
     @Published private(set) var agentTitle: String?
+    /// The name the person gave the row; it wins over every automatic name.
     @Published var customTitle = ""
     @Published var section = "Sessions"
+    /// The row's name until the program titles it: the repository's name for
+    /// a row from the Repos workspace.
+    let label: String?
+    /// The folder of the Repos workspace entry this row stands for, as
+    /// compared (`TerminalWorkspaceBaseline.normalized`); nil for the rest.
+    let repoDirectory: String?
+    @Published var pinned = false
+    /// Resume the agent's last conversation here when the session starts.
+    var resume = false
+    /// The process has been started. Rows from a workspace wait, as a
+    /// bookmark, until they are first shown.
+    @Published private(set) var isStarted = false
     /// The shell's working directory, followed as it changes.
     @Published private(set) var directory: String
     @Published private(set) var activity: Activity = .idle
@@ -263,12 +279,13 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
     private var poll: Timer?
 
     var title: String {
-        let name = customTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !name.isEmpty { return name }
-        if let agentTitle, !agentTitle.isEmpty { return agentTitle }
-        if let programTitle, !programTitle.isEmpty { return programTitle }
-        return launch.label
+        TerminalSessionName.resolve(custom: customTitle, agent: agentTitle, task: titleTask,
+                                    label: label, fallback: launch.label)
     }
+
+    /// The folder as a breadcrumb below the repository roots, set by the store.
+    var breadcrumbRoots: [String] = []
+    var breadcrumb: String { TerminalBreadcrumb.make(directory, roots: breadcrumbRoots) }
 
     /// The directory with the home folder as ~.
     var shortDirectory: String {
@@ -280,21 +297,33 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
     /// this session's own brief, with where it opened at the top.
     /// `cliUpdatesManaged` is true when FleetMate keeps the agent CLIs
     /// current, so they skip their own update checks.
-    init(id: UUID, launch: AgentLaunch, directory start: String, contextPath: String,
-         briefPath: String, codexValuePath: String, cliUpdatesManaged: Bool, fontSize: CGFloat) {
+    /// A session that starts nothing until `start` is called.
+    init(id: UUID, launch: AgentLaunch, directory start: String, sessionDirectory: URL, fontSize: CGFloat,
+         label: String? = nil, repoDirectory: String? = nil) {
         self.id = id
-        self.metadataPath = URL(fileURLWithPath: briefPath).deletingLastPathComponent()
-            .appendingPathComponent(id.uuidString + ".json").path
+        self.metadataPath = sessionDirectory.appendingPathComponent(id.uuidString + ".json").path
         self.launch = launch
         self.directory = start
+        self.label = label
+        self.repoDirectory = repoDirectory
         self.view = FleetMateTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 240))
         super.init()
-        view.processDelegate = self
-        view.installInputHandling()
-        view.getTerminal().changeHistorySize(50_000)
         view.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
         view.nativeBackgroundColor = .textBackgroundColor
         view.nativeForegroundColor = .textColor
+    }
+
+    /// Start the process. `briefPath` and `codexValuePath` are this session's
+    /// own brief, with where it opened at the top. `cliUpdatesManaged` is true
+    /// when FleetMate keeps the agent CLIs current, so they skip their own
+    /// update checks.
+    func start(contextPath: String, briefPath: String, codexValuePath: String, cliUpdatesManaged: Bool) {
+        guard !isStarted else { return }
+        isStarted = true
+        let start = directory
+        view.processDelegate = self
+        view.installInputHandling()
+        view.getTerminal().changeHistorySize(50_000)
         view.onOutput = { [weak self] in
             Task { @MainActor in self?.noteOutput() }
         }
@@ -327,6 +356,14 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
             var line = AgentBrief.launchLine(command, briefPath: briefPath,
                                              codexValuePath: codexValuePath,
                                              selfUpdate: !cliUpdatesManaged)
+            // Back after a relaunch: pick the last conversation here up
+            // again, or start afresh when there is none to resume.
+            if resume, let resumed = AgentResume.command(command) {
+                let resumeLine = AgentBrief.launchLine(resumed, briefPath: briefPath,
+                                                       codexValuePath: codexValuePath,
+                                                       selfUpdate: !cliUpdatesManaged)
+                line = resumeLine + " || " + line
+            }
             // The remote wrappers take the folder to open as their argument.
             if let dir = launch.directory, command.hasSuffix("-remote") {
                 line += " " + Self.quote(dir)
@@ -401,7 +438,7 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
     /// True when the terminal's foreground process is an agent CLI rather than
     /// the shell, from the pseudo-terminal's foreground process group.
     var agentIsForeground: Bool {
-        guard activity != .exited, let process = view.process, process.childfd >= 0 else { return false }
+        guard isStarted, activity != .exited, let process = view.process, process.childfd >= 0 else { return false }
         let group = tcgetpgrp(process.childfd)
         guard group > 0, group != process.shellPid else { return false }
         var buffer = [CChar](repeating: 0, count: 256)
@@ -410,19 +447,31 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         return Self.agentPrograms.contains { name.hasPrefix($0) }
     }
 
-    /// Output is streaming: the program is working.
-    var isRunning: Bool { activity == .busy }
+    /// Output is streaming, or the agent's title shows its spinner: the
+    /// program is working.
+    var isRunning: Bool { activity == .busy || (titleWorking && activity != .exited && isStarted) }
 
     /// An agent is waiting on the person: it rang its bell out of sight, or
     /// it sits idle at its prompt.
     var isPaused: Bool {
-        activity == .attention || (activity == .idle && agentIsForeground)
+        activity == .attention || (activity == .idle && !titleWorking && agentIsForeground)
+    }
+
+    /// The row's status line.
+    enum Status: Equatable { case notStarted, running, paused, idle, exited }
+
+    var status: Status {
+        if !isStarted { return .notStarted }
+        if activity == .exited { return .exited }
+        if isRunning { return .running }
+        if isPaused { return .paused }
+        return .idle
     }
 
     func terminate() {
         poll?.invalidate()
         poll = nil
-        view.terminate()
+        if isStarted { view.terminate() }
         try? FileManager.default.removeItem(atPath: metadataPath)
     }
 
@@ -435,7 +484,12 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
     nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
 
     nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        Task { @MainActor in self.programTitle = title.trimmingCharacters(in: .whitespaces) }
+        let parsed = TerminalTitle.parse(title)
+        Task { @MainActor in
+            self.programTitle = title.trimmingCharacters(in: .whitespaces)
+            self.titleTask = parsed.task
+            self.titleWorking = parsed.working ?? false
+        }
     }
 
     nonisolated func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
@@ -532,6 +586,51 @@ final class AgentTerminalStore: ObservableObject {
     /// half the window.
     @discardableResult
     func open(_ launch: AgentLaunch, focus: Bool = true, show: Bool = true) -> AgentTerminalSession {
+        let session = makeSession(launch)
+        session.wantsFocus = focus
+        // Beside the selected session, unless that is a repository's row:
+        // a new session is the person's own, not one of Repos'.
+        session.section = selected.flatMap { $0.repoDirectory == nil ? $0.section : nil } ?? "Sessions"
+        sessions.append(session)
+        startIfNeeded(session)
+        selectedId = session.id
+        if show { isVisible = true }
+        return session
+    }
+
+    /// A session ready to start, in the list but running nothing yet.
+    private func makeSession(_ launch: AgentLaunch, label: String? = nil,
+                             repoDirectory: String? = nil) -> AgentTerminalSession {
+        let id = UUID()
+        var directory = launch.directory.map { ($0 as NSString).expandingTildeInPath }
+            ?? startDirectory?() ?? Self.workspaceDirectory()
+        if directory == workspace.root.path {
+            do {
+                try workspace.prepare()
+            } catch {
+                workspaceError = "Could not prepare the agent workspace: \(error.localizedDescription)"
+                directory = FileManager.default.homeDirectoryForCurrentUser.path
+            }
+        }
+        let session = AgentTerminalSession(id: id, launch: launch, directory: directory,
+                                           sessionDirectory: brief.sessionDirectory, fontSize: fontSize,
+                                           label: label, repoDirectory: repoDirectory)
+        session.breadcrumbRoots = breadcrumbRoots
+        session.onSectionChange = { [weak self, weak session] name in
+            guard let self, let session else { return }
+            self.addSection(name)
+            self.move(session, to: name)
+        }
+        session.view.onShortcut = { [weak self] shortcut in
+            Task { @MainActor in self?.handle(shortcut, from: id) }
+        }
+        return session
+    }
+
+    /// Start a session's process the first time it is needed: opened,
+    /// selected or shown in the split.
+    func startIfNeeded(_ session: AgentTerminalSession) {
+        guard !session.isStarted else { return }
         // A stat when the brief is current; a regeneration only after the
         // CLI was installed or updated.
         brief.refresh()
@@ -541,34 +640,19 @@ final class AgentTerminalStore: ObservableObject {
         } catch {
             workspaceError = "Could not prepare the agent workspace: \(error.localizedDescription)"
         }
-        let id = UUID()
-        var directory = launch.directory.map { ($0 as NSString).expandingTildeInPath }
-            ?? startDirectory?() ?? Self.workspaceDirectory()
-        if directory == workspace.root.path, workspaceError != nil {
-            directory = FileManager.default.homeDirectoryForCurrentUser.path
-        }
+        let directory = session.directory
         let place = whereabouts?(directory) ?? AgentWhereabouts(module: "FleetMate", workingDirectory: directory)
-        let paths = brief.writeSessionBrief(id: id.uuidString, whereabouts: place)
+        let paths = brief.writeSessionBrief(id: session.id.uuidString, whereabouts: place)
         let managed = updater.isEnabled
-        if managed, AgentLaunch.isAgent(launch.command) { updater.updateIfStale() }
-        let session = AgentTerminalSession(id: id, launch: launch, directory: directory, contextPath: contextPath,
-                                           briefPath: paths.briefPath, codexValuePath: paths.codexValuePath,
-                                           cliUpdatesManaged: managed, fontSize: fontSize)
-        session.wantsFocus = focus
-        session.onSectionChange = { [weak self, weak session] name in
-            guard let self, let session else { return }
-            self.addSection(name)
-            self.move(session, to: name)
-        }
-        session.view.onShortcut = { [weak self] shortcut in
-            Task { @MainActor in self?.handle(shortcut, from: id) }
-        }
-        session.section = selected?.section ?? "Sessions"
-        sessions.append(session)
-        selectedId = session.id
-        if show { isVisible = true }
-        return session
+        if managed, AgentLaunch.isAgent(session.launch.command) { updater.updateIfStale() }
+        session.start(contextPath: contextPath, briefPath: paths.briefPath,
+                      codexValuePath: paths.codexValuePath, cliUpdatesManaged: managed)
     }
+
+    /// Sessions whose process has started.
+    var startedSessions: [AgentTerminalSession] { sessions.filter(\.isStarted) }
+    /// Whether any session is the person's own rather than a repository's row.
+    var hasOwnSessions: Bool { sessions.contains { $0.repoDirectory == nil } }
 
     /// Split the panel: the right pane gets a new session like the selected one.
     func toggleSplit() {
@@ -585,18 +669,34 @@ final class AgentTerminalStore: ObservableObject {
         selectedId = current
     }
 
+    /// Close a session. A repository's row that is running stops and stays
+    /// in the list, ready to start again; one that is not running is taken
+    /// out of the list and of the Repos workspace.
     func close(_ id: AgentTerminalSession.ID) {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
-        sessions[index].terminate()
+        let session = sessions[index]
+        let keepsRow = session.isStarted && session.repoDirectory.map(baselineDirectories.contains) == true
+        session.terminate()
         brief.removeSessionBrief(id: id.uuidString)
-        sessions.remove(at: index)
+        if keepsRow, let directory = session.repoDirectory {
+            let fresh = makeSession(session.launch, label: session.label, repoDirectory: directory)
+            fresh.customTitle = session.customTitle
+            fresh.section = session.section
+            fresh.pinned = session.pinned
+            sessions[index] = fresh
+        } else {
+            sessions.remove(at: index)
+            if session.repoDirectory != nil { persistBaselineRows() }
+        }
         if splitId == id { splitId = nil }
         if selectedId == id {
-            let neighbour = sessions.indices.contains(index) ? sessions[index] : sessions.last
-            selectedId = neighbour?.id == splitId ? sessions.first { $0.id != splitId }?.id : neighbour?.id
+            // The nearest running session, never a row that would start.
+            let running = sessions.enumerated().filter { $0.element.isStarted && $0.element.id != splitId }
+            let after = running.first { $0.offset >= index } ?? running.last
+            selectedId = after?.element.id
             selected?.wantsFocus = true
         }
-        if sessions.isEmpty { isVisible = false }
+        if startedSessions.isEmpty { isVisible = false }
     }
 
     func select(_ id: AgentTerminalSession.ID, focus: Bool = true) {
@@ -612,7 +712,7 @@ final class AgentTerminalStore: ObservableObject {
     /// Show the panel, starting a session if there is none, and give the
     /// terminal the keyboard.
     func show(defaultLaunch: AgentLaunch) {
-        if sessions.isEmpty {
+        if selected == nil {
             open(defaultLaunch)
         } else {
             isVisible = true
@@ -726,6 +826,24 @@ final class AgentTerminalStore: ObservableObject {
         guard sections.contains(section) else { return }
         objectWillChange.send()
         session.section = section
+        if session.repoDirectory != nil { persistBaselineRows() }
+    }
+
+    /// Name a session; empty goes back to the automatic name.
+    func rename(_ session: AgentTerminalSession, to name: String) {
+        session.customTitle = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if session.repoDirectory != nil { persistBaselineRows() }
+    }
+
+    func setPinned(_ session: AgentTerminalSession, _ pinned: Bool) {
+        objectWillChange.send()
+        session.pinned = pinned
+        if session.repoDirectory != nil { persistBaselineRows() }
+    }
+
+    func toggleCollapsed(_ section: String) {
+        if collapsedSections.insert(section).inserted == false { collapsedSections.remove(section) }
+        if sessions.contains(where: { $0.section == section && $0.repoDirectory != nil }) { persistBaselineRows() }
     }
 
     func addSection(_ name: String) {
@@ -741,6 +859,7 @@ final class AgentTerminalStore: ObservableObject {
         sections[index] = name
         if collapsedSections.remove(old) != nil { collapsedSections.insert(name) }
         for session in sessions where session.section == old { session.section = name }
+        persistBaselineRows()
     }
 
     func removeSection(_ name: String) {
@@ -748,6 +867,7 @@ final class AgentTerminalStore: ObservableObject {
         for session in sessions where session.section == name { session.section = "Sessions" }
         sections.removeAll { $0 == name }
         collapsedSections.remove(name)
+        persistBaselineRows()
     }
 
     // MARK: - Reordering
@@ -758,6 +878,7 @@ final class AgentTerminalStore: ObservableObject {
         let target = index + offset
         guard sections.indices.contains(target) else { return }
         sections.swapAt(index, target)
+        persistBaselineRows()
     }
 
     /// Drop a session on another: it takes that one's place and section.
@@ -774,6 +895,7 @@ final class AgentTerminalStore: ObservableObject {
         } else {
             sessions.append(session)
         }
+        if session.repoDirectory != nil { persistBaselineRows() }
     }
 
     // MARK: - Saved workspaces
@@ -853,22 +975,149 @@ final class AgentTerminalStore: ObservableObject {
     /// number of sessions until toggled.
     @Published var listCollapsedOverride: Bool?
 
-    /// The checkouts the Repos tab knows and shows, with their activity.
+    /// The registry's checkouts the Repos tab knows and shows, with their
+    /// activity, and the roots the session rows' breadcrumbs start below.
     private func repoCheckouts() -> [TerminalWorkspaceBaseline.Checkout] {
         let store = RepoRegistryStore()
         guard let document = try? store.load() else { return [] }
+        breadcrumbRoots = Array(Set(document.settings.scanRoots + [document.settings.cloneRoot]))
         return TerminalWorkspaceBaseline.checkouts(
             from: document, excluding: TerminalWorkspaceBaseline.hiddenRepoIds(registryPath: store.registryPath))
     }
 
-    /// The first time, with no workspaces file yet, write a Repos workspace
-    /// from the checkouts on this Mac. With nothing checked out, write
-    /// nothing, so the next launch tries again once a repository is cloned.
-    func seedBaselineWorkspaceIfNeeded() {
-        guard !FileManager.default.fileExists(atPath: TerminalWorkspaceStore.defaultPath),
-              let baseline = TerminalWorkspaceBaseline.make(from: repoCheckouts(), command: defaultLaunch.command)
-        else { return }
-        writeWorkspaces { $0.upsert(baseline) }
+    /// Where session rows' breadcrumbs start: the repository roots from
+    /// Settings › Repositories.
+    private(set) var breadcrumbRoots: [String] = [] {
+        didSet { for session in sessions { session.breadcrumbRoots = breadcrumbRoots } }
+    }
+
+    /// What a session generated from Repos runs: the person's default.
+    private var baselineCommand: String { defaultLaunch.command }
+
+    /// The folders of the Repos workspace's sessions, as compared.
+    private var baselineDirectories: Set<String> {
+        Set((workspaceFile.baseline?.sections ?? []).flatMap(\.sessions).compactMap(\.directory)
+            .map(TerminalWorkspaceBaseline.normalized))
+    }
+
+    /// Keep the Repos workspace in step with the tracked repositories and
+    /// show it in the session list: one section per host, one row per
+    /// repository, each starting in its folder the first time it is chosen.
+    /// Runs at launch, when FleetMate comes forward and when the registry
+    /// changes. Edits the person made to the workspace stay.
+    func syncBaseline() {
+        guard !AppEdition.current.isTicketsOnly else { return }
+        reloadWorkspaces()
+        guard workspaceFileError == nil else { return }
+        var file = workspaceFile
+        if file.syncBaseline(with: repoCheckouts(), command: baselineCommand) {
+            do {
+                try TerminalWorkspaceStore.save(file)
+                workspaceFile = file
+            } catch {
+                workspaceFileError = "Could not save the workspaces: \(error.localizedDescription)"
+            }
+        }
+        applyBaselineToList()
+        watchRegistry()
+    }
+
+    /// Add a row for every Repos workspace session not in the list yet and
+    /// take out rows, not yet started, whose session left the workspace.
+    private func applyBaselineToList() {
+        let baseline = workspaceFile.baseline
+        let wanted = baselineDirectories
+        sessions.removeAll { session in
+            guard let directory = session.repoDirectory, !session.isStarted, !wanted.contains(directory) else { return false }
+            session.terminate()
+            return true
+        }
+        for section in baseline?.sections ?? [] {
+            let name = section.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            if !sections.contains(name) {
+                sections.append(name)
+                if section.collapsed == true { collapsedSections.insert(name) }
+            }
+            for entry in section.sessions {
+                guard let directory = entry.directory else { continue }
+                let key = TerminalWorkspaceBaseline.normalized(directory)
+                guard !sessions.contains(where: { $0.repoDirectory == key }) else { continue }
+                let session = makeSession(AgentLaunch(command: entry.command ?? "",
+                                                      directory: TerminalWorkspaceStore.expand(directory)),
+                                          label: entry.label, repoDirectory: key)
+                session.customTitle = entry.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                session.pinned = entry.pinned == true
+                session.resume = entry.resume == true
+                session.section = name
+                insertInSection(session)
+            }
+        }
+    }
+
+    private func insertInSection(_ session: AgentTerminalSession) {
+        if let last = sessions.lastIndex(where: { $0.section == session.section }) {
+            sessions.insert(session, at: last + 1)
+        } else {
+            sessions.append(session)
+        }
+    }
+
+    /// Write the list's repository rows back to the Repos workspace: their
+    /// names, pins, sections and order, and the absence of removed rows, so
+    /// the next sync keeps what the person arranged.
+    private func persistBaselineRows() {
+        guard workspaceFile.baselineIndex != nil else { return }
+        let rows = sessions.filter { $0.repoDirectory != nil }
+        let sectionOrder = sections
+        let collapsed = collapsedSections
+        writeWorkspaces { file in
+            guard let index = file.baselineIndex else { return }
+            var workspace = file.workspaces[index]
+            var entries: [String: TerminalWorkspace.Session] = [:]
+            for entry in workspace.sections.flatMap(\.sessions) {
+                guard let directory = entry.directory else { continue }
+                entries[TerminalWorkspaceBaseline.normalized(directory)] = entries[TerminalWorkspaceBaseline.normalized(directory)] ?? entry
+            }
+            var rebuilt: [TerminalWorkspace.Section] = []
+            for name in sectionOrder {
+                let fromRows: [TerminalWorkspace.Session] = rows.filter { $0.section == name }.compactMap { row in
+                    guard let key = row.repoDirectory, var entry = entries[key] else { return nil }
+                    let custom = row.customTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                    entry.name = custom.isEmpty ? nil : custom
+                    entry.pinned = row.pinned ? true : nil
+                    return entry
+                }
+                // Sessions written by hand with no folder are kept where they were.
+                let unlisted = workspace.sections.first { $0.name == name }?.sessions.filter { $0.directory == nil } ?? []
+                guard !fromRows.isEmpty || !unlisted.isEmpty else { continue }
+                rebuilt.append(.init(name: name, collapsed: collapsed.contains(name) ? true : nil,
+                                     sessions: fromRows + unlisted))
+            }
+            workspace.sections = rebuilt
+            file.workspaces[index] = workspace
+        }
+    }
+
+    private var registryWatch: Timer?
+    private var registryModified: Date?
+
+    /// Sync again whenever the repository registry changes, so tracking,
+    /// hiding or cloning a repository shows in the list within seconds.
+    private func watchRegistry() {
+        registryModified = registryModificationDate()
+        guard registryWatch == nil else { return }
+        registryWatch = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let modified = self.registryModificationDate()
+                if modified != self.registryModified { self.syncBaseline() }
+            }
+        }
+    }
+
+    private func registryModificationDate() -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: RepoRegistryStore.defaultRegistryPath))?[.modificationDate] as? Date
     }
 
     /// Whether any repository is checked out, for the empty Workspaces menu.
@@ -877,35 +1126,115 @@ final class AgentTerminalStore: ObservableObject {
     /// Rebuild the Repos workspace from the checkouts now, keeping its name
     /// and place; every other workspace is left alone.
     func regenerateBaselineWorkspace() {
-        guard var baseline = TerminalWorkspaceBaseline.make(from: repoCheckouts(), command: defaultLaunch.command) else {
+        guard var baseline = TerminalWorkspaceBaseline.make(from: repoCheckouts(), command: baselineCommand) else {
             workspaceFileError = "No repositories are checked out yet. Clone one in Development › Repos."
             return
         }
         writeWorkspaces { file in
+            file.generateFromRepos = nil
             if let index = file.baselineIndex {
                 baseline.name = file.workspaces[index].name
                 file.workspaces[index] = baseline
             } else {
-                file.upsert(baseline)
+                file.workspaces.insert(baseline, at: 0)
             }
         }
+        // Rows the rebuild re-labelled or moved start over from the file.
+        sessions.removeAll { session in
+            guard session.repoDirectory != nil, !session.isStarted else { return false }
+            session.terminate()
+            return true
+        }
+        applyBaselineToList()
     }
 
-    /// Add checkouts the Repos workspace lacks, keeping every edit to it.
+    /// Add checkouts the Repos workspace lacks, keeping every edit to it,
+    /// including those the person removed before.
     func addMissingReposToBaseline() {
         let checkouts = repoCheckouts()
         guard !checkouts.isEmpty else {
             workspaceFileError = "No repositories are checked out yet. Clone one in Development › Repos."
             return
         }
-        let command = defaultLaunch.command
+        let command = baselineCommand
         writeWorkspaces { file in
+            file.generateFromRepos = nil
             if let index = file.baselineIndex {
                 TerminalWorkspaceBaseline.addMissing(checkouts, to: &file.workspaces[index], command: command)
             } else if let baseline = TerminalWorkspaceBaseline.make(from: checkouts, command: command) {
-                file.upsert(baseline)
+                file.workspaces.insert(baseline, at: 0)
             }
         }
+        applyBaselineToList()
+    }
+
+    // MARK: Restore at relaunch
+
+    /// Put the sessions open when FleetMate last quit back in the list,
+    /// waiting to start, with agents set to resume their conversation.
+    func restoreLastSessions() {
+        guard !AppEdition.current.isTicketsOnly, restoresSessions, !restored,
+              let restore = workspaceFile.restore else { return }
+        restored = true
+        var first: AgentTerminalSession?
+        defer {
+            // ⌃` brings the first one back, resuming, rather than a new session.
+            if selectedId == nil, let first { selectedId = first.id }
+        }
+        for section in restore.sections {
+            let name = section.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            for entry in section.sessions {
+                let command = entry.command ?? ""
+                let directory = entry.directory.map { TerminalWorkspaceStore.expand($0) }
+                // A repository's row: it resumes when next chosen.
+                if let directory, let row = sessions.first(where: {
+                    $0.repoDirectory == TerminalWorkspaceBaseline.normalized(directory) && $0.launch.command == command
+                }) {
+                    row.resume = entry.resume == true
+                    continue
+                }
+                addSection(name)
+                let session = makeSession(AgentLaunch(command: command, directory: directory), label: entry.label)
+                session.customTitle = entry.name ?? ""
+                session.pinned = entry.pinned == true
+                session.resume = entry.resume == true
+                session.section = name
+                insertInSection(session)
+                if first == nil { first = session }
+            }
+        }
+    }
+
+    private var restored = false
+
+    /// Reopen sessions at launch (Settings › Agent). Default on.
+    var restoresSessions: Bool {
+        UserDefaults.standard.object(forKey: AgentSettingsKey.restoreSessions) as? Bool ?? true
+    }
+
+    /// Record the running sessions for the next launch: the person's own in
+    /// their sections, and repository rows that were started, so they resume.
+    private func saveRestore() {
+        guard !AppEdition.current.isTicketsOnly, restoresSessions else { return }
+        let running = sessions.filter { $0.isStarted && $0.activity != .exited }
+        let names = sections.filter { name in running.contains { $0.section == name } }
+        let restore = TerminalWorkspace(name: "Last Sessions", sections: names.map { name in
+            TerminalWorkspace.Section(name: name, sessions: running.filter { $0.section == name }.map { session in
+                let custom = session.customTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                let isRow = session.repoDirectory != nil
+                return TerminalWorkspace.Session(
+                    name: custom.isEmpty ? nil : custom,
+                    command: session.launch.command,
+                    // A row is found again by its folder; the person's own
+                    // sessions reopen where they last were.
+                    directory: TerminalWorkspaceStore.abbreviate(isRow ? (session.launch.directory ?? session.directory)
+                                                                        : session.directory),
+                    pinned: session.pinned ? true : nil,
+                    resume: AgentResume.command(session.launch.command) != nil ? true : nil)
+            })
+        })
+        writeWorkspaces { $0.restore = restore.sections.isEmpty ? nil : restore }
     }
 
     func open(workspace: TerminalWorkspace, show: Bool? = nil) {
@@ -932,7 +1261,10 @@ final class AgentTerminalStore: ObservableObject {
                 if first == nil { first = session }
             }
         }
-        selectedId = first?.id ?? selectedBefore ?? sessions.first?.id
+        // Everything was in the list already (the Repos workspace at launch):
+        // leave it as it is rather than start a row nobody chose.
+        if first == nil && show == nil { return }
+        selectedId = first?.id ?? selectedBefore ?? startedSessions.first?.id ?? sessions.first?.id
         if show ?? workspace.show ?? true, !sessions.isEmpty {
             isVisible = true
             isMaximized = workspace.fullWindow ?? false
@@ -941,15 +1273,19 @@ final class AgentTerminalStore: ObservableObject {
     }
 
     func terminateAll() {
+        saveRestore()
         sessions.forEach { $0.terminate() }
         try? FileManager.default.removeItem(at: brief.sessionDirectory)
     }
 
+    /// Step through the running sessions; rows waiting to start are skipped,
+    /// so cycling never starts twenty agents on the way past.
     private func cycle(by offset: Int) {
-        guard !sessions.isEmpty else { return }
-        let index = sessions.firstIndex { $0.id == selectedId } ?? 0
-        let next = (index + offset + sessions.count) % sessions.count
-        select(sessions[next].id)
+        let running = startedSessions
+        guard !running.isEmpty else { return }
+        let index = running.firstIndex { $0.id == selectedId } ?? 0
+        let next = (index + offset + running.count) % running.count
+        select(running[next].id)
     }
 
     private func handle(_ shortcut: TerminalShortcut, from id: AgentTerminalSession.ID) {
@@ -970,6 +1306,7 @@ final class AgentTerminalStore: ObservableObject {
     private func updateShown() {
         for session in sessions {
             session.isShown = isVisible && (session.id == selectedId || session.id == splitId)
+            if session.isShown { startIfNeeded(session) }
         }
     }
 }
@@ -994,4 +1331,6 @@ enum AgentSettingsKey {
     static let fontOffset = "agentTerminalFontOffset"
     /// Keep codex and claude at their latest versions. Default on.
     static let keepClisCurrent = "agentKeepClisCurrent"
+    /// Reopen the sessions open at quit, agents resuming. Default on.
+    static let restoreSessions = "agentRestoreSessions"
 }

@@ -169,7 +169,7 @@ struct FleetMateCommands: Commands {
                     .keyboardShortcut("t", modifiers: .command)
                 Button("Terminal Full Window") {
                     let terminals = appState.terminals
-                    if terminals.sessions.isEmpty { terminals.open(appState.agentDefaultLaunch) }
+                    if terminals.selected == nil { terminals.open(appState.agentDefaultLaunch) }
                     terminals.isVisible = true
                     terminals.isMaximized.toggle()
                 }

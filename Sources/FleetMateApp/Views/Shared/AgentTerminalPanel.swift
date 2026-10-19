@@ -110,9 +110,10 @@ struct AgentTerminalPanel: View {
         }
         .onChange(of: store.sessions.count) { _, _ in store.listCollapsedOverride = nil }
         .onAppear(perform: store.reloadWorkspaces)
-        // Back from editing the file by hand: read it again.
+        // Back from editing the file by hand, or from tracking a repository
+        // elsewhere: read both again.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            store.reloadWorkspaces()
+            store.syncBaseline()
         }
     }
 
@@ -127,7 +128,8 @@ struct AgentTerminalPanel: View {
             HStack(spacing: 6) {
                 if !listCollapsed {
                     Text("Sessions").appFont(.caption, weight: .semibold).foregroundStyle(.secondary)
-                    Text("\(store.sessions.count)").appFont(.caption2).monospacedDigit().foregroundStyle(.tertiary)
+                    Text("\(store.startedSessions.count)").appFont(.caption2).monospacedDigit().foregroundStyle(.tertiary)
+                        .help("Sessions running")
                     Spacer(minLength: 4)
                     workspacesMenu
                     newSessionMenu
@@ -204,8 +206,8 @@ struct AgentTerminalPanel: View {
         TerminalSessionTraits(isAgent: session.agentIsForeground,
                               isRunning: session.isRunning,
                               isPaused: session.isPaused,
-                              searchable: [session.title, session.shortDirectory, session.section,
-                                           session.programTitle ?? session.launch.label],
+                              searchable: [session.title, session.shortDirectory, session.breadcrumb, session.section,
+                                           session.label ?? "", session.programTitle ?? session.launch.label],
                               lastActivity: session.lastActivity)
     }
 
@@ -216,7 +218,9 @@ struct AgentTerminalPanel: View {
                    sections: store.sections,
                    move: { store.move(session, to: $0) },
                    select: { store.select(session.id) },
-                   close: { store.close(session.id) })
+                   close: { store.close(session.id) },
+                   rename: { store.rename(session, to: $0) },
+                   pin: { store.setPinned(session, $0) })
         // Drag a row onto another to put it there, in that row's section.
         .onDrag {
             draggingId = session.id
@@ -332,9 +336,17 @@ struct AgentTerminalPanel: View {
     private func sectionedRows(filtered: Bool) -> some View {
         let indexed = Array(store.sessions.enumerated())
         let shown = filtered ? indexed.filter { filter.matches(traits($0.element)) } : indexed
+        let pinned = shown.filter { $0.element.pinned }
         return LazyVStack(spacing: 1) {
+            // Pinned sessions head the list, out of their own sections.
+            if !pinned.isEmpty {
+                if !listCollapsed { pinnedHeader }
+                if listCollapsed || filtered || !store.collapsedSections.contains(Self.pinnedSection) {
+                    ForEach(pinned, id: \.element.id) { index, session in row(session, index: index) }
+                }
+            }
             ForEach(store.sections, id: \.self) { section in
-                let rows = shown.filter { $0.element.section == section }
+                let rows = shown.filter { $0.element.section == section && !$0.element.pinned }
                 if !(filtered && rows.isEmpty) {
                     if !listCollapsed { sectionHeader(section) }
                     if listCollapsed || filtered || !store.collapsedSections.contains(section) {
@@ -426,9 +438,26 @@ struct AgentTerminalPanel: View {
         }
     }
 
+    /// The Pinned group's key in the collapsed set; no section can be named it.
+    static let pinnedSection = "\u{1}pinned"
+
+    private var pinnedHeader: some View {
+        Button {
+            if !store.collapsedSections.insert(Self.pinnedSection).inserted { store.collapsedSections.remove(Self.pinnedSection) }
+        } label: {
+            Label("Pinned", systemImage: store.collapsedSections.contains(Self.pinnedSection) ? "chevron.right" : "chevron.down")
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .padding(6)
+        .accessibilityLabel("Pinned")
+        .accessibilityValue(store.collapsedSections.contains(Self.pinnedSection) ? "Collapsed" : "Expanded")
+    }
+
     private func sectionHeader(_ section: String) -> some View {
         Button {
-            if !store.collapsedSections.insert(section).inserted { store.collapsedSections.remove(section) }
+            store.toggleCollapsed(section)
         } label: {
             Label(section, systemImage: store.collapsedSections.contains(section) ? "chevron.right" : "chevron.down")
                 .font(.caption).foregroundStyle(.secondary)
@@ -529,9 +558,14 @@ private struct SessionRow: View {
     let move: (String) -> Void
     let select: () -> Void
     let close: () -> Void
+    let rename: (String) -> Void
+    let pin: (Bool) -> Void
     @State private var hovered = false
     @State private var renaming = false
     @State private var name = ""
+
+    /// A repository's row that has not started: closing it takes it out of the list.
+    private var isBookmark: Bool { !session.isStarted && session.repoDirectory != nil }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -541,11 +575,18 @@ private struct SessionRow: View {
                     Text(session.title)
                         .appFont(fixed: 11.5, weight: isSelected ? .semibold : .regular)
                         .lineLimit(1)
-                    Text(session.shortDirectory)
+                    Text(session.breadcrumb)
                         .appFont(fixed: 10)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.head)
+                    if session.isStarted {
+                        // Paused reads the terminal's foreground process,
+                        // which publishes nothing; look again on a slow tick.
+                        TimelineView(.periodic(from: .now, by: 1.5)) { _ in statusLine }
+                    } else {
+                        statusLine
+                    }
                 }
                 Spacer(minLength: 2)
                 if hovered {
@@ -553,7 +594,8 @@ private struct SessionRow: View {
                         Image(systemName: "xmark").appFont(fixed: 9)
                     }
                     .buttonStyle(.borderless)
-                    .help("Close session (⌘W)")
+                    .help(closeHelp)
+                    .accessibilityLabel(closeTitle)
                 } else if index < 9 {
                     Text("⌘\(index + 1)").appFont(fixed: 9).foregroundStyle(.tertiary)
                 }
@@ -568,27 +610,50 @@ private struct SessionRow: View {
         .onHover { hovered = $0 }
         .contextMenu {
             Button("Rename Session…") { name = session.title; renaming = true }
-            Button("Use Automatic Name") { session.customTitle = "" }
+            Button("Use Automatic Name") { rename("") }
                 .disabled(session.customTitle.isEmpty)
+            Button(session.pinned ? "Unpin" : "Pin") { pin(!session.pinned) }
             Menu("Move to Section") {
                 ForEach(sections, id: \.self) { section in
                     Button(section) { move(section) }
                 }
             }
             Divider()
+            Button("Copy Path") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(session.directory, forType: .string)
+            }
+            Button("Show in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.directory)])
+            }
+            Divider()
             Button("Scroll to Top") { session.view.scroll(toPosition: 0) }
+                .disabled(!session.isStarted)
             Button("Scroll to Bottom") { session.view.scroll(toPosition: 1) }
-            Button("Close Session", action: close)
+                .disabled(!session.isStarted)
+            Button(closeTitle, action: close)
         }
         .popover(isPresented: $renaming, arrowEdge: .trailing) {
             AgentNamePopover(title: "Rename Session", name: $name,
-                             save: { session.customTitle = name; renaming = false },
+                             save: { rename(name); renaming = false },
                              cancel: { renaming = false })
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { select() }
+        .accessibilityAction(named: session.pinned ? "Unpin" : "Pin") { pin(!session.pinned) }
+        .accessibilityAction(named: closeTitle, close)
         .help("\(session.title)\n\(session.shortDirectory)\nProgram: \(session.programTitle ?? session.launch.label)")
+    }
+
+    private var closeTitle: String {
+        if isBookmark { return "Remove from List" }
+        return session.repoDirectory != nil ? "Stop Session" : "Close Session"
+    }
+
+    private var closeHelp: String {
+        if isBookmark { return "Remove this repository from the session list" }
+        return session.repoDirectory != nil ? "Stop the session; the repository stays in the list (⌘W)" : "Close session (⌘W)"
     }
 
     private var rowBackground: SwiftUI.Color {
@@ -597,17 +662,49 @@ private struct SessionRow: View {
         return hovered ? SwiftUI.Color.secondary.opacity(0.08) : .clear
     }
 
-    /// Green while output streams, orange when a session out of sight rang
-    /// its bell (an agent waiting on you), grey when idle or ended.
-    private var statusDot: some View {
-        let color: SwiftUI.Color
-        switch session.activity {
-        case .busy: color = .green
-        case .attention: color = .orange
-        case .idle: color = .secondary.opacity(0.5)
-        case .exited: color = .secondary.opacity(0.2)
+    /// Running with a bolt, Paused, Idle, Not Started or Ended.
+    private var statusLine: some View {
+        let (symbol, text): (String, String) = switch session.status {
+        case .running: ("bolt.fill", "Running")
+        case .paused: ("pause.fill", "Paused")
+        case .idle: ("moon.zzz", "Idle")
+        case .exited: ("stop.fill", "Ended")
+        case .notStarted: ("play", session.resume ? "Resumes when opened" : "Not started")
         }
-        return Circle().fill(color).frame(width: 7, height: 7).frame(width: 12)
+        return Label(text, systemImage: symbol)
+            .labelStyle(StatusLabelStyle())
+            .appFont(fixed: 9.5)
+            .foregroundStyle(session.status == .running ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+            .lineLimit(1)
+    }
+
+    /// Green while output streams, orange when a session out of sight rang
+    /// its bell (an agent waiting on you), grey when idle or ended, an
+    /// outline while it has not started.
+    @ViewBuilder
+    private var statusDot: some View {
+        if !session.isStarted {
+            Circle().strokeBorder(SwiftUI.Color.secondary.opacity(0.6), lineWidth: 1)
+                .frame(width: 7, height: 7).frame(width: 12)
+        } else {
+            let color: SwiftUI.Color = switch session.activity {
+            case .busy: .green
+            case .attention: .orange
+            case .idle: session.titleWorking ? .green : .secondary.opacity(0.5)
+            case .exited: .secondary.opacity(0.2)
+            }
+            Circle().fill(color).frame(width: 7, height: 7).frame(width: 12)
+        }
+    }
+}
+
+/// An icon and text tight together, for a row's status line.
+private struct StatusLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 3) {
+            configuration.icon
+            configuration.title
+        }
     }
 }
 

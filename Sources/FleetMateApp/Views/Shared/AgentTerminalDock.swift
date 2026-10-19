@@ -198,7 +198,8 @@ struct AgentTerminalStrip: View {
     }
 
     private var status: String {
-        let sessions = store.sessions
+        // Rows waiting to start are bookmarks, not sessions.
+        let sessions = store.startedSessions
         guard !sessions.isEmpty else { return "No sessions" }
         var text = sessions.count == 1 ? "1 session" : "\(sessions.count) sessions"
         if sessions.contains(where: { $0.activity == .attention }) {

@@ -19,6 +19,8 @@ struct TicketWorkflowView: View {
     @State private var reloadToken = 0
     @State private var isExpanded = false
     @State private var management: WorkflowManagementSelection?
+    @State private var runningStep: UUID?
+    @State private var stepFailures: [UUID: String] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -47,7 +49,7 @@ struct TicketWorkflowView: View {
                 Button("Refresh", systemImage: "arrow.clockwise") { reloadToken += 1 }
                     .labelStyle(.iconOnly)
                     .help("Refresh workflow")
-                    .disabled(isLoading || selectedAction != nil || management != nil)
+                    .disabled(isLoading || selectedAction != nil || management != nil || runningStep != nil)
             }
 
             if isExpanded {
@@ -72,7 +74,13 @@ struct TicketWorkflowView: View {
                         step: step,
                         actions: actions[step.id] ?? [],
                         errorMessage: actionErrors[step.id],
-                        selectAction: { action in
+                        failureMessage: stepFailures[step.id],
+                        isRunning: runningStep == step.id,
+                        isLocked: runningStep != nil || stepFailures[step.id] != nil,
+                        perform: { action in
+                            Task { await perform(action, on: step) }
+                        },
+                        performWithComment: { action in
                             selectedAction = WorkflowActionSelection(step: step, action: action)
                         })
                 }
@@ -118,6 +126,7 @@ struct TicketWorkflowView: View {
         actions = [:]
         actionErrors = [:]
         errorMessage = nil
+        stepFailures = [:]
         defer { isLoading = false }
         do {
             let loaded = try await service.getWorkflow(ticketId: ticketId)
@@ -138,13 +147,36 @@ struct TicketWorkflowView: View {
             errorMessage = error.localizedDescription
         }
     }
+
+    /// One click runs the action with no comment, as most steps need none.
+    @MainActor
+    private func perform(_ action: TdxWorkflowAction, on step: TdxWorkflowStep) async {
+        guard runningStep == nil, stepFailures[step.id] == nil else { return }
+        runningStep = step.id
+        defer { runningStep = nil }
+        do {
+            _ = try await service.performWorkflowAction(ticketId: ticketId, request: TdxWorkflowActionRequest(
+                stepId: step.id, actionId: action.id, comments: nil))
+            isLoading = true
+            reloadToken += 1
+            onActionCompleted()
+        } catch {
+            // A timeout may follow a committed action, so the step stays locked
+            // until the workflow is refreshed and its real state is shown.
+            stepFailures[step.id] = "\(action.label) failed: \(error.localizedDescription) Refresh the workflow before trying again."
+        }
+    }
 }
 
 private struct WorkflowStepView: View {
     let step: TdxWorkflowStep
     let actions: [TdxWorkflowAction]
     let errorMessage: String?
-    let selectAction: (TdxWorkflowAction) -> Void
+    let failureMessage: String?
+    let isRunning: Bool
+    let isLocked: Bool
+    let perform: (TdxWorkflowAction) -> Void
+    let performWithComment: (TdxWorkflowAction) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -167,14 +199,22 @@ private struct WorkflowStepView: View {
                 Text("No actions are available to you for this step.")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
-                ViewThatFits(in: .horizontal) {
-                    HStack {
-                        actionButtons
+                HStack(alignment: .center, spacing: 8) {
+                    ViewThatFits(in: .horizontal) {
+                        HStack {
+                            actionButtons
+                        }
+                        VStack(alignment: .leading) {
+                            actionButtons
+                        }
                     }
-                    VStack(alignment: .leading) {
-                        actionButtons
-                    }
+                    if isRunning { ProgressView().controlSize(.small) }
                 }
+            }
+            if let failureMessage {
+                Label(failureMessage, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
             }
         }
         .padding(10)
@@ -182,15 +222,18 @@ private struct WorkflowStepView: View {
         .background(.quaternary, in: .rect(cornerRadius: 6))
         .contextMenu {
             ForEach(actions) { action in
-                Button(action.label) { selectAction(action) }
+                Button(action.label) { perform(action) }
+                Button("\(action.label) with Comment…") { performWithComment(action) }
             }
+            .disabled(isLocked)
         }
     }
 
     private var actionButtons: some View {
         ForEach(actions) { action in
-            Button(action.label) { selectAction(action) }
-                .help(action.tooltip ?? action.label)
+            Button(action.label) { perform(action) }
+                .help("\(action.tooltip ?? action.label). Right-click to add a comment.")
+                .disabled(isLocked)
         }
     }
 }

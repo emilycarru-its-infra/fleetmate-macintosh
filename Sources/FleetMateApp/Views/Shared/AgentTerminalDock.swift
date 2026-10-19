@@ -304,12 +304,18 @@ struct AgentModeToolbarToggle: View {
         Button {
             terminals.toggle(defaultLaunch: defaultLaunch)
         } label: {
+            // The window toolbar strips bordered-prominent tint, so the fill
+            // is drawn here: white on the accent colour, in light and dark.
             Label("Agent", systemImage: terminals.isShowing ? "checkmark" : ContentView.agentSymbol)
-                .fontWeight(.semibold)
+                .labelStyle(.titleAndIcon)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(Color.accentColor))
+                .contentShape(Capsule())
         }
-        .buttonStyle(.borderedProminent)
-        .tint(.accentColor)
-        .labelStyle(.titleAndIcon)
+        .buttonStyle(.plain)
         .keyboardShortcut("`", modifiers: .control)
         .help(terminals.isShowing ? "Hide the agent terminal (⌘J or ⌃`)" : "Work with the agent in the terminal (⌘J or ⌃`)")
         .accessibilityLabel("Agent")

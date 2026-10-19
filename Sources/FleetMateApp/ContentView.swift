@@ -50,8 +50,16 @@ struct ContentView: View {
                 // Agent is the app's core action, so it sits at the far left,
                 // ahead of history, on every tab.
                 if !AppEdition.current.isTicketsOnly {
-                    ToolbarItem(placement: .navigation) {
-                        AgentModeToolbarToggle(terminals: terminals, defaultLaunch: appState.agentDefaultLaunch)
+                    if #available(macOS 26.0, *) {
+                        ToolbarItem(placement: .navigation) {
+                            AgentModeToolbarToggle(terminals: terminals, defaultLaunch: appState.agentDefaultLaunch)
+                        }
+                        // Its own filled capsule, not one more glass chip.
+                        .sharedBackgroundVisibility(.hidden)
+                    } else {
+                        ToolbarItem(placement: .navigation) {
+                            AgentModeToolbarToggle(terminals: terminals, defaultLaunch: appState.agentDefaultLaunch)
+                        }
                     }
                 }
                 // Browser-style history, mirrored on ⌘[ / ⌘].

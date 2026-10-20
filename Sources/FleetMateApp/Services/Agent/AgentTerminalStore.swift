@@ -255,6 +255,11 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
     /// The folder of the Repos workspace entry this row stands for, as
     /// compared (`TerminalWorkspaceBaseline.normalized`); nil for the rest.
     let repoDirectory: String?
+    /// For a row the person added to the Repos workspace beside a generated
+    /// one (a duplicate), its id there; nil for every other row.
+    let entryId: String?
+    /// How the Repos workspace knows this row: its id, else its folder.
+    var baselineKey: String? { entryId ?? repoDirectory }
     @Published var pinned = false
     /// Resume the agent's last conversation here when the session starts.
     var resume = false
@@ -304,8 +309,9 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
     /// current, so they skip their own update checks.
     /// A session that starts nothing until `start` is called.
     init(id: UUID, launch: AgentLaunch, directory start: String, sessionDirectory: URL, fontSize: CGFloat,
-         label: String? = nil, repoDirectory: String? = nil, followsDefault: Bool = false) {
+         label: String? = nil, repoDirectory: String? = nil, entryId: String? = nil, followsDefault: Bool = false) {
         self.id = id
+        self.entryId = entryId
         self.followsDefault = followsDefault
         self.metadataPath = sessionDirectory.appendingPathComponent(id.uuidString + ".json").path
         self.launch = launch
@@ -615,8 +621,8 @@ final class AgentTerminalStore: ObservableObject {
     }
 
     /// A session ready to start, in the list but running nothing yet.
-    private func makeSession(_ launch: AgentLaunch, label: String? = nil,
-                             repoDirectory: String? = nil, followsDefault: Bool = false) -> AgentTerminalSession {
+    private func makeSession(_ launch: AgentLaunch, label: String? = nil, repoDirectory: String? = nil,
+                             entryId: String? = nil, followsDefault: Bool = false) -> AgentTerminalSession {
         let id = UUID()
         var directory = launch.directory.map { ($0 as NSString).expandingTildeInPath }
             ?? startDirectory?() ?? Self.workspaceDirectory()
@@ -630,7 +636,7 @@ final class AgentTerminalStore: ObservableObject {
         }
         let session = AgentTerminalSession(id: id, launch: launch, directory: directory,
                                            sessionDirectory: brief.sessionDirectory, fontSize: fontSize,
-                                           label: label, repoDirectory: repoDirectory,
+                                           label: label, repoDirectory: repoDirectory, entryId: entryId,
                                            followsDefault: followsDefault)
         session.breadcrumbRoots = breadcrumbRoots
         session.onSectionChange = { [weak self, weak session] name in
@@ -694,14 +700,14 @@ final class AgentTerminalStore: ObservableObject {
     func close(_ id: AgentTerminalSession.ID) {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         let session = sessions[index]
-        let keepsRow = session.isStarted && session.repoDirectory.map(baselineDirectories.contains) == true
+        let keepsRow = session.isStarted && session.baselineKey.map(baselineKeys.contains) == true
         session.terminate()
         brief.removeSessionBrief(id: id.uuidString)
         if keepsRow, let directory = session.repoDirectory {
             var launch = session.launch
             if session.followsDefault { launch.command = "" }
             let fresh = makeSession(launch, label: session.label, repoDirectory: directory,
-                                    followsDefault: session.followsDefault)
+                                    entryId: session.entryId, followsDefault: session.followsDefault)
             fresh.customTitle = session.customTitle
             fresh.section = session.section
             fresh.pinned = session.pinned
@@ -863,6 +869,73 @@ final class AgentTerminalStore: ObservableObject {
         if session.repoDirectory != nil { persistBaselineRows() }
     }
 
+    /// What the session runs or, for a row that follows the default and has
+    /// not started, what it would run now.
+    func command(of session: AgentTerminalSession) -> String {
+        session.followsDefault && !session.isStarted ? defaultLaunch.command : session.launch.command
+    }
+
+    /// The folder a copy or a restart of `session` opens in: a repository
+    /// row's own folder, otherwise wherever the shell is now.
+    private func startFolder(of session: AgentTerminalSession) -> String {
+        session.repoDirectory != nil ? (session.launch.directory ?? session.directory) : session.directory
+    }
+
+    /// Run `command` in `session`'s place: the process ends and a new one
+    /// starts in the same folder, keeping the row's name, section, pin and
+    /// position. The session then runs that command whatever the default
+    /// is, and a repository row writes it to the Repos workspace. A row that
+    /// had not started stays waiting, set to the new command.
+    @discardableResult
+    func switchAgent(_ session: AgentTerminalSession, to command: String) -> AgentTerminalSession? {
+        guard let index = sessions.firstIndex(where: { $0.id == session.id }),
+              session.followsDefault || command != session.launch.command else { return nil }
+        let wasStarted = session.isStarted
+        let wasSelected = selectedId == session.id
+        let wasSplit = splitId == session.id
+        let directory = startFolder(of: session)
+        session.terminate()
+        brief.removeSessionBrief(id: session.id.uuidString)
+        let fresh = makeSession(AgentLaunch(command: command, directory: directory), label: session.label,
+                                repoDirectory: session.repoDirectory, entryId: session.entryId)
+        fresh.customTitle = session.customTitle
+        fresh.section = session.section
+        fresh.pinned = session.pinned
+        sessions[index] = fresh
+        if wasSplit { splitId = fresh.id }
+        if wasSelected {
+            fresh.wantsFocus = true
+            selectedId = fresh.id
+        }
+        if wasStarted { startIfNeeded(fresh) }
+        if fresh.repoDirectory != nil { persistBaselineRows() }
+        return fresh
+    }
+
+    /// Open a copy of `session` in its folder, running `command` (nil runs
+    /// what the original runs), directly below it in its section, named
+    /// "<name> 2" and selected. A copy of a repository row is a session the
+    /// person added to the Repos workspace, so sync never takes it out.
+    @discardableResult
+    func duplicate(_ session: AgentTerminalSession, command: String? = nil) -> AgentTerminalSession? {
+        guard let index = sessions.firstIndex(where: { $0.id == session.id }) else { return nil }
+        let isRow = session.repoDirectory != nil && workspaceFile.baselineIndex != nil
+        let fresh = makeSession(AgentLaunch(command: command ?? self.command(of: session), directory: startFolder(of: session)),
+                                label: session.label,
+                                repoDirectory: isRow ? session.repoDirectory : nil,
+                                entryId: isRow ? UUID().uuidString : nil)
+        fresh.customTitle = TerminalSessionName.duplicate(of: session.title, existing: sessions.map(\.title))
+        fresh.section = session.section
+        fresh.pinned = session.pinned
+        sessions.insert(fresh, at: index + 1)
+        fresh.wantsFocus = true
+        selectedId = fresh.id
+        isVisible = true
+        startIfNeeded(fresh)
+        if isRow { persistBaselineRows() }
+        return fresh
+    }
+
     func toggleCollapsed(_ section: String) {
         if collapsedSections.insert(section).inserted == false { collapsedSections.remove(section) }
         if sessions.contains(where: { $0.section == section && $0.repoDirectory != nil }) { persistBaselineRows() }
@@ -1013,10 +1086,10 @@ final class AgentTerminalStore: ObservableObject {
         didSet { for session in sessions { session.breadcrumbRoots = breadcrumbRoots } }
     }
 
-    /// The folders of the Repos workspace's sessions, as compared.
-    private var baselineDirectories: Set<String> {
-        Set((workspaceFile.baseline?.sections ?? []).flatMap(\.sessions).compactMap(\.directory)
-            .map(TerminalWorkspaceBaseline.normalized))
+    /// The Repos workspace's sessions as rows know them: an added session
+    /// by its id, the rest by folder as compared.
+    private var baselineKeys: Set<String> {
+        Set((workspaceFile.baseline?.sections ?? []).flatMap(\.sessions).compactMap(\.rowKey))
     }
 
     /// Keep the Repos workspace in step with the tracked repositories and
@@ -1045,9 +1118,9 @@ final class AgentTerminalStore: ObservableObject {
     /// take out rows, not yet started, whose session left the workspace.
     private func applyBaselineToList() {
         let baseline = workspaceFile.baseline
-        let wanted = baselineDirectories
+        let wanted = baselineKeys
         sessions.removeAll { session in
-            guard let directory = session.repoDirectory, !session.isStarted, !wanted.contains(directory) else { return false }
+            guard let key = session.baselineKey, !session.isStarted, !wanted.contains(key) else { return false }
             session.terminate()
             return true
         }
@@ -1061,11 +1134,11 @@ final class AgentTerminalStore: ObservableObject {
             for entry in section.sessions {
                 guard let directory = entry.directory else { continue }
                 let key = TerminalWorkspaceBaseline.normalized(directory)
-                guard !sessions.contains(where: { $0.repoDirectory == key }) else { continue }
+                guard !sessions.contains(where: { $0.repoDirectory == key && $0.entryId == entry.id }) else { continue }
                 // No command of its own: it runs the default when it starts.
                 let session = makeSession(AgentLaunch(command: entry.command ?? "",
                                                       directory: TerminalWorkspaceStore.expand(directory)),
-                                          label: entry.label, repoDirectory: key,
+                                          label: entry.label, repoDirectory: key, entryId: entry.id,
                                           followsDefault: entry.command == nil)
                 session.customTitle = entry.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 session.pinned = entry.pinned == true
@@ -1089,34 +1162,19 @@ final class AgentTerminalStore: ObservableObject {
     /// the next sync keeps what the person arranged.
     private func persistBaselineRows() {
         guard workspaceFile.baselineIndex != nil else { return }
-        let rows = sessions.filter { $0.repoDirectory != nil }
+        let rows = sessions.compactMap { session -> TerminalWorkspaceBaseline.Row? in
+            guard session.repoDirectory != nil else { return nil }
+            return TerminalWorkspaceBaseline.Row(
+                id: session.entryId,
+                directory: TerminalWorkspaceStore.abbreviate(session.launch.directory ?? session.directory),
+                label: session.label, section: session.section, name: session.customTitle,
+                pinned: session.pinned, command: session.followsDefault ? nil : session.launch.command)
+        }
         let sectionOrder = sections
         let collapsed = collapsedSections
         writeWorkspaces { file in
             guard let index = file.baselineIndex else { return }
-            var workspace = file.workspaces[index]
-            var entries: [String: TerminalWorkspace.Session] = [:]
-            for entry in workspace.sections.flatMap(\.sessions) {
-                guard let directory = entry.directory else { continue }
-                entries[TerminalWorkspaceBaseline.normalized(directory)] = entries[TerminalWorkspaceBaseline.normalized(directory)] ?? entry
-            }
-            var rebuilt: [TerminalWorkspace.Section] = []
-            for name in sectionOrder {
-                let fromRows: [TerminalWorkspace.Session] = rows.filter { $0.section == name }.compactMap { row in
-                    guard let key = row.repoDirectory, var entry = entries[key] else { return nil }
-                    let custom = row.customTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-                    entry.name = custom.isEmpty ? nil : custom
-                    entry.pinned = row.pinned ? true : nil
-                    return entry
-                }
-                // Sessions written by hand with no folder are kept where they were.
-                let unlisted = workspace.sections.first { $0.name == name }?.sessions.filter { $0.directory == nil } ?? []
-                guard !fromRows.isEmpty || !unlisted.isEmpty else { continue }
-                rebuilt.append(.init(name: name, collapsed: collapsed.contains(name) ? true : nil,
-                                     sessions: fromRows + unlisted))
-            }
-            workspace.sections = rebuilt
-            file.workspaces[index] = workspace
+            TerminalWorkspaceBaseline.write(rows, sections: sectionOrder, collapsed: collapsed, to: &file.workspaces[index])
         }
     }
 
@@ -1210,7 +1268,7 @@ final class AgentTerminalStore: ObservableObject {
                 // A repository's row: it resumes when next chosen. One that
                 // follows the default resumes whatever the default is then.
                 if let directory, let row = sessions.first(where: {
-                    $0.repoDirectory == TerminalWorkspaceBaseline.normalized(directory)
+                    $0.repoDirectory == TerminalWorkspaceBaseline.normalized(directory) && $0.entryId == entry.id
                         && ($0.followsDefault || $0.launch.command == command)
                 }) {
                     row.resume = entry.resume == true
@@ -1253,7 +1311,8 @@ final class AgentTerminalStore: ObservableObject {
                     directory: TerminalWorkspaceStore.abbreviate(isRow ? (session.launch.directory ?? session.directory)
                                                                         : session.directory),
                     pinned: session.pinned ? true : nil,
-                    resume: AgentResume.command(session.launch.command) != nil ? true : nil)
+                    resume: AgentResume.command(session.launch.command) != nil ? true : nil,
+                    id: session.entryId)
             })
         })
         writeWorkspaces { $0.restore = restore.sections.isEmpty ? nil : restore }

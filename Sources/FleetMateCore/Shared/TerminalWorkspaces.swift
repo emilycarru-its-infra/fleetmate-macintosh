@@ -149,15 +149,27 @@ public struct TerminalWorkspace: Codable, Equatable, Sendable {
         /// Resume the agent's last conversation in this folder when the
         /// session next starts (`claude --continue`, `codex resume --last`).
         public var resume: Bool?
+        /// Set on a session the person added to the Repos workspace beside
+        /// a generated one, such as a duplicate, which shares its folder.
+        /// It tells the two apart, and `sync` never removes a session that
+        /// carries one. Nil for generated sessions and everywhere else.
+        public var id: String?
 
         public init(name: String? = nil, label: String? = nil, command: String? = nil, directory: String? = nil,
-                    pinned: Bool? = nil, resume: Bool? = nil) {
+                    pinned: Bool? = nil, resume: Bool? = nil, id: String? = nil) {
             self.name = name
             self.label = label
             self.command = command
             self.directory = directory
             self.pinned = pinned
             self.resume = resume
+            self.id = id
+        }
+
+        /// How a row in the session list finds this session again: its id
+        /// when the person added it, else its folder as compared.
+        public var rowKey: String? {
+            id ?? directory.map(TerminalWorkspaceBaseline.normalized)
         }
     }
 }

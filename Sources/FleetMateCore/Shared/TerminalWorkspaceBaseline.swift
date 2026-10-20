@@ -107,7 +107,9 @@ public enum TerminalWorkspaceBaseline {
         for index in workspace.sections.indices {
             let before = workspace.sections[index].sessions.count
             workspace.sections[index].sessions.removeAll { session in
-                guard let directory = session.directory.map(normalized), stale.contains(directory) else { return false }
+                // One the person added stays, whatever becomes of its repository.
+                guard session.id == nil, let directory = session.directory.map(normalized),
+                      stale.contains(directory) else { return false }
                 change.removed.append(directory)
                 return true
             }
@@ -166,7 +168,7 @@ public enum TerminalWorkspaceBaseline {
         for s in workspace.sections.indices {
             for i in workspace.sections[s].sessions.indices {
                 let session = workspace.sections[s].sessions[i]
-                guard let directory = session.directory, placed.contains(normalized(directory)),
+                guard session.id == nil, let directory = session.directory, placed.contains(normalized(directory)),
                       let command = session.command,
                       baked.contains(command.trimmingCharacters(in: .whitespaces)) else { continue }
                 workspace.sections[s].sessions[i].command = nil
@@ -266,6 +268,74 @@ extension TerminalWorkspaceBaseline {
         struct Registry: Decodable { var repos: [String: Flag]? }
         guard let registry = try? JSONDecoder().decode(Registry.self, from: data) else { return [] }
         return Set((registry.repos ?? [:]).filter { $0.value.hidden == true }.keys)
+    }
+}
+
+extension TerminalWorkspaceBaseline {
+    /// A row of the session list that stands for a Repos workspace session,
+    /// as it is to be written back.
+    public struct Row: Equatable, Sendable {
+        /// The session's id when the person added it, else nil.
+        public var id: String?
+        /// Its folder, as stored (`~` for the home folder).
+        public var directory: String
+        public var label: String?
+        public var section: String
+        /// The name the person gave it; empty follows the automatic name.
+        public var name: String
+        public var pinned: Bool
+        /// The command it runs; nil follows the default agent.
+        public var command: String?
+
+        public init(id: String? = nil, directory: String, label: String? = nil, section: String,
+                    name: String = "", pinned: Bool = false, command: String? = nil) {
+            self.id = id
+            self.directory = directory
+            self.label = label
+            self.section = section
+            self.name = name
+            self.pinned = pinned
+            self.command = command
+        }
+
+        public var key: String { id ?? normalized(directory) }
+    }
+
+    /// Write the session list's rows back to the Repos workspace: their
+    /// names, pins, commands, sections and order, so the next sync keeps
+    /// what the person arranged. An added row (one with an id, such as a
+    /// duplicate) not in the workspace yet goes in where it sits; a
+    /// generated row whose session is gone stays out. A session with no row was
+    /// removed and is left out. Sessions written by hand with no folder stay
+    /// in their section. Everything else an entry carries, such as `resume`,
+    /// is kept.
+    public static func write(_ rows: [Row], sections order: [String], collapsed: Set<String>,
+                             to workspace: inout TerminalWorkspace) {
+        var entries: [String: TerminalWorkspace.Session] = [:]
+        for entry in workspace.sections.flatMap(\.sessions) {
+            guard let key = entry.rowKey, entries[key] == nil else { continue }
+            entries[key] = entry
+        }
+        var rebuilt: [TerminalWorkspace.Section] = []
+        for name in order {
+            let fromRows: [TerminalWorkspace.Session] = rows.filter { $0.section == name }.compactMap { row in
+                // Only an added row is new here; a generated one whose
+                // session sync took out stays out.
+                guard var entry = entries[row.key]
+                    ?? row.id.map({ TerminalWorkspace.Session(label: row.label, directory: row.directory, id: $0) })
+                else { return nil }
+                let custom = row.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                entry.name = custom.isEmpty ? nil : custom
+                entry.pinned = row.pinned ? true : nil
+                entry.command = row.command
+                return entry
+            }
+            let unlisted = workspace.sections.first { $0.name == name }?.sessions.filter { $0.directory == nil } ?? []
+            guard !fromRows.isEmpty || !unlisted.isEmpty else { continue }
+            rebuilt.append(.init(name: name, collapsed: collapsed.contains(name) ? true : nil,
+                                 sessions: fromRows + unlisted))
+        }
+        workspace.sections = rebuilt
     }
 }
 

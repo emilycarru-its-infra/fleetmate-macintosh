@@ -266,7 +266,10 @@ struct AgentTerminalPanel: View {
                    select: { store.select(session.id) },
                    close: { store.close(session.id) },
                    rename: { store.rename(session, to: $0) },
-                   pin: { store.setPinned(session, $0) },)
+                   pin: { store.setPinned(session, $0) },
+                   currentCommand: store.command(of: session),
+                   switchAgent: { switchAgent(session, to: $0) },
+                   duplicate: { store.duplicate(session, command: $0) })
         // Drag a row onto another to put it there, in that row's section.
         .onDrag {
             draggingId = session.id
@@ -281,6 +284,30 @@ struct AgentTerminalPanel: View {
             drop(before: session.id, in: session.section)
         }
         .overlay(alignment: .top) { dropLine(dropTarget == "row:\(session.id)") }
+    }
+
+    /// Switch straight away, unless the session is working: then ask first,
+    /// as a sheet on the window, since switching ends what it is doing.
+    private func switchAgent(_ session: AgentTerminalSession, to command: String) {
+        guard session.isStarted, session.isRunning else {
+            store.switchAgent(session, to: command)
+            return
+        }
+        let label = AgentLaunch(command: command).label
+        let alert = NSAlert()
+        alert.messageText = "Switch “\(session.title)” to \(label)?"
+        alert.informativeText = "The session is working. Switching ends what it is running and starts \(label) in the same folder."
+        alert.addButton(withTitle: "Switch")
+        alert.addButton(withTitle: "Cancel")
+        let store = store
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            if response == .alertFirstButtonReturn { store.switchAgent(session, to: command) }
+        }
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            alert.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            finish(alert.runModal())
+        }
     }
 
     private func dropBinding(_ key: String) -> Binding<Bool> {
@@ -606,6 +633,11 @@ private struct SessionRow: View {
     let close: () -> Void
     let rename: (String) -> Void
     let pin: (Bool) -> Void
+    /// What the session runs, for the check in Switch Agent.
+    let currentCommand: String
+    let switchAgent: (String) -> Void
+    /// Nil runs the same agent as this session.
+    let duplicate: (String?) -> Void
     @State private var hovered = false
     @State private var renaming = false
     @State private var name = ""
@@ -667,6 +699,19 @@ private struct SessionRow: View {
             Menu("Move to Section") {
                 ForEach(sections, id: \.self) { section in
                     Button(section) { move(section) }
+                }
+            }
+            Picker("Switch Agent", selection: Binding(get: { currentCommand }, set: switchAgent)) {
+                ForEach(AgentLaunch.installedPresets, id: \.command) { preset in
+                    Text(preset.label).tag(preset.command)
+                }
+            }
+            .pickerStyle(.menu)
+            Menu("Duplicate Session") {
+                Button("Same Agent") { duplicate(nil) }
+                Divider()
+                ForEach(AgentLaunch.installedPresets, id: \.command) { preset in
+                    Button(preset.label) { duplicate(preset.command) }
                 }
             }
             Divider()

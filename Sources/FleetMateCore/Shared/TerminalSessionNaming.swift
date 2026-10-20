@@ -73,6 +73,27 @@ public enum TerminalSessionName {
 /// nearest repository root (Settings › Repositories), joined with " · ", so
 /// `~/src/Cloud/Vantage` under the root `~/src` reads "Cloud · Vantage".
 /// Hidden components such as `.worktrees` are left out.
+extension TerminalSessionName {
+    /// The name for a copy of the session named `name`: "name 2", or the
+    /// next number free among `existing` (compared ignoring case). A name
+    /// already ending in a number counts on from it, so a copy of "api 2"
+    /// is "api 3".
+    public static func duplicate(of name: String, existing: [String]) -> String {
+        var base = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var number = 2
+        if let space = base.lastIndex(of: " "), let n = Int(base[base.index(after: space)...]), n >= 1, n < 10_000 {
+            let stem = base[..<space].trimmingCharacters(in: .whitespaces)
+            if !stem.isEmpty {
+                base = stem
+                number = n + 1
+            }
+        }
+        let taken = Set(existing.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+        while taken.contains("\(base) \(number)".lowercased()) { number += 1 }
+        return "\(base) \(number)"
+    }
+}
+
 public enum TerminalBreadcrumb {
     public static let separator = " · "
 

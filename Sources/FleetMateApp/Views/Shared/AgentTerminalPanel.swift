@@ -125,27 +125,16 @@ struct AgentTerminalPanel: View {
 
     private var sessionList: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                if !listCollapsed {
-                    Text("Sessions").appFont(.caption, weight: .semibold).foregroundStyle(.secondary)
-                    Text("\(store.startedSessions.count)").appFont(.caption2).monospacedDigit().foregroundStyle(.tertiary)
-                        .help("Sessions running")
-                    Spacer(minLength: 4)
-                    workspacesMenu
-                    newSessionMenu
-                    Button(action: store.toggleSplit) {
-                        Label("Split", systemImage: store.splitId == nil ? "rectangle.split.2x1" : "rectangle")
-                            .labelStyle(.iconOnly)
+            Group {
+                if listCollapsed {
+                    listToggle
+                } else {
+                    // Narrow, the title gives way before any control does.
+                    ViewThatFits(in: .horizontal) {
+                        header(titled: true)
+                        header(titled: false)
                     }
-                    .buttonStyle(.borderless)
-                    .help(store.splitId == nil ? "Split (⌘D)" : "Unsplit (⌘D)")
                 }
-                Button(action: { store.listCollapsedOverride = !listCollapsed }) {
-                    Label("Collapse", systemImage: listCollapsed ? "sidebar.left" : "sidebar.squares.left")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.borderless)
-                .help(listCollapsed ? "Show session names" : "Collapse the session list")
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -156,6 +145,8 @@ struct AgentTerminalPanel: View {
                     newSessionMenu
                         .menuIndicator(.hidden)
                         .fixedSize()
+                    layoutButton
+                    hideButton
                 }
                 .padding(.bottom, 6)
             }
@@ -196,6 +187,61 @@ struct AgentTerminalPanel: View {
         }
     }
 
+    private func header(titled: Bool) -> some View {
+        HStack(spacing: 6) {
+            if titled {
+                Text("Sessions").appFont(.caption, weight: .semibold).foregroundStyle(.secondary).fixedSize()
+                Text("\(store.startedSessions.count)").appFont(.caption2).monospacedDigit().foregroundStyle(.tertiary)
+                    .help("Sessions running")
+            }
+            Spacer(minLength: 4)
+            workspacesMenu
+            newSessionMenu
+            Button(action: store.toggleSplit) {
+                Label("Split", systemImage: store.splitId == nil ? "rectangle.split.2x1" : "rectangle")
+                    .labelStyle(.iconOnly)
+            }
+            .buttonStyle(.borderless)
+            .help(store.splitId == nil ? "Split (⌘D)" : "Unsplit (⌘D)")
+            layoutButton
+            hideButton
+            listToggle
+        }
+    }
+
+    private var listToggle: some View {
+        Button(action: { store.listCollapsedOverride = !listCollapsed }) {
+            Label("Collapse", systemImage: listCollapsed ? "sidebar.left" : "sidebar.squares.left")
+                .labelStyle(.iconOnly)
+        }
+        .buttonStyle(.borderless)
+        .help(listCollapsed ? "Show session names (⌃⌘S)" : "Collapse the session list (⌃⌘S)")
+        .accessibilityLabel(listCollapsed ? "Show Session List" : "Collapse Session List")
+    }
+
+    /// Fill the window, or go back to sharing it with the tab at the height
+    /// the terminal had; View › Terminal Full Window does the same.
+    private var layoutButton: some View {
+        Button {
+            store.isMaximized.toggle()
+        } label: {
+            Label(store.isMaximized ? "Split View" : "Full Window",
+                  systemImage: store.isMaximized ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                .labelStyle(.iconOnly)
+        }
+        .buttonStyle(.borderless)
+        .help(store.isMaximized ? "Share the window with the tab (⇧⌘↩)" : "Fill the window with the terminal (⇧⌘↩)")
+    }
+
+    /// Hide the terminal; the toolbar's Agent button, ⌘J or ⌃` bring it back.
+    private var hideButton: some View {
+        Button(action: store.hide) {
+            Label("Hide Agent", systemImage: "chevron.down").labelStyle(.iconOnly)
+        }
+        .buttonStyle(.borderless)
+        .help("Hide the terminal (⌘J or ⌃`)")
+    }
+
     private var sortMode: TerminalSessionSort { TerminalSessionSort(rawValue: sortModeRaw) ?? .manual }
 
     private var filter: TerminalSessionFilter {
@@ -220,7 +266,7 @@ struct AgentTerminalPanel: View {
                    select: { store.select(session.id) },
                    close: { store.close(session.id) },
                    rename: { store.rename(session, to: $0) },
-                   pin: { store.setPinned(session, $0) })
+                   pin: { store.setPinned(session, $0) },)
         // Drag a row onto another to put it there, in that row's section.
         .onDrag {
             draggingId = session.id
@@ -584,8 +630,13 @@ private struct SessionRow: View {
                         // Paused reads the terminal's foreground process,
                         // which publishes nothing; look again on a slow tick.
                         TimelineView(.periodic(from: .now, by: 1.5)) { _ in statusLine }
-                    } else {
-                        statusLine
+                    } else if session.resume {
+                        // Waiting rows show only their outlined dot; one that
+                        // will pick its conversation up again says so.
+                        Text("Resumes when opened")
+                            .appFont(fixed: 9.5)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                 }
                 Spacer(minLength: 2)
@@ -662,14 +713,14 @@ private struct SessionRow: View {
         return hovered ? SwiftUI.Color.secondary.opacity(0.08) : .clear
     }
 
-    /// Running with a bolt, Paused, Idle, Not Started or Ended.
+    /// Running with a bolt, Paused, Idle or Ended, for a started session.
     private var statusLine: some View {
         let (symbol, text): (String, String) = switch session.status {
         case .running: ("bolt.fill", "Running")
         case .paused: ("pause.fill", "Paused")
         case .idle: ("moon.zzz", "Idle")
         case .exited: ("stop.fill", "Ended")
-        case .notStarted: ("play", session.resume ? "Resumes when opened" : "Not started")
+        case .notStarted: ("", "")
         }
         return Label(text, systemImage: symbol)
             .labelStyle(StatusLabelStyle())

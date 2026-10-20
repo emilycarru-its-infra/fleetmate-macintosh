@@ -17,6 +17,12 @@ extension AppState {
         terminals.startDirectory = { [weak self] in
             self?.agentStartDirectory() ?? AgentTerminalStore.workspaceDirectory()
         }
+        terminals.showRepos = { [weak self] in
+            guard let self else { return }
+            self.terminals.hide()
+            self.selectedTab = .development
+            self.development.segment = .repos
+        }
         let changes: [AnyPublisher<Void, Never>] = [
             development.$segment.map { _ in () }.eraseToAnyPublisher(),
             development.$selectedPullRequest.map { _ in () }.eraseToAnyPublisher(),

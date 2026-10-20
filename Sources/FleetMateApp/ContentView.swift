@@ -47,6 +47,21 @@ struct ContentView: View {
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
             .background(ToolbarPriorityBridge { appState.globalSearchFocusRequest += 1 })
             .toolbar {
+                // Agent is the app's core action, so it sits at the far left,
+                // ahead of history, on every tab.
+                if !AppEdition.current.isTicketsOnly {
+                    if #available(macOS 26.0, *) {
+                        ToolbarItem(placement: .navigation) {
+                            AgentModeToolbarToggle(terminals: terminals, defaultLaunch: appState.agentDefaultLaunch)
+                        }
+                        // Its own filled capsule, not one more glass chip.
+                        .sharedBackgroundVisibility(.hidden)
+                    } else {
+                        ToolbarItem(placement: .navigation) {
+                            AgentModeToolbarToggle(terminals: terminals, defaultLaunch: appState.agentDefaultLaunch)
+                        }
+                    }
+                }
                 // Browser-style history, mirrored on ⌘[ / ⌘].
                 ToolbarItemGroup(placement: .navigation) {
                     Button {
@@ -86,14 +101,6 @@ struct ContentView: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     RecentActivityToolbarButton()
-                }
-                if !AppEdition.current.isTicketsOnly {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button(action: { terminals.toggle(defaultLaunch: appState.agentDefaultLaunch) }) {
-                            Label("Agent", systemImage: Self.agentSymbol)
-                        }
-                        .help("Show or hide the agent terminal (⌃`)")
-                    }
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: { showAuthPopover.toggle() }) {
@@ -140,8 +147,18 @@ struct ContentView: View {
             }
             .onAppear {
                 appState.wireAgentTerminal()
-                terminals.defaultLaunch = appState.agentDefaultLaunch
-                if appState.agentAutoStart && terminals.sessions.isEmpty {
+                terminals.resolveDefaultLaunch = { [weak appState] in appState?.agentDefaultLaunch ?? .shell }
+                // The tracked repositories as rows in the session list, then
+                // the sessions open at the last quit, both waiting to start.
+                // A saved workspace named to open at launch takes the place
+                // of the single session that otherwise starts.
+                terminals.syncBaseline()
+                terminals.restoreLastSessions()
+                terminals.reloadWorkspaces()
+                if !AppEdition.current.isTicketsOnly, !terminals.hasOwnSessions,
+                   let workspace = terminals.workspaceFile.launchWorkspace {
+                    terminals.open(workspace: workspace)
+                } else if appState.agentAutoStart && !terminals.hasOwnSessions {
                     terminals.open(appState.agentDefaultLaunch, focus: false, show: false)
                 }
                 writeAgentContext()

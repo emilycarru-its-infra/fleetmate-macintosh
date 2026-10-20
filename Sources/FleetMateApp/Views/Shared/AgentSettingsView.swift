@@ -9,6 +9,7 @@ struct AgentSettingsView: View {
     @EnvironmentObject var appState: AppState
     @AppStorage(AgentSettingsKey.command) private var command: String = ""
     @AppStorage(AgentSettingsKey.autoStart) private var autoStart: Bool = true
+    @AppStorage(AgentSettingsKey.restoreSessions) private var restoreSessions: Bool = true
     @State private var repos: [String] = []
     @State private var newRepo = ""
     @State private var hasOwnCommand = false
@@ -32,6 +33,8 @@ struct AgentSettingsView: View {
                         .font(.system(.body, design: .monospaced))
                 }
                 Toggle("Open a session when FleetMate starts", isOn: $autoStart)
+                Toggle("Reopen the last sessions when FleetMate starts", isOn: $restoreSessions)
+                    .help("Sessions open at quit come back in the list; Claude Code and Codex resume their last conversation when opened")
                 if let managed = appState.config.agentCommand, !hasOwnCommand {
                     Text("Your organization's default is \(managed.isEmpty ? "a shell" : "`\(managed)`").")
                         .appFont(.caption).foregroundStyle(.secondary)
@@ -39,7 +42,7 @@ struct AgentSettingsView: View {
             } header: {
                 Text("Terminal")
             } footer: {
-                Text("Sessions start in a login shell, so your PATH and tools are there. Each gets FLEETMATE_CONTEXT, a JSON file naming the tab and selection you're on, and FLEETMATE_AGENT_BRIEF, a guide to every fleetmate command; claude and codex sessions are given the guide at start. Toggle the panel with ⌃`.")
+                Text("Sessions start in a login shell, so your PATH and tools are there. Each gets FLEETMATE_CONTEXT, a JSON file naming the tab and selection you're on, and FLEETMATE_AGENT_BRIEF, a guide to every fleetmate command; claude and codex sessions are given the guide at start. Toggle the panel with ⌘J or ⌃`.")
                     .settingsFooter()
             }
 

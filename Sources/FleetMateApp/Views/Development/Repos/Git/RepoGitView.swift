@@ -231,14 +231,7 @@ struct RepoGitView: View {
 
     // MARK: Body
 
-    @ViewBuilder
-    private var mainBody: some View {
-        if state.focusedPanel == .insights {
-            RepoInsightsView(model: model)
-        } else {
-            changesBody
-        }
-    }
+    private var mainBody: some View { changesBody }
 
     /// Changes, History and Files: the panel list beside its diff or editor.
     /// The panel switcher sits at the top of the repository sidebar.
@@ -292,8 +285,6 @@ struct RepoGitView: View {
                         GitCommitDetailView(text: state.diffText, commit: state.focusedCommit)
                     case .browse:
                         RepoEditorPane(model: model)
-                    case .insights:
-                        EmptyView()
                     }
                 }
                 .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
@@ -307,7 +298,6 @@ struct RepoGitView: View {
         case .files: GitFilesPanel(state: state, openInEditor: openInEditor)
         case .history: GitCommitsPanel(state: state)
         case .browse: RepoFilesPane(model: model, searchText: searchText)
-        case .insights: EmptyView()
         }
     }
 
@@ -521,7 +511,6 @@ private extension RepoGitView {
         case "1": state.focusedPanel = .files; return .handled
         case "2": state.focusedPanel = .history; return .handled
         case "3": state.focusedPanel = .browse; return .handled
-        case "4": state.focusedPanel = .insights; return .handled
         case "j": state.moveSelectionDown(); return .handled
         case "k": state.moveSelectionUp(); return .handled
         case " ":

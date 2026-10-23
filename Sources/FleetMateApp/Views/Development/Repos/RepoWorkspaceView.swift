@@ -4,9 +4,8 @@ import FleetMateCore
 
 // MARK: - Left pane
 
-/// The Repos sidebar: the workspace's mode (Changes, History, Files,
-/// Insights) on top, then tracked repositories grouped the way checkouts sit
-/// on disk — host, then project or owner — with a filter and sort below.
+/// The Repos sidebar: the workspace's mode (Changes, History, Files) on
+/// top, then tracked repositories grouped the way checkouts sit on disk — host, then project or owner — with a filter and sort below.
 /// Status refreshes on appear and every 30 seconds while shown; fetch is on
 /// demand. Sort, grouping, filter and which groups are collapsed persist.
 struct ReposListView: View {
@@ -59,19 +58,42 @@ struct ReposListView: View {
     /// Switches what the rest of the window shows for the selected
     /// repository. It sits above the list because it is a mode of the whole
     /// workspace: it stays put as the selection moves between repositories.
+    ///
+    /// A segmented control cannot shrink below its labels, and the sidebar
+    /// column has a fixed width: an oversized control widened the whole
+    /// column, which was then centred and clipped off the window's left
+    /// edge. When the segments do not fit (a larger text size, longer
+    /// localised titles) the same choice falls back to a pop-up menu.
     private var panelPicker: some View {
-        Picker("View", selection: Bindable(model.git).focusedPanel) {
+        ViewThatFits(in: .horizontal) {
+            panelPicker(style: .segmented)
+            panelPicker(style: .menu)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .help("Changes, History or Files for the selected repository (keys 1–3)")
+    }
+
+    @ViewBuilder
+    private func panelPicker(style: PanelPickerStyle) -> some View {
+        let picker = Picker("View", selection: Bindable(model.git).focusedPanel) {
             ForEach(GitPaneState.Panel.allCases, id: \.self) { panel in
                 Text(panel.title).tag(panel)
             }
         }
-        .pickerStyle(.segmented)
         .labelsHidden()
         .controlSize(.regular)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .help("Changes, History, Files or Insights for the selected repository (keys 1–4)")
+        switch style {
+        // Ideal width stays the labels' width, so ViewThatFits can still
+        // fall back to the menu; when it fits, the control fills the
+        // column and the segments share it equally.
+        case .segmented: picker.pickerStyle(.segmented).frame(maxWidth: .infinity)
+        case .menu: picker.pickerStyle(.menu).frame(maxWidth: .infinity)
+        }
     }
+
+    private enum PanelPickerStyle { case segmented, menu }
 
     // MARK: List
 

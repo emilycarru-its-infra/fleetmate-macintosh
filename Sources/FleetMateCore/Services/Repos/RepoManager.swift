@@ -12,6 +12,9 @@ public struct DiscoveryResult: Codable, Sendable {
         case duplicate
         /// No origin remote, or one that could not be parsed.
         case noRemote
+        /// Its config can run commands, so it was linked without being
+        /// tracked; tracking it is the person's call.
+        case needsReview
     }
 
     public let path: String
@@ -157,12 +160,43 @@ public struct RepoManager: Sendable {
         return try resolve(record.key.id)
     }
 
+    public func setHidden(_ argument: String, _ hidden: Bool) throws -> RepoRecord {
+        let record = try resolve(argument)
+        guard record.isLocal else { throw RepoError.notLocal(record.key.displayName) }
+        try store.update { $0.repos[record.key.id]?.hidden = hidden }
+        return try resolve(record.key.id)
+    }
+
     /// Scans the configured roots and registers every checkout whose origin
     /// names a repository. Existing links are kept; a second copy of an
     /// already-linked repository is reported as a duplicate, not re-linked.
-    public func discover(track: Bool = false, settings override: RepoSettings? = nil) async throws -> [DiscoveryResult] {
+    ///
+    /// `track` marks every checkout found as tracked, linked before or not.
+    /// `trackNew` tracks only checkouts registered by this scan, leaving the
+    /// person's earlier choice for the rest alone.
+    public func discover(track: Bool = false, trackNew: Bool = false, settings override: RepoSettings? = nil) async throws -> [DiscoveryResult] {
         let settings = try override ?? self.settings()
         let found = await RepoDiscovery.discover(settings: settings)
+        return try register(found, track: track, trackNew: trackNew)
+    }
+
+    /// Checkouts under `roots` without registering anything, for a preview
+    /// the person picks from (onboarding). Includes the folders VS Code
+    /// workspace files in those roots name, marked `fromWorkspace`.
+    public func preview(roots: [String]) async throws -> [DiscoveredCheckout] {
+        var settings = try self.settings()
+        settings.scanRoots = roots
+        return await RepoDiscovery.discover(settings: settings, includeWorkspaceFolders: true)
+    }
+
+    /// Registers checkouts found by `preview` or `RepoDiscovery`, under the
+    /// same rules as `discover`.
+    ///
+    /// A clone whose config can run commands is never tracked here unless
+    /// `trustCommandConfig` says the person ticked it knowing that; it is
+    /// linked untracked and reported as `needsReview`.
+    @discardableResult
+    public func register(_ found: [DiscoveredCheckout], track: Bool = false, trackNew: Bool = false, trustCommandConfig: Bool = false) throws -> [DiscoveryResult] {
         let catalog = Dictionary((cachedCatalog()?.repos ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
 
         return try store.update { doc in
@@ -174,9 +208,10 @@ public struct RepoManager: Sendable {
                 }
                 let catalogEntry = catalog[key.id]
                 let canonicalKey = catalogEntry?.key ?? key
+                let held = checkout.runsCommands && !trustCommandConfig
                 if let existing = doc.repos[key.id] {
                     if existing.path == checkout.path {
-                        if track { doc.repos[key.id]?.tracked = true }
+                        if track && !held { doc.repos[key.id]?.tracked = true }
                         results.append(DiscoveryResult(path: checkout.path, id: key.id, displayName: canonicalKey.displayName, inCatalog: catalogEntry != nil, action: .alreadyLinked, registeredPath: nil))
                         continue
                     }
@@ -185,16 +220,135 @@ public struct RepoManager: Sendable {
                         continue
                     }
                 }
+                let previous = doc.repos[key.id]
+                let wantsTracking = track || (previous?.tracked ?? trackNew)
                 doc.repos[key.id] = RepoRegistryEntry(
                     key: canonicalKey,
                     path: checkout.path,
-                    tracked: track || (doc.repos[key.id]?.tracked ?? false),
+                    tracked: wantsTracking && !held,
                     remoteUrl: checkout.remoteUrl,
-                    defaultBranch: catalogEntry?.defaultBranch
+                    defaultBranch: catalogEntry?.defaultBranch,
+                    hidden: previous?.hidden ?? false
                 )
-                results.append(DiscoveryResult(path: checkout.path, id: key.id, displayName: canonicalKey.displayName, inCatalog: catalogEntry != nil, action: .linked, registeredPath: nil))
+                results.append(DiscoveryResult(path: checkout.path, id: key.id, displayName: canonicalKey.displayName, inCatalog: catalogEntry != nil,
+                                               action: wantsTracking && held ? .needsReview : .linked, registeredPath: nil))
             }
             return results
+        }
+    }
+
+    /// Adds `folders` to the scan roots, marks the roots as chosen, and
+    /// tracks every clone found in them: what the Repos sidebar's Choose
+    /// Folder does, with no further questions. Clones whose config can run
+    /// commands are left unregistered and returned for review instead.
+    @discardableResult
+    public func trackFolders(_ folders: [String]) async throws -> (results: [DiscoveryResult], review: [DiscoveredCheckout]) {
+        let roots = folders.map(RepoSettings.abbreviate)
+        try addScanRoots(roots)
+        var settings = try self.settings()
+        settings.scanRoots = roots
+        let found = await RepoDiscovery.discover(settings: settings)
+        let known = try store.load().repos
+        let review = found.filter { $0.runsCommands && ($0.key.map { known[$0.id]?.tracked != true } ?? false) }
+        let reviewPaths = Set(review.map(\.path))
+        return (try register(found.filter { !reviewPaths.contains($0.path) }, track: true), review)
+    }
+
+    /// Adds roots (deduplicated, stored as `~/…`) and marks them as chosen.
+    /// Until roots were chosen the list is only the default guess, so the
+    /// first choice replaces it rather than adding to it.
+    public func addScanRoots(_ folders: [String]) throws {
+        try updateSettings { settings in
+            if !settings.rootsChosen { settings.scanRoots = [] }
+            for root in folders.map(RepoSettings.abbreviate) where !settings.scanRoots.contains(where: { RepoSettings.abbreviate($0) == root }) {
+                settings.scanRoots.append(root)
+            }
+            settings.rootsChosen = true
+        }
+    }
+
+    /// Clones in the scan roots the registry has never seen, when looking for
+    /// them is on (nil when it is off). Nothing is registered: the person
+    /// adds or ignores them. Found without running git, since an unknown
+    /// clone's config is not trusted.
+    public func newClones() async throws -> [DiscoveredCheckout]? {
+        let settings = try self.settings()
+        guard settings.looksForNewClones, !settings.scanRoots.isEmpty else { return nil }
+        let found = await RepoDiscovery.discover(settings: settings)
+        let doc = try store.load()
+        let knownPaths = Set(doc.repos.values.map { URL(fileURLWithPath: $0.path).standardizedFileURL.path })
+        var seen = Set<String>()
+        return found.filter { checkout in
+            guard let key = checkout.key, doc.repos[key.id] == nil,
+                  !knownPaths.contains(URL(fileURLWithPath: checkout.path).standardizedFileURL.path) else { return false }
+            return seen.insert(key.id).inserted
+        }
+    }
+
+    /// The scan root each checkout sits in, for "found in ~/Code".
+    public func scanRoot(containing path: String) -> String? {
+        let roots = (try? settings().scanRoots) ?? []
+        let standard = URL(fileURLWithPath: path).standardizedFileURL.path
+        return roots.first { root in
+            let base = URL(fileURLWithPath: RepoSettings.expand(root)).standardizedFileURL.path
+            return standard.hasPrefix(base + "/")
+        }
+    }
+
+    /// Links new clones without tracking them, so they are not offered again.
+    @discardableResult
+    public func ignore(_ found: [DiscoveredCheckout]) throws -> [DiscoveryResult] {
+        try register(found, track: false)
+    }
+
+    // MARK: - Removing a clone
+
+    /// What deleting the checkout of `argument` would lose.
+    public func removalCheck(_ argument: String) async throws -> CloneRemovalCheck {
+        let record = try resolve(argument)
+        guard let local = record.local else { throw RepoError.notLocal(record.key.displayName) }
+        return await CloneRemovalCheck.inspect(path: local.path)
+    }
+
+    /// Moves the checkout of `argument` to the Trash and forgets it. Refuses
+    /// when anything would be lost unless `force` is set; the error lists
+    /// exactly what. A checkout already gone from disk is simply forgotten.
+    @discardableResult
+    public func removeClone(_ argument: String, force: Bool = false) async throws -> CloneRemovalCheck {
+        let record = try resolve(argument)
+        guard let local = record.local else { throw RepoError.notLocal(record.key.displayName) }
+        let path = local.path
+        guard FileManager.default.fileExists(atPath: path) else {
+            try store.update { $0.repos[record.key.id] = nil }
+            return CloneRemovalCheck(path: path)
+        }
+        try Self.refuseUnsafeTarget(path, settings: try settings())
+        let check = await CloneRemovalCheck.inspect(path: path)
+        if !check.isSafe && !force {
+            throw RepoError.wouldLoseWork(record.key.displayName, check.lossDescription)
+        }
+        do {
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+        } catch {
+            throw RepoError.invalidArgument("Could not move \(path) to the Trash: \(error.localizedDescription)")
+        }
+        try store.update { $0.repos[record.key.id] = nil }
+        return check
+    }
+
+    /// Never trash the home folder, a filesystem root or a scan root itself,
+    /// whatever the registry says.
+    static func refuseUnsafeTarget(_ path: String, settings: RepoSettings) throws {
+        let standard = URL(fileURLWithPath: path).standardizedFileURL.path
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+        let roots = settings.scanRoots.map { URL(fileURLWithPath: RepoSettings.expand($0)).standardizedFileURL.path }
+        let clone = URL(fileURLWithPath: RepoSettings.expand(settings.cloneRoot)).standardizedFileURL.path
+        if standard == "/" || standard == home || roots.contains(standard) || standard == clone
+            || standard.split(separator: "/").count < 2 {
+            throw RepoError.invalidArgument("Refusing to delete \(path): it is not a single clone.")
+        }
+        guard RepoDiscovery.isCheckout(standard) else {
+            throw RepoError.notAGitRepository(path)
         }
     }
 

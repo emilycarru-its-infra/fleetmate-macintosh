@@ -136,6 +136,24 @@ final class AuthProviderGroupingTests: XCTestCase {
         XCTAssertEqual(AuthDisplayStatus.summary([.notConfigured]).tone, .inactive)
     }
 
+    func testStoppedElevatedSessionIsNotACredentialProblem() {
+        XCTAssertEqual(AuthDisplayStatus.standby.label, "Stopped")
+        XCTAssertEqual(AuthDisplayStatus.standby.tone, .inactive)
+        XCTAssertEqual(AuthDisplayStatus.ready.tone, .positive)
+        XCTAssertEqual(AuthDisplayStatus.summary([.ready, .standby]).label, "All valid")
+    }
+
+    func testElevationWording() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertEqual(ElevationWording.toolbarText(.ready(expires: nil)), "Elevation ready")
+        XCTAssertEqual(ElevationWording.toolbarText(.starting), "Elevation starting…")
+        XCTAssertNil(ElevationWording.toolbarText(.expired))
+        XCTAssertNil(ElevationWording.toolbarText(.idle))
+        XCTAssertEqual(ElevationWording.detail(.ready(expires: now.addingTimeInterval(5 * 3600 + 12 * 60)), at: now), "Ready, 5h 12m left")
+        XCTAssertEqual(ElevationWording.detail(.expired, at: now), "Stopped, restarts on next use")
+        XCTAssertEqual(ElevationWording.stateLabel(.idle), "Stopped")
+    }
+
     func testEmptyProvidersAreLeftOut() {
         let groups = AuthProviderGrouping.group([.gitea], config: FleetMateConfig())
         XCTAssertEqual(groups.map(\.provider), [.storedCredential])

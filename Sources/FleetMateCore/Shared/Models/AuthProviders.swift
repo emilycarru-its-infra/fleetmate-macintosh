@@ -110,7 +110,7 @@ public enum AuthProviderGrouping {
     public static func methodDescription(for system: AuthSystemId, config: FleetMateConfig) -> String {
         switch system {
         case .intune, .graph, .entra:
-            if config.graphUsesAze { return "Elevation session" }
+            if config.graphUsesAze { return "Elevated session" }
             return provider(for: system, config: config) == .storedCredential ? "Service principal" : "Your token (direct)"
         case .devops: return "Your token"
         case .snipe:
@@ -201,6 +201,11 @@ public enum AuthDisplayStatus: Equatable, Sendable {
     case checking(String?)
     /// Verified and working.
     case valid
+    /// Verified, and its elevated session is running: shown as Ready.
+    case ready
+    /// Verified, but its elevated session is stopped. Grey, not a problem:
+    /// the next action restarts it.
+    case standby
     /// Needs the person to sign in; one action button.
     case needsSignIn
     /// Nothing set up, shown grey.
@@ -228,6 +233,8 @@ public enum AuthDisplayStatus: Equatable, Sendable {
         switch self {
         case .checking(let text): text ?? "Checking…"
         case .valid: "Valid"
+        case .ready: "Ready"
+        case .standby: "Stopped"
         case .needsSignIn: "Needs sign-in"
         case .notConfigured: "Not configured"
         case .failed: "Failed"
@@ -237,7 +244,8 @@ public enum AuthDisplayStatus: Equatable, Sendable {
     public var tone: Tone {
         switch self {
         case .checking: .neutral
-        case .valid: .positive
+        case .valid, .ready: .positive
+        case .standby: .inactive
         case .needsSignIn, .failed: .attention
         case .notConfigured: .inactive
         }

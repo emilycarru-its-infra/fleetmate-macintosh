@@ -29,7 +29,7 @@ let package = Package(
         // The Reporting tab is the ReportMate app's own dashboard. Pinned to a
         // commit on ReportMate's main; reportmate-sync.yml moves this revision
         // whenever ReportMate's main moves and FleetMate still builds and tests.
-        .package(url: "https://github.com/reportmate/reportmate-app-swift.git", revision: "8e63f46567f539867489ae24c66cb806f83984e7"),
+        .package(url: "https://github.com/reportmate/reportmate-app-swift.git", revision: "d9a916f58d51d2b42a1fd62b2052c29717227dde"),
     ],
     targets: [
         // Shared library with services, models, and config

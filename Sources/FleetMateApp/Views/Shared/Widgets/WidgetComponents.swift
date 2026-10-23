@@ -198,17 +198,21 @@ struct WidgetCard<Content: View>: View {
 }
 
 /// KPI tiles stacked in one cell of the row.
+/// With `fillsHeight`, the tiles share whatever height the row offers (a
+/// `WidgetsSection(equalHeights:)` row), so the column ends level with the
+/// chart cards beside it instead of leaving a gap below.
 struct WidgetKPIColumn: View {
     let kpis: [KPI]
+    var fillsHeight = false
     var onTap: (KPI) -> Void
 
     var body: some View {
         VStack(spacing: 8) {
             ForEach(kpis) { kpi in
-                KPICard(kpi: kpi) { onTap(kpi) }
+                KPICard(kpi: kpi, fillsHeight: fillsHeight) { onTap(kpi) }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: fillsHeight ? .infinity : nil, alignment: .top)
     }
 }
 
@@ -574,6 +578,7 @@ struct TreemapChart: View {
 
 struct KPICard: View {
     let kpi: KPI
+    var fillsHeight = false
     var onTap: (() -> Void)?
 
     var body: some View {
@@ -598,6 +603,7 @@ struct KPICard: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
+            .frame(maxHeight: fillsHeight ? .infinity : nil)
             .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.15)))
             .contentShape(Rectangle())

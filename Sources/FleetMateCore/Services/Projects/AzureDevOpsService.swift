@@ -30,10 +30,7 @@ public class AzureDevOpsService {
     private var identityCache: DevOpsIdentitySummary?
     /// The project list changes rarely, yet every Development poll fans out
     /// from it; hold it briefly and keep the last good copy through failures.
-    private var projectsCache: [DevOpsProject]?
-    private var projectsCacheExpiry: Date = .distantPast
-    private var projectsRetryAfter: Date = .distantPast
-    private var projectsFailureLogged = false
+    private let projectsCache = DevOpsProjectCache()
     private let cacheDuration: TimeInterval
 
     // URLSession
@@ -113,7 +110,7 @@ public class AzureDevOpsService {
         self.bearerToken = token
         self.tokenExpiry = expiry
         // A new token may be a different identity; let the next poll retry.
-        projectsRetryAfter = .distantPast
+        projectsCache.resetBackoff()
         dbg.info("AzDO Bearer token set, expires \(expiry)", category: "azdo-auth")
     }
 
@@ -147,6 +144,7 @@ public class AzureDevOpsService {
         self.sprintCache = nil
         self.defaultTeamCache = nil
         self.identityCache = nil
+        projectsCache.clear()
     }
 
     // MARK: - REST API Helper
@@ -663,10 +661,11 @@ public class AzureDevOpsService {
 
     public func listProjects() async throws -> [DevOpsProject] {
         let now = Date()
-        if let cached = projectsCache, now < projectsCacheExpiry { return cached }
-        if now < projectsRetryAfter {
-            if let cached = projectsCache { return cached }
-            throw AzDevOpsError.forbidden(message: "Project list unavailable; retrying after \(projectsRetryAfter.formatted(date: .omitted, time: .standard))")
+        let snapshot = projectsCache.snapshot()
+        if let cached = snapshot.projects, now < snapshot.expiresAt { return cached }
+        if now < snapshot.retryAfter {
+            if let cached = snapshot.projects { return cached }
+            throw AzDevOpsError.forbidden(message: "Project list unavailable; retrying after \(snapshot.retryAfter.formatted(date: .omitted, time: .standard))")
         }
         dbg.info("AzDO listProjects via REST API", category: "azdo")
 
@@ -681,18 +680,15 @@ public class AzureDevOpsService {
                 orgLevel: true
             )
             let projects = response.value ?? []
-            projectsCache = projects
-            projectsCacheExpiry = now.addingTimeInterval(10 * 60)
-            projectsFailureLogged = false
+            projectsCache.store(projects, now: now)
             return projects
         } catch {
             // Back off instead of failing again on every poll, and say so once.
-            projectsRetryAfter = now.addingTimeInterval(5 * 60)
-            if !projectsFailureLogged {
-                dbg.warn("AzDO listProjects failing; backing off 5 min and using the last good list (\(projectsCache?.count ?? 0) projects)", category: "azdo")
-                projectsFailureLogged = true
+            let failure = projectsCache.recordFailure(now: now)
+            if failure.shouldLog {
+                dbg.warn("AzDO listProjects failing; backing off 5 min and using the last good list (\(failure.projects?.count ?? 0) projects)", category: "azdo")
             }
-            if let cached = projectsCache { return cached }
+            if let cached = failure.projects { return cached }
             throw error
         }
     }
@@ -2217,7 +2213,7 @@ public enum AzDevOpsError: Error, LocalizedError {
 
 // MARK: - REST API Project Model
 
-public struct DevOpsProject: Decodable {
+public struct DevOpsProject: Decodable, Sendable {
     public let id: String
     public let name: String
     public let state: String?

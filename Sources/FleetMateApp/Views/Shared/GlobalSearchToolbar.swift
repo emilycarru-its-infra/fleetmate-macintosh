@@ -123,6 +123,8 @@ struct GlobalSearchToolbarField: View {
         .appFont(.body)
         .padding(.horizontal, 10)
         .frame(width: width, height: 28)
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityIdentifier("FleetMateSearchField")
         .contentShape(Rectangle())
         .onTapGesture { focused = true }
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))

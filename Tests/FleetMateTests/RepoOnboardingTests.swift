@@ -271,7 +271,7 @@ final class RepoDiscoveryScanTests: XCTestCase {
     func testEntryPatternRejectsBackslash() {
         XCTAssertNil("\turl = x \\".wholeMatch(of: RepoDiscovery.entryPattern))
         XCTAssertEqual(RepoDiscovery.commandConfigKeys(inConfig: "[remote \"origin\"]\n\turl = x \\\n[user]\n\tpager = less\n"),
-                       ["(continuation line)"])
+                       ["(continuation line)", "user.pager"])
     }
 
     func testFlaggedKeysAreNamed() {

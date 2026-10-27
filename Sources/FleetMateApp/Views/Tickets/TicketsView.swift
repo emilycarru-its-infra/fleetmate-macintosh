@@ -161,6 +161,10 @@ struct TicketsView: View {
     @State private var collapsedTicketIds: Set<Int> = []
 
     // Comment state
+    @State private var detailLoadGate = TicketLoadGate()
+    @State private var feedLoadGate = TicketLoadGate()
+    @State private var feedLoadError: String?
+    @State private var selectionRevision = UUID()
     @State private var newComment = ""
     @State private var isCommentSectionExpanded = false
     @State private var scrollToCommentToken = 0
@@ -635,6 +639,12 @@ struct TicketsView: View {
             appState.agentSelection = selectedTicket.map(AgentSelection.init(ticket:))
             // A draft belongs to the ticket it was written on — carrying it to
             // the next ticket risks posting it to the wrong conversation.
+            selectionRevision = UUID()
+            detailLoadGate.invalidate()
+            feedLoadGate.invalidate()
+            isLoadingDetail = false
+            isLoadingFeed = false
+            feedLoadError = nil
             newComment = ""
             isCommentSectionExpanded = false
             isCommentPrivate = false
@@ -699,7 +709,7 @@ struct TicketsView: View {
         }
         .onAppCommand { command in
             switch command {
-            case .refresh:       loadTickets()
+            case .refresh:       refreshTickets()
             case .newItem:       showCreateTicket = true
             case .toggleFilters: showFilters.toggle()
             case .clearFilters:
@@ -795,7 +805,7 @@ struct TicketsView: View {
                     .environmentObject(appState)
                 }
 
-                Button(action: loadTickets) {
+                Button(action: refreshTickets) {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(isLoading)
@@ -2012,7 +2022,7 @@ struct TicketsView: View {
                     )
 
                 HStack {
-                    Toggle("Private", isOn: $isCommentPrivate)
+                    Toggle("Private comment (internal only)", isOn: $isCommentPrivate)
                         .toggleStyle(.checkbox)
                         .appFont(.body)
                     Spacer()
@@ -2026,6 +2036,10 @@ struct TicketsView: View {
                     .disabled(newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingComment)
                     .help("Post comment")
                 }
+
+                Text(isCommentPrivate ? "Only users with access to private ticket activity can see this comment." : "This comment is visible to people who can view the ticket.")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
 
                 // Notify options
                 VStack(alignment: .leading, spacing: 4) {
@@ -2078,6 +2092,13 @@ struct TicketsView: View {
             if isLoadingFeed {
                 ProgressView("Loading activity...")
                     .padding()
+            } else if let feedLoadError {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(feedLoadError).foregroundStyle(.secondary)
+                    Button("Retry Activity") {
+                        if let id = selectedTicket?.id { loadTicketFeed(ticketId: id) }
+                    }
+                }
             } else if filteredFeed.isEmpty {
                 Text("No comments yet")
                     .foregroundColor(.secondary)
@@ -2277,35 +2298,56 @@ struct TicketsView: View {
         }
     }
 
+    private func refreshTickets() {
+        loadTickets()
+        guard let id = selectedTicket?.id else { return }
+        loadTicketDetail(ticketId: id)
+        loadTicketFeed(ticketId: id)
+    }
+
     private func loadTicketDetail(ticketId: Int) {
         ticketActivityRevision += 1
+        let request = detailLoadGate.begin(ticketId: ticketId)
+        isLoadingDetail = true
         Task {
-            isLoadingDetail = true
-            defer { isLoadingDetail = false }
+            defer {
+                if detailLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) {
+                    isLoadingDetail = false
+                }
+            }
             do {
-                if let full = try await appState.tdxService.getTicket(id: ticketId) {
-                    guard selectedTicketIds.first == ticketId else { return }
+                let full = try await appState.tdxService.getTicket(id: ticketId)
+                guard detailLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) else { return }
+                if let full {
                     detailedTicket = full
                     populateEditFields(from: full)
                 }
             } catch {
-                print("Failed to load ticket detail: \(error)")
+                guard detailLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) else { return }
+                saveErrorMessage = "Could not load ticket details: \(error.localizedDescription)"
             }
         }
     }
 
     private func loadTicketFeed(ticketId: Int) {
+        let request = feedLoadGate.begin(ticketId: ticketId)
+        isLoadingFeed = true
+        feedLoadError = nil
+        ticketFeed = []
         Task {
-            isLoadingFeed = true
-            defer { isLoadingFeed = false }
+            defer {
+                if feedLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) {
+                    isLoadingFeed = false
+                }
+            }
             do {
                 let loadedFeed = try await appState.tdxService.getTicketFeed(ticketId: ticketId)
-                guard selectedTicketIds.first == ticketId else { return }
+                guard feedLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) else { return }
                 ticketFeed = loadedFeed
             } catch {
-                guard selectedTicketIds.first == ticketId else { return }
-                print("Failed to load ticket feed: \(error)")
+                guard feedLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) else { return }
                 ticketFeed = []
+                feedLoadError = "Could not load activity: \(error.localizedDescription)"
             }
         }
     }
@@ -2590,6 +2632,12 @@ struct TicketsView: View {
     }
 
     private func addComment(ticket: TdxTicket) async {
+        guard let ticketId = ticket.id else { return }
+        let revision = selectionRevision
+        let submittedComment = newComment
+        let submittedPrivate = isCommentPrivate
+        let submittedRequestor = notifyRequestor
+        let submittedResponsible = notifyResponsible
         var notificationEmails: [String] = []
         if notifyRequestor, let email = Self.notificationEmail(ticket.requestorEmail) {
             notificationEmails.append(email)
@@ -2604,16 +2652,23 @@ struct TicketsView: View {
 
         do {
             _ = try await appState.tdxService.addComment(
-                ticketId: ticket.id ?? 0,
-                comment: newComment,
-                isPrivate: isCommentPrivate,
+                ticketId: ticketId,
+                comment: submittedComment,
+                isPrivate: submittedPrivate,
                 notifyEmails: notificationEmails.isEmpty ? nil : notificationEmails
             )
-            newComment = ""
-            notifyRequestor = false
-            notifyResponsible = false
-            loadTicketFeed(ticketId: ticket.id ?? 0)
+            guard selectionRevision == revision, selectedTicket?.id == ticketId else { return }
+            // Leave anything typed while the request was running untouched.
+            if newComment == submittedComment, isCommentPrivate == submittedPrivate,
+               notifyRequestor == submittedRequestor, notifyResponsible == submittedResponsible {
+                newComment = ""
+                isCommentPrivate = false
+                notifyRequestor = false
+                notifyResponsible = false
+            }
+            loadTicketFeed(ticketId: ticketId)
         } catch {
+            guard selectionRevision == revision, selectedTicket?.id == ticketId else { return }
             saveErrorMessage = "Comment failed: \(error.localizedDescription)"
         }
     }
@@ -2641,7 +2696,7 @@ struct TicketsView: View {
 
         let block = "> \(author) wrote:\n\(quoted)\n\n"
         newComment = block + newComment
-        isCommentPrivate = entry.isPrivate == true
+        isCommentPrivate = isCommentPrivate || entry.isPrivate == true
         // The comment box folds by default and sits above the feed, so a reply
         // has to open it and bring it back on screen before focusing.
         isCommentSectionExpanded = true
@@ -2989,6 +3044,17 @@ struct FeedEntryRow: View {
                 }
                 .buttonStyle(.plain)
                 .help("Copy to clipboard")
+            }
+
+            if let notified = item.notifiedList?.trimmingCharacters(in: .whitespacesAndNewlines) {
+                Text(notified.isEmpty ? "Notified: nobody" : "Notified: \(notified)")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            } else {
+                Text("Notification recipients unavailable")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             if let body = item.body, !body.isEmpty {

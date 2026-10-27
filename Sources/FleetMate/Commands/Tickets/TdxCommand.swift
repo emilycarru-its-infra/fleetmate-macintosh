@@ -51,6 +51,7 @@ struct TicketsSubcommand: AsyncParsableCommand {
     func run() async throws {
         let config = try FleetMateConfig.load()
         let service = TdxService(config: config)
+        await service.signInSilently(config: config)
 
         guard service.isConfigured else {
             print("TeamDynamix not configured. Set TDX_BASE_URL and TDX_APP_ID.".red)
@@ -134,6 +135,7 @@ struct TicketSubcommand: AsyncParsableCommand {
     func run() async throws {
         let config = try FleetMateConfig.load()
         let service = TdxService(config: config)
+        await service.signInSilently(config: config)
 
         guard service.isConfigured else {
             print("TeamDynamix not configured.".red)
@@ -253,6 +255,7 @@ struct CreateTicketSubcommand: AsyncParsableCommand {
     func run() async throws {
         let config = try FleetMateConfig.load()
         let service = TdxService(config: config)
+        await service.signInSilently(config: config)
 
         guard service.isConfigured else {
             print("TeamDynamix not configured.".red)
@@ -325,6 +328,7 @@ struct CommentSubcommand: AsyncParsableCommand {
     func run() async throws {
         let config = try FleetMateConfig.load()
         let service = TdxService(config: config)
+        await service.signInSilently(config: config)
 
         guard service.isConfigured else {
             print("TeamDynamix not configured.".red)
@@ -354,6 +358,7 @@ struct StatusesSubcommand: AsyncParsableCommand {
     func run() async throws {
         let config = try FleetMateConfig.load()
         let service = TdxService(config: config)
+        await service.signInSilently(config: config)
 
         guard service.isConfigured else {
             print("TeamDynamix not configured.".red)

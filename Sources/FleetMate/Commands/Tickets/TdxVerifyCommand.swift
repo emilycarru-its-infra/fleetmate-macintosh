@@ -49,6 +49,7 @@ struct VerifySubcommand: AsyncParsableCommand {
     func run() async throws {
         let config = try FleetMateConfig.load()
         let service = TdxService(config: config)
+        await service.signInSilently(config: config)
 
         guard service.isConfigured else {
             print("TeamDynamix not configured.".red)

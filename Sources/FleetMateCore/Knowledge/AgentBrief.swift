@@ -277,19 +277,36 @@ public enum AgentBrief {
         let program = String(trimmed[..<firstEnd])
         let rest = String(trimmed[firstEnd...])
         let nextWord = rest.split(whereSeparator: \.isWhitespace).first.map(String.init)
+        let words = rest.split(whereSeparator: \.isWhitespace).map(String.init)
+        if !Set(words).isDisjoint(with: ["--help", "-h", "--version", "-V"]) { return command }
         switch (program as NSString).lastPathComponent {
         case "claude":
             if let nextWord, claudeNonSessionSubcommands.contains(nextWord) { return command }
             return program + " --append-system-prompt-file " + shellQuote(briefPath)
                 + directoryArguments(additionalDirectories) + rest
         case "codex":
+            let managementCommands: Set<String> = ["agents", "queue", "mcp", "plugin", "login", "logout",
+                "app", "app-server", "remote-control", "completion", "update", "doctor", "debug", "features",
+                "help", "archive", "delete", "unarchive", "migrate-rollouts", "migrate-nfs-db", "exec-server"]
+            if let nextWord, managementCommands.contains(nextWord) { return command }
             var line = program
             if !selfUpdate { line += " -c check_for_update_on_startup=false" }
             return line + " -c \"developer_instructions=$(cat " + shellQuote(codexValuePath) + ")\""
-                + directoryArguments(additionalDirectories) + rest
+                + directoryArguments(codexAllowsAdditionalDirectories(words) ? additionalDirectories : []) + rest
         default:
             return command
         }
+    }
+
+    /// Unknown user profiles remain untouched. Codex rejects --add-dir under
+    /// read-only permissions, so only an explicit writable workspace opts in.
+    private static func codexAllowsAdditionalDirectories(_ words: [String]) -> Bool {
+        var sandbox: String?
+        for (index, word) in words.enumerated() {
+            if word == "--sandbox" || word == "-s", index + 1 < words.count { sandbox = words[index + 1] }
+            if word.hasPrefix("--sandbox=") { sandbox = String(word.dropFirst("--sandbox=".count)) }
+        }
+        return sandbox == "workspace-write"
     }
 
     private static func directoryArguments(_ directories: [String]) -> String {

@@ -19,6 +19,7 @@ struct AgentLaunch: Hashable {
         ("Shell", ""),
         ("Claude", "claude"),
         ("Codex", "codex"),
+        ("Codex (workspace)", "codex --sandbox workspace-write --ask-for-approval on-request"),
         ("Claude (remote)", "claude-remote"),
         ("Codex (remote)", "codex-remote"),
     ]

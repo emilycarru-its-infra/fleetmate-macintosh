@@ -153,17 +153,28 @@ final class AgentBriefTests: XCTestCase {
     }
 
     func testWorkspaceDirectoriesAreQuotedAndDoNotChangePermissions() {
-        let line = AgentBrief.launchLine("codex --sandbox read-only", briefPath: brief,
+        let line = AgentBrief.launchLine("codex --sandbox workspace-write", briefPath: brief,
             codexValuePath: codexValue, additionalDirectories: ["/tmp/agent files", "/tmp/agent files"])
         XCTAssertTrue(line.contains(" --add-dir '/tmp/agent files'"))
         XCTAssertEqual(line.components(separatedBy: " --add-dir ").count, 2)
-        XCTAssertTrue(line.hasSuffix(" --sandbox read-only"))
+        XCTAssertTrue(line.hasSuffix(" --sandbox workspace-write"))
         XCTAssertFalse(line.contains("dangerously"))
         XCTAssertFalse(line.contains("--no-daemon"))
         let explicit = AgentBrief.launchLine("codex --no-daemon", briefPath: brief, codexValuePath: codexValue)
         XCTAssertTrue(explicit.hasSuffix(" --no-daemon"))
         XCTAssertEqual(AgentBrief.launchLine("codex-remote", briefPath: brief,
             codexValuePath: codexValue, additionalDirectories: ["/tmp/private"]), "codex-remote")
+    }
+
+    func testReadOnlyAndUnknownPermissionsDoNotReceiveWritableRoots() {
+        for command in ["codex", "codex --sandbox read-only", "codex -s workspace-write -s read-only"] {
+            XCTAssertFalse(AgentBrief.launchLine(command, briefPath: brief, codexValuePath: codexValue,
+                additionalDirectories: ["/tmp/context"]).contains("--add-dir"))
+        }
+        for command in ["codex queue --thread demo --message hello", "codex agents", "codex --help", "codex -V", "claude --version"] {
+            XCTAssertEqual(AgentBrief.launchLine(command, briefPath: brief, codexValuePath: codexValue,
+                additionalDirectories: ["/tmp/context"]), command)
+        }
     }
 
     func testOtherCommandsAreUnchanged() {

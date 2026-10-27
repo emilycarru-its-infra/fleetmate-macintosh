@@ -31,6 +31,8 @@ struct AgentSettingsView: View {
                     TextField("Command", text: $command, prompt: Text("e.g. claude --model opus"))
                         .font(.system(.body, design: .monospaced))
                 }
+                Text("Codex follows your own permissions by default. Choose Codex (workspace) to allow work in the checkout and FleetMate's guide/context folders, with approvals on request.")
+                    .appFont(.caption).foregroundStyle(.secondary)
                 Toggle("Open a session when FleetMate starts", isOn: $autoStart)
                 if let managed = appState.config.agentCommand, !hasOwnCommand {
                     Text("Your organization's default is \(managed.isEmpty ? "a shell" : "`\(managed)`").")

@@ -88,7 +88,7 @@ public enum AgentBrief {
         out.append("""
         - Every system FleetMate manages is reachable through the `\(name)` command-line \
         tool\(cliPath.map { " (`\($0)`" + (cliVersion.map { ", version \($0))" } ?? ")") } ?? ""). \
-        It already holds the person's sign-ins and configuration, so use it rather than \
+        It uses the person's configuration and each command's supported sign-in flow, so use it rather than \
         calling the services' APIs, `az`, or Microsoft Graph directly.
         - Prefer `--json` (or `-j`) wherever a command offers it, and parse that rather \
         than the human-readable text.
@@ -270,7 +270,7 @@ public enum AgentBrief {
     /// passes when it keeps the CLIs current itself, Codex also skips its own
     /// update check, so a session never opens on an update prompt.
     public static func launchLine(_ command: String, briefPath: String, codexValuePath: String,
-                                  selfUpdate: Bool = true) -> String {
+                                  selfUpdate: Bool = true, additionalDirectories: [String] = []) -> String {
         let trimmed = command.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return command }
         let firstEnd = trimmed.firstIndex(where: \.isWhitespace) ?? trimmed.endIndex
@@ -280,20 +280,22 @@ public enum AgentBrief {
         switch (program as NSString).lastPathComponent {
         case "claude":
             if let nextWord, claudeNonSessionSubcommands.contains(nextWord) { return command }
-            return program + " --append-system-prompt-file " + shellQuote(briefPath) + rest
+            return program + " --append-system-prompt-file " + shellQuote(briefPath)
+                + directoryArguments(additionalDirectories) + rest
         case "codex":
-            var line = program + " " + codexNoDaemon(program)
+            var line = program
             if !selfUpdate { line += " -c check_for_update_on_startup=false" }
-            return line + " -c \"developer_instructions=$(cat " + shellQuote(codexValuePath) + ")\"" + rest
+            return line + " -c \"developer_instructions=$(cat " + shellQuote(codexValuePath) + ")\""
+                + directoryArguments(additionalDirectories) + rest
         default:
             return command
         }
     }
 
-    /// Expands to `--no-daemon` when this Codex has the flag, else to
-    /// nothing, so an older Codex still starts.
-    static func codexNoDaemon(_ program: String) -> String {
-        "$(" + program + " --help 2>/dev/null | grep -q -e --no-daemon && printf %s --no-daemon)"
+    private static func directoryArguments(_ directories: [String]) -> String {
+        var seen = Set<String>()
+        return directories.filter { !$0.isEmpty && seen.insert($0).inserted }
+            .map { " --add-dir " + shellQuote($0) }.joined()
     }
 
     /// `s` as a TOML basic string, quotes included, on one line.

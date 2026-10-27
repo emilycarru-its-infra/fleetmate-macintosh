@@ -125,6 +125,11 @@ final class FleetMateTerminalView: LocalProcessTerminalView {
 
     private func handleKeyDown(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if flags == .command, event.keyCode == 51 {
+            // Match Terminal's delete-to-start-of-line editing command.
+            send([0x15])
+            return true
+        }
         if flags == .shift, event.keyCode == 36 || event.keyCode == 76 {
             send([0x0a])
             return true
@@ -322,7 +327,9 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
             // command line; anything else finds it through the environment.
             var line = AgentBrief.launchLine(command, briefPath: briefPath,
                                              codexValuePath: codexValuePath,
-                                             selfUpdate: !cliUpdatesManaged)
+                                             selfUpdate: !cliUpdatesManaged,
+                                             additionalDirectories: [AgentWorkspace().root.path,
+                                                 (briefPath as NSString).deletingLastPathComponent])
             // The remote wrappers take the folder to open as their argument.
             if let dir = launch.directory, command.hasSuffix("-remote") {
                 line += " " + Self.quote(dir)

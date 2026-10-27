@@ -213,6 +213,19 @@ private struct AgentCliUpdatesSection: View {
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
+            if cli == .codex, status?.installed == false {
+                HStack {
+                    Link("Codex setup instructions", destination: URL(string: "https://developers.openai.com/codex/quickstart")!)
+                    Button("Copy Install Command") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString("npm install -g @openai/codex", forType: .string)
+                    }
+                    .buttonStyle(.borderless)
+                }
+                .appFont(.caption)
+                Text("Run the command in Terminal if npm is installed, then start a new session. FleetMate does not install it automatically.")
+                    .appFont(.caption).foregroundStyle(.secondary)
+            }
             if let status, status.installed {
                 Text(detail(status))
                     .appFont(.caption).foregroundStyle(.secondary)

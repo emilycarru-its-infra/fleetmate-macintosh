@@ -77,13 +77,18 @@ public enum TdxHeadlessSignIn {
             service.refuseSso(reason: result.error ?? "Silent TeamDynamix sign-in failed")
             return
         }
-        let expiry = Date().addingTimeInterval(23 * 60 * 60)
-        if !token.hasPrefix("eyJ"),
-           let base = config.tdxBaseUrl, let url = URL(string: base),
-           let cookies = HTTPCookieStorage.shared.cookies(for: url), !cookies.isEmpty {
+        let expiry = TdxCliSessionCache.tokenExpiry(token) ?? Date().addingTimeInterval(23 * 60 * 60)
+        guard expiry > Date() else {
+            service.refuseSso(reason: "TeamDynamix returned an expired session")
+            return
+        }
+        if token.hasPrefix("eyJ"), token.split(separator: ".").count == 3 {
+            service.setSsoToken(token, expiry: expiry, userId: result.userEmail, userName: result.userName)
+        } else if let base = config.tdxBaseUrl, let url = URL(string: base),
+                  let cookies = HTTPCookieStorage.shared.cookies(for: url), !cookies.isEmpty {
             service.setSsoCookies(cookies, userName: result.userName)
         } else {
-            service.setSsoToken(token, expiry: expiry, userId: result.userEmail, userName: result.userName)
+            service.refuseSso(reason: "TeamDynamix returned no usable user session")
         }
     }
 

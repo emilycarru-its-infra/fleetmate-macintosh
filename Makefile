@@ -79,6 +79,9 @@ APP_PRODUCT_NAME := FleetMateApp
 APP_BUNDLE_NAME := $(APP_DISPLAY_NAME).app
 APP_BUNDLE_EXECUTABLE := $(APP_DISPLAY_NAME)
 APP_INFO_PLIST := Sources/FleetMateApp/Info.plist
+# A stable app-scoped identity lets managed SSO distinguish the CLI from an
+# unrelated executable with the same filename. Override with deployment config.
+CLI_SIGNING_IDENTIFIER ?= $(shell /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$(APP_INFO_PLIST)" 2>/dev/null).cli
 APP_ENTITLEMENTS := Sources/FleetMateApp/FleetMateApp.entitlements
 APP_DIR := $(BUILD_DIR)/app
 APP_BUNDLE := $(APP_DIR)/$(APP_BUNDLE_NAME)
@@ -169,6 +172,9 @@ check-signing-identity:
 sign: release check-signing-identity
 	@echo "$(BLUE)Signing binary...$(NC)"
 	@set -e; REAL_BIN_PATH=$$(swift build -c release --show-bin-path)/$(BINARY_NAME); \
+	if [ -z "$(CLI_SIGNING_IDENTIFIER)" ] || [ "$(CLI_SIGNING_IDENTIFIER)" = ".cli" ]; then \
+		echo "$(RED)Error: CLI_SIGNING_IDENTIFIER must be configured$(NC)"; exit 1; \
+	fi; \
 	if [ ! -f "$$REAL_BIN_PATH" ]; then \
 		echo "$(RED)Error: Binary not found at $$REAL_BIN_PATH$(NC)"; \
 		exit 1; \
@@ -176,12 +182,14 @@ sign: release check-signing-identity
 	if [ -n "$(KEYCHAIN)" ]; then \
 		security unlock-keychain "$(KEYCHAIN)" || true; \
 		codesign --force --sign "$(SIGNING_IDENTITY)" \
+			--identifier "$(CLI_SIGNING_IDENTIFIER)" \
 			--options runtime \
 			--timestamp \
 			--keychain "$(KEYCHAIN)" \
 			"$$REAL_BIN_PATH"; \
 	else \
 		codesign --force --sign "$(SIGNING_IDENTITY)" \
+			--identifier "$(CLI_SIGNING_IDENTIFIER)" \
 			--options runtime \
 			--timestamp \
 			"$$REAL_BIN_PATH"; \

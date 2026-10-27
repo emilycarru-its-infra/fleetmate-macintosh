@@ -8,6 +8,7 @@ struct TdxCommand: AsyncParsableCommand {
         commandName: "tdx",
         abstract: "Query TeamDynamix tickets",
         subcommands: [
+            TdxLoginSubcommand.self,
             TicketsSubcommand.self,
             TicketSubcommand.self,
             CreateTicketSubcommand.self,
@@ -379,5 +380,27 @@ struct StatusesSubcommand: AsyncParsableCommand {
             }
             print("")
         }
+    }
+}
+
+struct TdxLoginSubcommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "login", abstract: "Sign in to TeamDynamix silently")
+
+    @Flag(name: .long, help: "Discard the CLI's cached session and retry silent SSO")
+    var refresh = false
+
+    @MainActor
+    func run() async throws {
+        let config = try FleetMateConfig.load()
+        let service = TdxService(config: config)
+        if refresh {
+            let upn = LoginCommand.account(LoginCommand.locateAz())?.user ?? SignedInAddress.readDevice()?.address
+            TdxCliSessionCache.clear(baseURL: service.baseUrl, expectedUpn: upn)
+        }
+        await service.signInSilently(config: config)
+        guard service.actingIdentityIsUser else {
+            throw ValidationError(service.refusedSsoReason ?? "Silent TeamDynamix sign-in is unavailable")
+        }
+        print("Signed in to TeamDynamix as \(service.authenticatedUserName ?? "the current user").")
     }
 }

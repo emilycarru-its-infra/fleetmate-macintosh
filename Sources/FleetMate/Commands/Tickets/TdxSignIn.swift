@@ -15,6 +15,12 @@ extension TdxService {
         let upn = LoginCommand.account(LoginCommand.locateAz())?.user
             ?? SignedInAddress.readDevice()?.address
 
+        if let cached = TdxCliSessionCache.read(baseURL: baseUrl, expectedUpn: upn) {
+            dbg.debug("TDX CLI using its verified Keychain session", category: "tdx-sso")
+            TdxHeadlessSignIn.apply(cached, to: self, config: config)
+            return
+        }
+
         guard let result = await TdxHeadlessSignIn.run(config: config, upn: upn) else {
             dbg.warn("TDX silent sign-in failed in the CLI", category: "tdx-sso")
             refuseSso(reason: "Silent TeamDynamix sign-in failed. The command was not run.")
@@ -25,5 +31,6 @@ extension TdxService {
             return
         }
         TdxHeadlessSignIn.apply(result, to: self, config: config)
+        if actingIdentityIsUser { TdxCliSessionCache.save(result, baseURL: baseUrl, expectedUpn: upn) }
     }
 }

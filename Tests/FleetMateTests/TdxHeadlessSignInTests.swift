@@ -31,4 +31,17 @@ final class TdxHeadlessSignInTests: XCTestCase {
         XCTAssertFalse(service.actingIdentityIsUser)
         XCTAssertEqual(service.refusedSsoReason, "Silent sign-in failed")
     }
+    @MainActor
+    func testExpiredJwtAndMissingCookieSessionRefuseFallback() throws {
+        let config = FleetMateConfig()
+        let service = TdxService(config: config)
+        let payload = try JSONSerialization.data(withJSONObject: ["exp": 1]).base64EncodedString()
+        TdxHeadlessSignIn.apply(.success(token: "eyJhbGciOiJIUzI1NiJ9.\(payload).synthetic"), to: service, config: config)
+        XCTAssertFalse(service.actingIdentityIsUser)
+        XCTAssertNotNil(service.refusedSsoReason)
+        TdxHeadlessSignIn.apply(.success(token: "cookie-auth"), to: service, config: config)
+        XCTAssertFalse(service.actingIdentityIsUser)
+        XCTAssertNotNil(service.refusedSsoReason)
+    }
+
 }

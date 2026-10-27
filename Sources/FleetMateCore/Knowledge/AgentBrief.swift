@@ -93,8 +93,9 @@ public enum AgentBrief {
         - Prefer `--json` (or `-j`) wherever a command offers it, and parse that rather \
         than the human-readable text.
         - `\(name) <command> --help` prints the full help for any command listed below.
-        - If a command reports an authentication problem, `\(name) login` signs in again \
-        and checks every system (its options are listed below).
+        - If a command reports an authentication problem, `\(name) login --check` reports \
+        service availability using silent checks. Report a failed sign-in to the person; \
+        do not launch an interactive login or browser authentication flow.
         - Commands that change something — wiping, locking, retiring or resetting a \
         device, elevating access, activating a role, editing records or tickets — act on \
         real devices and accounts. Confirm the target with the person before running them.
@@ -371,8 +372,9 @@ public struct AgentBriefStore: Sendable {
         return "\(AgentBriefStore.formatVersion)|\(cliPath)|\(size)|\(Int(modified))"
     }
 
-    /// Bump when the brief's layout changes, so existing caches regenerate.
-    static let formatVersion = 3
+    /// Bump when built-in guidance or layout changes, so app-only updates also
+    /// refresh the brief while the installed CLI stays unchanged.
+    static let formatVersion = 4
 
     /// Make sure the brief matches the installed CLI, regenerating it if not.
     /// Blocking: a stat when current, two short CLI runs when stale.

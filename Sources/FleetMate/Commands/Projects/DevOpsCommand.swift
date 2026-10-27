@@ -47,12 +47,7 @@ struct ItemsSubcommand: AsyncParsableCommand {
 
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let service = AzureDevOpsService(config: config)
-
-        guard service.isConfigured else {
-            print("Azure DevOps not configured. Set DEVOPS_ORGANIZATION and DEVOPS_PROJECT.".red)
-            throw ExitCode.failure
-        }
+        let service = try await DevOpsCliSignIn.authenticatedService(config: config)
 
         let items = try await service.getWorkItems(state: state, type: type, assignedTo: assignee, limit: limit)
 
@@ -110,12 +105,7 @@ struct ItemSubcommand: AsyncParsableCommand {
 
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let service = AzureDevOpsService(config: config)
-
-        guard service.isConfigured else {
-            print("Azure DevOps not configured.".red)
-            throw ExitCode.failure
-        }
+        let service = try await DevOpsCliSignIn.authenticatedService(config: config)
 
         guard let item = try await service.getWorkItem(id: id) else {
             print("Work item not found: \(id)".red)
@@ -187,12 +177,7 @@ struct CreateItemSubcommand: AsyncParsableCommand {
 
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let service = AzureDevOpsService(config: config)
-
-        guard service.isConfigured else {
-            print("Azure DevOps not configured.".red)
-            throw ExitCode.failure
-        }
+        let service = try await DevOpsCliSignIn.authenticatedService(config: config)
 
         let request = CreateWorkItemRequest(
             title: title,
@@ -249,12 +234,7 @@ struct UpdateItemSubcommand: AsyncParsableCommand {
 
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let service = AzureDevOpsService(config: config)
-
-        guard service.isConfigured else {
-            print("Azure DevOps not configured.".red)
-            throw ExitCode.failure
-        }
+        let service = try await DevOpsCliSignIn.authenticatedService(config: config)
 
         let request = UpdateWorkItemRequest(
             state: state,
@@ -292,12 +272,7 @@ struct SprintsSubcommand: AsyncParsableCommand {
 
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let service = AzureDevOpsService(config: config)
-
-        guard service.isConfigured else {
-            print("Azure DevOps not configured.".red)
-            throw ExitCode.failure
-        }
+        let service = try await DevOpsCliSignIn.authenticatedService(config: config)
 
         let sprints = try await service.getSprints()
 
@@ -337,12 +312,7 @@ struct BoardsSubcommand: AsyncParsableCommand {
 
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let service = AzureDevOpsService(config: config)
-
-        guard service.isConfigured else {
-            print("Azure DevOps not configured.".red)
-            throw ExitCode.failure
-        }
+        let service = try await DevOpsCliSignIn.authenticatedService(config: config)
 
         let boards = try await service.getBoards()
 
@@ -390,12 +360,7 @@ struct FromErrorSubcommand: AsyncParsableCommand {
 
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let service = AzureDevOpsService(config: config)
-
-        guard service.isConfigured else {
-            print("Azure DevOps not configured.".red)
-            throw ExitCode.failure
-        }
+        let service = try await DevOpsCliSignIn.authenticatedService(config: config)
 
         guard let item = try await service.createFromError(
             deviceName: device,

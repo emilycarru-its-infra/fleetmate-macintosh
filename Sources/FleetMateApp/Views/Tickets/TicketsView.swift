@@ -160,11 +160,25 @@ struct TicketsView: View {
     // every parent starts expanded.
     @State private var collapsedTicketIds: Set<Int> = []
 
+    private struct CommentDraft: Equatable {
+        var text: String
+        var isPrivate: Bool
+        var notifyRequestor: Bool
+        var notifyResponsible: Bool
+    }
+
+    private var commentDraft: CommentDraft {
+        CommentDraft(text: newComment, isPrivate: isCommentPrivate,
+                     notifyRequestor: notifyRequestor, notifyResponsible: notifyResponsible)
+    }
+
     // Comment state
     @State private var detailLoadGate = TicketLoadGate()
     @State private var feedLoadGate = TicketLoadGate()
     @State private var feedLoadError: String?
     @State private var selectionRevision = UUID()
+    @State private var commentDrafts: [Int: CommentDraft] = [:]
+    @State private var commentPostErrors: [Int: String] = [:]
     @State private var newComment = ""
     @State private var isCommentSectionExpanded = false
     @State private var scrollToCommentToken = 0
@@ -635,7 +649,12 @@ struct TicketsView: View {
             }
             contentSection
         }
-        .onChange(of: selectedTicketIds) { _, newIds in
+        .onChange(of: selectedTicketIds) { oldIds, newIds in
+            if let oldId = oldIds.first ?? nil {
+                commentDrafts[oldId] = newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : commentDraft
+            }
+            let nextId = newIds.first ?? nil
+            let draft = nextId.flatMap { commentDrafts[$0] }
             appState.agentSelection = selectedTicket.map(AgentSelection.init(ticket:))
             // A draft belongs to the ticket it was written on — carrying it to
             // the next ticket risks posting it to the wrong conversation.
@@ -645,11 +664,12 @@ struct TicketsView: View {
             isLoadingDetail = false
             isLoadingFeed = false
             feedLoadError = nil
-            newComment = ""
-            isCommentSectionExpanded = false
-            isCommentPrivate = false
-            notifyRequestor = false
-            notifyResponsible = false
+            newComment = draft?.text ?? ""
+            isCommentSectionExpanded = draft != nil
+            isCommentPrivate = draft?.isPrivate ?? false
+            notifyRequestor = draft?.notifyRequestor ?? false
+            notifyResponsible = draft?.notifyResponsible ?? false
+            saveErrorMessage = nextId.flatMap { commentPostErrors[$0] }
             detailedTicket = nil
             ticketFeed = []
             if let ticketId = newIds.first, let unwrappedId = ticketId {
@@ -2634,6 +2654,7 @@ struct TicketsView: View {
     private func addComment(ticket: TdxTicket) async {
         guard let ticketId = ticket.id else { return }
         let revision = selectionRevision
+        let submittedDraft = commentDraft
         let submittedComment = newComment
         let submittedPrivate = isCommentPrivate
         let submittedRequestor = notifyRequestor
@@ -2657,6 +2678,8 @@ struct TicketsView: View {
                 isPrivate: submittedPrivate,
                 notifyEmails: notificationEmails.isEmpty ? nil : notificationEmails
             )
+            commentPostErrors[ticketId] = nil
+            if commentDrafts[ticketId] == submittedDraft { commentDrafts[ticketId] = nil }
             guard selectionRevision == revision, selectedTicket?.id == ticketId else { return }
             // Leave anything typed while the request was running untouched.
             if newComment == submittedComment, isCommentPrivate == submittedPrivate,
@@ -2668,8 +2691,10 @@ struct TicketsView: View {
             }
             loadTicketFeed(ticketId: ticketId)
         } catch {
+            let message = "Comment failed: \(error.localizedDescription)"
+            commentPostErrors[ticketId] = message
             guard selectionRevision == revision, selectedTicket?.id == ticketId else { return }
-            saveErrorMessage = "Comment failed: \(error.localizedDescription)"
+            saveErrorMessage = message
         }
     }
 

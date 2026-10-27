@@ -10,19 +10,31 @@ public actor GitHubNotificationService {
         self.client = GitHubGraphQLClient(config: config)
     }
 
-    /// Notification threads, newest first.
-    ///
-    /// - Parameters:
-    ///   - includeRead: `true` returns read threads too (GitHub's "all"); the
-    ///     default is unread only, which is what an inbox is for.
-    ///   - limit: Page size, capped by GitHub at 50.
-    public func getNotifications(includeRead: Bool = false, limit: Int = 50) async throws -> [GitHubNotification] {
-        let path = "/notifications?all=\(includeRead)&participating=false&per_page=\(min(limit, 50))"
-        let data = try await client.executeREST(path: path)
-        let threads = try JSONDecoder().decode([RestThread].self, from: data)
-        let mapped = threads.map(Self.map)
-        dbg.info("GitHub getNotifications(all=\(includeRead)) → \(mapped.count)", category: "github")
-        return mapped
+    /// Newest notification threads, bounded to avoid exhausting the API budget.
+    public func getNotifications(includeRead: Bool = false, limit: Int = 200) async throws -> [GitHubNotification] {
+        let client = client
+        return try await Self.loadNotifications(includeRead: includeRead, limit: limit) { path in
+            try await client.executeREST(path: path)
+        }
+    }
+
+    static func loadNotifications(includeRead: Bool, limit: Int,
+                                  fetch: @Sendable (String) async throws -> Data) async throws -> [GitHubNotification] {
+        let limit = min(max(0, limit), 200)
+        guard limit > 0 else { return [] }
+        var result: [GitHubNotification] = []
+        var seen = Set<String>()
+        let pageSize = min(limit, 50)
+        for page in 1...4 {
+            try Task.checkCancellation()
+            let path = "/notifications?all=\(includeRead)&participating=false&per_page=\(pageSize)&page=\(page)"
+            let data = try await fetch(path)
+            let threads = try JSONDecoder().decode([RestThread].self, from: data)
+            let fresh = threads.filter { seen.insert($0.id).inserted }
+            result.append(contentsOf: fresh.map(Self.map).prefix(limit - result.count))
+            if threads.count < pageSize || result.count == limit || fresh.isEmpty { break }
+        }
+        return result
     }
 
     /// Marks one thread read. It stays in the "all" list, drops out of unread.

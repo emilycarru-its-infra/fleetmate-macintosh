@@ -263,12 +263,10 @@ public enum AgentBrief {
     ///   the shell reads the value from `codexValuePath`, a file holding the
     ///   brief as one TOML string.
     ///
-    /// Codex: any command-line override makes Codex run without its shared
-    /// background server and warn about it at start, so the line says
-    /// `--no-daemon` outright (where the installed Codex has the flag) and
-    /// the warning never appears. With `selfUpdate` false, which FleetMate
-    /// passes when it keeps the CLIs current itself, Codex also skips its own
-    /// update check, so a session never opens on an update prompt.
+    /// Codex retains its normal shared daemon unless the person's command
+    /// explicitly opts out. The per-launch developer instructions do not
+    /// change that choice. With `selfUpdate: false`, its own update check is
+    /// disabled so an app-managed session does not stop at an update prompt.
     public static func launchLine(_ command: String, briefPath: String, codexValuePath: String,
                                   selfUpdate: Bool = true, additionalDirectories: [String] = []) -> String {
         let trimmed = command.trimmingCharacters(in: .whitespaces)

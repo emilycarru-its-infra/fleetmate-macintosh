@@ -66,6 +66,11 @@ jobs:
       - name: Test
         run: swift test
 
+      - name: Validate CLI command groups
+        run: |
+          swift run --skip-build fleetmate devops --help > /dev/null
+          swift run --skip-build fleetmate tasks --help > /dev/null
+
   # A run started by workflow_dispatch (reportmate-sync does this for its pull
   # request) is not counted toward the pull request's required check, so this
   # job records the result as a commit status under the same name. It runs no

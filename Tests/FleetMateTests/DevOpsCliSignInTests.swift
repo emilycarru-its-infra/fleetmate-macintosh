@@ -27,6 +27,20 @@ final class DevOpsCliSignInTests: XCTestCase {
         XCTAssertFalse(called)
     }
 
+    func testProviderConfigurationAndSharedTenantAreUsed() async throws {
+        var config = FleetMateConfig()
+        config.graphTenantId = "shared-tenant-placeholder"
+        config.tasks = TasksConfig(providers: TaskProvidersConfig(
+            azdevops: AzureDevOpsProviderConfig(organization: "provider-example", project: "Provider")))
+        let service = try await DevOpsCliSignIn.authenticatedService(config: config, resolveProject: true) { tenant in
+            XCTAssertEqual(tenant, "shared-tenant-placeholder")
+            return .success(accessToken: "synthetic-token")
+        }
+        XCTAssertTrue(service.hasValidToken)
+        XCTAssertTrue(service.baseUrl.hasSuffix("/provider-example"))
+        XCTAssertEqual(service.resolvedProject, "Provider")
+    }
+
     func testFailedSignInDoesNotReturnAnAuthenticatedClientOrExposeProviderDetails() async {
         do {
             _ = try await DevOpsCliSignIn.authenticatedService(config: Self.config(), resolveProject: false) { _ in

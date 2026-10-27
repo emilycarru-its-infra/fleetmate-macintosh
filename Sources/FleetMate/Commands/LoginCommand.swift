@@ -86,9 +86,11 @@ struct LoginCommand: AsyncParsableCommand {
         }
 
         // Azure DevOps — SSO via the az session (no PAT).
-        if config.devopsOrganization?.isEmpty == false {
-            let ok = (try? await AzureDevOpsService(config: config).verifyAuth()) ?? false
-            report.set(.devops, ok ? .ok : .failed, ok ? (config.devopsOrganization ?? "") : "auth failed (Azure sign-in required)")
+        let devopsOrganization = config.tasks?.providers.azdevops?.organization ?? config.devopsOrganization
+        if let devopsOrganization, !devopsOrganization.isEmpty {
+            let service = try? await DevOpsCliSignIn.authenticatedService(config: config, resolveProject: false)
+            let ok = (try? await service?.verifyAuth()) ?? false
+            report.set(.devops, ok ? .ok : .failed, ok ? devopsOrganization : "silent sign-in or API verification failed")
         }
 
         // Snipe-IT — Entra bearer (SSO) when snipe_oidc_audience is set (dormant

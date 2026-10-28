@@ -63,6 +63,9 @@ jobs:
       # The test target was never built by CI, so a test could not fail here --
       # it was not compiled, let alone run. Tests that nothing executes are
       # worse than no tests: they read as coverage.
+      - name: Test Safari extension packaging
+        run: python3 -m unittest discover -s Tests/Packaging -v
+
       - name: Test
         run: swift test
 

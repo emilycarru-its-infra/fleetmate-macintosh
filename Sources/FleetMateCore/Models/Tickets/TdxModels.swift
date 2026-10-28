@@ -221,6 +221,7 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
     public let itemId: Int?
     public let replies: [TdxFeedEntry]?
     public let repliesCount: Int?
+    public let notifiedList: String?
 
     /// Replies as a plain array — TDX omits the key on some entries and sends
     /// `[]` on others, and callers shouldn't have to care which.
@@ -246,7 +247,8 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
         itemType: Int?,
         itemId: Int?,
         replies: [TdxFeedEntry]?,
-        repliesCount: Int?
+        repliesCount: Int?,
+        notifiedList: String? = nil
     ) {
         self.id = id
         self.body = body
@@ -258,6 +260,7 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
         self.itemId = itemId
         self.replies = replies
         self.repliesCount = repliesCount
+        self.notifiedList = notifiedList
     }
 
     /// A copy carrying the given replies.
@@ -272,7 +275,8 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
             itemType: itemType,
             itemId: itemId,
             replies: replies,
-            repliesCount: repliesCount ?? replies.count
+            repliesCount: repliesCount ?? replies.count,
+            notifiedList: notifiedList
         )
     }
 
@@ -287,6 +291,7 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
         case itemId = "ItemID"
         case replies = "Replies"
         case repliesCount = "RepliesCount"
+        case notifiedList = "NotifiedList"
     }
 }
 

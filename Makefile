@@ -82,6 +82,11 @@ APP_INFO_PLIST := Sources/FleetMateApp/Info.plist
 APP_ENTITLEMENTS := Sources/FleetMateApp/FleetMateApp.entitlements
 APP_DIR := $(BUILD_DIR)/app
 APP_BUNDLE := $(APP_DIR)/$(APP_BUNDLE_NAME)
+SAFARI_EXTENSION_RESOURCES ?= Sources/TicketLinkExtension/Resources
+APP_SIGN_DEEP := --deep
+ifeq ($(EDITION),ticketsmate)
+APP_SIGN_DEEP :=
+endif
 
 # Build Paths
 BUILD_BIN_PATH := $(shell swift build -c release --show-bin-path 2>/dev/null || echo "$(BUILD_DIR)/release")
@@ -294,6 +299,9 @@ release-app:
 		echo "$(GREEN)✓ Icon generated: $(APP_DISPLAY_NAME).icns (from PNG)$(NC)"; \
 	fi; \
 	rm -rf "$$(dirname $$ICONSET_DIR)"
+ifeq ($(EDITION),ticketsmate)
+	python3 build/embed-safari-extension.py --app "$(APP_BUNDLE)" --resources "$(SAFARI_EXTENSION_RESOURCES)"
+endif
 	@echo "$(GREEN)✓ App bundle assembled: $(APP_BUNDLE)$(NC)"
 
 # Sign the .app bundle
@@ -303,22 +311,34 @@ sign-app: release-app check-signing-identity
 		echo "$(RED)Error: App bundle not found at $(APP_BUNDLE)$(NC)"; \
 		exit 1; \
 	fi; \
+	if [ -n "$(KEYCHAIN)" ]; then security unlock-keychain "$(KEYCHAIN)" || true; fi; \
+	if [ "$(EDITION)" = ticketsmate ]; then \
+		if [ -n "$(KEYCHAIN)" ]; then \
+			codesign --force --options runtime --timestamp --keychain "$(KEYCHAIN)" \
+				--entitlements Sources/TicketLinkExtension/Extension.entitlements \
+				--sign "$(SIGNING_IDENTITY)" "$(APP_BUNDLE)/Contents/PlugIns/TicketLinks.appex"; \
+		else \
+			codesign --force --options runtime --timestamp \
+				--entitlements Sources/TicketLinkExtension/Extension.entitlements \
+				--sign "$(SIGNING_IDENTITY)" "$(APP_BUNDLE)/Contents/PlugIns/TicketLinks.appex"; \
+		fi; \
+	fi; \
 	if [ -n "$(KEYCHAIN)" ]; then \
 		security unlock-keychain "$(KEYCHAIN)" || true; \
-		codesign --force --deep --sign "$(SIGNING_IDENTITY)" \
+		codesign --force $(APP_SIGN_DEEP) --sign "$(SIGNING_IDENTITY)" \
 			--options runtime \
 			--timestamp \
 			--entitlements "$(APP_ENTITLEMENTS)" \
 			--keychain "$(KEYCHAIN)" \
 			"$(APP_BUNDLE)"; \
 	else \
-		codesign --force --deep --sign "$(SIGNING_IDENTITY)" \
+		codesign --force $(APP_SIGN_DEEP) --sign "$(SIGNING_IDENTITY)" \
 			--options runtime \
 			--timestamp \
 			--entitlements "$(APP_ENTITLEMENTS)" \
 			"$(APP_BUNDLE)"; \
 	fi; \
-	codesign --verify --verbose "$(APP_BUNDLE)"; \
+	codesign --verify --deep --strict --verbose "$(APP_BUNDLE)"; \
 	codesign -dvv "$(APP_BUNDLE)" 2>&1 | grep -Fq "Authority=$(SIGNING_IDENTITY)" || { \
 		echo "$(RED)Error: app bundle is not signed by '$(SIGNING_IDENTITY)'$(NC)"; exit 1; }
 	@echo "$(GREEN)✓ App bundle signed successfully$(NC)"

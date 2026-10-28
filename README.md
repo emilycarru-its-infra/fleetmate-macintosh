@@ -590,3 +590,15 @@ of the checked-out branch. Use Fetch to update that remote-tracking ref, then re
 A missing `origin/main` is reported as an error. The equivalent CLI report is
 `fleetmate repos stats <repository> --ref refs/remotes/origin/main`; omitting `--ref` keeps the CLI's
 working-branch history behavior.
+
+## Safari ticket links
+
+The ticket-only app contains a Safari Web Extension at `Contents/PlugIns/TicketLinks.appex`. Its identifier is the containing app’s identifier followed by `.SafariExtension`; its native bundle versions match the containing app. The default web resources request no website access. Deployments supply their scoped Manifest V3 extension resources before final signing.
+
+Build the app with a configured resource directory:
+
+```sh
+make release-app EDITION=ticketsmate SAFARI_EXTENSION_RESOURCES=/path/to/web-extension
+```
+
+The app-signing target signs the sandboxed extension first and then the containing app. Notarization covers the complete app bundle. A deployment that replaces web resources must repeat that signing order and verify the nested signature. The extension is distributed and updated with the containing application.

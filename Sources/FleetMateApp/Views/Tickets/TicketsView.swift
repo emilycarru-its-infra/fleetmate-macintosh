@@ -2991,6 +2991,17 @@ struct FeedEntryRow: View {
                 .help("Copy to clipboard")
             }
 
+            if let notified = item.notifiedList?.trimmingCharacters(in: .whitespacesAndNewlines) {
+                Text(notified.isEmpty ? "Notified: nobody" : "Notified: \(TicketsView.decodeHtml(notified))")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            } else {
+                Text("Notification recipients unavailable")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if let body = item.body, !body.isEmpty {
                 Text(TicketsView.decodeHtml(body))
                     .appFont(isReply ? .callout : .body)

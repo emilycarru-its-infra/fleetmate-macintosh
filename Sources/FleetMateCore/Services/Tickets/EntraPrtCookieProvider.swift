@@ -1,6 +1,5 @@
 import Foundation
 import AuthenticationServices
-import FleetMateCore
 
 /// Asks the Microsoft Enterprise SSO plug-in for this device's PRT cookie.
 ///
@@ -16,7 +15,9 @@ import FleetMateCore
 /// with no prompt and no window — which is the only shape of TDX SSO that meets
 /// FleetMate's no-interaction rule.
 @MainActor
-final class EntraPrtCookieProvider: NSObject {
+public final class EntraPrtCookieProvider: NSObject {
+
+    public override init() { super.init() }
 
     /// Entra hosts the plug-in services. Must match a `URLs` entry in the
     /// Extensible SSO payload or the broker won't claim the request.
@@ -37,7 +38,7 @@ final class EntraPrtCookieProvider: NSObject {
     ///
     /// Never shows UI: `isUserInterfaceEnabled = false` means a broker that
     /// would need to prompt fails instead, which is the correct outcome here.
-    func ssoCookies(for url: URL) async -> [HTTPCookie] {
+    public func ssoCookies(for url: URL) async -> [HTTPCookie] {
         let cookies = await withTaskGroup(of: [HTTPCookie].self, returning: [HTTPCookie].self) { group in
             group.addTask { @MainActor in await self.requestCookies(for: url) }
             group.addTask { @MainActor in
@@ -146,7 +147,7 @@ final class EntraPrtCookieProvider: NSObject {
 
 extension EntraPrtCookieProvider: ASAuthorizationControllerDelegate {
 
-    func authorizationController(
+    public func authorizationController(
         controller: ASAuthorizationController,
         didCompleteWithAuthorization authorization: ASAuthorization
     ) {
@@ -161,7 +162,7 @@ extension EntraPrtCookieProvider: ASAuthorizationControllerDelegate {
         finish(with: cookies)
     }
 
-    func authorizationController(
+    public func authorizationController(
         controller: ASAuthorizationController,
         didCompleteWithError error: Error
     ) {

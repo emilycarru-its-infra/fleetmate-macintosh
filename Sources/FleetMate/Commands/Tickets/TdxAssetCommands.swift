@@ -5,12 +5,15 @@ import Rainbow
 
 // `fleetmate tdx assets|asset|from-error`, matching FleetMate for Windows.
 
-private func tdxService() throws -> TdxService {
-    let service = TdxService(config: try FleetMateConfig.load())
+@MainActor
+private func tdxService() async throws -> TdxService {
+    let config = try FleetMateConfig.load()
+    let service = TdxService(config: config)
     guard service.isConfigured else {
         print("TeamDynamix not configured.".red)
         throw ExitCode.failure
     }
+    await service.signInSilently(config: config)
     return service
 }
 
@@ -78,7 +81,7 @@ struct TdxFromErrorSubcommand: AsyncParsableCommand {
 
     func run() async throws {
         let config = try FleetMateConfig.load()
-        let tdx = try tdxService()
+        let tdx = try await tdxService()
         let reportMate = ReportMateService(config: config)
         guard reportMate.isConfigured else {
             print("ReportMate is not configured".red)

@@ -881,6 +881,12 @@ public struct FleetMateConfig: Codable {
         return "\(web)/TDNext/Apps/\(appId)/Tickets/TicketDet?TicketID=\(ticketId)"
     }
 
+    /// Explicit web navigation bypasses the managed ticket-link handoff.
+    /// Keep copied and shared ticket URLs unmarked so they still open the app.
+    public func tdxTicketBrowserUrl(_ ticketId: Int) -> String {
+        "\(tdxTicketWebUrl(ticketId))&ticketsmate=browser"
+    }
+
     public func tdxTicketsUrl(_ suffix: String = "") -> String {
         let appId = tdxTicketingAppId ?? tdxAppId ?? 0
         if suffix.isEmpty {

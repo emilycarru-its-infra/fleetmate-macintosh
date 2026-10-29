@@ -1097,7 +1097,7 @@ struct TicketsView: View {
         let editsPending = hasEdits && selectedTicket?.id == ticket.id
 
         Button {
-            if let url = URL(string: link) { NSWorkspace.shared.open(url) }
+            if let url = URL(string: appState.config.tdxTicketBrowserUrl(id)) { NSWorkspace.shared.open(url) }
         } label: {
             Label("Open in TeamDynamix", systemImage: "globe")
         }
@@ -1430,7 +1430,7 @@ struct TicketsView: View {
                 
                 // Open in web button
                 Button(action: {
-                    let urlStr = appState.config.tdxTicketWebUrl(ticket.id ?? 0)
+                    let urlStr = appState.config.tdxTicketBrowserUrl(ticket.id ?? 0)
                     if let url = URL(string: urlStr) {
                         NSWorkspace.shared.open(url)
                     }

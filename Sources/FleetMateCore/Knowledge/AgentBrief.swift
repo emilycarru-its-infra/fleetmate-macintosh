@@ -88,13 +88,14 @@ public enum AgentBrief {
         out.append("""
         - Every system FleetMate manages is reachable through the `\(name)` command-line \
         tool\(cliPath.map { " (`\($0)`" + (cliVersion.map { ", version \($0))" } ?? ")") } ?? ""). \
-        It already holds the person's sign-ins and configuration, so use it rather than \
+        It uses the person's configuration and each command's supported sign-in flow, so use it rather than \
         calling the services' APIs, `az`, or Microsoft Graph directly.
         - Prefer `--json` (or `-j`) wherever a command offers it, and parse that rather \
         than the human-readable text.
         - `\(name) <command> --help` prints the full help for any command listed below.
-        - If a command reports an authentication problem, `\(name) login` signs in again \
-        and checks every system (its options are listed below).
+        - If a command reports an authentication problem, `\(name) login --check` reports \
+        service availability using silent checks. Report a failed sign-in to the person; \
+        do not launch an interactive login or browser authentication flow.
         - Commands that change something — wiping, locking, retiring or resetting a \
         device, elevating access, activating a role, editing records or tickets — act on \
         real devices and accounts. Confirm the target with the person before running them.
@@ -263,37 +264,54 @@ public enum AgentBrief {
     ///   the shell reads the value from `codexValuePath`, a file holding the
     ///   brief as one TOML string.
     ///
-    /// Codex: any command-line override makes Codex run without its shared
-    /// background server and warn about it at start, so the line says
-    /// `--no-daemon` outright (where the installed Codex has the flag) and
-    /// the warning never appears. With `selfUpdate` false, which FleetMate
-    /// passes when it keeps the CLIs current itself, Codex also skips its own
-    /// update check, so a session never opens on an update prompt.
+    /// Codex retains its normal shared daemon unless the person's command
+    /// explicitly opts out. The per-launch developer instructions do not
+    /// change that choice. With `selfUpdate: false`, its own update check is
+    /// disabled so an app-managed session does not stop at an update prompt.
     public static func launchLine(_ command: String, briefPath: String, codexValuePath: String,
-                                  selfUpdate: Bool = true) -> String {
+                                  selfUpdate: Bool = true, additionalDirectories: [String] = []) -> String {
         let trimmed = command.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return command }
         let firstEnd = trimmed.firstIndex(where: \.isWhitespace) ?? trimmed.endIndex
         let program = String(trimmed[..<firstEnd])
         let rest = String(trimmed[firstEnd...])
         let nextWord = rest.split(whereSeparator: \.isWhitespace).first.map(String.init)
+        let words = rest.split(whereSeparator: \.isWhitespace).map(String.init)
+        if !Set(words).isDisjoint(with: ["--help", "-h", "--version", "-V"]) { return command }
         switch (program as NSString).lastPathComponent {
         case "claude":
             if let nextWord, claudeNonSessionSubcommands.contains(nextWord) { return command }
-            return program + " --append-system-prompt-file " + shellQuote(briefPath) + rest
+            return program + " --append-system-prompt-file " + shellQuote(briefPath)
+                + directoryArguments(additionalDirectories) + rest
         case "codex":
-            var line = program + " " + codexNoDaemon(program)
+            let managementCommands: Set<String> = ["agents", "queue", "mcp", "plugin", "login", "logout",
+                "app", "app-server", "remote-control", "completion", "update", "doctor", "debug", "features",
+                "help", "archive", "delete", "unarchive", "migrate-rollouts", "migrate-nfs-db", "exec-server"]
+            if let nextWord, managementCommands.contains(nextWord) { return command }
+            var line = program
             if !selfUpdate { line += " -c check_for_update_on_startup=false" }
-            return line + " -c \"developer_instructions=$(cat " + shellQuote(codexValuePath) + ")\"" + rest
+            return line + " -c \"developer_instructions=$(cat " + shellQuote(codexValuePath) + ")\""
+                + directoryArguments(codexAllowsAdditionalDirectories(words) ? additionalDirectories : []) + rest
         default:
             return command
         }
     }
 
-    /// Expands to `--no-daemon` when this Codex has the flag, else to
-    /// nothing, so an older Codex still starts.
-    static func codexNoDaemon(_ program: String) -> String {
-        "$(" + program + " --help 2>/dev/null | grep -q -e --no-daemon && printf %s --no-daemon)"
+    /// Unknown user profiles remain untouched. Codex rejects --add-dir under
+    /// read-only permissions, so only an explicit writable workspace opts in.
+    private static func codexAllowsAdditionalDirectories(_ words: [String]) -> Bool {
+        var sandbox: String?
+        for (index, word) in words.enumerated() {
+            if word == "--sandbox" || word == "-s", index + 1 < words.count { sandbox = words[index + 1] }
+            if word.hasPrefix("--sandbox=") { sandbox = String(word.dropFirst("--sandbox=".count)) }
+        }
+        return sandbox == "workspace-write"
+    }
+
+    private static func directoryArguments(_ directories: [String]) -> String {
+        var seen = Set<String>()
+        return directories.filter { !$0.isEmpty && seen.insert($0).inserted }
+            .map { " --add-dir " + shellQuote($0) }.joined()
     }
 
     /// `s` as a TOML basic string, quotes included, on one line.
@@ -354,8 +372,9 @@ public struct AgentBriefStore: Sendable {
         return "\(AgentBriefStore.formatVersion)|\(cliPath)|\(size)|\(Int(modified))"
     }
 
-    /// Bump when the brief's layout changes, so existing caches regenerate.
-    static let formatVersion = 3
+    /// Bump when built-in guidance or layout changes, so app-only updates also
+    /// refresh the brief while the installed CLI stays unchanged.
+    static let formatVersion = 4
 
     /// Make sure the brief matches the installed CLI, regenerating it if not.
     /// Blocking: a stat when current, two short CLI runs when stale.

@@ -11,13 +11,18 @@ struct DevicesWidgetsSection: View {
     @ObservedObject var metrics: WidgetMetrics
 
     var body: some View {
-        WidgetsSection(tab: .devices) {
+        // One band: the cards share the row's height and the three tiles
+        // split the column, so nothing ends short of its neighbours.
+        WidgetsSection(tab: .devices, equalHeights: true) {
+            let waiting = metrics.isLoading(.devices) && metrics.deviceCount == 0
             WidgetKPIColumn(kpis: [
                 KPI(title: "Managed Devices", value: "\(metrics.deviceCount)", icon: "laptopcomputer",
-                    color: .blue, loading: metrics.isLoading(.devices) && metrics.deviceCount == 0, tab: .devices),
+                    color: .blue, loading: waiting, tab: .devices),
                 KPI(title: "Non-Compliant", value: "\(metrics.nonCompliantCount)", icon: "exclamationmark.triangle",
-                    color: .orange, loading: metrics.isLoading(.devices) && metrics.deviceCount == 0, tab: .devices),
-            ]) { kpi in
+                    color: .orange, loading: waiting, tab: .devices),
+                KPI(title: "Not Synced in 30 Days", value: "\(metrics.staleCount)", icon: "clock.arrow.circlepath",
+                    color: .secondary, loading: waiting, tab: .devices),
+            ], fillsHeight: true) { kpi in
                 if kpi.title == "Non-Compliant" {
                     appState.openWidgetFilter(tab: .devices, category: "Compliance", label: "Non-Compliant")
                 }
@@ -45,17 +50,19 @@ struct DevicesWidgetsSection: View {
 
             if appState.config.reportMateUrl != nil {
                 WidgetCard(title: "Errors by Category", isLoading: metrics.isLoading(.reportMate)) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 12) {
-                            WidgetMiniStat(label: "Managed", value: "\(metrics.rmDeviceCount)", color: .blue)
-                            WidgetMiniStat(label: "Errors", value: "\(metrics.rmErrorCount)",
-                                           color: metrics.rmErrorCount > 0 ? .orange : .green)
-                        }
-                        if metrics.errorCategoryBars.isEmpty {
-                            if metrics.isLoading(.reportMate) { SkeletonChartCard() } else { WidgetEmptyState("No errors found") }
-                        } else {
+                    if !metrics.errorCategoryBars.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 12) {
+                                WidgetMiniStat(label: "Managed", value: "\(metrics.rmDeviceCount)", color: .blue)
+                                WidgetMiniStat(label: "Errors", value: "\(metrics.rmErrorCount)", color: .orange)
+                            }
                             HorizontalBarList(bars: metrics.errorCategoryBars)
                         }
+                    } else if metrics.isLoading(.reportMate) {
+                        SkeletonChartCard()
+                    } else {
+                        WidgetAllClear(title: "No errors reported",
+                                       detail: "\(metrics.rmDeviceCount) devices reporting")
                     }
                 }
             }
@@ -137,7 +144,7 @@ struct TicketsWidgetsSection: View {
         let shown = tickets(nil)
         let stats = TicketStats(tickets: shown)
         WidgetsSection(tab: .tickets, equalHeights: true, singleRow: true) {
-            TicketKPIGrid(stats: stats, loading: isLoading && shown.isEmpty, tiles: kpiTiles(openStatuses: openStatuses))
+            WidgetKPIGrid(loading: isLoading && shown.isEmpty, tiles: kpiTiles(openStatuses: openStatuses))
 
             let byStatus = TicketStats(tickets: tickets(.status)).byStatus
             WidgetCard(title: "By Status", isLoading: isLoading) {
@@ -248,26 +255,38 @@ struct TicketKPITile {
     let action: () -> Void
 }
 
-/// Six figures share one chart-width cell. At laptop widths the tiles use
-/// two compact columns; wider windows give them three. Each is a button.
-private struct TicketKPIGrid: View {
-    let stats: TicketStats
+/// Figures as a grid of buttons in one cell of the strip. At narrower widths
+/// the tiles take fewer columns and more rows; the grid always fills the
+/// height the row offers, so it ends level with the cards beside it. Text
+/// never shrinks below the caption size.
+struct WidgetKPIGrid: View {
     let loading: Bool
     let tiles: [TicketKPITile]
+    /// The most columns to try, widest first.
+    var maxColumns = 3
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            grid(columns: 3).frame(minWidth: 330)
+            ForEach(Array(stride(from: maxColumns, through: 2, by: -1)), id: \.self) { columns in
+                grid(columns: columns).frame(minWidth: CGFloat(columns) * 110)
+            }
             grid(columns: 2)
         }
+        .frame(maxHeight: .infinity)
     }
 
     private func grid(columns: Int) -> some View {
-        Grid(horizontalSpacing: 6, verticalSpacing: 6) {
-            ForEach(0..<(6 / columns), id: \.self) { row in
+        let rows = Int((Double(tiles.count) / Double(columns)).rounded(.up))
+        return Grid(horizontalSpacing: 6, verticalSpacing: 6) {
+            ForEach(0..<rows, id: \.self) { row in
                 GridRow {
                     ForEach(0..<columns, id: \.self) { col in
-                        tile(tiles[row * columns + col])
+                        let index = row * columns + col
+                        if index < tiles.count {
+                            tile(tiles[index])
+                        } else {
+                            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                        }
                     }
                 }
             }
@@ -283,12 +302,12 @@ private struct TicketKPIGrid: View {
                         SkeletonView(width: 30, height: 16, cornerRadius: 4)
                     } else {
                         Text(t.value, format: .number).appFont(.title3, weight: .bold)
-                            .monospacedDigit().lineLimit(1).minimumScaleFactor(0.8)
+                            .monospacedDigit().lineLimit(1)
                     }
                     Spacer(minLength: 0)
                 }
-                Text(t.title).appFont(.caption2).foregroundStyle(.secondary)
-                    .lineLimit(1).minimumScaleFactor(0.8)
+                Text(t.title).appFont(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.tail)
             }
             .padding(.horizontal, 7)
             .padding(.vertical, 6)
@@ -302,6 +321,8 @@ private struct TicketKPIGrid: View {
         .buttonStyle(.plain)
         .help(t.help)
         .accessibilityLabel("\(t.title): \(t.value)")
+        .accessibilityAddTraits(t.isOn ? .isSelected : [])
+        .accessibilityHint(t.help)
     }
 }
 
@@ -330,35 +351,43 @@ func ticketAgeColor(_ bucket: String) -> Color {
 // MARK: - Projects
 
 /// The signed-in user's work items and GitHub issues — the lists that headed
-/// the Dashboard — beside the work-item count and state breakdown.
+/// the Dashboard — beside tiles and breakdowns of the same items. Every
+/// figure comes from what the tab has already loaded.
 struct ProjectsWidgetsSection: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var metrics: WidgetMetrics
+    @ObservedObject var tasks: DashboardTasksModel
+    /// The tile filtering the Projects list, if any.
+    @Binding var selection: WorkItemTile?
 
     var body: some View {
+        let items = appState.cachedMyWorkItems
+        let stats = WorkItemStats(items)
+        let loading = metrics.isLoading(.workItems) && items.isEmpty
         WidgetsSection(tab: .projects) {
-            WidgetKPIColumn(kpis: [
-                KPI(title: "Active Work Items", value: "\(metrics.activeWorkItems)", icon: "list.bullet.rectangle",
-                    color: .indigo, loading: metrics.isLoading(.workItems) && metrics.activeWorkItems == 0, tab: .projects),
-            ]) { _ in }
+            WidgetKPIGrid(loading: loading, tiles: tiles(stats), maxColumns: 4)
+                .widgetSpan(2)
 
-            WidgetCard(title: "Work Items", isLoading: metrics.isLoading(.workItems)) {
+            WidgetCard(title: "By State", isLoading: metrics.isLoading(.workItems)) {
                 if metrics.workItemSlices.isEmpty {
                     if metrics.isLoading(.workItems) { SkeletonChartCard() } else { WidgetEmptyState("No work item data") }
                 } else {
                     VStack(alignment: .leading, spacing: 4) {
-                        DonutWidget(slices: metrics.workItemSlices, size: 130)
+                        DonutWidget(slices: metrics.workItemSlices, size: 110, adaptsToWidth: true)
                         if !metrics.sprintInfo.isEmpty {
-                            Text(metrics.sprintInfo).appFont(.caption2).foregroundStyle(.secondary)
+                            Text(metrics.sprintInfo).appFont(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
             }
 
+            barCard("By Type", WorkItemStats.ranked(items) { $0.workItemType }, color: .indigo, loading: loading)
+            barCard("By Project", WorkItemStats.ranked(items) { $0.teamProject }, color: .teal, loading: loading)
+
             // The user's work items and GitHub issues, five rows each; the
             // full lists open in a sheet.
             ForEach([PullRequestSource.azureDevOps, .gitHub], id: \.self) { source in
-                TasksWidget(source: source, model: appState.dashboardTasks)
+                TasksWidget(source: source, model: tasks)
                     .widgetSpan(2)
             }
         }
@@ -370,81 +399,38 @@ struct ProjectsWidgetsSection: View {
             if ready { Task { await metrics.load(.workItems, appState: appState, force: true) } }
         }
     }
-}
 
-// MARK: - Development
-
-/// Counts from what the Development tab has already loaded — no requests of
-/// its own, so the widgets cost nothing against the GitHub budget. Each card
-/// jumps to the segment and filter it counts.
-struct DevelopmentWidgetsSection: View {
-    @ObservedObject var model: DevelopmentModel
-
-    private func count(_ relation: PullRequestRelation) -> Int {
-        model.queue.section(relation).count
-    }
-
-    private var repoBars: [ChartBar] {
-        var counts: [String: Int] = [:]
-        for pr in model.queue.pullRequests { counts[pr.repository, default: 0] += 1 }
-        let colors: [Color] = [.blue, .purple, .orange, .teal, .green, .indigo, .brown, .pink]
-        return counts.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
-            .prefix(8)
-            .enumerated()
-            .map { i, entry in ChartBar(label: entry.key, value: entry.value, color: colors[i % colors.count]) }
-    }
-
-    var body: some View {
-        WidgetsSection(tab: .development) {
-            let prLoading = model.isLoadingPullRequests && model.queue.isEmpty
-            WidgetKPIColumn(kpis: [
-                KPI(title: "Unread in Inbox", value: "\(model.unreadCount)", icon: "tray",
-                    color: .blue, loading: model.isLoadingInbox && model.notifications.isEmpty, tab: .development),
-                KPI(title: "Review Requested",
-                    value: model.queue.failed() ? "--" : "\(count(.assignedToMe))", icon: "person.crop.circle.badge.checkmark",
-                    color: .purple, loading: prLoading, tab: .development),
-            ]) { kpi in
-                if kpi.title == "Unread in Inbox", model.unreadCount > 0 {
-                    model.showInbox = true
-                } else {
-                    model.selectedSource = nil
-                    model.segment = .pullRequests
-                }
-            }
-
-            WidgetKPIColumn(kpis: PullRequestSource.allCases.map { source in
-                KPI(title: "\(source.shortName) Pull Requests",
-                    value: model.queue.failed(source) ? "--" : "\(model.count(for: source))",
-                    icon: source.symbolName, color: source == .gitHub ? .indigo : .blue,
-                    loading: prLoading, tab: .development)
-            }) { kpi in
-                model.selectedSource = PullRequestSource.allCases.first { kpi.title.hasPrefix($0.shortName) }
-                model.segment = .pullRequests
-            }
-
-            WidgetKPIColumn(kpis: [
-                KPI(title: "Failing Pipelines", value: "\(model.pipelineCount(for: .failed))", icon: "xmark.octagon",
-                    color: .orange, loading: model.isLoadingPipelines && model.pipelineRuns.isEmpty, tab: .development),
-                KPI(title: "Running Pipelines", value: "\(model.pipelineCount(for: .running))", icon: "play.circle",
-                    color: .teal, loading: model.isLoadingPipelines && model.pipelineRuns.isEmpty, tab: .development),
-            ]) { kpi in
-                model.pipelineStatusFilter = kpi.title.hasPrefix("Failing") ? .failed : .running
-                model.segment = .pipelines
-            }
-
-            WidgetCard(title: "Pull Requests by Repository", isLoading: model.isLoadingPullRequests) {
-                let bars = repoBars
-                if bars.isEmpty {
-                    if model.isLoadingPullRequests { SkeletonChartCard() } else { WidgetEmptyState("No open pull requests") }
-                } else {
-                    HorizontalBarList(bars: bars) { label in
-                        model.selectedSource = nil
-                        model.selectedRepo = label
-                        model.segment = .pullRequests
-                    }
-                }
+    private func barCard(_ title: String, _ counts: [DevelopmentStats.Count], color: Color, loading: Bool) -> some View {
+        WidgetCard(title: title, isLoading: metrics.isLoading(.workItems)) {
+            if counts.isEmpty {
+                if loading { SkeletonChartCard() } else { WidgetEmptyState("No work item data") }
+            } else {
+                HorizontalBarList(bars: counts.prefix(8).map { ChartBar(label: $0.label, value: $0.value, color: color) })
             }
         }
+    }
+
+    /// Each tile filters the Projects list to the items it counts; clicking
+    /// the lit tile again, or Clear Filters, shows everything again.
+    private func tiles(_ stats: WorkItemStats) -> [TicketKPITile] {
+        func tile(_ kind: WorkItemTile, _ value: Int, _ icon: String, _ color: Color, _ help: String) -> TicketKPITile {
+            let isOn = selection == kind
+            return TicketKPITile(title: kind.title, value: value, icon: icon, color: color, isOn: isOn,
+                                 help: isOn ? "Show every item again" : help) {
+                selection = isOn ? nil : kind
+            }
+        }
+        return [
+            tile(.assignedToMe, stats.open, "list.bullet.rectangle", .indigo, "Show your open work items"),
+            tile(.inProgress, stats.inProgress, "play.circle", .blue, "Show items open and past New"),
+            tile(.newThisWeek, stats.newThisWeek, "sparkles", .green, "Show items created in the last 7 days"),
+            tile(.updatedThisWeek, stats.updatedThisWeek, "clock.arrow.circlepath", .teal,
+                 "Show items changed in the last 7 days"),
+            tile(.blocked, stats.blocked, "hand.raised", .orange, "Show items tagged Blocked, or on a Blocked column or state"),
+            tile(.overdue, stats.overdue, "calendar.badge.exclamationmark", .purple, "Show items past their due date"),
+            tile(.stale, stats.stale, "hourglass", .gray, "Show items not changed in \(WorkItemStats.staleDays) days"),
+            tile(.gitHubIssues, tasks.issues.count, "exclamationmark.circle", .indigo, "Show the open GitHub issues in your list"),
+        ]
     }
 }
 
@@ -485,6 +471,27 @@ struct TasksWidget: View {
     }
 }
 
+/// A card with nothing to chart: one centred line in the card's own height,
+/// rather than two zero figures over a lone "none" message.
+struct WidgetAllClear: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: "checkmark.circle")
+                .appFont(.title2)
+                .foregroundStyle(.green)
+                .accessibilityHidden(true)
+            Text(title).appFont(.callout, weight: .medium)
+            Text(detail).appFont(.caption).foregroundStyle(.secondary).monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 struct WidgetMiniStat: View {
     let label: String
     let value: String
@@ -493,7 +500,7 @@ struct WidgetMiniStat: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(value).appFont(.title3, weight: .bold).monospacedDigit().foregroundStyle(color)
-            Text(label).appFont(.caption2).foregroundStyle(.secondary)
+            Text(label).appFont(.caption).foregroundStyle(.secondary)
         }
     }
 }

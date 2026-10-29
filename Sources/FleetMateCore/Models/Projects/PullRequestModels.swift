@@ -364,3 +364,20 @@ public struct PullRequestQueueError: Sendable, Identifiable {
         self.message = message
     }
 }
+
+extension GitHubIssueSummary {
+    /// The issue as a row in the Projects list. The id carries the repository
+    /// (`owner/name#n`), since the list mixes issues from many repositories.
+    public var asUnifiedTask: UnifiedTask {
+        UnifiedTask(
+            id: id,
+            provider: "github",
+            title: title,
+            state: state.lowercased() == "closed" ? .closed : .open,
+            createdAt: updatedAt ?? .distantPast,
+            updatedAt: updatedAt ?? .distantPast,
+            externalUrl: webUrl,
+            metadata: ["repository": repository]
+        )
+    }
+}

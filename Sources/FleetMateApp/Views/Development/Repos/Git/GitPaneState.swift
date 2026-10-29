@@ -17,14 +17,13 @@ import FleetMateCore
 @MainActor
 final class GitPaneState {
     enum Panel: String, Hashable, CaseIterable {
-        case files, history, browse, insights
+        case files, history, browse
 
         var title: String {
             switch self {
             case .files: "Changes"
             case .history: "History"
             case .browse: "Files"
-            case .insights: "Insights"
             }
         }
 
@@ -34,7 +33,6 @@ final class GitPaneState {
             case .files: "1"
             case .history: "2"
             case .browse: "3"
-            case .insights: "4"
             }
         }
     }
@@ -145,7 +143,7 @@ final class GitPaneState {
             fileSelection = nextID(in: filteredFiles.map(\.id), after: primaryFileSelection).map { [$0] } ?? []
         case .history:
             commitSelection = nextID(in: filteredCommits.map(\.sha), after: commitSelection)
-        case .browse, .insights:
+        case .browse:
             break
         }
     }
@@ -156,7 +154,7 @@ final class GitPaneState {
             fileSelection = previousID(in: filteredFiles.map(\.id), before: primaryFileSelection).map { [$0] } ?? []
         case .history:
             commitSelection = previousID(in: filteredCommits.map(\.sha), before: commitSelection)
-        case .browse, .insights:
+        case .browse:
             break
         }
     }
@@ -246,7 +244,7 @@ final class GitPaneState {
         case .history:
             guard let sha = commitSelection else { diffText = ""; return }
             diffText = (try? await copy.show(sha)) ?? ""
-        case .browse, .insights:
+        case .browse:
             break
         }
     }

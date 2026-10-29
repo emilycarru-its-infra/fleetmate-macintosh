@@ -45,7 +45,7 @@ struct GitHelpSheet: View {
     private var content: some View {
         HStack(alignment: .top, spacing: 20) {
             column("Navigation", entries: [
-                ("1 / 2 / 3 / 4", "Changes / History / Files / Insights"),
+                ("1 / 2 / 3", "Changes / History / Files"),
                 ("Tab", "Next panel"),
                 ("⇧ Tab", "Previous panel"),
                 ("j / ↓", "Down"),

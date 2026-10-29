@@ -52,6 +52,9 @@ struct BoardsView: View {
     @State private var isResolvingDirectHit = false
     @State private var filterProvider: String? = nil
     @State private var filters = FilterState<TaskFilterCategory>()
+    /// The strip tile the list is narrowed to. A tile counts the signed-in
+    /// user's items, so picking one shows the Mine list.
+    @State private var tileFilter: WorkItemTile?
     @State private var showFilters = false
     @State private var groupBy: GroupByOption = .column
     @AppStorage("projects.board.source") private var boardSource: BoardSource = .devOps
@@ -242,8 +245,16 @@ struct BoardsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if appState.config.isDevOpsConfigured { ProjectsWidgetsSection(metrics: appState.widgetMetrics) }
+            if appState.config.isDevOpsConfigured {
+                ProjectsWidgetsSection(metrics: appState.widgetMetrics, tasks: appState.dashboardTasks, selection: $tileFilter)
+            }
             contentArea
+        }
+        .onChange(of: tileFilter) { _, tile in
+            if tile != nil, viewMode != .mine { viewMode = .mine }
+        }
+        .onChange(of: viewMode) { _, mode in
+            if mode != .mine { tileFilter = nil }
         }
         .onAppCommand { command in
             switch command {
@@ -464,12 +475,13 @@ struct BoardsView: View {
     /// True when anything is narrowing the list, including the Closed toggle,
     /// which now lives inside the popover rather than beside it.
     private var hasAnyActiveFilter: Bool {
-        filters.hasActiveFilters || showClosed
+        filters.hasActiveFilters || showClosed || tileFilter != nil
     }
 
     private func clearAllFilters() {
         filters.clearAll()
         showClosed = false
+        tileFilter = nil
     }
 
     /// Filter popover: the shared category panel plus the Projects-specific
@@ -481,6 +493,20 @@ struct BoardsView: View {
                 .toggleStyle(.checkbox)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
+            if appState.config.isDevOpsConfigured {
+                Picker("My items:", selection: $tileFilter) {
+                    Text("All").tag(WorkItemTile?.none)
+                    Divider()
+                    ForEach(WorkItemTile.allCases) { tile in
+                        Text(tile.title).tag(Optional(tile))
+                    }
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+                .padding(.horizontal, 14)
+                .padding(.bottom, 10)
+                .help("Show only the items one of the tiles above counts")
+            }
             Divider()
             FilterPanelView(filters: filters)
         }
@@ -770,10 +796,21 @@ struct BoardsView: View {
     /// "show closed", newest change first.
     private var flatTasks: [UnifiedTask] {
         var tasks = filteredTasks
+        if viewMode == .mine, tileFilter == .gitHubIssues {
+            // The GitHub Issues tile counts the issues in the strip's list,
+            // which are not work items: list those.
+            let q = searchText.lowercased()
+            return appState.dashboardTasks.issues
+                .filter { q.isEmpty || $0.title.lowercased().contains(q) }
+                .map(\.asUnifiedTask)
+                .sorted { $0.updatedAt > $1.updatedAt }
+        }
         if viewMode == .mine {
             // The @Me set (assigned to the signed-in user, not finished), the
-            // same one the Dashboard counts — not the org's recent items.
-            let mine = appState.cachedMyWorkItems
+            // same one the Dashboard counts — not the org's recent items —
+            // narrowed to the picked tile's set.
+            let now = Date()
+            let mine = appState.cachedMyWorkItems.filter { tileFilter?.matches($0, now: now) ?? true }
             let ids = Set(mine.map { String($0.id) })
             tasks = tasks.filter { $0.provider == "azdevops" && ids.contains($0.id) }
             // Items no shared query covers still belong in Mine — unless the
@@ -789,7 +826,9 @@ struct BoardsView: View {
     private var flatList: some View {
         let tasks = flatTasks
         return VStack(spacing: 0) {
-            if viewMode == .mine {
+            if viewMode == .mine, let tile = tileFilter {
+                tileFilterBar(tile)
+            } else if viewMode == .mine {
                 HandbookReminderCard(model: appState.handbookReminders)
                     .onAppear { appState.handbookReminders.load(appState: appState) }
             }
@@ -797,10 +836,35 @@ struct BoardsView: View {
         }
     }
 
+    /// Names the tile the list is narrowed to, with the way back.
+    private func tileFilterBar(_ tile: WorkItemTile) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                .foregroundStyle(Color.accentColor)
+                .accessibilityHidden(true)
+            Text("Showing \(tile.title)").appFont(.callout, weight: .medium)
+            Spacer(minLength: 0)
+            Button("Clear Filter") { tileFilter = nil }
+                .controlSize(.small)
+                .help("Show every item again")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.bar)
+        .overlay(alignment: .bottom) { Divider() }
+        .accessibilityElement(children: .contain)
+    }
+
     @ViewBuilder
     private func flatListBody(_ tasks: [UnifiedTask]) -> some View {
         Group {
-            if tasks.isEmpty {
+            if tasks.isEmpty, let tile = tileFilter {
+                ContentUnavailableView(
+                    "Nothing in \(tile.title)",
+                    systemImage: "line.3.horizontal.decrease.circle",
+                    description: Text("None of your items match this tile. Clear the filter to see them all.")
+                )
+            } else if tasks.isEmpty {
                 ContentUnavailableView(
                     viewMode == .mine ? "Nothing assigned to you" : "No recent work items",
                     systemImage: "checkmark.circle",

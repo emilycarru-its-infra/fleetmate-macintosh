@@ -15,38 +15,68 @@ extension AppTab {
     }
 
     /// Per-tab persistence key for whether the widgets are hidden.
-    var widgetsCollapsedKey: String { "widgets.collapsed.\(rawValue)" }
+    /// Development moved to collapsed-by-default and Projects to shown, so
+    /// their keys moved too: a choice stored before the change does not
+    /// override the new default; the next one is kept as before.
+    var widgetsCollapsedKey: String {
+        switch self {
+        case .development, .projects: "widgets.collapsed.\(rawValue).v2"
+        default: "widgets.collapsed.\(rawValue)"
+        }
+    }
+
+    /// Development opens on the work itself — changes, diffs, commits — so
+    /// its graphs start hidden until the Graphs button shows them. Every
+    /// other tab opens with its graphs shown. Either way the choice is kept.
+    var widgetsCollapsedByDefault: Bool { self == .development }
 }
 
 /// A tab's widgets as an invisible accordion: no header of its own, shown or
 /// hidden from the toolbar's Graphs button. Hidden, the tab is exactly its
 /// own layout. State is kept per tab.
+///
+/// Every row is one band: cards share the row's height and stretch across
+/// its width (see `WidgetRowLayout`). With `maxHeight`, a strip taller than
+/// that scrolls inside itself rather than pushing the tab's own content off
+/// the screen.
 struct WidgetsSection<Content: View>: View {
     let tab: AppTab
-    /// Stretches every card in a row to the row's tallest, so a row reads as
-    /// one band instead of cards of ragged heights.
-    var equalHeights = false
     var singleRow = false
+    var maxHeight: CGFloat?
     @ViewBuilder var content: Content
 
     @AppStorage private var collapsed: Bool
+    @State private var contentHeight: CGFloat = 0
 
-    init(tab: AppTab, equalHeights: Bool = false, singleRow: Bool = false, @ViewBuilder content: () -> Content) {
+    /// `equalHeights` is kept for existing call sites; rows are always level.
+    init(tab: AppTab, equalHeights: Bool = true, singleRow: Bool = false, maxHeight: CGFloat? = nil,
+         @ViewBuilder content: () -> Content) {
         self.tab = tab
-        self.equalHeights = equalHeights
         self.singleRow = singleRow
+        self.maxHeight = maxHeight
         self.content = content()
-        _collapsed = AppStorage(wrappedValue: false, tab.widgetsCollapsedKey)
+        _collapsed = AppStorage(wrappedValue: tab.widgetsCollapsedByDefault, tab.widgetsCollapsedKey)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             if !collapsed {
-                WidgetRowLayout(spacing: 12, minUnitWidth: 240, equalHeights: equalHeights, wraps: !singleRow) {
-                    content
+                Group {
+                    if let maxHeight {
+                        ScrollView(.vertical) {
+                            rows.background {
+                                GeometryReader { geo in
+                                    Color.clear.preference(key: WidgetStripHeight.self, value: geo.size.height)
+                                }
+                            }
+                        }
+                        .scrollBounceBehavior(.basedOnSize)
+                        .frame(height: max(1, min(contentHeight, maxHeight)))
+                        .onPreferenceChange(WidgetStripHeight.self) { contentHeight = $0 }
+                    } else {
+                        rows
+                    }
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
                 .overlay(alignment: .bottom) { Divider() }
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
@@ -54,6 +84,19 @@ struct WidgetsSection<Content: View>: View {
         .fixedSize(horizontal: false, vertical: true)
         .clipped()
     }
+
+    private var rows: some View {
+        WidgetRowLayout(spacing: 12, minUnitWidth: 240, wraps: !singleRow) {
+            content
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+}
+
+private struct WidgetStripHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// Toolbar toggle for the current tab's widgets. Rebuilt per tab (`.id`) so
@@ -64,7 +107,7 @@ struct GraphsToolbarButton: View {
 
     init(tab: AppTab) {
         self.tab = tab
-        _collapsed = AppStorage(wrappedValue: false, tab.widgetsCollapsedKey)
+        _collapsed = AppStorage(wrappedValue: tab.widgetsCollapsedByDefault, tab.widgetsCollapsedKey)
     }
 
     var body: some View {
@@ -91,49 +134,47 @@ struct WidgetSpan: LayoutValueKey {
 
 extension View {
     func widgetSpan(_ units: Int) -> some View { layoutValue(key: WidgetSpan.self, value: units) }
+    /// The card takes a row of its own, whatever the width.
+    func widgetFullRow() -> some View { layoutValue(key: WidgetSpan.self, value: WidgetRowLayout.fullRow) }
 }
 
-/// Lays cards out left to right across the full width, wrapping onto a new row
-/// once a unit would fall below `minUnitWidth`. Every row is stretched to the
-/// full width, so there is never a ragged gap on the right; each card keeps
-/// its own natural height and is never stretched to its tallest neighbour.
+/// A responsive grid for a tab's cards.
+///
+/// The width is cut into units of at least `minUnitWidth`; a card takes its
+/// span of them. Cards keep their order and are split into the fewest rows
+/// that hold them, then balanced so every row carries about the same number
+/// of units — never a full row followed by one stretched leftover. Each row
+/// spans the full width, and every card in a row is offered the row's
+/// tallest height, so a row reads as one level band with no holes beside or
+/// below its cards.
 struct WidgetRowLayout: Layout {
+    static let fullRow = 1_000
+
     var spacing: CGFloat = 12
     var minUnitWidth: CGFloat = 240
-    /// Offer every card its row's tallest height (see WidgetsSection).
-    var equalHeights = false
     var wraps = true
 
     private struct Placement { var index: Int; var x: CGFloat; var y: CGFloat; var width: CGFloat; var rowHeight: CGFloat = 0 }
 
     private func arrange(width: CGFloat, subviews: Subviews) -> (placements: [Placement], height: CGFloat) {
         guard !subviews.isEmpty else { return ([], 0) }
-        let spans = subviews.map { max(1, $0[WidgetSpan.self]) }
+        let rawSpans = subviews.map { max(1, $0[WidgetSpan.self]) }
         let unitsPerRow = wraps
             ? max(1, Int((width + spacing) / (minUnitWidth + spacing)))
-            : spans.reduce(0, +)
-
-        // Greedy rows by span.
-        var rows: [[Int]] = [[]]
-        var used = 0
-        for (i, span) in spans.enumerated() {
-            let s = min(span, unitsPerRow)
-            if used + s > unitsPerRow, !rows[rows.count - 1].isEmpty {
-                rows.append([]); used = 0
-            }
-            rows[rows.count - 1].append(i); used += s
-        }
+            : rawSpans.filter { $0 < Self.fullRow }.reduce(0, +)
+        let rows = WidgetRowPacking.rows(spans: rawSpans, unitsPerRow: max(1, unitsPerRow), fullRow: Self.fullRow)
+        let spans = rawSpans.map { min($0, max(1, unitsPerRow)) }
 
         var placements: [Placement] = []
         var y: CGFloat = 0
         for row in rows {
-            let units = row.reduce(0) { $0 + min(spans[$1], unitsPerRow) }
-            let unitWidth = (width - spacing * CGFloat(row.count - 1)) / CGFloat(units)
+            let units = row.reduce(0) { $0 + spans[$1] }
+            let unitWidth = (width - spacing * CGFloat(row.count - 1)) / CGFloat(max(units, 1))
             var x: CGFloat = 0
             var rowHeight: CGFloat = 0
             let rowStart = placements.count
             for i in row {
-                let w = unitWidth * CGFloat(min(spans[i], unitsPerRow))
+                let w = unitWidth * CGFloat(spans[i])
                 let h = subviews[i].sizeThatFits(ProposedViewSize(width: w, height: nil)).height
                 placements.append(Placement(index: i, x: x, y: y, width: w))
                 rowHeight = max(rowHeight, h)
@@ -154,8 +195,37 @@ struct WidgetRowLayout: Layout {
         for p in arrange(width: bounds.width, subviews: subviews).placements {
             subviews[p.index].place(at: CGPoint(x: bounds.minX + p.x, y: bounds.minY + p.y),
                                     anchor: .topLeading,
-                                    proposal: ProposedViewSize(width: p.width, height: equalHeights ? p.rowHeight : nil))
+                                    proposal: ProposedViewSize(width: p.width, height: p.rowHeight))
         }
+    }
+}
+
+// MARK: - Chart text
+
+/// Axis and legend text for widget charts: the app's caption size, scaled
+/// with its text-size setting. Swift Charts' own default is smaller and does
+/// not follow that setting, so every widget chart sets its labels with this.
+extension AppTextStyle {
+    static func chartLabel(_ scale: Double) -> Font { AppTextStyle.caption.font(scale: scale) }
+}
+
+/// A chart legend in the same caption text as the axes, flowing onto more
+/// lines rather than shrinking. Entries keep the series order.
+struct WidgetChartLegend: View {
+    let items: [(label: String, color: Color)]
+
+    var body: some View {
+        WidgetFlowLayout(spacing: 10) {
+            ForEach(items, id: \.label) { item in
+                HStack(spacing: 4) {
+                    Circle().fill(item.color).frame(width: 8, height: 8)
+                    Text(item.label).appFont(.caption).foregroundStyle(.secondary)
+                }
+                .fixedSize()
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -178,7 +248,7 @@ struct WidgetCard<Content: View>: View {
                         HStack(spacing: 4) {
                             Text(title).appFont(.subheadline, weight: .bold)
                             Image(systemName: "chevron.right")
-                                .appFont(.caption2).foregroundStyle(.secondary)
+                                .appFont(.caption).foregroundStyle(.secondary)
                         }
                     }
                     .buttonStyle(.plain)
@@ -198,17 +268,21 @@ struct WidgetCard<Content: View>: View {
 }
 
 /// KPI tiles stacked in one cell of the row.
+/// With `fillsHeight`, the tiles share whatever height the row offers (a
+/// `WidgetsSection(equalHeights:)` row), so the column ends level with the
+/// chart cards beside it instead of leaving a gap below.
 struct WidgetKPIColumn: View {
     let kpis: [KPI]
+    var fillsHeight = true
     var onTap: (KPI) -> Void
 
     var body: some View {
         VStack(spacing: 8) {
             ForEach(kpis) { kpi in
-                KPICard(kpi: kpi) { onTap(kpi) }
+                KPICard(kpi: kpi, fillsHeight: fillsHeight) { onTap(kpi) }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: fillsHeight ? .infinity : nil, alignment: .top)
     }
 }
 
@@ -291,7 +365,7 @@ struct DonutWidget: View {
                 // natural width; every count is in the legend regardless.
                 if Self.wedgeFraction(slice, of: slices) >= 0.12 {
                     Text(slice.value, format: .number)
-                        .appFont(.caption2, weight: .bold)
+                        .appFont(.caption, weight: .bold)
                         .monospacedDigit()
                         .foregroundStyle(.white)
                         .fixedSize()
@@ -349,11 +423,11 @@ struct HorizontalBarList: View {
             ForEach(bars) { bar in
                 GridRow {
                     Text(bar.label)
-                        .appFont(.caption2)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .frame(maxWidth: compact ? 70 : 160, alignment: .leading)
+                        .frame(maxWidth: compact ? 110 : 180, alignment: .leading)
                         .help(bar.label)
                         .modifier(BarRowInteraction(id: bar.id, label: bar.label, hovered: $hovered, onSelect: onSelect))
                     GeometryReader { geo in
@@ -367,7 +441,7 @@ struct HorizontalBarList: View {
                     .frame(height: 14)
                     .modifier(BarRowInteraction(id: bar.id, label: bar.label, hovered: $hovered, onSelect: onSelect))
                     Text(bar.value, format: .number)
-                        .appFont(.caption2, weight: .medium)
+                        .appFont(.caption, weight: .medium)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                         .fixedSize()
@@ -412,12 +486,12 @@ struct ChartLegendList: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Circle().fill(slice.color).frame(width: 8, height: 8)
                     Text(Self.displayLabel(slice))
-                        .appFont(.caption2)
+                        .appFont(.caption)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 6)
                     Text(slice.value, format: .number)
-                        .appFont(.caption2, weight: .medium)
+                        .appFont(.caption, weight: .medium)
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                         .fixedSize()
@@ -461,11 +535,10 @@ struct TreemapChart: View {
                                 if rect.width > 48 && rect.height > 30 {
                                     VStack(spacing: 1) {
                                         Text(slice.label)
-                                            .appFont(.caption2, weight: .bold)
+                                            .appFont(.caption, weight: .bold)
                                             .lineLimit(1)
-                                            .minimumScaleFactor(0.7)
                                         Text(slice.value, format: .number)
-                                            .appFont(.caption2)
+                                            .appFont(.caption)
                                             .monospacedDigit()
                                             .fixedSize()
                                     }
@@ -506,9 +579,9 @@ struct TreemapChart: View {
                     HStack(spacing: 4) {
                         Circle().fill(slice.color).frame(width: 7, height: 7)
                         Text(slice.label)
-                            .appFont(.caption2).foregroundStyle(.secondary)
+                            .appFont(.caption).foregroundStyle(.secondary)
                         Text(slice.value, format: .number)
-                            .appFont(.caption2, weight: .medium).monospacedDigit()
+                            .appFont(.caption, weight: .medium).monospacedDigit()
                     }
                     .fixedSize()
                     .onTapGesture { onSelect?(slice.label) }
@@ -574,6 +647,7 @@ struct TreemapChart: View {
 
 struct KPICard: View {
     let kpi: KPI
+    var fillsHeight = true
     var onTap: (() -> Void)?
 
     var body: some View {
@@ -591,13 +665,14 @@ struct KPICard: View {
                             .appFont(.title2, weight: .bold).monospacedDigit()
                     }
                     Text(kpi.title)
-                        .appFont(.caption2)
+                        .appFont(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
+            .frame(maxHeight: fillsHeight ? .infinity : nil)
             .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.15)))
             .contentShape(Rectangle())

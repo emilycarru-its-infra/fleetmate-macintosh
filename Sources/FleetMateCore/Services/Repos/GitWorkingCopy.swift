@@ -302,8 +302,42 @@ public struct GitWorkingCopy: Sendable {
 
     /// Runs git in this checkout. Prompts are disabled: with no terminal to
     /// answer them, a credential prompt would otherwise hang the call.
+    ///
+    /// A clone reaches this only once someone added it, which is when it is
+    /// trusted (the way an editor trusts a workspace), so commit, push and
+    /// the other commands people run on purpose keep the clone's hooks.
+    /// Everything else, the reads and background refreshes, still turns off
+    /// the config that runs programs on its own: `core.fsmonitor`, the pager,
+    /// hooks, external diff drivers and textconv filters.
     public func git(_ arguments: [String], extraEnvironment: [String: String] = [:]) async -> ProcessOutput {
-        await GitWorkingCopy.runGit(["-C", path] + arguments, extraEnvironment: extraEnvironment)
+        await GitWorkingCopy.runGit(["-C", path] + Self.safetyConfig(for: arguments) + Self.withSafeDiffOptions(arguments),
+                                    extraEnvironment: extraEnvironment)
+    }
+
+    /// Commands that keep the clone's hooks.
+    static let hookCommands: Set<String> = ["commit", "push", "pull", "merge", "rebase", "switch", "checkout", "am", "cherry-pick", "revert"]
+
+    /// `-c` options that keep a clone's config from running programs during
+    /// reads.
+    static func safetyConfig(for arguments: [String]) -> [String] {
+        var config = ["-c", "core.fsmonitor=false", "-c", "core.pager=cat"]
+        if !hookCommands.contains(arguments.first ?? "") {
+            config += ["-c", "core.hooksPath=/dev/null"]
+        }
+        return config
+    }
+
+    /// `diff`, `show` and `log` never run an external diff or textconv
+    /// program; `grep` never runs textconv.
+    static func withSafeDiffOptions(_ arguments: [String]) -> [String] {
+        guard let command = arguments.first else { return arguments }
+        let extra: [String]
+        switch command {
+        case "diff", "show", "log": extra = ["--no-ext-diff", "--no-textconv"]
+        case "grep": extra = ["--no-textconv"]
+        default: return arguments
+        }
+        return [command] + extra + arguments.dropFirst()
     }
 
     static func runGit(_ arguments: [String], extraEnvironment: [String: String] = [:]) async -> ProcessOutput {

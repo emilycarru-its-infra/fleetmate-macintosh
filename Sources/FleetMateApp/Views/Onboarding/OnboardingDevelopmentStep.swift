@@ -59,12 +59,11 @@ struct OnboardingDevelopmentStep: View {
 
                 Section {
                     TextField("Clone into", text: $wizardState.repoCloneRoot, prompt: Text("~/Developer"))
-                    TextField("Find checkouts in", text: $wizardState.repoScanRoot, prompt: Text("~/Developer"))
                     TextField("Extra GitHub owners", text: $wizardState.repoGitHubOwners, prompt: Text("Optional, comma-separated"))
                 } header: {
                     Text("Repositories")
                 } footer: {
-                    Text("Choose which repositories to track in Settings ▸ Repositories once setup is done.")
+                    Text("New clones go here. The next step finds the ones you already have.")
                     .settingsFooter()
                 }
             }

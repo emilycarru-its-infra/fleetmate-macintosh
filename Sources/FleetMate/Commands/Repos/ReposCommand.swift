@@ -28,6 +28,9 @@ struct ReposCommand: AsyncParsableCommand {
             ReposUnlinkCommand.self,
             ReposTrackCommand.self,
             ReposUntrackCommand.self,
+            ReposHideCommand.self,
+            ReposUnhideCommand.self,
+            ReposRemoveCloneCommand.self,
             ReposStatusCommand.self,
             ReposFetchCommand.self,
             ReposPullCommand.self,
@@ -265,7 +268,8 @@ struct ReposListCommand: AsyncParsableCommand {
             print("")
             for (record, status) in zip(records, statuses) {
                 let marker = record.isTracked ? "●".green : "○".cyan
-                print(" \(marker) " + record.key.displayName.col(44) + " " + ReposCLI.summary(status))
+                let hidden = record.isHidden ? "  (hidden in the app)".lightBlack : ""
+                print(" \(marker) " + record.key.displayName.col(44) + " " + ReposCLI.summary(status) + hidden)
             }
             print("")
         } catch {
@@ -291,6 +295,9 @@ struct ReposDiscoverCommand: AsyncParsableCommand {
     @Flag(name: .long, help: "Also mark every linked repository as tracked")
     var track = false
 
+    @Flag(name: .customLong("track-new"), help: "Track only checkouts not linked before (what the app does when auto-tracking is on)")
+    var trackNew = false
+
     @Flag(name: .long, help: "Output JSON")
     var json = false
 
@@ -300,7 +307,7 @@ struct ReposDiscoverCommand: AsyncParsableCommand {
             var settings = try manager.settings()
             if !root.isEmpty { settings.scanRoots = root }
             if let depth { settings.scanDepth = depth }
-            let results = try await manager.discover(track: track, settings: settings)
+            let results = try await manager.discover(track: track, trackNew: trackNew, settings: settings)
             if json {
                 try ReposCLI.printJSON(results)
                 return
@@ -309,6 +316,7 @@ struct ReposDiscoverCommand: AsyncParsableCommand {
             let known = results.filter { $0.action == .alreadyLinked }
             let duplicates = results.filter { $0.action == .duplicate }
             let noRemote = results.filter { $0.action == .noRemote }
+            let review = results.filter { $0.action == .needsReview }
             print("\nScanned " + settings.scanRoots.joined(separator: ", ") + " (depth \(settings.scanDepth)): \(results.count) checkouts\n")
             for r in linked {
                 let note: String = r.inCatalog ? "" : "  (not in catalog)".yellow
@@ -320,7 +328,14 @@ struct ReposDiscoverCommand: AsyncParsableCommand {
                 let note: String = "  (already at \(r.registeredPath ?? ""))"
                 print("  = ".yellow + name + " " + r.path.lightBlack + note)
             }
+            for r in review {
+                let name: String = (r.displayName ?? "").col(44)
+                print("  ! ".yellow + name + " " + r.path.lightBlack + "  (its settings can run commands; linked, not tracked)".yellow)
+            }
             print("\n\(linked.count) linked, \(known.count) already linked, \(duplicates.count) duplicate copies, \(noRemote.count) without a usable origin")
+            if !review.isEmpty {
+                print("\(review.count) not tracked because their git config runs commands. Check them, then 'fleetmate repos track <repo>'.".yellow)
+            }
         } catch {
             throw ReposCLI.fail(error)
         }
@@ -439,6 +454,90 @@ struct ReposUntrackCommand: AsyncParsableCommand {
                 let record = try RepoManager().setTracked(repo, false)
                 print("Stopped tracking \(record.key.displayName)")
             }
+        } catch {
+            throw ReposCLI.fail(error)
+        }
+    }
+}
+
+struct ReposHideCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "hide", abstract: "Hide repositories from the app's Repos sidebar (they stay tracked)")
+
+    @Argument(help: "Repositories")
+    var repos: [String]
+
+    func run() async throws {
+        do {
+            for repo in repos {
+                let record = try RepoManager().setHidden(repo, true)
+                print("Hid \(record.key.displayName) from the sidebar")
+            }
+        } catch {
+            throw ReposCLI.fail(error)
+        }
+    }
+}
+
+struct ReposUnhideCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(commandName: "unhide", abstract: "Show hidden repositories in the app's Repos sidebar again")
+
+    @Argument(help: "Repositories")
+    var repos: [String]
+
+    func run() async throws {
+        do {
+            for repo in repos {
+                let record = try RepoManager().setHidden(repo, false)
+                print("Showing \(record.key.displayName) in the sidebar".green)
+            }
+        } catch {
+            throw ReposCLI.fail(error)
+        }
+    }
+}
+
+struct ReposRemoveCloneCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "remove-clone",
+        abstract: "Move a local clone to the Trash and stop tracking it",
+        discussion: """
+        Before anything moves, the clone is checked for uncommitted or untracked files,
+        commits on no remote, stashes and other worktrees. If any exist the command lists
+        them and stops; pass --force to move it to the Trash anyway. Use --dry-run to see
+        the check without removing anything.
+        """
+    )
+
+    @Argument(help: "Repository")
+    var repo: String
+
+    @Flag(name: .long, help: "Remove even though work would be lost")
+    var force = false
+
+    @Flag(name: .customLong("dry-run"), help: "Only report what would be lost")
+    var dryRun = false
+
+    @Flag(name: .long, help: "Output JSON")
+    var json = false
+
+    func run() async throws {
+        let manager = RepoManager()
+        do {
+            let record = try manager.resolve(repo)
+            if dryRun {
+                let check = try await manager.removalCheck(repo)
+                if json { try ReposCLI.printJSON(check); return }
+                if check.isSafe {
+                    print("\(record.key.displayName): nothing would be lost.".green)
+                } else {
+                    print("Deleting \(record.key.displayName) would lose:".yellow)
+                    for line in check.lossDescription { print("  " + line) }
+                }
+                return
+            }
+            let check = try await manager.removeClone(repo, force: force)
+            if json { try ReposCLI.printJSON(check); return }
+            print("Moved \(check.path) to the Trash and stopped tracking \(record.key.displayName)")
         } catch {
             throw ReposCLI.fail(error)
         }
@@ -905,16 +1004,30 @@ struct ReposSettingsCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Concurrent git processes for batch commands")
     var concurrency: Int?
 
+    @Option(name: .customLong("auto-track"), help: "Offer new clones in the scan roots in the app: on or off")
+    var autoTrack: String?
+
     @Flag(name: .long, help: "Output JSON")
     var json = false
 
     func run() async throws {
         let manager = RepoManager()
         do {
-            let changing = !scanRoot.isEmpty || depth != nil || cloneRoot != nil || !gitHubOwner.isEmpty || concurrency != nil
+            let autoTrackValue: Bool?
+            switch autoTrack?.lowercased() {
+            case nil: autoTrackValue = nil
+            case "on", "true", "yes": autoTrackValue = true
+            case "off", "false", "no": autoTrackValue = false
+            default: throw RepoError.invalidArgument("--auto-track takes on or off.")
+            }
+            let changing = !scanRoot.isEmpty || depth != nil || cloneRoot != nil || !gitHubOwner.isEmpty || concurrency != nil || autoTrackValue != nil
             if changing {
                 try manager.updateSettings { s in
-                    if !scanRoot.isEmpty { s.scanRoots = scanRoot }
+                    if !scanRoot.isEmpty {
+                        s.scanRoots = scanRoot.map(RepoSettings.abbreviate)
+                        s.rootsChosen = true
+                    }
+                    if let autoTrackValue { s.autoTrackNewClones = autoTrackValue }
                     if let depth { s.scanDepth = max(1, depth) }
                     if let cloneRoot { s.cloneRoot = cloneRoot }
                     if !gitHubOwner.isEmpty { s.gitHubOwners = gitHubOwner }
@@ -932,6 +1045,8 @@ struct ReposSettingsCommand: AsyncParsableCommand {
                 print("GitHub owners: \(settings.gitHubOwners.isEmpty ? "(your own and your organizations')" : settings.gitHubOwners.joined(separator: ", "))")
                 print("protected:     \(settings.protectedBranches.joined(separator: ", ")) + each repository's default branch")
                 print("concurrency:   \(settings.concurrency)")
+                let auto = settings.autoTrackNewClones ? (settings.rootsChosen ? "on" : "on once scan roots are chosen") : "off"
+                print("new clones:    offered in the app \(auto)")
             }
         } catch {
             throw ReposCLI.fail(error)

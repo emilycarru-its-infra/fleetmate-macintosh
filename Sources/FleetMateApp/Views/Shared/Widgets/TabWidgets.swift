@@ -11,13 +11,18 @@ struct DevicesWidgetsSection: View {
     @ObservedObject var metrics: WidgetMetrics
 
     var body: some View {
-        WidgetsSection(tab: .devices) {
+        // One band: the cards share the row's height and the three tiles
+        // split the column, so nothing ends short of its neighbours.
+        WidgetsSection(tab: .devices, equalHeights: true) {
+            let waiting = metrics.isLoading(.devices) && metrics.deviceCount == 0
             WidgetKPIColumn(kpis: [
                 KPI(title: "Managed Devices", value: "\(metrics.deviceCount)", icon: "laptopcomputer",
-                    color: .blue, loading: metrics.isLoading(.devices) && metrics.deviceCount == 0, tab: .devices),
+                    color: .blue, loading: waiting, tab: .devices),
                 KPI(title: "Non-Compliant", value: "\(metrics.nonCompliantCount)", icon: "exclamationmark.triangle",
-                    color: .orange, loading: metrics.isLoading(.devices) && metrics.deviceCount == 0, tab: .devices),
-            ]) { kpi in
+                    color: .orange, loading: waiting, tab: .devices),
+                KPI(title: "Not Synced in 30 Days", value: "\(metrics.staleCount)", icon: "clock.arrow.circlepath",
+                    color: .secondary, loading: waiting, tab: .devices),
+            ], fillsHeight: true) { kpi in
                 if kpi.title == "Non-Compliant" {
                     appState.openWidgetFilter(tab: .devices, category: "Compliance", label: "Non-Compliant")
                 }
@@ -45,17 +50,19 @@ struct DevicesWidgetsSection: View {
 
             if appState.config.reportMateUrl != nil {
                 WidgetCard(title: "Errors by Category", isLoading: metrics.isLoading(.reportMate)) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 12) {
-                            WidgetMiniStat(label: "Managed", value: "\(metrics.rmDeviceCount)", color: .blue)
-                            WidgetMiniStat(label: "Errors", value: "\(metrics.rmErrorCount)",
-                                           color: metrics.rmErrorCount > 0 ? .orange : .green)
-                        }
-                        if metrics.errorCategoryBars.isEmpty {
-                            if metrics.isLoading(.reportMate) { SkeletonChartCard() } else { WidgetEmptyState("No errors found") }
-                        } else {
+                    if !metrics.errorCategoryBars.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 12) {
+                                WidgetMiniStat(label: "Managed", value: "\(metrics.rmDeviceCount)", color: .blue)
+                                WidgetMiniStat(label: "Errors", value: "\(metrics.rmErrorCount)", color: .orange)
+                            }
                             HorizontalBarList(bars: metrics.errorCategoryBars)
                         }
+                    } else if metrics.isLoading(.reportMate) {
+                        SkeletonChartCard()
+                    } else {
+                        WidgetAllClear(title: "No errors reported",
+                                       detail: "\(metrics.rmDeviceCount) devices reporting")
                     }
                 }
             }
@@ -482,6 +489,27 @@ struct TasksWidget: View {
             .frame(minWidth: 820, minHeight: 560)
             .environmentObject(appState)
         }
+    }
+}
+
+/// A card with nothing to chart: one centred line in the card's own height,
+/// rather than two zero figures over a lone "none" message.
+struct WidgetAllClear: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: "checkmark.circle")
+                .appFont(.title2)
+                .foregroundStyle(.green)
+                .accessibilityHidden(true)
+            Text(title).appFont(.callout, weight: .medium)
+            Text(detail).appFont(.caption2).foregroundStyle(.secondary).monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
     }
 }
 

@@ -2,7 +2,6 @@ import SwiftUI
 import Combine
 import FleetMateCore
 
-@main
 struct FleetMateApp: App {
     @StateObject private var appState = AppState()
     @AppStorage(AppFontScale.storageKey) private var fontScale: Double = AppFontScale.default
@@ -1011,8 +1010,9 @@ class AppState: ObservableObject {
         dbg.info("[PRT] Installed \(cookies.count) PRT cookie(s) for the silent SAML chain", category: "tdx-sso")
     }
 
-    func attemptSilentTdxSso() {
+    func attemptSilentTdxSso(useCache: Bool = true) {
         guard ssoViewModel == nil else { return }
+        if useCache, restoreTdxSession() { return }
         dbg.info("[SSO Phase 1] Starting silent TDX SSO attempt (authMethod=\(config.tdxAuthMethod), ssoEnabled=\(config.tdxSsoEnabled))", category: "tdx-sso")
 
         Task { @MainActor [weak self] in
@@ -1148,8 +1148,49 @@ class AppState: ObservableObject {
         ssoViewModel = nil
     }
     
+    /// Reuse the last sign-in is only done from an installed, signed copy:
+    /// a build run from anywhere else has a different signature and would
+    /// raise a keychain prompt.
+    static var isTdxSessionCacheEnabled: Bool {
+        Bundle.main.bundlePath.hasPrefix("/Applications/")
+    }
+
+    /// Restore the last sign-in from the keychain when it still has an hour
+    /// left — the app or the background helper wrote it — so launch skips the
+    /// silent SSO chain. A session TDX no longer accepts is dropped and the
+    /// normal sign-in runs.
+    private func restoreTdxSession() -> Bool {
+        guard Self.isTdxSessionCacheEnabled,
+              let cached = TdxSessionCache.load(), cached.isFresh else { return false }
+        dbg.info("[SSO] Reusing saved TDX session (expires \(cached.expiry))", category: "tdx-sso")
+
+        for cookie in cached.cookies.compactMap(\.httpCookie) {
+            HTTPCookieStorage.shared.setCookie(cookie)
+        }
+        if let me = cached.me { tdxMe = me }
+        handleTdxSsoSuccess(token: cached.token, expiry: cached.expiry,
+                            userId: cached.userId, userName: cached.userName, persist: false)
+        if let me = cached.me {
+            ticketInbox.start(service: tdxService, me: me)
+            InboxAgent.registerIfInstalled()
+        }
+
+        let probeEmail = cached.me?.primaryEmail ?? cached.userId
+        Task { @MainActor [weak self] in
+            guard let self, let email = probeEmail, email.contains("@") else { return }
+            if (try? await self.tdxService.findPerson(email: email)) == nil {
+                dbg.warn("[SSO] Saved TDX session was refused; signing in again", category: "tdx-sso")
+                TdxSessionCache.clear()
+                self.tdxService.clearSsoToken()
+                self.tdxSsoAuthenticated = false
+                self.attemptSilentTdxSso(useCache: false)
+            }
+        }
+        return true
+    }
+
     /// Handle successful SSO authentication
-    func handleTdxSsoSuccess(token: String, expiry: Date, userId: String?, userName: String?) {
+    func handleTdxSsoSuccess(token: String, expiry: Date, userId: String?, userName: String?, persist: Bool = true) {
         // If token isn't a real JWT, use cookie-based auth instead
         if !token.hasPrefix("eyJ") {
             // Extract cookies from shared storage for the TDX domain
@@ -1170,6 +1211,16 @@ class AppState: ObservableObject {
         tdxAuthenticatedUserName = userName
         showTdxSsoLogin = false
         authManager.update(.tdx, state: .valid(user: userName, expiry: expiry))
+
+        if persist && Self.isTdxSessionCacheEnabled {
+            let cookies = config.tdxBaseUrl.flatMap(URL.init(string:))
+                .flatMap { HTTPCookieStorage.shared.cookies(for: $0) } ?? []
+            TdxSessionCache(token: token, expiry: expiry, userId: userId, userName: userName,
+                            cookies: cookies, me: tdxMe).save()
+        }
+
+        // The background helper only needs the session for the inbox.
+        guard !InboxAgent.isAgentProcess else { return }
 
         // Launch preloads tickets in parallel with this sign-in and usually
         // loses the race (notAuthenticated), leaving the Dashboard at zero
@@ -1205,6 +1256,7 @@ class AppState: ObservableObject {
     /// the service account is shut off too, so nothing is attributed to the
     /// wrong person. There is no other route: no interactive window either.
     func rejectTdxSsoIdentity(_ result: TdxSsoResult) {
+        TdxSessionCache.clear()
         let reason = result.error ?? "TDX sign-in refused: identity could not be confirmed"
         dbg.error("[SSO] \(reason) — sign-in refused", category: "tdx-sso")
         tdxService.refuseSso(reason: reason)
@@ -1290,9 +1342,14 @@ class AppState: ObservableObject {
                 if let person = try await tdxService.findPerson(email: email) {
                     dbg.info("TDX identity resolved: \(person.fullName ?? "?") via \(email)", category: "tdx")
                     tdxMe = person
+                    if Self.isTdxSessionCacheEnabled, var cached = TdxSessionCache.load() {
+                        cached.me = person
+                        cached.save()
+                    }
                     // Build the inbox quietly from launch, so it is ready
                     // before anyone opens it.
                     ticketInbox.start(service: tdxService, me: person)
+                    InboxAgent.registerIfInstalled()
                     return
                 }
             } catch {

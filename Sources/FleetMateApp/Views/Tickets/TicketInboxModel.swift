@@ -8,9 +8,14 @@ import FleetMateCore
 /// The first pass covers `TicketInbox.windowDays` and is slow — TDX allows
 /// about 60 calls a minute — so it runs newest first, saves after every
 /// ticket, and resumes where it stopped.
+///
+/// The same model runs in the app window and in the background helper. A
+/// file lock lets only one of them scan; the other just reloads what the
+/// scanner saved.
 @MainActor
 final class TicketInboxModel: ObservableObject {
     @Published private(set) var inbox: TicketInbox?
+    @Published private(set) var readIds: Set<Int> = []
     @Published private(set) var isScanning = false
     @Published private(set) var progress: (done: Int, total: Int)?
     @Published private(set) var errorMessage: String?
@@ -21,54 +26,86 @@ final class TicketInboxModel: ObservableObject {
     private var scanTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
 
-    var unreadCount: Int { inbox?.unreadCount ?? 0 }
+    var unreadCount: Int { inbox?.unreadCount(readIds: readIds) ?? 0 }
 
     /// True once a full pass has finished on this computer. Until then the
     /// inbox is incomplete, so it stays out of sight.
     var isReady: Bool { inbox?.scannedThrough != nil }
 
-    /// Load the stored inbox for this person and start refreshing it every
-    /// five minutes. Safe to call repeatedly.
+    func isRead(_ item: TicketInboxItem) -> Bool { readIds.contains(item.id) }
+
+    /// Load the stored inbox for this person and keep it fresh: a pass every
+    /// five minutes, and a reload of the helper's results every minute.
+    /// Safe to call repeatedly.
     func start(service: TdxService, me: TdxPerson) {
         guard let uid = me.uid else { return }
         if inbox?.personUid != uid {
             scanTask?.cancel()
-            inbox = TicketInbox.load(personUid: uid)
+            refreshTask?.cancel()
+            refreshTask = nil
+            load(uid: uid)
         }
         guard refreshTask == nil else { return }
         refreshTask = Task { [weak self] in
+            var tick = 0
             while !Task.isCancelled {
-                self?.scan(service: service, me: me)
-                try? await Task.sleep(for: .seconds(300))
+                if tick % 5 == 0 {
+                    self?.scan(service: service, me: me)
+                } else if self?.isScanning == false {
+                    self?.reload()
+                }
+                tick += 1
+                try? await Task.sleep(for: .seconds(60))
             }
         }
     }
 
     func scan(service: TdxService, me: TdxPerson) {
         guard !isScanning, let uid = me.uid else { return }
-        if inbox?.personUid != uid { inbox = TicketInbox.load(personUid: uid) }
+        if inbox?.personUid != uid { load(uid: uid) }
         scanTask = Task { await runPass(service: service, me: me) }
     }
 
     func markRead(_ item: TicketInboxItem) {
-        guard inbox?.readIds.contains(item.id) == false else { return }
-        inbox?.readIds.insert(item.id)
-        persist()
+        guard !readIds.contains(item.id) else { return }
+        readIds.insert(item.id)
+        saveReadState()
     }
 
     func markUnread(_ item: TicketInboxItem) {
-        inbox?.readIds.remove(item.id)
-        persist()
+        readIds.remove(item.id)
+        saveReadState()
     }
 
     func markAllRead() {
         guard let ids = inbox?.items.map(\.id) else { return }
-        inbox?.readIds.formUnion(ids)
-        persist()
+        readIds.formUnion(ids)
+        saveReadState()
+    }
+
+    private func load(uid: String) {
+        inbox = TicketInbox.load(personUid: uid)
+        let live = Set(inbox?.items.map(\.id) ?? [])
+        readIds = TicketInboxReadState.load(personUid: uid).readIds.intersection(live)
+    }
+
+    /// Pick up what the other process saved. Read marks stay as they are:
+    /// only this window writes them.
+    private func reload() {
+        guard let uid = inbox?.personUid else { return }
+        inbox = TicketInbox.load(personUid: uid)
     }
 
     private func runPass(service: TdxService, me: TdxPerson) async {
-        guard var working = inbox else { return }
+        guard let uid = me.uid else { return }
+        guard let lock = TicketInboxScanLock(personUid: uid) else {
+            // The other process is scanning; show what it has so far.
+            reload()
+            return
+        }
+        defer { withExtendedLifetime(lock) {} }
+
+        var working = TicketInbox.load(personUid: uid)
         isScanning = true
         errorMessage = nil
         defer {
@@ -111,24 +148,22 @@ final class TicketInboxModel: ObservableObject {
                 try? await Task.sleep(for: .seconds(30))
             }
             progress = (index + 1, changed.count)
-            // Keep read marks made while the pass runs.
-            if let current = inbox { working.readIds = current.readIds }
             inbox = working
-            persist()
+            try? working.save()
             try? await Task.sleep(for: pace)
         }
 
-        if let current = inbox { working.readIds = current.readIds }
         working.prune(before: cutoff)
         if failures == 0 { working.scannedThrough = passStart }
         inbox = working
-        persist()
+        try? working.save()
         if failures > 0 {
             errorMessage = "\(failures) ticket\(failures == 1 ? "" : "s") couldn't be read; they'll be retried."
         }
     }
 
-    private func persist() {
-        try? inbox?.save()
+    private func saveReadState() {
+        guard let uid = inbox?.personUid else { return }
+        try? TicketInboxReadState(readIds: readIds).save(personUid: uid)
     }
 }

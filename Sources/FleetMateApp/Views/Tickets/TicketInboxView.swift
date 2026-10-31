@@ -13,8 +13,8 @@ struct TicketInboxView: View {
 
     private var items: [TicketInboxItem] {
         let all = inbox.inbox?.sortedItems ?? []
-        guard showUnreadOnly, let state = inbox.inbox else { return all }
-        return all.filter { !state.isRead($0) || $0.id == selectedItemId }
+        guard showUnreadOnly else { return all }
+        return all.filter { !inbox.isRead($0) || $0.id == selectedItemId }
     }
 
     var body: some View {
@@ -47,7 +47,7 @@ struct TicketInboxView: View {
                     row(item)
                         .tag(item.id)
                         .contextMenu {
-                            if inbox.inbox?.isRead(item) == true {
+                            if inbox.isRead(item) {
                                 Button("Mark as Unread") { inbox.markUnread(item) }
                             } else {
                                 Button("Mark as Read") { inbox.markRead(item) }
@@ -107,7 +107,7 @@ struct TicketInboxView: View {
     }
 
     private func row(_ item: TicketInboxItem) -> some View {
-        let isRead = inbox.inbox?.isRead(item) ?? true
+        let isRead = inbox.isRead(item)
         return HStack(alignment: .top, spacing: 8) {
             Circle()
                 .fill(isRead ? Color.clear : Color.accentColor)

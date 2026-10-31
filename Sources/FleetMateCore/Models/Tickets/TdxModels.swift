@@ -596,7 +596,7 @@ public struct CreateFeedEntryRequest: Codable {
 
 // MARK: - People Models
 
-public struct TdxPerson: Codable, Identifiable, Hashable {
+public struct TdxPerson: Codable, Identifiable, Hashable, Sendable {
     public let uid: String?
     public let fullName: String?
     public let firstName: String?

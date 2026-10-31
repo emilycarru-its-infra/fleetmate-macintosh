@@ -37,10 +37,11 @@ final class TicketInboxTests: XCTestCase {
 
         XCTAssertEqual(inbox.items.map(\.id), [1])
         XCTAssertEqual(inbox.ticketModified[42], "2026-10-30T11:00:00Z")
-        XCTAssertEqual(inbox.unreadCount, 1)
+        XCTAssertEqual(inbox.unreadCount(readIds: []), 1)
+        XCTAssertEqual(inbox.unreadCount(readIds: [1]), 0)
     }
 
-    func testMergeTwiceDoesNotDuplicateAndPruneDropsOldReadMarks() throws {
+    func testMergeTwiceDoesNotDuplicateAndPruneDropsOldItems() throws {
         var inbox = TicketInbox(personUid: "u1")
         let cutoff = TdxTicket.parseDate("2026-08-01T00:00:00Z")!
         let feed = [entry(1, notified: "Pat Example")]
@@ -48,19 +49,30 @@ final class TicketInboxTests: XCTestCase {
         inbox.merge(feed: feed, ticket: try ticket(), name: name, email: email, cutoff: cutoff)
         XCTAssertEqual(inbox.items.count, 1)
 
-        inbox.readIds = [1, 99]
         inbox.prune(before: TdxTicket.parseDate("2026-11-01T00:00:00Z")!)
         XCTAssertTrue(inbox.items.isEmpty)
-        XCTAssertTrue(inbox.readIds.isEmpty)
     }
 
     func testSaveAndLoadRoundTrip() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         var inbox = TicketInbox(personUid: "u1")
-        inbox.readIds = [7]
+        inbox.ticketModified = [42: "2026-10-30T11:00:00Z"]
         try inbox.save(root: root)
-        XCTAssertEqual(TicketInbox.load(personUid: "u1", root: root).readIds, [7])
-        XCTAssertTrue(TicketInbox.load(personUid: "u2", root: root).readIds.isEmpty)
+        XCTAssertEqual(TicketInbox.load(personUid: "u1", root: root).ticketModified[42], "2026-10-30T11:00:00Z")
+        XCTAssertTrue(TicketInbox.load(personUid: "u2", root: root).ticketModified.isEmpty)
+
+        try TicketInboxReadState(readIds: [7]).save(personUid: "u1", root: root)
+        XCTAssertEqual(TicketInboxReadState.load(personUid: "u1", root: root).readIds, [7])
+    }
+
+    func testScanLockIsExclusive() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var first: TicketInboxScanLock? = TicketInboxScanLock(personUid: "u1", root: root)
+        XCTAssertNotNil(first)
+        XCTAssertNil(TicketInboxScanLock(personUid: "u1", root: root))
+        first = nil
+        XCTAssertNotNil(TicketInboxScanLock(personUid: "u1", root: root))
     }
 }

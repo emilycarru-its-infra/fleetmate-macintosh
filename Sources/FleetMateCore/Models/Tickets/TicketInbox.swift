@@ -31,14 +31,13 @@ public struct TicketInboxItem: Codable, Identifiable, Hashable, Sendable {
 ///
 /// TDX has no per-person inbox in its API, so this is built by reading the
 /// feeds of tickets that changed and keeping the entries whose notified list
-/// names the person. Read state is kept here too: TDX does not record which
-/// comments someone has read.
+/// names the person. Read marks live apart, in `TicketInboxReadState`, so the
+/// background scanner never overwrites what the person marked.
 public struct TicketInbox: Codable, Sendable {
     public static let windowDays = 90
 
     public var personUid: String
     public var items: [TicketInboxItem] = []
-    public var readIds: Set<Int> = []
     /// When the last full pass started. The next pass asks only for tickets
     /// modified since then.
     public var scannedThrough: Date?
@@ -54,11 +53,9 @@ public struct TicketInbox: Codable, Sendable {
         items.sorted { $0.createdDate > $1.createdDate }
     }
 
-    public var unreadCount: Int {
+    public func unreadCount(readIds: Set<Int>) -> Int {
         items.reduce(0) { $0 + (readIds.contains($1.id) ? 0 : 1) }
     }
-
-    public func isRead(_ item: TicketInboxItem) -> Bool { readIds.contains(item.id) }
 
     /// True when a feed entry's notified list names this person.
     ///
@@ -106,21 +103,22 @@ public struct TicketInbox: Codable, Sendable {
         if let modified = ticket.modifiedDate { ticketModified[ticketId] = modified }
     }
 
-    /// Drop items older than the window, and read marks for items gone.
+    /// Drop items older than the window.
     public mutating func prune(before cutoff: Date) {
         items.removeAll { ($0.date ?? .distantPast) < cutoff }
-        let live = Set(items.map(\.id))
-        readIds.formIntersection(live)
     }
 
     // MARK: - Storage
 
-    public static func fileURL(personUid: String, root: URL? = nil) -> URL {
+    public static func directory(root: URL? = nil) -> URL {
         let base = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base
             .appendingPathComponent(AppEdition.current.isTicketsOnly ? "TicketsMate" : "FleetMate", isDirectory: true)
             .appendingPathComponent("Inbox", isDirectory: true)
-            .appendingPathComponent("\(personUid).json")
+    }
+
+    public static func fileURL(personUid: String, root: URL? = nil) -> URL {
+        directory(root: root).appendingPathComponent("\(personUid).json")
     }
 
     public static func load(personUid: String, root: URL? = nil) -> TicketInbox {
@@ -137,5 +135,57 @@ public struct TicketInbox: Codable, Sendable {
         let url = Self.fileURL(personUid: personUid, root: root)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(self).write(to: url, options: .atomic)
+    }
+}
+
+/// The comments a person has marked read, kept per computer: TDX does not
+/// record it. Written only by the app window, never by the scanner.
+public struct TicketInboxReadState: Codable, Sendable {
+    public var readIds: Set<Int> = []
+
+    public init(readIds: Set<Int> = []) {
+        self.readIds = readIds
+    }
+
+    public static func fileURL(personUid: String, root: URL? = nil) -> URL {
+        TicketInbox.directory(root: root).appendingPathComponent("\(personUid).read.json")
+    }
+
+    public static func load(personUid: String, root: URL? = nil) -> TicketInboxReadState {
+        guard let data = try? Data(contentsOf: fileURL(personUid: personUid, root: root)),
+              let state = try? JSONDecoder().decode(TicketInboxReadState.self, from: data) else {
+            return TicketInboxReadState()
+        }
+        return state
+    }
+
+    public func save(personUid: String, root: URL? = nil) throws {
+        let url = Self.fileURL(personUid: personUid, root: root)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(self).write(to: url, options: .atomic)
+    }
+}
+
+/// An exclusive, non-blocking lock on one person's inbox, so the app window
+/// and the background helper never scan at the same time.
+public final class TicketInboxScanLock {
+    private let descriptor: Int32
+
+    /// Nil when another process holds the lock.
+    public init?(personUid: String, root: URL? = nil) {
+        let url = TicketInbox.directory(root: root).appendingPathComponent("\(personUid).lock")
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let fd = open(url.path, O_CREAT | O_RDWR, 0o644)
+        guard fd >= 0 else { return nil }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+            close(fd)
+            return nil
+        }
+        descriptor = fd
+    }
+
+    deinit {
+        flock(descriptor, LOCK_UN)
+        close(descriptor)
     }
 }

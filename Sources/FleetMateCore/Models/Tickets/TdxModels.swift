@@ -345,6 +345,7 @@ public struct TicketSearchRequest: Codable {
     public var isOnHold: Bool?
     public var createdDateFrom: String?
     public var createdDateTo: String?
+    public var modifiedDateFrom: String?
     public var maxResults: Int = 50
 
     /// Status classes a ticket is still being worked in.
@@ -390,6 +391,7 @@ public struct TicketSearchRequest: Codable {
         case isOnHold = "IsOnHold"
         case createdDateFrom = "CreatedDateFrom"
         case createdDateTo = "CreatedDateTo"
+        case modifiedDateFrom = "ModifiedDateFrom"
         case maxResults = "MaxResults"
     }
 }

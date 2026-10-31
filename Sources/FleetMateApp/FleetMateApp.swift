@@ -1233,6 +1233,8 @@ class AppState: ObservableObject {
     /// itself can't say who you are. This is resolved separately from the
     /// signed-in Azure identity and is what "Assign to me" acts on.
     @Published var tdxMe: TdxPerson?
+    /// Comments across all tickets that notified `tdxMe`.
+    let ticketInbox = TicketInboxModel()
 
     /// Email addresses to try when resolving `tdxMe`, best first.
     private func tdxIdentityCandidates() async -> [String] {
@@ -1288,6 +1290,9 @@ class AppState: ObservableObject {
                 if let person = try await tdxService.findPerson(email: email) {
                     dbg.info("TDX identity resolved: \(person.fullName ?? "?") via \(email)", category: "tdx")
                     tdxMe = person
+                    // Build the inbox quietly from launch, so it is ready
+                    // before anyone opens it.
+                    ticketInbox.start(service: tdxService, me: person)
                     return
                 }
             } catch {

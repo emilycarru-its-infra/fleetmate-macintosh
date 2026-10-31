@@ -181,7 +181,7 @@ struct PipelineRunRow: View {
             AgentContextMenuItems(.pipelineRun(run))
             Divider()
             Button("Open in Browser") {
-                if let url = URL(string: run.webUrl) { NSWorkspace.shared.open(url) }
+                if let url = URL(string: run.webUrl) { NSWorkspace.shared.openInBrowser(url) }
             }
             Button("Copy Link") {
                 NSPasteboard.general.clearContents()
@@ -278,7 +278,7 @@ struct PipelineRunDetailView: View {
             .help("Reload the log")
             AgentContextButton(.pipelineRun(run))
             Button {
-                if let url = URL(string: run.webUrl) { NSWorkspace.shared.open(url) }
+                if let url = URL(string: run.webUrl) { NSWorkspace.shared.openInBrowser(url) }
             } label: {
                 Image(systemName: "globe")
             }

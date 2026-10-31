@@ -186,7 +186,7 @@ struct PullRequestDetailView: View {
 
             AgentContextButton(.pullRequest(pullRequest))
             Button {
-                if let url = URL(string: pullRequest.webUrl) { NSWorkspace.shared.open(url) }
+                if let url = URL(string: pullRequest.webUrl) { NSWorkspace.shared.openInBrowser(url) }
             } label: {
                 Image(systemName: "globe")
             }
@@ -636,7 +636,7 @@ struct PullRequestDetailView: View {
                                 .foregroundStyle(.secondary)
                             if let link = check.detailsUrl, let url = URL(string: link) {
                                 Button {
-                                    NSWorkspace.shared.open(url)
+                                    NSWorkspace.shared.openInBrowser(url)
                                 } label: {
                                     Image(systemName: "arrow.up.right.square").appFont(fixed: 11)
                                 }

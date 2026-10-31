@@ -917,7 +917,7 @@ struct BoardsView: View {
                 onOpenQuery: { query in
                     let urlString = appState.devOpsService.storedQueryWebUrl(queryId: query.id)
                     if let url = URL(string: urlString) {
-                        NSWorkspace.shared.open(url)
+                        NSWorkspace.shared.openInBrowser(url)
                     }
                 },
                 queryContext: { query, count in
@@ -1253,7 +1253,7 @@ struct BoardsView: View {
         // Open in Browser
         if let urlStr = task.externalUrl, let url = URL(string: urlStr) {
             Button {
-                NSWorkspace.shared.open(url)
+                NSWorkspace.shared.openInBrowser(url)
             } label: {
                 Label("Open in Browser", systemImage: "safari")
             }

@@ -845,7 +845,7 @@ struct PullRequestRow: View {
 
     private func open() {
         guard let url = URL(string: pullRequest.webUrl) else { return }
-        NSWorkspace.shared.open(url)
+        NSWorkspace.shared.openInBrowser(url)
     }
 
     private static func relative(_ date: Date) -> String {

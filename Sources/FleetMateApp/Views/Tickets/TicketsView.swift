@@ -2300,6 +2300,8 @@ struct TicketsView: View {
     /// a list with no label on it.
     private var activityHeader: some View {
         HStack(spacing: 10) {
+            Text("Activity")
+                .appFont(.headline)
             Button {
                 withAnimation(.easeInOut(duration: 0.15)) { isCommentSectionExpanded.toggle() }
                 if isCommentSectionExpanded { commentFocused = true }
@@ -2308,8 +2310,6 @@ struct TicketsView: View {
                       systemImage: "square.and.pencil")
             }
             .help(isCommentSectionExpanded ? "Close the comment editor" : "Write a comment")
-            Text("Activity")
-                .appFont(.headline)
             Spacer()
             Picker("", selection: $feedFilter) {
                 Text("Comments").tag(FeedFilterType.comments)

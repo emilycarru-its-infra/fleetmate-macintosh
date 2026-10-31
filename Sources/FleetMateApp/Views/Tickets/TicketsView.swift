@@ -2053,7 +2053,9 @@ struct TicketsView: View {
                     )
 
                 HStack(spacing: 10) {
-                    Button("Post Comment") {
+                    // Blue only once there is something to post: a disabled
+                    // prominent button draws as a muddy grey slab.
+                    let postButton = Button("Post Comment") {
                         Task {
                             isAddingComment = true
                             await addComment(ticket: ticket)
@@ -2061,10 +2063,14 @@ struct TicketsView: View {
                             if newComment.isEmpty { isCommentSectionExpanded = false }
                         }
                     }
-                    .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingComment)
+                    .disabled(!hasCommentDraft || isAddingComment)
                     .help("Post comment (⌘Return)")
+                    if hasCommentDraft {
+                        postButton.buttonStyle(.borderedProminent)
+                    } else {
+                        postButton.buttonStyle(.bordered)
+                    }
                     Button("Cancel") {
                         withAnimation(.easeInOut(duration: 0.15)) { isCommentSectionExpanded = false }
                     }

@@ -51,6 +51,7 @@ public struct TdxTicket: Codable, Identifiable, Sendable, Equatable, Hashable {
     public let locationRoomId: Int?
     public let uri: String?
     public let attachments: [TdxAttachment]?
+    public let attributes: [TdxCustomAttribute]?
 
     /// Attachments as a plain array, newest first — how the web UI sorts them.
     public var attachmentList: [TdxAttachment] {
@@ -157,6 +158,39 @@ public struct TdxTicket: Codable, Identifiable, Sendable, Equatable, Hashable {
         case locationRoomId = "LocationRoomID"
         case uri = "Uri"
         case attachments = "Attachments"
+        case attributes = "Attributes"
+    }
+
+    /// Custom attributes whose value is a person, such as a form's
+    /// "Primary Contact" field. TDX stores those as the person's UID, so a
+    /// value that parses as a UUID is how they are told apart.
+    public var personAttributes: [TdxCustomAttribute] {
+        (attributes ?? []).filter { attribute in
+            guard let value = attribute.value?.trimmingCharacters(in: .whitespaces) else { return false }
+            return UUID(uuidString: value) != nil
+        }
+    }
+}
+
+/// One custom attribute on a ticket.
+public struct TdxCustomAttribute: Codable, Hashable, Sendable {
+    public let id: Int?
+    public let name: String?
+    public let value: String?
+    public let valueText: String?
+
+    public init(id: Int?, name: String?, value: String?, valueText: String?) {
+        self.id = id
+        self.name = name
+        self.value = value
+        self.valueText = valueText
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id = "ID"
+        case name = "Name"
+        case value = "Value"
+        case valueText = "ValueText"
     }
 }
 
@@ -566,8 +600,30 @@ public struct TdxPerson: Codable, Identifiable, Hashable {
     public let firstName: String?
     public let lastName: String?
     public let primaryEmail: String?
+    /// The person's department, as TDX names their default account.
+    public let defaultAccountName: String?
+    /// Only on group members: whether the group's notifications reach them.
+    public let isGroupNotified: Bool?
 
     public var id: String { uid ?? UUID().uuidString }
+
+    public init(
+        uid: String?,
+        fullName: String?,
+        firstName: String? = nil,
+        lastName: String? = nil,
+        primaryEmail: String?,
+        defaultAccountName: String? = nil,
+        isGroupNotified: Bool? = nil
+    ) {
+        self.uid = uid
+        self.fullName = fullName
+        self.firstName = firstName
+        self.lastName = lastName
+        self.primaryEmail = primaryEmail
+        self.defaultAccountName = defaultAccountName
+        self.isGroupNotified = isGroupNotified
+    }
 
     enum CodingKeys: String, CodingKey {
         case uid = "UID"
@@ -575,6 +631,8 @@ public struct TdxPerson: Codable, Identifiable, Hashable {
         case firstName = "FirstName"
         case lastName = "LastName"
         case primaryEmail = "PrimaryEmail"
+        case defaultAccountName = "DefaultAccountName"
+        case isGroupNotified = "IsGroupNotified"
     }
 }
 

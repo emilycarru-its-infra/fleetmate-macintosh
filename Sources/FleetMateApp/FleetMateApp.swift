@@ -1012,7 +1012,6 @@ class AppState: ObservableObject {
 
     func attemptSilentTdxSso(useCache: Bool = true) {
         guard ssoViewModel == nil else { return }
-        if useCache, restoreTdxSession() { return }
         dbg.info("[SSO Phase 1] Starting silent TDX SSO attempt (authMethod=\(config.tdxAuthMethod), ssoEnabled=\(config.tdxSsoEnabled))", category: "tdx-sso")
 
         Task { @MainActor [weak self] in
@@ -1023,6 +1022,9 @@ class AppState: ObservableObject {
             // one, and arriving with it late means the attempt has already
             // timed out onto the service account.
             await self.primeTdxSsoUpn()
+
+            // A saved sign-in verified for this same address skips the chain.
+            if useCache, self.restoreTdxSession() { return }
 
             // Phase 0: ask the Entra broker for the device's PRT cookie and put
             // it in shared cookie storage, which the silent URLSession chain
@@ -1160,24 +1162,31 @@ class AppState: ObservableObject {
     /// silent SSO chain. A session TDX no longer accepts is dropped and the
     /// normal sign-in runs.
     private func restoreTdxSession() -> Bool {
-        guard Self.isTdxSessionCacheEnabled,
-              let cached = TdxSessionCache.load(), cached.isFresh else { return false }
+        guard Self.isTdxSessionCacheEnabled, let cached = TdxSessionCache.load() else { return false }
+        guard cached.matches(expectedUpn: TdxSsoLoginViewModel.fallbackUpn, baseUrl: config.tdxBaseUrl) else {
+            if cached.isFresh {
+                dbg.warn("[SSO] Saved TDX session is for another account or tenant; discarding", category: "tdx-sso")
+                TdxSessionCache.clear()
+            }
+            return false
+        }
         dbg.info("[SSO] Reusing saved TDX session (expires \(cached.expiry))", category: "tdx-sso")
 
         for cookie in cached.cookies.compactMap(\.httpCookie) {
             HTTPCookieStorage.shared.setCookie(cookie)
         }
-        if let me = cached.me { tdxMe = me }
+        if let me = cached.confirmedMe { tdxMe = me }
         handleTdxSsoSuccess(token: cached.token, expiry: cached.expiry,
                             userId: cached.userId, userName: cached.userName, persist: false)
-        if let me = cached.me {
+        if let me = cached.confirmedMe {
             ticketInbox.start(service: tdxService, me: me)
             InboxAgent.registerIfInstalled()
         }
 
-        let probeEmail = cached.me?.primaryEmail ?? cached.userId
+        let probeEmail = cached.confirmedUpn
         Task { @MainActor [weak self] in
-            guard let self, let email = probeEmail, email.contains("@") else { return }
+            guard let self else { return }
+            let email = probeEmail
             if (try? await self.tdxService.findPerson(email: email)) == nil {
                 dbg.warn("[SSO] Saved TDX session was refused; signing in again", category: "tdx-sso")
                 TdxSessionCache.clear()
@@ -1212,11 +1221,13 @@ class AppState: ObservableObject {
         showTdxSsoLogin = false
         authManager.update(.tdx, state: .valid(user: userName, expiry: expiry))
 
-        if persist && Self.isTdxSessionCacheEnabled {
-            let cookies = config.tdxBaseUrl.flatMap(URL.init(string:))
-                .flatMap { HTTPCookieStorage.shared.cookies(for: $0) } ?? []
+        // `userId` is the address the identity check just verified.
+        if persist && Self.isTdxSessionCacheEnabled,
+           let upn = userId, upn.contains("@"), let baseUrl = config.tdxBaseUrl {
+            let cookies = URL(string: baseUrl).flatMap { HTTPCookieStorage.shared.cookies(for: $0) } ?? []
+            let me = tdxMe?.primaryEmail?.lowercased() == upn.lowercased() ? tdxMe : nil
             TdxSessionCache(token: token, expiry: expiry, userId: userId, userName: userName,
-                            cookies: cookies, me: tdxMe).save()
+                            cookies: cookies, me: me, confirmedUpn: upn, baseUrl: baseUrl).save()
         }
 
         // The background helper only needs the session for the inbox.
@@ -1342,7 +1353,8 @@ class AppState: ObservableObject {
                 if let person = try await tdxService.findPerson(email: email) {
                     dbg.info("TDX identity resolved: \(person.fullName ?? "?") via \(email)", category: "tdx")
                     tdxMe = person
-                    if Self.isTdxSessionCacheEnabled, var cached = TdxSessionCache.load() {
+                    if Self.isTdxSessionCacheEnabled, var cached = TdxSessionCache.load(),
+                       person.primaryEmail?.lowercased() == cached.confirmedUpn {
                         cached.me = person
                         cached.save()
                     }

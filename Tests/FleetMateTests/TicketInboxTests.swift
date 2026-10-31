@@ -76,3 +76,25 @@ final class TicketInboxTests: XCTestCase {
         XCTAssertNotNil(TicketInboxScanLock(personUid: "u1", root: root))
     }
 }
+
+final class TdxSessionCacheTests: XCTestCase {
+    private func cache(expiry: Date = Date().addingTimeInterval(7200)) -> TdxSessionCache {
+        TdxSessionCache(token: "t", expiry: expiry, userId: "pat@example.invalid", userName: "Pat",
+                        cookies: [], me: TdxPerson(uid: "u1", fullName: "Pat", primaryEmail: "other@example.invalid"),
+                        confirmedUpn: "Pat@Example.invalid", baseUrl: "https://tdx.example.invalid")
+    }
+
+    func testMatchesOnlySameAccountAndTenant() {
+        let c = cache()
+        XCTAssertTrue(c.matches(expectedUpn: "pat@example.invalid", baseUrl: "https://tdx.example.invalid"))
+        XCTAssertFalse(c.matches(expectedUpn: "someone@example.invalid", baseUrl: "https://tdx.example.invalid"))
+        XCTAssertFalse(c.matches(expectedUpn: nil, baseUrl: "https://tdx.example.invalid"))
+        XCTAssertFalse(c.matches(expectedUpn: "pat@example.invalid", baseUrl: "https://other.example.invalid"))
+        XCTAssertFalse(cache(expiry: Date().addingTimeInterval(600))
+            .matches(expectedUpn: "pat@example.invalid", baseUrl: "https://tdx.example.invalid"))
+    }
+
+    func testMeIsDroppedWhenItIsNotTheConfirmedPerson() {
+        XCTAssertNil(cache().confirmedMe)
+    }
+}

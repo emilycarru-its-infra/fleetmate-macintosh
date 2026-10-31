@@ -41,9 +41,16 @@ public struct TdxSessionCache: Codable, Sendable {
     public var userName: String?
     public var cookies: [Cookie]
     public var me: TdxPerson?
+    /// The address the sign-in was verified for, lowercased.
+    public var confirmedUpn: String
+    /// The TDX tenant the session belongs to.
+    public var baseUrl: String
 
     public init(token: String, expiry: Date, userId: String?, userName: String?,
-                cookies: [HTTPCookie], me: TdxPerson? = nil) {
+                cookies: [HTTPCookie], me: TdxPerson? = nil,
+                confirmedUpn: String, baseUrl: String) {
+        self.confirmedUpn = confirmedUpn.lowercased()
+        self.baseUrl = baseUrl
         self.token = token
         self.expiry = expiry
         self.userId = userId
@@ -54,6 +61,23 @@ public struct TdxSessionCache: Codable, Sendable {
 
     /// Worth reusing: at least an hour left.
     public var isFresh: Bool { expiry > Date().addingTimeInterval(3600) }
+
+    /// Reusable for this sign-in: fresh, for the same tenant, and verified
+    /// for the address the app expects now. An unknown expected address
+    /// never matches, the same rule the live sign-in applies.
+    public func matches(expectedUpn: String?, baseUrl: String?) -> Bool {
+        guard isFresh,
+              let expected = expectedUpn?.trimmingCharacters(in: .whitespaces).lowercased(),
+              !expected.isEmpty,
+              let baseUrl, baseUrl == self.baseUrl else { return false }
+        return confirmedUpn == expected
+    }
+
+    /// The cached "me", only when it is the confirmed person.
+    public var confirmedMe: TdxPerson? {
+        guard let me, me.primaryEmail?.lowercased() == confirmedUpn else { return nil }
+        return me
+    }
 
     private static var service: String {
         "\(Bundle.main.bundleIdentifier ?? "ca.ecuad.macadmin.fleetmate").tdx-session"

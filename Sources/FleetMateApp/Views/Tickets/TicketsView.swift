@@ -781,6 +781,9 @@ struct TicketsView: View {
                 Toggle(isOn: $assignedToMe) {
                     Label("Assigned to Me", systemImage: assignedToMe ? "person.crop.circle.fill" : "person.crop.circle")
                         .labelStyle(AdaptiveLabelStyle(iconOnly: compactToolbar))
+                        // The toolbar's own "on" bezel is a faint grey; blue
+                        // says plainly that the list is filtered to you.
+                        .foregroundStyle(assignedToMe ? Color.accentColor : Color.primary)
                 }
                 .toggleStyle(.button)
                 .disabled(appState.tdxMe == nil)

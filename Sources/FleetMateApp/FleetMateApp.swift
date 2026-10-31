@@ -273,9 +273,10 @@ class AppState: ObservableObject {
     /// it instead of "No asset data".
     @Published var assetsLoadError: String?
     @Published var cachedTickets: [TdxTicket] = []
-    /// True from the start of a TDX sign-in until it succeeds or fails, so
-    /// an empty ticket list reads as "signing in", not "no results".
-    @Published var isTdxSigningIn = false
+    /// Where the automatic TDX sign-in has got to, from its start until the
+    /// first ticket list arrives; nil otherwise. Drives the launch progress.
+    @Published var tdxSignInStage: TdxSignInStage?
+    var isTdxSigningIn: Bool { tdxSignInStage != nil }
     /// The organization's most recently changed work items, anyone's and in
     /// any state: feeds global search and the activity feed.
     @Published var cachedWorkItems: [WorkItem] = []
@@ -607,6 +608,7 @@ class AppState: ObservableObject {
         cachedTickets = tickets
         ticketsCacheTime = Date()
         TicketSnapshot.save(tickets)
+        if tdxSignInStage == .tickets { tdxSignInStage = nil }
     }
     
     /// Update work items cache
@@ -673,8 +675,10 @@ class AppState: ObservableObject {
             let tickets = try await tdxService.searchTickets(search: search, maxResults: 500)
             updateTicketsCache(tickets)
             dbg.info("Tickets preloaded: \(tickets.count) tickets", category: "preload")
+            if tdxSignInStage == .tickets { tdxSignInStage = nil }
         } catch {
             dbg.error("Tickets preload FAILED: \(error)", category: "preload")
+            if tdxSignInStage == .tickets { tdxSignInStage = nil }
         }
     }
 
@@ -1026,7 +1030,7 @@ class AppState: ObservableObject {
 
     func attemptSilentTdxSso(useCache: Bool = true) {
         guard ssoViewModel == nil else { return }
-        isTdxSigningIn = true
+        tdxSignInStage = .account
         dbg.info("[SSO Phase 1] Starting silent TDX SSO attempt (authMethod=\(config.tdxAuthMethod), ssoEnabled=\(config.tdxSsoEnabled))", category: "tdx-sso")
 
         Task { @MainActor [weak self] in
@@ -1037,6 +1041,7 @@ class AppState: ObservableObject {
             // one, and arriving with it late means the attempt has already
             // timed out onto the service account.
             await self.primeTdxSsoUpn()
+            self.tdxSignInStage = .microsoft
 
             // A saved sign-in verified for this same address skips the chain.
             if useCache, self.restoreTdxSession() { return }
@@ -1051,6 +1056,7 @@ class AppState: ObservableObject {
             let viewModel = TdxSsoLoginViewModel(config: self.config)
             self.ssoViewModel = viewModel
 
+            self.tdxSignInStage = .teamDynamix
             let silentSuccess = await viewModel.performSilentAuthentication()
             self.ssoViewModel = nil
 
@@ -1083,6 +1089,7 @@ class AppState: ObservableObject {
     /// so this may complete silently where Phase 1 failed.
     func attemptHeadlessTdxSso() {
         guard ssoViewModel == nil else { return }
+        tdxSignInStage = .browser
         dbg.info("[SSO Phase 1.5] Starting headless WKWebView SSO attempt", category: "tdx-sso")
 
         let viewModel = TdxSsoLoginViewModel(config: config)
@@ -1150,7 +1157,7 @@ class AppState: ObservableObject {
             // this is the only way in, so a failure here means no TDX access
             // until someone signs in.
             dbg.warn("[SSO Phase 1.5] Headless WKWebView SSO FAILED or timed out — TDX calls will fail until an interactive sign-in succeeds", category: "tdx-sso")
-            self.isTdxSigningIn = false
+            self.tdxSignInStage = nil
         }
     }
 
@@ -1233,7 +1240,7 @@ class AppState: ObservableObject {
             tdxService.setSsoToken(token, expiry: expiry, userId: userId, userName: userName)
         }
         tdxSsoAuthenticated = true
-        isTdxSigningIn = false
+        tdxSignInStage = cachedTickets.isEmpty || !isTicketsCacheValid ? .tickets : nil
         tdxAuthenticatedUserName = userName
         showTdxSsoLogin = false
         authManager.update(.tdx, state: .valid(user: userName, expiry: expiry))
@@ -1289,7 +1296,7 @@ class AppState: ObservableObject {
         dbg.error("[SSO] \(reason) — sign-in refused", category: "tdx-sso")
         tdxService.refuseSso(reason: reason)
         tdxSsoAuthenticated = false
-        isTdxSigningIn = false
+        tdxSignInStage = nil
         tdxAuthenticatedUserName = nil
         tdxMe = nil
         showTdxSsoLogin = false
@@ -1300,7 +1307,7 @@ class AppState: ObservableObject {
     /// Handle SSO authentication failure or cancellation
     func handleTdxSsoFailure(_ error: String?) {
         showTdxSsoLogin = false
-        isTdxSigningIn = false
+        tdxSignInStage = nil
         if let error = error {
             errorMessage = "TDX SSO login failed: \(error)"
             authManager.update(.tdx, state: .failed(message: error))
@@ -1725,4 +1732,23 @@ class AppState: ObservableObject {
         authManager.update(.snipe, state: .valid(user: userName, expiry: nil))
         invalidateAssetsCache()
     }
+}
+
+/// The steps of the automatic TDX sign-in, in order. Nothing here waits on
+/// the person: each step runs by itself and the window only reports it.
+enum TdxSignInStage: Int, CaseIterable {
+    case account, microsoft, teamDynamix, browser, tickets
+
+    var label: String {
+        switch self {
+        case .account: "Finding your account"
+        case .microsoft: "Connecting to Microsoft"
+        case .teamDynamix: "Signing in to TeamDynamix"
+        case .browser: "Finishing sign-in"
+        case .tickets: "Loading tickets"
+        }
+    }
+
+    /// Share of the way through, for a determinate bar.
+    var fraction: Double { Double(rawValue + 1) / Double(Self.allCases.count + 1) }
 }

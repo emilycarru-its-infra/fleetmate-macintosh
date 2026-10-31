@@ -860,9 +860,23 @@ struct TicketsView: View {
                 )
                 Spacer()
             }
-        } else if (isLoading || appState.isTdxSigningIn) && appState.cachedTickets.isEmpty {
+        } else if let stage = appState.tdxSignInStage, appState.cachedTickets.isEmpty {
+            VStack(spacing: 8) {
+                ProgressView(value: stage.fraction)
+                    .frame(width: 280)
+                    .animation(.easeInOut(duration: 0.3), value: stage)
+                Text(stage.label)
+                    .appFont(.callout)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding(.top, 60)
+            .frame(maxWidth: .infinity)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Signing in: \(stage.label)")
+        } else if isLoading && appState.cachedTickets.isEmpty {
             VStack {
-                ProgressView(appState.isTdxSigningIn && !isLoading ? "Signing in to TeamDynamix..." : "Loading tickets...")
+                ProgressView("Loading tickets...")
                     .padding(.top, 50)
                 Spacer()
             }

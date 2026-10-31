@@ -2,8 +2,8 @@ import XCTest
 @testable import FleetMateCore
 
 final class TicketInboxTests: XCTestCase {
-    private let name = "Pat Example"
-    private let email = "pat@example.invalid"
+    private let personName = "Pat Example"
+    private let personEmail = "pat@example.invalid"
 
     private func entry(_ id: Int, notified: String?, by author: String = "other@example.invalid",
                        date: String = "2026-10-30T10:00:00Z") -> TdxFeedEntry {
@@ -18,11 +18,11 @@ final class TicketInboxTests: XCTestCase {
     }
 
     func testAddressedByNameOrEmail() {
-        XCTAssertTrue(TicketInbox.isAddressed(notifiedList: "A B <a@example.invalid>, Pat Example <pat@example.invalid>", name: name, email: email))
-        XCTAssertTrue(TicketInbox.isAddressed(notifiedList: "A B , Pat Example", name: name, email: nil))
-        XCTAssertFalse(TicketInbox.isAddressed(notifiedList: "Pat Examples", name: name, email: nil))
-        XCTAssertFalse(TicketInbox.isAddressed(notifiedList: nil, name: name, email: email))
-        XCTAssertFalse(TicketInbox.isAddressed(notifiedList: "", name: name, email: email))
+        XCTAssertTrue(TicketInbox.isAddressed(notifiedList: "A B <a@example.invalid>, Pat Example <pat@example.invalid>", name: personName, email: personEmail))
+        XCTAssertTrue(TicketInbox.isAddressed(notifiedList: "A B , Pat Example", name: personName, email: nil))
+        XCTAssertFalse(TicketInbox.isAddressed(notifiedList: "Pat Examples", name: personName, email: nil))
+        XCTAssertFalse(TicketInbox.isAddressed(notifiedList: nil, name: personName, email: personEmail))
+        XCTAssertFalse(TicketInbox.isAddressed(notifiedList: "", name: personName, email: personEmail))
     }
 
     func testMergeKeepsOnlyNotifiedEntriesFromOthersInsideWindow() throws {
@@ -31,9 +31,9 @@ final class TicketInboxTests: XCTestCase {
         inbox.merge(feed: [
             entry(1, notified: "Pat Example <pat@example.invalid>"),
             entry(2, notified: "Someone Else"),
-            entry(3, notified: "Pat Example", by: email),
+            entry(3, notified: "Pat Example", by: personEmail),
             entry(4, notified: "Pat Example", date: "2026-07-01T00:00:00Z"),
-        ], ticket: try ticket(), name: name, email: email, cutoff: cutoff)
+        ], ticket: try ticket(), name: personName, email: personEmail, cutoff: cutoff)
 
         XCTAssertEqual(inbox.items.map(\.id), [1])
         XCTAssertEqual(inbox.ticketModified[42], "2026-10-30T11:00:00Z")
@@ -45,8 +45,8 @@ final class TicketInboxTests: XCTestCase {
         var inbox = TicketInbox(personUid: "u1")
         let cutoff = TdxTicket.parseDate("2026-08-01T00:00:00Z")!
         let feed = [entry(1, notified: "Pat Example")]
-        inbox.merge(feed: feed, ticket: try ticket(), name: name, email: email, cutoff: cutoff)
-        inbox.merge(feed: feed, ticket: try ticket(), name: name, email: email, cutoff: cutoff)
+        inbox.merge(feed: feed, ticket: try ticket(), name: personName, email: personEmail, cutoff: cutoff)
+        inbox.merge(feed: feed, ticket: try ticket(), name: personName, email: personEmail, cutoff: cutoff)
         XCTAssertEqual(inbox.items.count, 1)
 
         inbox.prune(before: TdxTicket.parseDate("2026-11-01T00:00:00Z")!)

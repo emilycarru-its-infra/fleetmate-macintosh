@@ -252,7 +252,7 @@ struct DashboardTasksPane: View {
                 appState.navigateToTab = .projects
             }
             Button("Open in Azure DevOps") {
-                if let url = workItemWebUrl(item) { NSWorkspace.shared.open(url) }
+                if let url = workItemWebUrl(item) { NSWorkspace.shared.openInBrowser(url) }
             }
         }
     }
@@ -319,7 +319,7 @@ struct DashboardTasksPane: View {
                 appState.navigateToTab = .projects
             }
             Button("Open in GitHub") {
-                if let url = URL(string: issue.webUrl) { NSWorkspace.shared.open(url) }
+                if let url = URL(string: issue.webUrl) { NSWorkspace.shared.openInBrowser(url) }
             }
         }
     }

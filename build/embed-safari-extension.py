@@ -39,7 +39,7 @@ def embed(app, resources):
         metadata = {
             'CFBundleExecutable': 'TicketLinks',
             'CFBundleIdentifier': identifier + '.SafariExtension',
-            'CFBundleName': 'Ticket Links',
+            'CFBundleName': info['CFBundleName'] + ' Links',
             'CFBundleDisplayName': info.get('CFBundleDisplayName', info['CFBundleName']) + ' Links',
             'CFBundlePackageType': 'XPC!',
             'CFBundleShortVersionString': info['CFBundleShortVersionString'],

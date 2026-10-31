@@ -297,7 +297,7 @@ struct AzDoTaskSidebarView: View {
                 .controlSize(headerControlSize)
                 .help("Copy link")
 
-                Button(action: { NSWorkspace.shared.open(urlObj) }) {
+                Button(action: { NSWorkspace.shared.openInBrowser(urlObj) }) {
                     Image(systemName: "globe")
                 }
                 .buttonStyle(.bordered)
@@ -1792,7 +1792,7 @@ struct AzDoTaskSidebarView: View {
             // Navigate to the org notification settings page
             let orgUrl = url.deletingLastPathComponent().deletingLastPathComponent()
             let notifUrl = orgUrl.appendingPathComponent("_notifications")
-            NSWorkspace.shared.open(notifUrl)
+            NSWorkspace.shared.openInBrowser(notifUrl)
         }
     }
 

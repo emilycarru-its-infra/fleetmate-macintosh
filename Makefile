@@ -83,10 +83,10 @@ APP_ENTITLEMENTS := Sources/FleetMateApp/FleetMateApp.entitlements
 APP_DIR := $(BUILD_DIR)/app
 APP_BUNDLE := $(APP_DIR)/$(APP_BUNDLE_NAME)
 SAFARI_EXTENSION_RESOURCES ?= Sources/TicketLinkExtension/Resources
-APP_SIGN_DEEP := --deep
-ifeq ($(EDITION),ticketsmate)
+# Both editions carry the Safari link extension, signed on its own with its
+# sandbox entitlements before the outer bundle; --deep would re-sign it with
+# the app's entitlements instead.
 APP_SIGN_DEEP :=
-endif
 
 # Build Paths
 BUILD_BIN_PATH := $(shell swift build -c release --show-bin-path 2>/dev/null || echo "$(BUILD_DIR)/release")
@@ -318,9 +318,7 @@ release-app:
 		echo "$(GREEN)✓ Icon generated: $(APP_DISPLAY_NAME).icns (from PNG)$(NC)"; \
 	fi; \
 	rm -rf "$$(dirname $$ICONSET_DIR)"
-ifeq ($(EDITION),ticketsmate)
 	python3 build/embed-safari-extension.py --app "$(APP_BUNDLE)" --resources "$(SAFARI_EXTENSION_RESOURCES)"
-endif
 	@echo "$(GREEN)✓ App bundle assembled: $(APP_BUNDLE)$(NC)"
 
 # Sign the .app bundle
@@ -331,7 +329,7 @@ sign-app: release-app check-signing-identity
 		exit 1; \
 	fi; \
 	if [ -n "$(KEYCHAIN)" ]; then security unlock-keychain "$(KEYCHAIN)" || true; fi; \
-	if [ "$(EDITION)" = ticketsmate ]; then \
+	if [ -d "$(APP_BUNDLE)/Contents/PlugIns/TicketLinks.appex" ]; then \
 		if [ -n "$(KEYCHAIN)" ]; then \
 			codesign --force --options runtime --timestamp --keychain "$(KEYCHAIN)" \
 				--entitlements Sources/TicketLinkExtension/Extension.entitlements \

@@ -714,7 +714,7 @@ final class DevelopmentModel: ObservableObject {
         if notification.unread { markRead(notification, appState: appState) }
 
         guard notification.subjectType == .pullRequest, let number = notification.subjectNumber else {
-            if let url = URL(string: notification.webUrl) { NSWorkspace.shared.open(url) }
+            if let url = URL(string: notification.webUrl) { NSWorkspace.shared.openInBrowser(url) }
             return
         }
 
@@ -737,7 +737,7 @@ final class DevelopmentModel: ObservableObject {
                 self.queue.insert(pr)
                 self.selectedPullRequest = pr
             } else if let url = URL(string: notification.webUrl) {
-                NSWorkspace.shared.open(url)
+                NSWorkspace.shared.openInBrowser(url)
             }
         }
     }
@@ -1400,7 +1400,7 @@ struct CodePullRequestRow: View {
             AgentContextMenuItems(.pullRequest(pullRequest))
             Divider()
             Button("Open in Browser") {
-                if let url = URL(string: pullRequest.webUrl) { NSWorkspace.shared.open(url) }
+                if let url = URL(string: pullRequest.webUrl) { NSWorkspace.shared.openInBrowser(url) }
             }
             Button("Copy Link") {
                 NSPasteboard.general.clearContents()
@@ -1524,7 +1524,7 @@ struct InboxRow: View {
                     iconButton("checkmark", help: "Done — remove from inbox", action: onDone)
                     iconButton("bell.slash", help: "Unsubscribe from this thread", action: onUnsubscribe)
                     iconButton("globe", help: "Open in browser") {
-                        if let url = URL(string: notification.webUrl) { NSWorkspace.shared.open(url) }
+                        if let url = URL(string: notification.webUrl) { NSWorkspace.shared.openInBrowser(url) }
                     }
                 }
             }
@@ -1539,7 +1539,7 @@ struct InboxRow: View {
             Button("Unsubscribe", action: onUnsubscribe)
             Divider()
             Button("Open in Browser") {
-                if let url = URL(string: notification.webUrl) { NSWorkspace.shared.open(url) }
+                if let url = URL(string: notification.webUrl) { NSWorkspace.shared.openInBrowser(url) }
             }
             Button("Copy Link") {
                 NSPasteboard.general.clearContents()
@@ -1591,7 +1591,7 @@ struct ActivityRow: View {
                     }
                     if isHovering, let url = entry.comment.url.flatMap(URL.init) {
                         Button {
-                            NSWorkspace.shared.open(url)
+                            NSWorkspace.shared.openInBrowser(url)
                         } label: {
                             Image(systemName: "arrow.up.right.square").appFont(fixed: 10)
                         }
@@ -1677,7 +1677,7 @@ struct CommitRow: View {
             AgentContextMenuItems(.commit(commit, in: repository))
             Divider()
             Button("Open in Browser") {
-                if let url = commit.url.flatMap(URL.init) { NSWorkspace.shared.open(url) }
+                if let url = commit.url.flatMap(URL.init) { NSWorkspace.shared.openInBrowser(url) }
             }
             Button("Copy SHA") {
                 NSPasteboard.general.clearContents()
@@ -1770,7 +1770,7 @@ struct CommitDetailView: View {
             .disabled(commit.url == nil)
             .help("Copy link")
             Button {
-                if let url = commit.url.flatMap(URL.init) { NSWorkspace.shared.open(url) }
+                if let url = commit.url.flatMap(URL.init) { NSWorkspace.shared.openInBrowser(url) }
             } label: {
                 Image(systemName: "globe")
             }

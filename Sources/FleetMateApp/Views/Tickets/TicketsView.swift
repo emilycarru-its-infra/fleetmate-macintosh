@@ -166,8 +166,22 @@ struct TicketsView: View {
     @State private var scrollToCommentToken = 0
     @State private var isCommentPrivate = false
     @State private var isAddingComment = false
-    @State private var notifyRequestor = false
-    @State private var notifyResponsible = false
+    /// Recipient ids (see `NotifyRecipient`) ticked for the next comment.
+    @State private var notifySelection: Set<String> = []
+
+    // People on the open ticket — contacts, responsible group members, and
+    // people held in custom attributes — all offered as notify recipients.
+    @State private var ticketContacts: [TdxPerson] = []
+    @State private var groupMembers: [TdxPerson] = []
+    @State private var groupMemberCache: [Int: [TdxPerson]] = [:]
+    @State private var attributePeople: [AttributePerson] = []
+    @State private var isPeopleExpanded = false
+    @State private var contactSearchText = ""
+    @State private var contactSearchResults: [TdxPerson] = []
+    @State private var isSearchingContact = false
+    @State private var showContactResults = false
+    @State private var isAddingContact = false
+    @State private var peopleErrorMessage: String? = nil
 
     // Feed filter
     @State private var feedFilter: FeedFilterType = .comments
@@ -638,8 +652,12 @@ struct TicketsView: View {
             newComment = ""
             isCommentSectionExpanded = false
             isCommentPrivate = false
-            notifyRequestor = false
-            notifyResponsible = false
+            notifySelection = []
+            ticketContacts = []
+            groupMembers = []
+            attributePeople = []
+            peopleErrorMessage = nil
+            isAddingContact = false
             detailedTicket = nil
             ticketFeed = []
             if let ticketId = newIds.first, let unwrappedId = ticketId {
@@ -1338,6 +1356,8 @@ struct TicketsView: View {
                             TicketAttachmentsView(attachments: ticket.attachmentList)
                         }
                         Divider().padding(.vertical, 8)
+                        peopleSection(ticket: ticket)
+                        Divider().padding(.vertical, 8)
                         addCommentSection(ticket: ticket)
                             .id("addComment")
                         Section {
@@ -2027,29 +2047,229 @@ struct TicketsView: View {
                     .help("Post comment")
                 }
 
-                // Notify options
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Notify:")
-                        .appFont(.body)
-                        .foregroundColor(.secondary)
-                    if let requestor = ticket.requestorName,
-                       !requestor.isEmpty,
-                       Self.notificationEmail(ticket.requestorEmail) != nil {
-                        Toggle("Requestor: \(requestor)", isOn: $notifyRequestor)
+                // Notify options — everyone the web UI offers: the
+                // responsible group, requestor, responsible, contacts, and
+                // people held in custom attributes.
+                let recipients = notifyRecipients(ticket: ticket)
+                if !recipients.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Notify:")
+                            .appFont(.body)
+                            .foregroundColor(.secondary)
+                        ForEach(recipients) { recipient in
+                            Toggle(isOn: Binding(
+                                get: { notifySelection.contains(recipient.id) },
+                                set: { isOn in
+                                    if isOn { notifySelection.insert(recipient.id) } else { notifySelection.remove(recipient.id) }
+                                }
+                            )) {
+                                Text("\(recipient.name) (\(recipient.roles.joined(separator: ", ")))")
+                            }
                             .toggleStyle(.checkbox)
                             .appFont(.body)
-                    }
-                    if let responsible = ticket.responsibleFullName,
-                       !responsible.isEmpty,
-                       ticket.responsibleUid != ticket.requestorUid,
-                       Self.notificationEmail(ticket.responsibleEmail) != nil {
-                        Toggle("Responsible: \(responsible)", isOn: $notifyResponsible)
-                            .toggleStyle(.checkbox)
-                            .appFont(.body)
+                            .help(recipient.emails.joined(separator: ", "))
+                        }
                     }
                 }
             }
         }
+    }
+
+    // MARK: - People Section
+
+    /// The ticket's contacts, with add and remove, and its responsible group.
+    /// Contacts added here show up straight away as notify recipients.
+    private func peopleSection(ticket: TdxTicket) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: { withAnimation(.easeInOut(duration: 0.15)) { isPeopleExpanded.toggle() } }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .appFont(.caption)
+                        .foregroundColor(.secondary)
+                        .rotationEffect(.degrees(isPeopleExpanded ? 90 : 0))
+                    Text("People")
+                        .appFont(.headline)
+                    Text(verbatim: "\(ticketContacts.count)")
+                        .appFont(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.18))
+                        .foregroundColor(.secondary)
+                        .clipShape(Capsule())
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(isPeopleExpanded ? "Hide people" : "Show the ticket's contacts and group")
+
+            if isPeopleExpanded {
+                if let peopleErrorMessage {
+                    Label(peopleErrorMessage, systemImage: "exclamationmark.triangle.fill")
+                        .appFont(.caption)
+                        .foregroundColor(.orange)
+                }
+
+                Text("Contacts")
+                    .appFont(.subheadline)
+                    .foregroundColor(.secondary)
+                HStack(alignment: .top, spacing: 6) {
+                    personSearchField(
+                        searchText: $contactSearchText,
+                        searchResults: $contactSearchResults,
+                        isSearching: $isSearchingContact,
+                        showResults: $showContactResults,
+                        onSelect: { person in
+                            contactSearchText = ""
+                            showContactResults = false
+                            Task { await addContact(person, ticket: ticket) }
+                        }
+                    )
+                    .frame(maxWidth: 360)
+                    if isAddingContact { ProgressView().controlSize(.small) }
+                }
+                if ticketContacts.isEmpty {
+                    Text("No contacts")
+                        .appFont(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(ticketContacts, id: \.id) { person in
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(person.fullName ?? "Unknown")
+                                    .appFont(.body)
+                                Text([person.primaryEmail, person.defaultAccountName]
+                                        .compactMap { $0?.isEmpty == false ? $0 : nil }
+                                        .joined(separator: " · "))
+                                    .appFont(.caption)
+                                    .foregroundColor(.secondary)
+                                    .textSelection(.enabled)
+                            }
+                            Spacer()
+                            Button(action: { Task { await removeContact(person, ticket: ticket) } }) {
+                                Image(systemName: "trash")
+                                    .appFont(.caption)
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Remove \(person.fullName ?? "this person") from the ticket's contacts")
+                        }
+                    }
+                }
+
+                if let group = ticket.responsibleGroupName, !group.isEmpty {
+                    Text("Resources")
+                        .appFont(.subheadline)
+                        .foregroundColor(.secondary)
+                        .padding(.top, 4)
+                    HStack(spacing: 6) {
+                        Image(systemName: "person.3")
+                            .appFont(.caption)
+                            .foregroundColor(.secondary)
+                        Text(group)
+                            .appFont(.body)
+                        Text("Group")
+                            .appFont(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .help(groupMembers.compactMap(\.fullName).joined(separator: ", "))
+                }
+            }
+        }
+    }
+
+    /// Load contacts, responsible group members and attribute people for the
+    /// open ticket. Each source fails on its own — a group the session can't
+    /// read still leaves the contacts usable.
+    private func loadTicketPeople(ticket: TdxTicket) async {
+        guard let ticketId = ticket.id else { return }
+        let service = appState.tdxService
+
+        async let contacts = try? service.getTicketContacts(ticketId: ticketId)
+        let groupId = ticket.responsibleGroupId ?? 0
+        var members = groupMemberCache[groupId]
+        if members == nil, groupId > 0 {
+            members = try? await service.getGroupMembers(groupId: groupId)
+            if let members { groupMemberCache[groupId] = members }
+        }
+        var fromAttributes: [AttributePerson] = []
+        for attribute in ticket.personAttributes {
+            guard let uid = attribute.value?.trimmingCharacters(in: .whitespaces),
+                  let person = try? await service.getPerson(uid: uid) else { continue }
+            fromAttributes.append(AttributePerson(label: attribute.name ?? "Contact", person: person))
+        }
+        let loadedContacts = await contacts
+
+        guard selectedTicketIds.first == ticketId else { return }
+        ticketContacts = loadedContacts ?? []
+        groupMembers = members ?? []
+        attributePeople = fromAttributes
+    }
+
+    private func addContact(_ person: TdxPerson, ticket: TdxTicket) async {
+        guard let ticketId = ticket.id, let uid = person.uid else { return }
+        guard !ticketContacts.contains(where: { $0.uid == uid }) else { return }
+        isAddingContact = true
+        defer { isAddingContact = false }
+        do {
+            try await appState.tdxService.addTicketContact(ticketId: ticketId, uid: uid)
+            peopleErrorMessage = nil
+            ticketContacts = (try? await appState.tdxService.getTicketContacts(ticketId: ticketId))
+                ?? ticketContacts + [person]
+        } catch {
+            peopleErrorMessage = "Couldn't add \(person.fullName ?? "contact"): \(error.localizedDescription)"
+        }
+    }
+
+    private func removeContact(_ person: TdxPerson, ticket: TdxTicket) async {
+        guard let ticketId = ticket.id, let uid = person.uid else { return }
+        do {
+            try await appState.tdxService.removeTicketContact(ticketId: ticketId, uid: uid)
+            peopleErrorMessage = nil
+            ticketContacts.removeAll { $0.uid == uid }
+            if let email = Self.notificationEmail(person.primaryEmail) {
+                notifySelection.remove(email.lowercased())
+            }
+        } catch {
+            peopleErrorMessage = "Couldn't remove \(person.fullName ?? "contact"): \(error.localizedDescription)"
+        }
+    }
+
+    /// Everyone a comment can notify, merged by email so a person who is both
+    /// requestor and contact appears once with both roles.
+    private func notifyRecipients(ticket: TdxTicket) -> [NotifyRecipient] {
+        var recipients: [NotifyRecipient] = []
+
+        if let groupId = ticket.responsibleGroupId, groupId > 0,
+           let group = ticket.responsibleGroupName, !group.isEmpty {
+            let emails = groupMembers
+                .filter { $0.isGroupNotified != false }
+                .compactMap { Self.notificationEmail($0.primaryEmail) }
+            if !emails.isEmpty {
+                recipients.append(NotifyRecipient(id: "group:\(groupId)", name: group,
+                                                  roles: ["Responsible Group"], emails: emails))
+            }
+        }
+
+        func add(name: String?, email: String?, role: String) {
+            guard let email = Self.notificationEmail(email) else { return }
+            let key = email.lowercased()
+            if let index = recipients.firstIndex(where: { $0.id == key }) {
+                if !recipients[index].roles.contains(role) { recipients[index].roles.append(role) }
+                return
+            }
+            let display = (name?.isEmpty == false ? name : nil) ?? email
+            recipients.append(NotifyRecipient(id: key, name: display, roles: [role], emails: [email]))
+        }
+
+        add(name: ticket.requestorName, email: ticket.requestorEmail, role: "Requestor")
+        add(name: ticket.responsibleFullName, email: ticket.responsibleEmail, role: "Responsible")
+        for person in ticketContacts {
+            add(name: person.fullName, email: person.primaryEmail, role: "Contact")
+        }
+        for entry in attributePeople {
+            add(name: entry.person.fullName, email: entry.person.primaryEmail, role: entry.label)
+        }
+        return recipients
     }
 
     // MARK: - Activity Section
@@ -2287,6 +2507,7 @@ struct TicketsView: View {
                     guard selectedTicketIds.first == ticketId else { return }
                     detailedTicket = full
                     populateEditFields(from: full)
+                    await loadTicketPeople(ticket: full)
                 }
             } catch {
                 print("Failed to load ticket detail: \(error)")
@@ -2590,13 +2811,9 @@ struct TicketsView: View {
     }
 
     private func addComment(ticket: TdxTicket) async {
-        var notificationEmails: [String] = []
-        if notifyRequestor, let email = Self.notificationEmail(ticket.requestorEmail) {
-            notificationEmails.append(email)
-        }
-        if notifyResponsible, let email = Self.notificationEmail(ticket.responsibleEmail) {
-            notificationEmails.append(email)
-        }
+        var notificationEmails = notifyRecipients(ticket: ticket)
+            .filter { notifySelection.contains($0.id) }
+            .flatMap(\.emails)
         notificationEmails = notificationEmails.reduce(into: []) { result, email in
             guard !result.contains(where: { $0.caseInsensitiveCompare(email) == .orderedSame }) else { return }
             result.append(email)
@@ -2610,8 +2827,7 @@ struct TicketsView: View {
                 notifyEmails: notificationEmails.isEmpty ? nil : notificationEmails
             )
             newComment = ""
-            notifyRequestor = false
-            notifyResponsible = false
+            notifySelection = []
             loadTicketFeed(ticketId: ticket.id ?? 0)
         } catch {
             saveErrorMessage = "Comment failed: \(error.localizedDescription)"
@@ -2780,6 +2996,21 @@ enum FeedFilterType: String, CaseIterable {
 }
 
 // MARK: - Detail Row
+
+/// Someone a comment can notify: a person, or a group expanded to the
+/// members who take its notifications.
+struct NotifyRecipient: Identifiable, Hashable {
+    let id: String
+    let name: String
+    var roles: [String]
+    let emails: [String]
+}
+
+/// A person held in a ticket's custom attribute, labelled by that attribute.
+struct AttributePerson: Hashable {
+    let label: String
+    let person: TdxPerson
+}
 
 struct DetailRow: View {
     let label: String
@@ -2991,15 +3222,14 @@ struct FeedEntryRow: View {
                 .help("Copy to clipboard")
             }
 
-            if let notified = item.notifiedList?.trimmingCharacters(in: .whitespacesAndNewlines) {
-                Text(notified.isEmpty ? "Notified: nobody" : "Notified: \(TicketsView.decodeHtml(notified))")
+            // Only shown when TDX says who was notified. Replies and most
+            // system entries carry no list, and an empty one says nothing.
+            if let notified = item.notifiedList?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !notified.isEmpty {
+                Text("Notified: \(TicketsView.decodeHtml(notified))")
                     .appFont(.caption)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
-            } else {
-                Text("Notification recipients unavailable")
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             if let body = item.body, !body.isEmpty {

@@ -1138,6 +1138,51 @@ public class TdxService {
         return accountCache
     }
 
+    // MARK: - Ticket People
+
+    /// The people listed as contacts on a ticket (the web UI's People tab).
+    public func getTicketContacts(ticketId: Int) async throws -> [TdxPerson] {
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
+        return try await get(config.tdxTicketsUrl("\(ticketId)/contacts"), headers: headers)
+    }
+
+    /// Add a person to a ticket's contacts.
+    public func addTicketContact(ticketId: Int, uid: String) async throws {
+        try await sendWithoutBody(config.tdxTicketsUrl("\(ticketId)/contacts/\(uid)"), method: .post)
+    }
+
+    /// Remove a person from a ticket's contacts.
+    public func removeTicketContact(ticketId: Int, uid: String) async throws {
+        try await sendWithoutBody(config.tdxTicketsUrl("\(ticketId)/contacts/\(uid)"), method: .delete)
+    }
+
+    /// The members of a group, each carrying whether group notifications reach them.
+    public func getGroupMembers(groupId: Int) async throws -> [TdxPerson] {
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
+        return try await get(config.tdxGlobalUrl("groups/\(groupId)/members"), headers: headers)
+    }
+
+    /// One person by UID.
+    public func getPerson(uid: String) async throws -> TdxPerson? {
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
+        return try? await get(config.tdxPeopleUrl(uid), headers: headers)
+    }
+
+    private func sendWithoutBody(_ url: String, method: HTTPMethod) async throws {
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            activeSession.request(url, method: method, headers: headers)
+                .validate()
+                .response { response in
+                    if let error = response.error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
+                    }
+                }
+        }
+    }
+
     /// Responsible groups.
     public func getGroups() async throws -> [TdxLookupItem] {
         if !groupCache.isEmpty && Date() < refDataExpiry { return groupCache }

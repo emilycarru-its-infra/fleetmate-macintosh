@@ -849,7 +849,7 @@ struct TicketsView: View {
 
     @ViewBuilder
     private var contentSection: some View {
-        if appState.config.isTdxConfigured && viewMode == .inbox {
+        if appState.config.isTdxConfigured && viewMode == .inbox && appState.ticketInbox.isReady {
             ticketsInboxView
         } else if !appState.config.isTdxConfigured {
             VStack {
@@ -3354,7 +3354,7 @@ struct ViewModePill: View {
     var body: some View {
         SegmentedPill(
             selection: $selection,
-            options: [.table, .board, .inbox],
+            options: inbox.isReady ? [.table, .board, .inbox] : [.table, .board],
             label: { mode in
                 switch mode {
                 case .table: "List"

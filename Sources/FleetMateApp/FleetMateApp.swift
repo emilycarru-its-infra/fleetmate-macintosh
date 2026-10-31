@@ -1290,6 +1290,9 @@ class AppState: ObservableObject {
                 if let person = try await tdxService.findPerson(email: email) {
                     dbg.info("TDX identity resolved: \(person.fullName ?? "?") via \(email)", category: "tdx")
                     tdxMe = person
+                    // Build the inbox quietly from launch, so it is ready
+                    // before anyone opens it.
+                    ticketInbox.start(service: tdxService, me: person)
                     return
                 }
             } catch {

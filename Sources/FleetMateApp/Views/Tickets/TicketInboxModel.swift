@@ -23,6 +23,10 @@ final class TicketInboxModel: ObservableObject {
 
     var unreadCount: Int { inbox?.unreadCount ?? 0 }
 
+    /// True once a full pass has finished on this computer. Until then the
+    /// inbox is incomplete, so it stays out of sight.
+    var isReady: Bool { inbox?.scannedThrough != nil }
+
     /// Load the stored inbox for this person and start refreshing it every
     /// five minutes. Safe to call repeatedly.
     func start(service: TdxService, me: TdxPerson) {

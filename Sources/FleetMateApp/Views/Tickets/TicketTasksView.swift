@@ -23,7 +23,6 @@ struct TicketTasksView: View {
                         Image(systemName: "chevron.right").font(.caption)
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
                         Text("Tasks").font(.headline)
-                        Text(String(tasks.count)).font(.caption).foregroundStyle(.secondary)
                     }.contentShape(Rectangle())
                 }.buttonStyle(.plain)
                     .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")

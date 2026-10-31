@@ -860,9 +860,9 @@ struct TicketsView: View {
                 )
                 Spacer()
             }
-        } else if isLoading && appState.cachedTickets.isEmpty {
+        } else if (isLoading || appState.isTdxSigningIn) && appState.cachedTickets.isEmpty {
             VStack {
-                ProgressView("Loading tickets...")
+                ProgressView(appState.isTdxSigningIn && !isLoading ? "Signing in to TeamDynamix..." : "Loading tickets...")
                     .padding(.top, 50)
                 Spacer()
             }
@@ -1389,10 +1389,15 @@ struct TicketsView: View {
                         }
                         Divider().padding(.vertical, 8)
                         peopleSection(ticket: ticket)
-                        Divider().padding(.vertical, 8)
-                        addCommentSection(ticket: ticket)
-                            .id("addComment")
                         Section {
+                            // The compose space opens here, under the Activity
+                            // bar's Add Comment button, above the feed it adds to.
+                            if isCommentSectionExpanded {
+                                addCommentSection(ticket: ticket)
+                                    .id("addComment")
+                                    .padding(.top, 10)
+                                Divider().padding(.top, 10)
+                            }
                             activityFeed
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.top, 10)
@@ -2023,37 +2028,7 @@ struct TicketsView: View {
 
     private func addCommentSection(ticket: TdxTicket) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Folded by default, like Attachments — the editor, notify options
-            // and buttons only take space when a comment is being written.
-            Button(action: {
-                withAnimation(.easeInOut(duration: 0.15)) { isCommentSectionExpanded.toggle() }
-                if isCommentSectionExpanded { commentFocused = true }
-            }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
-                        .appFont(.caption)
-                        .foregroundColor(.secondary)
-                        .rotationEffect(.degrees(isCommentSectionExpanded ? 90 : 0))
-                    Text("Add Comment")
-                        .appFont(.headline)
-                    if !isCommentSectionExpanded,
-                       !newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text("Draft")
-                            .appFont(.caption)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(Color.accentColor.opacity(0.15))
-                            .foregroundColor(.accentColor)
-                            .clipShape(Capsule())
-                    }
-                    Spacer()
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(isCommentSectionExpanded ? "Hide the comment editor" : "Write a comment")
-
-            if isCommentSectionExpanded {
+            Group {
                 TextEditor(text: $newComment)
                     .appFont(.body)
                     .frame(height: 80)
@@ -2063,20 +2038,27 @@ struct TicketsView: View {
                             .stroke(Color.gray.opacity(0.3), lineWidth: 1)
                     )
 
-                HStack {
-                    Toggle("Private", isOn: $isCommentPrivate)
-                        .toggleStyle(.checkbox)
-                        .appFont(.body)
-                    Spacer()
+                HStack(spacing: 10) {
                     Button("Post Comment") {
                         Task {
                             isAddingComment = true
                             await addComment(ticket: ticket)
                             isAddingComment = false
+                            if newComment.isEmpty { isCommentSectionExpanded = false }
                         }
                     }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: .command)
                     .disabled(newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAddingComment)
-                    .help("Post comment")
+                    .help("Post comment (⌘Return)")
+                    Button("Cancel") {
+                        withAnimation(.easeInOut(duration: 0.15)) { isCommentSectionExpanded = false }
+                    }
+                    .help("Close the comment editor; the draft is kept")
+                    Toggle("Private", isOn: $isCommentPrivate)
+                        .toggleStyle(.checkbox)
+                        .appFont(.body)
+                    Spacer()
                 }
 
                 // Notify options — everyone the web UI offers: the
@@ -2121,13 +2103,6 @@ struct TicketsView: View {
                         .rotationEffect(.degrees(isPeopleExpanded ? 90 : 0))
                     Text("People")
                         .appFont(.headline)
-                    Text(verbatim: "\(ticketContacts.count)")
-                        .appFont(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(Color.secondary.opacity(0.18))
-                        .foregroundColor(.secondary)
-                        .clipShape(Capsule())
                     Spacer()
                 }
                 .contentShape(Rectangle())
@@ -2310,7 +2285,15 @@ struct TicketsView: View {
     /// feed below is showing. Scrolling either of those away leaves you reading
     /// a list with no label on it.
     private var activityHeader: some View {
-        HStack {
+        HStack(spacing: 10) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) { isCommentSectionExpanded.toggle() }
+                if isCommentSectionExpanded { commentFocused = true }
+            } label: {
+                Label(hasCommentDraft && !isCommentSectionExpanded ? "Add Comment (Draft)" : "Add Comment",
+                      systemImage: "square.and.pencil")
+            }
+            .help(isCommentSectionExpanded ? "Close the comment editor" : "Write a comment")
             Text("Activity")
                 .appFont(.headline)
             Spacer()
@@ -2323,6 +2306,10 @@ struct TicketsView: View {
             .pickerStyle(.segmented)
             .frame(width: 320)
         }
+    }
+
+    private var hasCommentDraft: Bool {
+        !newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var activityFeed: some View {

@@ -16,6 +16,7 @@ enum TicketSortField: String, CaseIterable {
 enum TicketViewMode: String, CaseIterable {
     case table = "Table"
     case board = "Board"
+    case inbox = "Inbox"
 }
 
 // MARK: - Date Range Preset
@@ -734,7 +735,7 @@ struct TicketsView: View {
         .task(id: searchText) { await resolveRequestorHits() }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
-                ViewModePill(selection: $viewMode)
+                ViewModePill(selection: $viewMode, inbox: appState.ticketInbox)
 
                 if viewMode == .board {
                     // A menu-style Picker in the toolbar draws an empty
@@ -848,7 +849,9 @@ struct TicketsView: View {
 
     @ViewBuilder
     private var contentSection: some View {
-        if !appState.config.isTdxConfigured {
+        if appState.config.isTdxConfigured && viewMode == .inbox && appState.ticketInbox.isReady {
+            ticketsInboxView
+        } else if !appState.config.isTdxConfigured {
             VStack {
                 ContentUnavailableView(
                     "Not Configured",
@@ -875,6 +878,8 @@ struct TicketsView: View {
                 ticketsTableView
             case .board:
                 ticketsBoardView
+            case .inbox:
+                ticketsInboxView
             }
         }
     }
@@ -888,6 +893,33 @@ struct TicketsView: View {
             detailSidebarView
                 .background(Color(nsColor: .windowBackgroundColor))
         }
+    }
+
+    // MARK: - Inbox + Detail
+
+    private var ticketsInboxView: some View {
+        DetailSplitView(fraction: $detailFraction, showsDetail: selectedTicket != nil) {
+            TicketInboxView(
+                inbox: appState.ticketInbox,
+                onRefresh: { startInbox(scanNow: true) },
+                onSelect: { item in selectedTicketIds = [item.ticketId] }
+            )
+        } trailing: {
+            detailSidebarView
+                .background(Color(nsColor: .windowBackgroundColor))
+        }
+        .task(id: appState.tdxMe?.uid) { startInbox(scanNow: false) }
+    }
+
+    /// Start the inbox once the signed-in person is known. It keeps
+    /// refreshing on its own after that.
+    private func startInbox(scanNow: Bool) {
+        guard let me = appState.tdxMe else {
+            Task { await appState.resolveTdxMe() }
+            return
+        }
+        appState.ticketInbox.start(service: appState.tdxService, me: me)
+        if scanNow { appState.ticketInbox.scan(service: appState.tdxService, me: me) }
     }
 
     // MARK: - Board + Detail
@@ -3317,12 +3349,20 @@ struct TicketStatusBadge: View {
 /// in SegmentedPill so Projects renders an identical one.
 struct ViewModePill: View {
     @Binding var selection: TicketViewMode
+    @ObservedObject var inbox: TicketInboxModel
 
     var body: some View {
         SegmentedPill(
             selection: $selection,
-            options: [.table, .board],
-            label: { $0 == .table ? "List" : "Board" }
+            options: inbox.isReady ? [.table, .board, .inbox] : [.table, .board],
+            label: { mode in
+                switch mode {
+                case .table: "List"
+                case .board: "Board"
+                case .inbox: inbox.unreadCount > 0 ? "Inbox \(inbox.unreadCount)" : "Inbox"
+                }
+            },
+            segmentWidth: nil
         )
     }
 }

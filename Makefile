@@ -258,6 +258,25 @@ release-app:
 			"$(APP_BUNDLE)/Contents/Info.plist"; \
 		echo "$(GREEN)✓ Info.plist set up for $(APP_DISPLAY_NAME)$(NC)"; \
 	fi; \
+	BUNDLE_ID=$$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$(APP_BUNDLE)/Contents/Info.plist"); \
+	AGENT_DIR="$(APP_BUNDLE)/Contents/Library/LaunchAgents"; \
+	AGENT_PLIST="$$AGENT_DIR/$$BUNDLE_ID.inbox-agent.plist"; \
+	mkdir -p "$$AGENT_DIR"; \
+	/usr/libexec/PlistBuddy \
+		-c "Add :Label string $$BUNDLE_ID.inbox-agent" \
+		-c "Add :BundleProgram string Contents/MacOS/$(APP_BUNDLE_EXECUTABLE)" \
+		-c "Add :ProgramArguments array" \
+		-c "Add :ProgramArguments:0 string $(APP_BUNDLE_EXECUTABLE)" \
+		-c "Add :ProgramArguments:1 string --inbox-agent" \
+		-c "Add :AssociatedBundleIdentifiers array" \
+		-c "Add :AssociatedBundleIdentifiers:0 string $$BUNDLE_ID" \
+		-c "Add :RunAtLoad bool true" \
+		-c "Add :KeepAlive dict" \
+		-c "Add :KeepAlive:SuccessfulExit bool false" \
+		-c "Add :ProcessType string Background" \
+		-c "Add :LimitLoadToSessionType string Aqua" \
+		"$$AGENT_PLIST" > /dev/null; \
+	echo "$(GREEN)✓ Inbox helper launch agent: $$BUNDLE_ID.inbox-agent$(NC)"; \
 	echo "$(BLUE)Generating .icns from icon PNG...$(NC)"; \
 	ICONSET_DIR=$$(mktemp -d)/AppIcon.iconset; \
 	mkdir -p "$$ICONSET_DIR"; \

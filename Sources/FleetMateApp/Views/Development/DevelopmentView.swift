@@ -1002,10 +1002,13 @@ private struct DevelopmentContent: View {
                 .help("Only pull requests I created, review or took part in")
                 if !model.repoCounts.isEmpty {
                     RepoFilterMenu(selection: $model.selectedRepo, counts: model.repoCounts)
+                        .layoutPriority(-1)
                 }
                 pullsSortMenu
-                Spacer()
+                Spacer(minLength: 0)
                 Text("\(model.visiblePullRequests(matching: searchText).count) open")
+                    .lineLimit(1)
+                    .fixedSize()
                     .appFont(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -1034,6 +1037,9 @@ private struct DevelopmentContent: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        // A chip keeps its one-line size; the repository menu gives way instead.
+        .lineLimit(1)
+        .fixedSize()
     }
 
     private func repoHeader(_ key: String, count: Int) -> some View {

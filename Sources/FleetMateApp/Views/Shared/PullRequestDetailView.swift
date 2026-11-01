@@ -106,6 +106,13 @@ struct PullRequestDetailView: View {
     @State private var mergeMethod: PullRequestMergeMethod = .squash
     /// Draft state can flip in-app, so it is tracked apart from the row.
     @State private var isDraft: Bool
+    /// Two columns once the detail pane is wide enough for both to read well.
+    @State private var isWide = false
+    private static let wideLayoutWidth: CGFloat = 900
+
+    private var handbookTerms: [String] {
+        [pullRequest.repository, "\(pullRequest.container) \(pullRequest.repository)"]
+    }
 
     init(pullRequest: UnifiedPullRequest, isInline: Bool = false, onActionCompleted: (() -> Void)? = nil) {
         self.pullRequest = pullRequest
@@ -572,19 +579,37 @@ struct PullRequestDetailView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let detail {
-            // One vertical read: Overview, Checks, then Commits, then Changes.
+            // Wide: Overview | Handbook, Comments | Checks and Commits, then
+            // Changes across the full width. Narrow: one column in that order.
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    overviewSection(detail)
-                    if !checks.isEmpty { checksSection }
-                    // The Handbook pages about this repository, beside the change to it.
-                    HandbookRelatedSection(knowledge: appState.knowledge,
-                                           terms: [pullRequest.repository, "\(pullRequest.container) \(pullRequest.repository)"])
-                    commitsSection(detail)
+                    PullRequestColumns(isWide: isWide, knowledge: appState.knowledge, terms: handbookTerms) {
+                        overviewSection(detail)
+                    } trailing: {
+                        HandbookRelatedSection(knowledge: appState.knowledge, terms: handbookTerms)
+                    }
+                    let hasComments = !detail.comments.isEmpty
+                    if isWide {
+                        HStack(alignment: .top, spacing: 16) {
+                            if hasComments {
+                                commentsSection(detail).frame(maxWidth: .infinity, alignment: .topLeading)
+                            }
+                            VStack(alignment: .leading, spacing: 20) {
+                                if !checks.isEmpty { checksSection }
+                                commitsSection(detail)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                        }
+                    } else {
+                        if hasComments { commentsSection(detail) }
+                        if !checks.isEmpty { checksSection }
+                        commitsSection(detail)
+                    }
                     changesSection(detail)
                 }
                 .padding(14)
             }
+            .onGeometryChange(for: Bool.self, of: { $0.size.width >= Self.wideLayoutWidth }) { isWide = $0 }
         } else {
             VStack(spacing: 10) {
                 ProgressView()
@@ -667,6 +692,11 @@ struct PullRequestDetailView: View {
                     .foregroundStyle(.secondary)
             }
 
+        }
+    }
+
+    private func commentsSection(_ detail: PullRequestDetail) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
             let conversation = detail.comments.filter { !$0.isSystem }
             let system = detail.comments.filter(\.isSystem)
 
@@ -810,6 +840,32 @@ struct PullRequestDetailView: View {
             }
         } catch {
             loadError = error.localizedDescription
+        }
+    }
+}
+
+/// The top row: the overview beside the Handbook pages for the repository.
+/// Observes the Handbook itself so the row splits once pages arrive, and keeps
+/// the overview full width when there are none.
+private struct PullRequestColumns<Leading: View, Trailing: View>: View {
+    let isWide: Bool
+    @ObservedObject var knowledge: KnowledgeStore
+    let terms: [String]
+    @ViewBuilder let leading: () -> Leading
+    @ViewBuilder let trailing: () -> Trailing
+
+    var body: some View {
+        let hasHandbook = !knowledge.handbook.related(to: terms, limit: 5).isEmpty
+        if isWide && hasHandbook {
+            HStack(alignment: .top, spacing: 16) {
+                leading().frame(maxWidth: .infinity, alignment: .topLeading)
+                trailing().frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 20) {
+                leading()
+                trailing()
+            }
         }
     }
 }

@@ -380,6 +380,8 @@ struct PullRequestQueueSection: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .lineLimit(1)
+        .fixedSize()
         .help(isSelected ? "Clear the \(source.displayName) filter" : "Show only \(source.displayName)")
     }
 

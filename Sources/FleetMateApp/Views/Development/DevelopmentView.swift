@@ -43,6 +43,14 @@ final class DevelopmentModel: ObservableObject {
     @Published var pullsOldestFirst = UserDefaults.standard.bool(forKey: "development.pulls.oldestFirst") {
         didSet { UserDefaults.standard.set(pullsOldestFirst, forKey: "development.pulls.oldestFirst") }
     }
+    /// Repository groups the Pulls list shows collapsed, by group key
+    /// ("Project/Repo"). Remembered across launches; a new repository opens
+    /// expanded.
+    @Published var collapsedPullGroups = Set(UserDefaults.standard.stringArray(forKey: "development.pulls.collapsedGroups") ?? []) {
+        didSet {
+            UserDefaults.standard.set(collapsedPullGroups.sorted(), forKey: "development.pulls.collapsedGroups")
+        }
+    }
     @Published var selectedPullRequest: UnifiedPullRequest?
     @Published private(set) var availableSources: Set<PullRequestSource> = []
 
@@ -386,6 +394,28 @@ final class DevelopmentModel: ObservableObject {
                 let r = rhs.rows.first?.lastActivity ?? .distantPast
                 return l == r ? lhs.key < rhs.key : (pullsOldestFirst ? l < r : l > r)
             }
+    }
+
+    /// Click a group header to collapse or expand it. With Option held, every
+    /// group follows the one clicked, as in a Finder outline.
+    func togglePullGroup(_ key: String, all: Bool) {
+        let collapse = !collapsedPullGroups.contains(key)
+        if all {
+            setAllPullGroups(collapsed: collapse)
+        } else if collapse {
+            collapsedPullGroups.insert(key)
+        } else {
+            collapsedPullGroups.remove(key)
+        }
+    }
+
+    /// View › Collapse All Groups and Expand All Groups.
+    func setAllPullGroups(collapsed: Bool) {
+        if collapsed {
+            collapsedPullGroups.formUnion(groupedPullRequests(matching: searchText).map(\.key))
+        } else {
+            collapsedPullGroups.removeAll()
+        }
     }
 
     var repoCounts: [(repo: String, count: Int)] {
@@ -933,7 +963,9 @@ private struct DevelopmentContent: View {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         ForEach(model.groupedPullRequests(matching: searchText), id: \.key) { group in
                             Section {
-                                ForEach(group.rows) { pr in pullRequestRow(pr, showRepository: false) }
+                                if !model.collapsedPullGroups.contains(group.key) {
+                                    ForEach(group.rows) { pr in pullRequestRow(pr, showRepository: false) }
+                                }
                             } header: {
                                 repoHeader(group.key, count: group.rows.count)
                             }
@@ -982,6 +1014,11 @@ private struct DevelopmentContent: View {
             .pickerStyle(.inline)
             Divider()
             Toggle("Group by Repository", isOn: $model.pullsGroupedByRepo)
+            if model.pullsGroupedByRepo {
+                Divider()
+                Button("Expand All Groups") { model.setAllPullGroups(collapsed: false) }
+                Button("Collapse All Groups") { model.setAllPullGroups(collapsed: true) }
+            }
         } label: {
             Label("Sort", systemImage: "arrow.up.arrow.down").labelStyle(.iconOnly)
         }
@@ -1052,21 +1089,45 @@ private struct DevelopmentContent: View {
         .fixedSize()
     }
 
+    /// A repository group's header: click to collapse or expand it,
+    /// Option-click to collapse or expand every group.
     private func repoHeader(_ key: String, count: Int) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "folder").appFont(.caption2).foregroundStyle(.secondary)
-            Text(key).appFont(.caption, weight: .semibold, design: .monospaced)
-            Text("\(count)")
-                .appFont(.caption2).monospacedDigit()
-                .padding(.horizontal, 5).padding(.vertical, 1)
-                .background(Color.secondary.opacity(0.15))
-                .clipShape(Capsule())
-                .foregroundStyle(.secondary)
-            Spacer()
+        let collapsed = model.collapsedPullGroups.contains(key)
+        return Button {
+            let all = NSEvent.modifierFlags.contains(.option)
+            withAnimation(.easeInOut(duration: 0.15)) { model.togglePullGroup(key, all: all) }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .appFont(fixed: 10, weight: .semibold)
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(collapsed ? 0 : 90))
+                    .frame(width: 12)
+                Image(systemName: "folder").appFont(.caption2).foregroundStyle(.secondary)
+                Text(key).appFont(.caption, weight: .semibold, design: .monospaced)
+                Text("\(count)")
+                    .appFont(.caption2).monospacedDigit()
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.15))
+                    .clipShape(Capsule())
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background(.bar)
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
-        .background(.bar)
+        .buttonStyle(.plain)
+        .help(collapsed ? "Expand \(key) (Option-click expands every group)" : "Collapse \(key) (Option-click collapses every group)")
+        .accessibilityLabel("\(key), \(count) pull requests")
+        .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
+        .contextMenu {
+            Button(collapsed ? "Expand" : "Collapse") { model.togglePullGroup(key, all: false) }
+            Divider()
+            Button("Expand All Groups") { model.setAllPullGroups(collapsed: false) }
+            Button("Collapse All Groups") { model.setAllPullGroups(collapsed: true) }
+        }
     }
 
     private var emptyPullRequests: some View {

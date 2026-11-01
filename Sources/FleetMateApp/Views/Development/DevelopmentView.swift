@@ -336,6 +336,15 @@ final class DevelopmentModel: ObservableObject {
 
     // MARK: Derived
 
+    func notificationAuthor(_ notification: GitHubNotification) -> String? {
+        guard notification.subjectType == .pullRequest, let number = notification.subjectNumber else { return nil }
+        return queue.pullRequests.first {
+            $0.source == .gitHub && $0.number == number
+                && $0.container.caseInsensitiveCompare(notification.owner) == .orderedSame
+                && $0.repository.caseInsensitiveCompare(notification.repositoryName) == .orderedSame
+        }?.authorName
+    }
+
     var unreadCount: Int { notifications.filter(\.unread).count }
 
     private var sourceScoped: [UnifiedPullRequest] {
@@ -855,21 +864,15 @@ private struct DevelopmentContent: View {
                 segmentWidth: nil
             )
 
-            // The inbox is a glance, not a page: a popover off one button.
-            // The button only appears while there is something unread (or its
-            // popover is open, so marking all read doesn't pull the anchor
-            // out from under it); an empty inbox is not worth toolbar room.
-            if model.unreadCount > 0 || model.showInbox {
-                Button {
-                    model.showInbox.toggle()
-                } label: {
-                    Label("Inbox", systemImage: "tray.full")
-                }
-                .help("Inbox: unread notifications")
-                .popover(isPresented: $model.showInbox, arrowEdge: .bottom) {
-                    inboxList
-                        .frame(width: 440, height: 520)
-                }
+            Button {
+                model.showInbox.toggle()
+                if model.showInbox { model.loadInbox(appState: appState, force: true) }
+            } label: {
+                Label("Inbox", systemImage: model.unreadCount > 0 ? "tray.full" : "tray")
+            }
+            .help(model.inboxError == nil ? "GitHub notification inbox" : "GitHub inbox needs attention")
+            .popover(isPresented: $model.showInbox, arrowEdge: .bottom) {
+                inboxList.frame(width: 440, height: 520)
             }
 
             Button(action: {
@@ -1092,6 +1095,14 @@ private struct DevelopmentContent: View {
                         .foregroundStyle(.secondary)
                 }
                 Button {
+                    model.loadInbox(appState: appState, force: true)
+                } label: {
+                    Label("Refresh Inbox", systemImage: "arrow.clockwise").labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.isLoadingInbox)
+                .help("Refresh GitHub notifications")
+                Button {
                     model.markAllRead(appState: appState)
                 } label: {
                     Label("Mark all read", systemImage: "envelope.open").labelStyle(.iconOnly)
@@ -1105,6 +1116,12 @@ private struct DevelopmentContent: View {
             Divider()
 
             let rows = model.visibleNotifications
+            if let error = model.inboxError, !rows.isEmpty {
+                Text("Refresh failed. Showing previously loaded notifications. \(error)")
+                    .appFont(.caption).foregroundStyle(.secondary).padding(12)
+            }
+            Text("Latest 200 notifications. A PR author is shown when its details are loaded.")
+                .appFont(.caption).foregroundStyle(.secondary).padding(.horizontal, 12)
             if let error = model.inboxError, rows.isEmpty {
                 ContentUnavailableView("Inbox unavailable", systemImage: "bell.slash", description: Text(error))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1127,6 +1144,7 @@ private struct DevelopmentContent: View {
                         ForEach(rows) { notification in
                             InboxRow(
                                 notification: notification,
+                                pullRequestAuthor: model.notificationAuthor(notification),
                                 isBusy: model.busyThreadIds.contains(notification.id),
                                 onOpen: {
                                     model.open(notification, appState: appState)
@@ -1462,6 +1480,7 @@ struct CodePullRequestRow: View {
 /// carries the inbox verbs (read, done, unsubscribe, browser).
 struct InboxRow: View {
     let notification: GitHubNotification
+    var pullRequestAuthor: String? = nil
     let isBusy: Bool
     let onOpen: () -> Void
     let onMarkRead: () -> Void
@@ -1488,6 +1507,10 @@ struct InboxRow: View {
                             .appFont(fixed: 12, weight: notification.unread ? .semibold : .regular)
                             .lineLimit(2)
                             .foregroundStyle(.primary)
+                        if notification.subjectType == .pullRequest {
+                            Text(pullRequestAuthor.map { "PR author: \($0)" } ?? "PR author unavailable")
+                                .appFont(.caption).foregroundStyle(.secondary)
+                        }
                         HStack(spacing: 6) {
                             Text(notification.repository)
                                 .appFont(.caption2, design: .monospaced)

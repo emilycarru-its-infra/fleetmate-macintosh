@@ -136,6 +136,10 @@ struct QueriesListView<MenuContent: View>: View {
     @AppStorage("queriesList.width.changed") private var changedWidth: Double = 80
 
     @State private var sort: QueriesSort? = nil
+    /// The order of the queries themselves, remembered across launches and
+    /// shared with the toolbar's Sort menu and View > Sort Queries By.
+    @AppStorage(QueryListOrder.storageKey) private var queryOrder: QueryListOrder = .default
+    @AppStorage(QueryListOrder.ascendingStorageKey) private var queryOrderAscending = QueryListOrder.default.defaultAscending
     /// Width of the column being dragged, captured at drag start so the
     /// translation applies to a stable baseline.
     @State private var dragBaseWidth: Double? = nil
@@ -305,11 +309,24 @@ struct QueriesListView<MenuContent: View>: View {
     }
 
     /// Click cycles ascending → descending → back to query order.
+    /// Title and Changed also order the queries themselves, so the headers
+    /// still do something visible while every query is collapsed.
     private func cycleSort(_ column: QueriesColumn) {
         if let current = sort, current.column == column {
             sort = current.ascending ? QueriesSort(column: column, ascending: false) : nil
         } else {
             sort = QueriesSort(column: column, ascending: true)
+        }
+        guard let sort else { return }
+        switch column {
+        case .title:
+            queryOrder = .name
+            queryOrderAscending = sort.ascending
+        case .changed:
+            queryOrder = .lastChanged
+            queryOrderAscending = sort.ascending
+        default:
+            break
         }
     }
 
@@ -378,6 +395,7 @@ struct QueriesListView<MenuContent: View>: View {
     /// rows keep their ancestors so tree context survives filtering.
     private var visibleSections: [(bucket: String, runs: [(QueryRunDisplay, [QueryDisplayRow])])] {
         let narrowing = !searchText.isEmpty || filtersActive || !showClosed
+        let positions = self.positions
         var result: [(String, [(QueryRunDisplay, [QueryDisplayRow])])] = []
         for section in sections {
             var visible: [(QueryRunDisplay, [QueryDisplayRow])] = []
@@ -388,17 +406,38 @@ struct QueriesListView<MenuContent: View>: View {
                 }
             }
             if !visible.isEmpty {
-                // Most recently active query first within its area.
-                visible.sort { Self.latestChange($0.0) > Self.latestChange($1.0) }
-                result.append((section.bucket, visible))
+                let orderedRuns = queryOrder.sorted(visible, ascending: queryOrderAscending) { run, rows in
+                    QueryOrderKey(
+                        name: run.query.name,
+                        resultCount: rows.count,
+                        lastChanged: Self.latestChange(run),
+                        position: positions[run.id] ?? .max
+                    )
+                }
+                result.append((section.bucket, orderedRuns))
             }
         }
-        // And the area with the most recent activity first.
-        return result.sorted { lhs, rhs in
-            let l = lhs.1.map { Self.latestChange($0.0) }.max() ?? .distantPast
-            let r = rhs.1.map { Self.latestChange($0.0) }.max() ?? .distantPast
-            return l > r
+        // The project groups follow the same order, keyed on their queries.
+        let orderedSections = queryOrder.sorted(result, ascending: queryOrderAscending) { bucket, runs in
+            QueryOrderKey(
+                name: bucket,
+                resultCount: runs.reduce(0) { $0 + $1.1.count },
+                lastChanged: runs.map { Self.latestChange($0.0) }.max() ?? .distantPast,
+                position: runs.map { positions[$0.0.id] ?? .max }.min() ?? .max
+            )
         }
+        // "General" holds whatever fits no project; by name it reads best last.
+        guard queryOrder == .name else { return orderedSections }
+        return orderedSections.filter { $0.0 != "General" } + orderedSections.filter { $0.0 == "General" }
+    }
+
+    /// Each query's place in the Azure DevOps list, for Query Order.
+    private var positions: [String: Int] {
+        var result: [String: Int] = [:]
+        for (index, run) in sections.flatMap(\.runs).enumerated() where result[run.id] == nil {
+            result[run.id] = index
+        }
+        return result
     }
 
     /// When anything in a query last changed.
@@ -716,5 +755,44 @@ struct QueryWorkItemRow: View {
         default:
             return .blue
         }
+    }
+}
+
+// MARK: - Sort menu
+
+/// The Sort Queries By choices, shared by the toolbar's Sort menu and the
+/// View menu so both show the same checkmarks. Picking a new order starts it
+/// in its natural direction; the second picker flips it.
+struct QuerySortMenuItems: View {
+    @AppStorage(QueryListOrder.storageKey) private var order: QueryListOrder = .default
+    @AppStorage(QueryListOrder.ascendingStorageKey) private var ascending = QueryListOrder.default.defaultAscending
+
+    private var orderBinding: Binding<QueryListOrder> {
+        Binding(
+            get: { order },
+            set: { newValue in
+                if newValue != order { ascending = newValue.defaultAscending }
+                order = newValue
+            }
+        )
+    }
+
+    var body: some View {
+        Picker("Sort Queries By", selection: orderBinding) {
+            ForEach(QueryListOrder.allCases, id: \.self) { option in
+                Text(option.title).tag(option)
+            }
+        }
+        .pickerStyle(.inline)
+        .labelsHidden()
+
+        Divider()
+
+        Picker("Direction", selection: $ascending) {
+            Text(order.directionTitle(ascending: order.defaultAscending)).tag(order.defaultAscending)
+            Text(order.directionTitle(ascending: !order.defaultAscending)).tag(!order.defaultAscending)
+        }
+        .pickerStyle(.inline)
+        .labelsHidden()
     }
 }

@@ -402,6 +402,18 @@ struct BoardsView: View {
                 }
             }
 
+            // The queries list orders its queries, not just the rows inside
+            // them, so sorting works while every query is collapsed.
+            if viewMode == .list && showQueriesList {
+                Menu {
+                    QuerySortMenuItems()
+                } label: {
+                    Label("Sort Queries", systemImage: "arrow.up.arrow.down")
+                }
+                .disabled(queryRuns.isEmpty)
+                .help("Sort queries")
+            }
+
             // Filters, create and refresh sit with the other controls on the
             // leading side rather than split across the window.
             Button(action: { showFilters.toggle() }) {
@@ -834,22 +846,18 @@ struct BoardsView: View {
         appState.config.isDevOpsConfigured && (filterProvider == nil || filterProvider == "azdevops")
     }
 
-    /// Query runs grouped by area-path bucket, queries A→Z inside each bucket,
-    /// buckets A→Z with "General" last.
+    /// Query runs grouped by area-path bucket, in the order Azure DevOps keeps
+    /// the shared queries. The list orders them for display by the chosen
+    /// Sort Queries By setting; this order is what "Query Order" shows.
     private var querySections: [(bucket: String, runs: [QueryRunDisplay])] {
         let runs = sharedQueries.compactMap { queryRuns[$0.id] }
-        let grouped = Dictionary(grouping: runs, by: \.areaBucket)
-        return grouped.keys
-            .sorted { a, b in
-                if a == "General" { return false }
-                if b == "General" { return true }
-                return a.localizedCaseInsensitiveCompare(b) == .orderedAscending
-            }
-            .map { bucket in
-                (bucket, grouped[bucket]!.sorted {
-                    $0.query.name.localizedCaseInsensitiveCompare($1.query.name) == .orderedAscending
-                })
-            }
+        var buckets: [String] = []
+        var grouped: [String: [QueryRunDisplay]] = [:]
+        for run in runs {
+            if grouped[run.areaBucket] == nil { buckets.append(run.areaBucket) }
+            grouped[run.areaBucket, default: []].append(run)
+        }
+        return buckets.map { ($0, grouped[$0] ?? []) }
     }
 
     @ViewBuilder

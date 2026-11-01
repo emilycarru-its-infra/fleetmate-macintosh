@@ -161,7 +161,23 @@ struct TicketsView: View {
     // every parent starts expanded.
     @State private var collapsedTicketIds: Set<Int> = []
 
+    private struct CommentDraft: Equatable {
+        var text: String
+        var isPrivate: Bool
+        var notify: Set<String>
+    }
+
+    private var commentDraft: CommentDraft {
+        CommentDraft(text: newComment, isPrivate: isCommentPrivate, notify: notifySelection)
+    }
+
     // Comment state
+    @State private var detailLoadGate = TicketLoadGate()
+    @State private var feedLoadGate = TicketLoadGate()
+    @State private var feedLoadError: String?
+    @State private var selectionRevision = UUID()
+    @State private var commentDrafts: [Int: CommentDraft] = [:]
+    @State private var commentPostErrors: [Int: String] = [:]
     @State private var newComment = ""
     @State private var isCommentSectionExpanded = false
     @State private var scrollToCommentToken = 0
@@ -646,14 +662,26 @@ struct TicketsView: View {
             }
             contentSection
         }
-        .onChange(of: selectedTicketIds) { _, newIds in
+        .onChange(of: selectedTicketIds) { oldIds, newIds in
+            if let oldId = oldIds.first ?? nil {
+                commentDrafts[oldId] = newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : commentDraft
+            }
+            let nextId = newIds.first ?? nil
+            let draft = nextId.flatMap { commentDrafts[$0] }
             appState.agentSelection = selectedTicket.map(AgentSelection.init(ticket:))
             // A draft belongs to the ticket it was written on — carrying it to
             // the next ticket risks posting it to the wrong conversation.
-            newComment = ""
-            isCommentSectionExpanded = false
-            isCommentPrivate = false
-            notifySelection = []
+            selectionRevision = UUID()
+            detailLoadGate.invalidate()
+            feedLoadGate.invalidate()
+            isLoadingDetail = false
+            isLoadingFeed = false
+            feedLoadError = nil
+            newComment = draft?.text ?? ""
+            isCommentSectionExpanded = draft != nil
+            isCommentPrivate = draft?.isPrivate ?? false
+            notifySelection = draft?.notify ?? []
+            saveErrorMessage = nextId.flatMap { commentPostErrors[$0] }
             ticketContacts = []
             groupMembers = []
             attributePeople = []
@@ -718,7 +746,7 @@ struct TicketsView: View {
         }
         .onAppCommand { command in
             switch command {
-            case .refresh:       loadTickets()
+            case .refresh:       refreshTickets()
             case .newItem:       showCreateTicket = true
             case .toggleFilters: showFilters.toggle()
             case .clearFilters:
@@ -817,7 +845,7 @@ struct TicketsView: View {
                     .environmentObject(appState)
                 }
 
-                Button(action: loadTickets) {
+                Button(action: refreshTickets) {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(isLoading)
@@ -2084,6 +2112,10 @@ struct TicketsView: View {
                     Spacer()
                 }
 
+                Text(isCommentPrivate ? "Only users with access to private ticket activity can see this comment." : "This comment is visible to people who can view the ticket.")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+
                 // Notify options — everyone the web UI offers: the
                 // responsible group, requestor, responsible, contacts, and
                 // people held in custom attributes.
@@ -2340,6 +2372,13 @@ struct TicketsView: View {
             if isLoadingFeed {
                 ProgressView("Loading activity...")
                     .padding()
+            } else if let feedLoadError {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(feedLoadError).foregroundStyle(.secondary)
+                    Button("Retry Activity") {
+                        if let id = selectedTicket?.id { loadTicketFeed(ticketId: id) }
+                    }
+                }
             } else if filteredFeed.isEmpty {
                 Text("No comments yet")
                     .foregroundColor(.secondary)
@@ -2539,36 +2578,57 @@ struct TicketsView: View {
         }
     }
 
+    private func refreshTickets() {
+        loadTickets()
+        guard let id = selectedTicket?.id else { return }
+        loadTicketDetail(ticketId: id)
+        loadTicketFeed(ticketId: id)
+    }
+
     private func loadTicketDetail(ticketId: Int) {
         ticketActivityRevision += 1
+        let request = detailLoadGate.begin(ticketId: ticketId)
+        isLoadingDetail = true
         Task {
-            isLoadingDetail = true
-            defer { isLoadingDetail = false }
+            defer {
+                if detailLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) {
+                    isLoadingDetail = false
+                }
+            }
             do {
-                if let full = try await appState.tdxService.getTicket(id: ticketId) {
-                    guard selectedTicketIds.first == ticketId else { return }
+                let full = try await appState.tdxService.getTicket(id: ticketId)
+                guard detailLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) else { return }
+                if let full {
                     detailedTicket = full
                     populateEditFields(from: full)
                     await loadTicketPeople(ticket: full)
                 }
             } catch {
-                print("Failed to load ticket detail: \(error)")
+                guard detailLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) else { return }
+                saveErrorMessage = "Could not load ticket details: \(error.localizedDescription)"
             }
         }
     }
 
     private func loadTicketFeed(ticketId: Int) {
+        let request = feedLoadGate.begin(ticketId: ticketId)
+        isLoadingFeed = true
+        feedLoadError = nil
+        ticketFeed = []
         Task {
-            isLoadingFeed = true
-            defer { isLoadingFeed = false }
+            defer {
+                if feedLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) {
+                    isLoadingFeed = false
+                }
+            }
             do {
                 let loadedFeed = try await appState.tdxService.getTicketFeed(ticketId: ticketId)
-                guard selectedTicketIds.first == ticketId else { return }
+                guard feedLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) else { return }
                 ticketFeed = loadedFeed
             } catch {
-                guard selectedTicketIds.first == ticketId else { return }
-                print("Failed to load ticket feed: \(error)")
+                guard feedLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) else { return }
                 ticketFeed = []
+                feedLoadError = "Could not load activity: \(error.localizedDescription)"
             }
         }
     }
@@ -2853,8 +2913,14 @@ struct TicketsView: View {
     }
 
     private func addComment(ticket: TdxTicket) async {
+        guard let ticketId = ticket.id else { return }
+        let revision = selectionRevision
+        let submittedDraft = commentDraft
+        let submittedComment = newComment
+        let submittedPrivate = isCommentPrivate
+        let submittedNotify = notifySelection
         var notificationEmails = notifyRecipients(ticket: ticket)
-            .filter { notifySelection.contains($0.id) }
+            .filter { submittedNotify.contains($0.id) }
             .flatMap(\.emails)
         notificationEmails = notificationEmails.reduce(into: []) { result, email in
             guard !result.contains(where: { $0.caseInsensitiveCompare(email) == .orderedSame }) else { return }
@@ -2863,16 +2929,27 @@ struct TicketsView: View {
 
         do {
             _ = try await appState.tdxService.addComment(
-                ticketId: ticket.id ?? 0,
-                comment: newComment,
-                isPrivate: isCommentPrivate,
+                ticketId: ticketId,
+                comment: submittedComment,
+                isPrivate: submittedPrivate,
                 notifyEmails: notificationEmails.isEmpty ? nil : notificationEmails
             )
-            newComment = ""
-            notifySelection = []
-            loadTicketFeed(ticketId: ticket.id ?? 0)
+            commentPostErrors[ticketId] = nil
+            if commentDrafts[ticketId] == submittedDraft { commentDrafts[ticketId] = nil }
+            guard selectionRevision == revision, selectedTicket?.id == ticketId else { return }
+            // Leave anything typed while the request was running untouched.
+            if newComment == submittedComment, isCommentPrivate == submittedPrivate,
+               notifySelection == submittedNotify {
+                newComment = ""
+                isCommentPrivate = false
+                notifySelection = []
+            }
+            loadTicketFeed(ticketId: ticketId)
         } catch {
-            saveErrorMessage = "Comment failed: \(error.localizedDescription)"
+            let message = "Comment failed: \(error.localizedDescription)"
+            commentPostErrors[ticketId] = message
+            guard selectionRevision == revision, selectedTicket?.id == ticketId else { return }
+            saveErrorMessage = message
         }
     }
 
@@ -2899,7 +2976,7 @@ struct TicketsView: View {
 
         let block = "> \(author) wrote:\n\(quoted)\n\n"
         newComment = block + newComment
-        isCommentPrivate = entry.isPrivate == true
+        isCommentPrivate = isCommentPrivate || entry.isPrivate == true
         // The comment box folds by default and sits above the feed, so a reply
         // has to open it and bring it back on screen before focusing.
         isCommentSectionExpanded = true

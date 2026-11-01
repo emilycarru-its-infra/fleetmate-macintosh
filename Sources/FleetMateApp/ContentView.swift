@@ -134,7 +134,7 @@ struct ContentView: View {
                     }
                 }
                 // Last, at the far right, where search is looked for.
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItem(id: "fleetmate.search", placement: .primaryAction) {
                     GlobalSearchToolbarField(width: windowWidth < Self.compactModuleToolbarBelow ? 200 : 300)
                 }
             }

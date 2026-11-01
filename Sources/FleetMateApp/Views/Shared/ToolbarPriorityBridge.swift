@@ -5,22 +5,21 @@ import SwiftUI
 ///
 /// SwiftUI on the macOS 26 SDK has no say over overflow, and AppKit's default
 /// sent the centred module tab bar into the `>>` menu while the current
-/// module's own controls stayed. The tab bar is how every module is reached,
-/// so it must be the last thing to go: this bridges to the window's
+/// module's own controls stayed. Search must remain available as a field;
+/// module navigation follows it in priority. This bridges to the window's
 /// `NSToolbar` and ranks its items —
 ///
-/// - the centred tab bar: `.user`, the highest priority;
-/// - the window-wide items (history, Graphs, Recent Activity, Agent,
-///   Authentication, Search): `.high`;
+/// - Search: `.user`, so it remains a field when other items overflow;
+/// - the centred tab bar and window-wide items (history, Graphs, Recent Activity, Agent,
+///   Authentication): `.high`;
 /// - everything else, which is the visible module's own toolbar: `.low`.
 ///
 /// Before anything overflows, `compactModuleToolbar` has already folded the
 /// module's segment switch into a menu; this ranking only decides what goes
 /// once even that is too wide.
 ///
-/// It also names the search field's item, which SwiftUI leaves without a
-/// label, so the overflow menu and Customize Toolbar show "Search" rather
-/// than a bare magnifier.
+/// Search has a stable toolbar ID and an editable-field fallback, so its
+/// priority does not depend on when SwiftUI supplies an item label.
 struct ToolbarPriorityBridge: NSViewRepresentable {
     /// The labels of the window-wide toolbar items, as their `Label` titles.
     static let windowItemLabels: Set<String> = [
@@ -86,10 +85,14 @@ struct ToolbarPriorityBridge: NSViewRepresentable {
                     continue
                 }
                 let priority: NSToolbarItem.VisibilityPriority
-                if item.itemIdentifier == toolbar.centeredItemIdentifier {
-                    priority = .user
-                } else if item.label.isEmpty, let view = item.view, Self.containsTextField(view) {
+                let isSearch = item.itemIdentifier.rawValue.contains("fleetmate.search")
+                    || item.label == "Search"
+                    || item.view.map(Self.containsTextField) == true
+                if isSearch {
                     nameSearchItem(item)
+                    priority = .user
+                    item.view?.setContentCompressionResistancePriority(.required, for: .horizontal)
+                } else if item.itemIdentifier == toolbar.centeredItemIdentifier {
                     priority = .high
                 } else if ToolbarPriorityBridge.windowItemLabels.contains(item.label) {
                     priority = .high

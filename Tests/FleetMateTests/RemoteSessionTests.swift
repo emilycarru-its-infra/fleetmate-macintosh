@@ -49,7 +49,8 @@ final class RemoteSessionTests: XCTestCase {
         XCTAssertEqual(url.host, "192.168.2.50")
         XCTAssertEqual(url.user, "fleetadmin")
         XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?.password, "p@ss/word:1")
-        XCTAssertEqual(url.password, "p%40ss%2Fword:1", "URL.password keeps the percent-encoding; reserved characters are encoded")
+        XCTAssertEqual(url.password?.removingPercentEncoding, "p@ss/word:1",
+                       "Foundation may encode the colon differently; the password must round-trip")
         XCTAssertFalse(url.absoluteString.contains("p@ss/word:1"))
 
         let noPassword = try XCTUnwrap(launcher.screenSharingURL(address: "192.168.2.50", password: nil))

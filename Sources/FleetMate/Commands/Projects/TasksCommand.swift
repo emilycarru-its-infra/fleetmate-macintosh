@@ -30,7 +30,7 @@ extension TasksCommand {
             abstract: "List tasks from all providers"
         )
 
-        @Option(name: .shortAndLong, help: "Filter by provider (github, gitea, azdo)")
+        @Option(name: .shortAndLong, help: "Filter by provider (github, gitea, azdevops)")
         var provider: String?
 
         @Option(name: .shortAndLong, help: "Filter by state (open, in-progress, closed)")
@@ -48,7 +48,7 @@ extension TasksCommand {
         @Option(name: .shortAndLong, help: "Search in title/description")
         var query: String?
 
-        @Option(name: .shortAndLong, help: "Maximum results per provider")
+        @Option(name: .long, help: "Maximum results per provider")
         var limit: Int = 50
 
         @Flag(name: .long, help: "Include closed tasks")
@@ -139,7 +139,7 @@ extension TasksCommand {
             abstract: "Show task details"
         )
 
-        @Argument(help: "Provider (github, gitea, azdo)")
+        @Argument(help: "Provider (github, gitea, azdevops)")
         var provider: String
 
         @Argument(help: "Task ID")
@@ -203,7 +203,7 @@ extension TasksCommand {
             abstract: "Create a new task"
         )
 
-        @Argument(help: "Provider (github, gitea, azdo)")
+        @Argument(help: "Provider (github, gitea, azdevops)")
         var provider: String
 
         @Option(name: .shortAndLong, help: "Task title")
@@ -505,7 +505,11 @@ extension TasksCommand {
 private func createRegistry(config: FleetMateConfig) async throws -> TaskProviderRegistry {
     let registry = TaskProviderRegistry()
 
-    let azdo = AzureDevOpsTaskProvider(config: config)
+    var azdo = AzureDevOpsTaskProvider(config: config)
+    if await azdo.isEnabled,
+       let service = try? await DevOpsCliSignIn.authenticatedService(config: config, resolveProject: false) {
+        azdo = AzureDevOpsTaskProvider(service: service, config: config)
+    }
     let github = GitHubProjectsTaskProvider(config: config.tasks?.providers.github ?? GitHubProviderConfig())
     let gitea = GiteaTaskProvider(config: config)
 
@@ -517,7 +521,7 @@ private func createRegistry(config: FleetMateConfig) async throws -> TaskProvide
     let authResults = await registry.authenticateAll()
     for (id, success) in authResults {
         if !success {
-            print("Warning: Provider \(id) auth failed (non-fatal)")
+            FileHandle.standardError.write(Data("Warning: Provider \(id) auth failed (non-fatal)\n".utf8))
         }
     }
 

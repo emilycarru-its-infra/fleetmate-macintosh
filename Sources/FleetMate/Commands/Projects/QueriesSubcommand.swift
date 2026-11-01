@@ -130,24 +130,6 @@ struct QueriesSubcommand: AsyncParsableCommand {
     /// subcommand walks.
     static func authenticatedService() async throws -> AzureDevOpsService {
         let config = try FleetMateConfig.load()
-        let service = AzureDevOpsService(config: config)
-        guard service.isConfigured else {
-            print("Azure DevOps not configured.".red)
-            throw ExitCode.failure
-        }
-
-        let tenantId = config.devopsTenantId ?? config.graphTenantId
-        let sso = DevOpsSsoService(tenantId: tenantId)
-        let result = try await sso.refreshAccessToken()
-        guard result.success, let token = result.accessToken else {
-            print("Token acquisition failed: \(result.error ?? "unknown"). Run 'az login'.".red)
-            throw ExitCode.failure
-        }
-        service.setBearerToken(token, expiry: Date().addingTimeInterval(TimeInterval(result.expiresIn ?? 3600)))
-
-        if service.resolvedProject.isEmpty {
-            _ = try await service.discoverProject()
-        }
-        return service
+        return try await DevOpsCliSignIn.authenticatedService(config: config)
     }
 }

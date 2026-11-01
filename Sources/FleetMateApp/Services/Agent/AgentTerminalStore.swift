@@ -258,6 +258,8 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
     private let metadataPath: String
 
     private var lastOutput = Date.distantPast
+    /// When the session last printed or rang its bell; nil until it has.
+    private(set) var lastActivity: Date?
     private var poll: Timer?
 
     var title: String {
@@ -298,7 +300,9 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         }
         view.onBell = { [weak self] in
             Task { @MainActor in
-                guard let self, !self.isShown else { return }
+                guard let self else { return }
+                self.lastActivity = Date()
+                guard !self.isShown else { return }
                 self.activity = .attention
             }
         }
@@ -357,6 +361,7 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
 
     private func noteOutput() {
         lastOutput = Date()
+        lastActivity = lastOutput
         if activity == .idle { activity = .busy }
     }
 
@@ -403,6 +408,15 @@ final class AgentTerminalSession: NSObject, ObservableObject, Identifiable, Loca
         guard proc_name(group, &buffer, UInt32(buffer.count)) > 0 else { return false }
         let name = String(cString: buffer).lowercased()
         return Self.agentPrograms.contains { name.hasPrefix($0) }
+    }
+
+    /// Output is streaming: the program is working.
+    var isRunning: Bool { activity == .busy }
+
+    /// An agent is waiting on the person: it rang its bell out of sight, or
+    /// it sits idle at its prompt.
+    var isPaused: Bool {
+        activity == .attention || (activity == .idle && agentIsForeground)
     }
 
     func terminate() {
@@ -454,7 +468,13 @@ final class AgentTerminalStore: ObservableObject {
         }
     }
     /// The terminal takes the whole window, the tab hidden behind it.
-    @Published var isMaximized = false
+    /// While the panel is open the choice is remembered, so it reopens in
+    /// the mode it was last used in.
+    @Published var isMaximized = false {
+        didSet { if isVisible { UserDefaults.standard.set(isMaximized, forKey: AgentSettingsKey.lastFullWindow) } }
+    }
+    /// Whether the terminal was last used filling the window rather than split.
+    var lastUsedFullWindow: Bool { UserDefaults.standard.bool(forKey: AgentSettingsKey.lastFullWindow) }
     /// What ⌘T opens. Kept current by the window from the person's settings.
     var defaultLaunch: AgentLaunch = .shell
     /// What to tell a new session about where it is, given its directory.
@@ -596,6 +616,13 @@ final class AgentTerminalStore: ObservableObject {
         }
     }
 
+    /// Show the panel in the mode it was last used in: split or full window.
+    func expand(defaultLaunch: AgentLaunch) {
+        let fullWindow = lastUsedFullWindow
+        show(defaultLaunch: defaultLaunch)
+        isMaximized = fullWindow
+    }
+
     /// Hide the panel into the strip; the keyboard goes back to the content.
     func hide() {
         isVisible = false
@@ -672,12 +699,7 @@ final class AgentTerminalStore: ObservableObject {
     }
 
     func toggle(defaultLaunch: AgentLaunch) {
-        if sessions.isEmpty {
-            open(defaultLaunch)
-        } else {
-            isVisible.toggle()
-            if isVisible { selected?.wantsFocus = true }
-        }
+        if isShowing { hide() } else { expand(defaultLaunch: defaultLaunch) }
     }
 
     /// Put `text` into an agent's input without pressing Return, showing the
@@ -765,6 +787,13 @@ enum AgentSettingsKey {
     static let autoStart = "agentAutoStart"
     static let repos = "agentRepos"
     static let panelHeight = "agentPanelHeight"
+    /// The terminal was last open filling the window rather than split.
+    static let lastFullWindow = "agentTerminalLastFullWindow"
+    /// Session list filters, sort and search in the terminal's sidebar.
+    static let filterActive = "agentTerminalFilterActive"
+    static let filterRunning = "agentTerminalFilterRunning"
+    static let filterPaused = "agentTerminalFilterPaused"
+    static let sortMode = "agentTerminalSortMode"
     /// Points the terminal's text is above or below the app's text size.
     static let fontOffset = "agentTerminalFontOffset"
     /// Keep codex and claude at their latest versions. Default on.

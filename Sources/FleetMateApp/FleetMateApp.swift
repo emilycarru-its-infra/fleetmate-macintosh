@@ -726,6 +726,22 @@ class AppState: ObservableObject {
         }
     }
 
+    /// Start one domain's session now, from the Authentication popover, so
+    /// the cold start is paid before the action that needs it. Re-reads the
+    /// container afterwards either way, and keeps polling.
+    func startElevationSession(_ domain: GraphDomain) async {
+        guard config.graphUsesAze, !elevationCreating.contains(domain) else { return }
+        elevationCreating.insert(domain)
+        do {
+            try await ElevationSession().ensureSession(domain)
+        } catch {
+            dbg.error("Elevated session start failed for \(domain.rawValue): \(error)", category: "elevation")
+        }
+        elevationCreating.remove(domain)
+        await refreshElevationInfo()
+        startElevationPolling()
+    }
+
     /// Re-read the containers every five minutes; az calls are cheap but not
     /// free, and the expiry tag covers the time in between.
     private func startElevationPolling() {

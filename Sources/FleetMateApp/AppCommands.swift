@@ -168,21 +168,19 @@ struct FleetMateCommands: Commands {
                 AgentTerminalMenuItems(terminals: appState.terminals,
                                        defaultLaunch: { appState.agentDefaultLaunch })
                 Button("Terminal Split View") {
-                    let terminals = appState.terminals
-                    terminals.show(defaultLaunch: appState.agentDefaultLaunch)
-                    terminals.isMaximized = false
-                    let available = NSApp.keyWindow?.contentLayoutRect.height ?? 800
-                    UserDefaults.standard.set(max(120, (available - 36) / 2), forKey: AgentSettingsKey.panelHeight)
+                    AgentTerminalDock.splitView(appState.terminals, defaultLaunch: appState.agentDefaultLaunch)
                 }
                 Button("New Terminal Session") { appState.terminals.open(appState.agentDefaultLaunch) }
                     .keyboardShortcut("t", modifiers: .command)
                 Button("Terminal Full Window") {
                     let terminals = appState.terminals
-                    if terminals.sessions.isEmpty { terminals.open(appState.agentDefaultLaunch) }
+                    if terminals.selected == nil { terminals.open(appState.agentDefaultLaunch) }
                     terminals.isVisible = true
                     terminals.isMaximized.toggle()
                 }
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
+                AgentWorkspaceMenuItems(terminals: appState.terminals)
+                AgentSessionListMenuItem(terminals: appState.terminals)
 
                 Divider()
             }

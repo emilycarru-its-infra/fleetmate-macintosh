@@ -1,11 +1,11 @@
 import SwiftUI
 import AppKit
 
-/// A persistent top-edge strip holds icon controls for visibility and size.
-/// The terminal and strip behave as one split: drag the divider down to the
-/// bottom and the terminal folds into the strip, drag the strip up (or click
-/// it) and it opens at the height it had. Double-clicking the divider closes
-/// it. ⌃` and View › Show/Hide Agent Terminal do the same from anywhere.
+/// The terminal under the tab, split at a divider: drag it to resize, drag
+/// it to the bottom or double-click it to hide the terminal, drag it to the
+/// top to fill the window. Nothing shows while the terminal is hidden; the
+/// toolbar's Agent button, ⌘J and ⌃` bring it back in its last mode. The
+/// layout and hide controls are in the session list's header.
 struct AgentTerminalDock: View {
     @ObservedObject var store: AgentTerminalStore
     let repos: [String]
@@ -19,12 +19,11 @@ struct AgentTerminalDock: View {
     @State private var liveHeight: Double?
 
     static let minimumHeight: Double = 120
-    /// Released below this, the panel closes into the strip.
+    /// Released below this, the panel closes.
     static let snapHeight: Double = 80
 
     var body: some View {
         VStack(spacing: 0) {
-            AgentTerminalStrip(store: store, defaultLaunch: defaultLaunch)
             if store.isShowing {
                 if !store.isMaximized { divider }
                 AgentTerminalPanel(store: store, repos: repos, defaultLaunch: defaultLaunch)
@@ -34,9 +33,17 @@ struct AgentTerminalDock: View {
         }
     }
 
+    /// Show the terminal at half the window's height.
+    static func splitView(_ store: AgentTerminalStore, defaultLaunch: AgentLaunch) {
+        store.show(defaultLaunch: defaultLaunch)
+        store.isMaximized = false
+        let available = NSApp.keyWindow?.contentLayoutRect.height ?? 800
+        UserDefaults.standard.set(max(minimumHeight, (available - 36) / 2), forKey: AgentSettingsKey.panelHeight)
+    }
+
     private var divider: some View {
         Rectangle()
-            .fill(Color.secondary.opacity(0.25))
+            .fill(Color(nsColor: .separatorColor))
             .frame(height: 1)
             .padding(.vertical, 2)
             .contentShape(Rectangle().inset(by: -3))
@@ -80,137 +87,8 @@ struct AgentTerminalDock: View {
     }
 }
 
-/// The bar on the terminal's top edge: icon controls to split, fill the
-/// window or hide, then the agent and its sessions. Clicking anywhere on the
-/// bar while the terminal is closed opens it in the mode it was last used
-/// in. Plain text throughout; nothing here is a badge.
-struct AgentTerminalStrip: View {
-    @ObservedObject var store: AgentTerminalStore
-    let defaultLaunch: AgentLaunch
-    @State private var hovered = false
-    @AppStorage(AgentSettingsKey.panelHeight) private var panelHeight: Double = 280
-
-    static let height: CGFloat = 32
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Divider()
-            ViewThatFits(in: .horizontal) {
-                stripContent(details: true)
-                stripContent(details: false)
-            }
-        }
-        .background(hovered && !store.isShowing ? Color.secondary.opacity(0.08) : Color.secondary.opacity(0.04))
-        .contentShape(Rectangle())
-        .onHover { hovered = $0 }
-        .onTapGesture { if !store.isShowing { store.expand(defaultLaunch: defaultLaunch) } }
-        .gesture(
-            DragGesture(minimumDistance: 4)
-                .onEnded { value in
-                    if value.translation.height < -8, !store.isShowing {
-                        store.expand(defaultLaunch: defaultLaunch)
-                    } else if value.translation.height > 8, store.isShowing {
-                        store.hide()
-                    }
-                }
-        )
-        .help(store.isShowing ? "" : "Show the Agent Terminal (⌃`) — click or drag up")
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Agent Terminal, \(status)")
-        .accessibilityAction(named: store.isShowing ? "Hide Agent Terminal" : "Show Agent Terminal", toggleShown)
-    }
-
-    private func stripContent(details: Bool) -> some View {
-        HStack(spacing: 8) {
-            controls
-            Divider().frame(height: 14)
-            Image(systemName: ContentView.agentSymbol)
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-            if details { Text("Agent").appFont(.caption, weight: .semibold).fixedSize() }
-            if details {
-                Text(defaultLaunch.label).appFont(.caption).foregroundStyle(.secondary).fixedSize()
-            }
-            // Session activity changes without the store publishing, so
-            // read it on a slow tick rather than re-rendering the window.
-            if details {
-                TimelineView(.periodic(from: .now, by: 1.5)) { _ in
-                    Text(status).appFont(.caption).foregroundStyle(.secondary).fixedSize()
-                }
-            }
-            Spacer(minLength: 8)
-            Button(action: toggleShown) {
-                Capsule().fill(.secondary.opacity(0.4)).frame(width: 28, height: 4)
-                    .frame(width: 36, height: 22)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel(store.isShowing ? "Collapse terminal" : "Open terminal")
-            .help("Click to show or hide the terminal; drag to open or close")
-            Spacer(minLength: 8)
-        }
-        .fixedSize(horizontal: false, vertical: true)
-        .buttonStyle(.borderless)
-        .padding(.horizontal, 10)
-        .frame(height: Self.height - 1)
-    }
-
-    /// Split, full window and show/hide as icon buttons. The mode the
-    /// terminal is in is drawn in the accent colour, as a panel toggle is.
-    private var controls: some View {
-        HStack(spacing: 2) {
-            StripIconButton(symbol: "rectangle.split.1x2",
-                            label: "Split View",
-                            help: "Show FleetMate and the terminal at half height",
-                            isOn: store.isShowing && !store.isMaximized,
-                            action: splitView)
-            StripIconButton(symbol: isFullWindow ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
-                            label: isFullWindow ? "Restore Terminal Height" : "Full Window",
-                            help: isFullWindow ? "Restore the terminal to its height (⇧⌘↩)" : "Fill the window with the terminal (⇧⌘↩)",
-                            isOn: isFullWindow,
-                            action: toggleFullWindow)
-            StripIconButton(symbol: store.isShowing ? "chevron.down" : "chevron.up",
-                            label: store.isShowing ? "Hide Terminal" : "Show Terminal",
-                            help: store.isShowing ? "Hide the Agent Terminal (⌃`)" : "Show the Agent Terminal in its last mode (⌃`)",
-                            isOn: false,
-                            action: toggleShown)
-        }
-    }
-
-    private var isFullWindow: Bool { store.isShowing && store.isMaximized }
-
-    private func splitView() {
-        store.show(defaultLaunch: defaultLaunch)
-        store.isMaximized = false
-        panelHeight = max(120, ((NSApp.keyWindow?.contentLayoutRect.height ?? 800) - 36) / 2)
-    }
-
-    private func toggleShown() {
-        if store.isShowing { store.hide() } else { store.expand(defaultLaunch: defaultLaunch) }
-    }
-
-    private func toggleFullWindow() {
-        if isFullWindow {
-            store.isMaximized = false
-        } else {
-            store.show(defaultLaunch: defaultLaunch)
-            store.isMaximized = true
-        }
-    }
-
-    private var status: String {
-        let sessions = store.sessions
-        guard !sessions.isEmpty else { return "No sessions" }
-        var text = sessions.count == 1 ? "1 session" : "\(sessions.count) sessions"
-        if sessions.contains(where: { $0.activity == .attention }) {
-            text += " · waiting for you"
-        } else if sessions.contains(where: { $0.activity == .busy }) {
-            text += " · working"
-        }
-        return text
-    }
-}
-
-/// View › Show/Hide Agent Terminal, titled by what it will do.
+/// View › Show/Hide Agent (⌘J), titled by what it will do. ⌃` does the
+/// same from the toolbar control and from inside a terminal.
 struct AgentTerminalMenuItems: View {
     @ObservedObject var terminals: AgentTerminalStore
     let defaultLaunch: () -> AgentLaunch
@@ -223,40 +101,90 @@ struct AgentTerminalMenuItems: View {
                 terminals.expand(defaultLaunch: defaultLaunch())
             }
         } label: {
-            Label(terminals.isShowing ? "Hide Agent Terminal" : "Show Agent Terminal",
+            Label(terminals.isShowing ? "Hide Agent" : "Show Agent",
                   systemImage: ContentView.agentSymbol)
         }
-        .keyboardShortcut("`", modifiers: .control)
+        .keyboardShortcut("j", modifiers: .command)
     }
 }
 
-/// A borderless icon button on the strip, with its name as tooltip and
-/// accessibility label. `isOn` marks the mode the terminal is in.
-private struct StripIconButton: View {
-    let symbol: String
-    let label: String
-    let help: String
-    let isOn: Bool
-    let action: () -> Void
-    @State private var hovered = false
+/// View › Terminal Workspaces: the same menu as the session list's. Saving
+/// opens the terminal so the session list can ask for the name.
+struct AgentWorkspaceMenuItems: View {
+    @ObservedObject var terminals: AgentTerminalStore
 
     var body: some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .appFont(.caption, weight: .medium)
-                .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                .frame(width: 24, height: 22)
-                .background(
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(isOn ? Color.accentColor.opacity(0.15)
-                              : hovered ? Color.primary.opacity(0.08) : .clear)
-                )
-                .contentShape(Rectangle())
+        Menu("Terminal Workspaces") {
+            AgentWorkspaceMenuContent(store: terminals) {
+                terminals.isVisible = true
+                terminals.savingWorkspaceRequested = true
+            }
+        }
+        .onAppear(perform: terminals.reloadWorkspaces)
+    }
+}
+
+/// View › Show/Hide Session List, ⌃⌘S as in any Mac sidebar.
+struct AgentSessionListMenuItem: View {
+    @ObservedObject var terminals: AgentTerminalStore
+
+    var body: some View {
+        let collapsed = terminals.listCollapsedOverride ?? (terminals.sessions.count < 2)
+        Button(collapsed ? "Show Terminal Session List" : "Hide Terminal Session List") {
+            terminals.listCollapsedOverride = !collapsed
+        }
+        .keyboardShortcut("s", modifiers: [.control, .command])
+        .disabled(!terminals.isShowing)
+    }
+}
+
+/// The toolbar's Agent control: the first item at the far left, filled with the
+/// accent colour so it reads as the app's main action rather than one more
+/// glyph. ⌘J (View › Show Agent) and ⌃` toggle it from anywhere; while the
+/// terminal is open the icon becomes a check so the state is still visible.
+struct AgentModeToolbarToggle: View {
+    @ObservedObject var terminals: AgentTerminalStore
+    let defaultLaunch: AgentLaunch
+
+    var body: some View {
+        Button {
+            terminals.toggle(defaultLaunch: defaultLaunch)
+        } label: {
+            // The window toolbar strips bordered-prominent tint, so the
+            // capsule is drawn here. Closed, it is accent-tinted glass that
+            // calls for attention; open, it goes neutral and shows a check.
+            Label("Agent", systemImage: terminals.isShowing ? "checkmark" : ContentView.agentSymbol)
+                .labelStyle(.titleAndIcon)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(terminals.isShowing ? Color.primary : Color.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .modifier(AgentButtonSurface(active: terminals.isShowing))
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .onHover { hovered = $0 }
-        .help(help)
-        .accessibilityLabel(label)
-        .accessibilityAddTraits(isOn ? .isSelected : [])
+        .keyboardShortcut("`", modifiers: .control)
+        .help(terminals.isShowing ? "Hide the agent terminal (⌘J or ⌃`)" : "Work with the agent in the terminal (⌘J or ⌃`)")
+        .accessibilityLabel("Agent")
+        .accessibilityValue(terminals.isShowing ? "On" : "Off")
+        .accessibilityAddTraits(terminals.isShowing ? .isSelected : [])
+    }
+}
+
+/// Liquid Glass on macOS 26, a plain filled capsule before it.
+private struct AgentButtonSurface: ViewModifier {
+    let active: Bool
+
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.glassEffect(
+                active ? .regular.interactive() : .regular.tint(.accentColor).interactive(),
+                in: .capsule
+            )
+        } else {
+            content.background(
+                Capsule().fill(active ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Color.accentColor))
+            )
+        }
     }
 }

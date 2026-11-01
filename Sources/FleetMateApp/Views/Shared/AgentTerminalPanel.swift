@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftTerm
+import UniformTypeIdentifiers
 import FleetMateCore
 
 /// Hosts a session's terminal and hands it keyboard focus once it is
@@ -63,7 +64,10 @@ struct AgentTerminalPanel: View {
     let repos: [String]
     let defaultLaunch: AgentLaunch
     /// A hand toggle, kept until the number of sessions changes.
-    @State private var listOverride: Bool?
+    /// The expanded list's width, dragged at its divider and remembered.
+    @AppStorage(AgentSettingsKey.listWidth) private var listWidth: Double = 250
+    @State private var listDragStart: Double?
+    static let listWidthRange: ClosedRange<Double> = 180...520
     @State private var sectionEditor = false
     @State private var editingSection: String?
     @State private var sectionName = ""
@@ -72,14 +76,22 @@ struct AgentTerminalPanel: View {
     @AppStorage(AgentSettingsKey.filterPaused) private var filterPaused = false
     @AppStorage(AgentSettingsKey.sortMode) private var sortModeRaw = TerminalSessionSort.manual.rawValue
     @State private var searchText = ""
+    @State private var savingWorkspace = false
+    @State private var workspaceName = ""
+    /// The session being dragged in the list, and the row or section it is over.
+    @State private var draggingId: AgentTerminalSession.ID?
+    @State private var dropTarget: String?
 
-    private var listCollapsed: Bool { listOverride ?? (store.sessions.count < 2) }
+    /// Rows drag as this private type, so a row dropped on a terminal is not pasted as text.
+    static let sessionDragType = UTType(exportedAs: "app.fleetmate.terminal-session")
+
+    private var listCollapsed: Bool { store.listCollapsedOverride ?? (store.sessions.count < 2) }
 
     var body: some View {
         HStack(spacing: 0) {
             sessionList
-                .frame(width: listCollapsed ? 34 : 250)
-            Divider()
+                .frame(width: listCollapsed ? 34 : CGFloat(min(max(listWidth, Self.listWidthRange.lowerBound), Self.listWidthRange.upperBound)))
+            listDivider
             HStack(spacing: 0) {
                 if let session = store.selected {
                     pane(session)
@@ -92,11 +104,17 @@ struct AgentTerminalPanel: View {
         }
         .background(SwiftUI.Color(nsColor: .textBackgroundColor))
         .overlay(alignment: .top) {
-            if let error = store.workspaceError {
+            if let error = store.workspaceError ?? store.workspaceFileError {
                 Text(error).font(.caption).padding(6).background(.regularMaterial)
             }
         }
-        .onChange(of: store.sessions.count) { _, _ in listOverride = nil }
+        .onChange(of: store.sessions.count) { _, _ in store.listCollapsedOverride = nil }
+        .onAppear(perform: store.reloadWorkspaces)
+        // Back from editing the file by hand, or from tracking a repository
+        // elsewhere: read both again.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            store.syncBaseline()
+        }
     }
 
     private func pane(_ session: AgentTerminalSession) -> some View {
@@ -107,25 +125,16 @@ struct AgentTerminalPanel: View {
 
     private var sessionList: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                if !listCollapsed {
-                    Text("Sessions").appFont(.caption, weight: .semibold).foregroundStyle(.secondary)
-                    Text("\(store.sessions.count)").appFont(.caption2).monospacedDigit().foregroundStyle(.tertiary)
-                    Spacer(minLength: 4)
-                    newSessionMenu
-                    Button(action: store.toggleSplit) {
-                        Label("Split", systemImage: store.splitId == nil ? "rectangle.split.2x1" : "rectangle")
-                            .labelStyle(.iconOnly)
+            Group {
+                if listCollapsed {
+                    listToggle
+                } else {
+                    // Narrow, the title gives way before any control does.
+                    ViewThatFits(in: .horizontal) {
+                        header(titled: true)
+                        header(titled: false)
                     }
-                    .buttonStyle(.borderless)
-                    .help(store.splitId == nil ? "Split (⌘D)" : "Unsplit (⌘D)")
                 }
-                Button(action: { listOverride = !listCollapsed }) {
-                    Label("Collapse", systemImage: listCollapsed ? "sidebar.left" : "sidebar.squares.left")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.borderless)
-                .help(listCollapsed ? "Show session names" : "Collapse the session list")
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
@@ -136,6 +145,8 @@ struct AgentTerminalPanel: View {
                     newSessionMenu
                         .menuIndicator(.hidden)
                         .fixedSize()
+                    layoutButton
+                    hideButton
                 }
                 .padding(.bottom, 6)
             }
@@ -160,6 +171,75 @@ struct AgentTerminalPanel: View {
             }
         }
         .background(SwiftUI.Color.secondary.opacity(0.05))
+        .popover(isPresented: $savingWorkspace, arrowEdge: .top) {
+            AgentNamePopover(title: "Save Workspace", name: $workspaceName,
+                             save: {
+                                 store.saveWorkspace(named: workspaceName)
+                                 savingWorkspace = false
+                             },
+                             cancel: { savingWorkspace = false })
+        }
+        // View › Save Sessions as Workspace… asks here, where the name popover can anchor.
+        .onChange(of: store.savingWorkspaceRequested) { _, requested in
+            guard requested else { return }
+            store.savingWorkspaceRequested = false
+            beginSavingWorkspace()
+        }
+    }
+
+    private func header(titled: Bool) -> some View {
+        HStack(spacing: 6) {
+            if titled {
+                Text("Sessions").appFont(.caption, weight: .semibold).foregroundStyle(.secondary).fixedSize()
+                Text("\(store.startedSessions.count)").appFont(.caption2).monospacedDigit().foregroundStyle(.tertiary)
+                    .help("Sessions running")
+            }
+            Spacer(minLength: 4)
+            workspacesMenu
+            newSessionMenu
+            Button(action: store.toggleSplit) {
+                Label("Split", systemImage: store.splitId == nil ? "rectangle.split.2x1" : "rectangle")
+                    .labelStyle(.iconOnly)
+            }
+            .buttonStyle(.borderless)
+            .help(store.splitId == nil ? "Split (⌘D)" : "Unsplit (⌘D)")
+            layoutButton
+            hideButton
+            listToggle
+        }
+    }
+
+    private var listToggle: some View {
+        Button(action: { store.listCollapsedOverride = !listCollapsed }) {
+            Label("Collapse", systemImage: listCollapsed ? "sidebar.left" : "sidebar.squares.left")
+                .labelStyle(.iconOnly)
+        }
+        .buttonStyle(.borderless)
+        .help(listCollapsed ? "Show session names (⌃⌘S)" : "Collapse the session list (⌃⌘S)")
+        .accessibilityLabel(listCollapsed ? "Show Session List" : "Collapse Session List")
+    }
+
+    /// Fill the window, or go back to sharing it with the tab at the height
+    /// the terminal had; View › Terminal Full Window does the same.
+    private var layoutButton: some View {
+        Button {
+            store.isMaximized.toggle()
+        } label: {
+            Label(store.isMaximized ? "Split View" : "Full Window",
+                  systemImage: store.isMaximized ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                .labelStyle(.iconOnly)
+        }
+        .buttonStyle(.borderless)
+        .help(store.isMaximized ? "Share the window with the tab (⇧⌘↩)" : "Fill the window with the terminal (⇧⌘↩)")
+    }
+
+    /// Hide the terminal; the toolbar's Agent button, ⌘J or ⌃` bring it back.
+    private var hideButton: some View {
+        Button(action: store.hide) {
+            Label("Hide Agent", systemImage: "chevron.down").labelStyle(.iconOnly)
+        }
+        .buttonStyle(.borderless)
+        .help("Hide the terminal (⌘J or ⌃`)")
     }
 
     private var sortMode: TerminalSessionSort { TerminalSessionSort(rawValue: sortModeRaw) ?? .manual }
@@ -172,8 +252,8 @@ struct AgentTerminalPanel: View {
         TerminalSessionTraits(isAgent: session.agentIsForeground,
                               isRunning: session.isRunning,
                               isPaused: session.isPaused,
-                              searchable: [session.title, session.shortDirectory, session.section,
-                                           session.programTitle ?? session.launch.label],
+                              searchable: [session.title, session.shortDirectory, session.breadcrumb, session.section,
+                                           session.label ?? "", session.programTitle ?? session.launch.label],
                               lastActivity: session.lastActivity)
     }
 
@@ -184,7 +264,143 @@ struct AgentTerminalPanel: View {
                    sections: store.sections,
                    move: { store.move(session, to: $0) },
                    select: { store.select(session.id) },
-                   close: { store.close(session.id) })
+                   close: { store.close(session.id) },
+                   rename: { store.rename(session, to: $0) },
+                   pin: { store.setPinned(session, $0) },
+                   currentCommand: store.command(of: session),
+                   switchAgent: { switchAgent(session, to: $0) },
+                   duplicate: { store.duplicate(session, command: $0) })
+        // Drag a row onto another to put it there, in that row's section.
+        .onDrag {
+            draggingId = session.id
+            let provider = NSItemProvider()
+            provider.registerDataRepresentation(forTypeIdentifier: Self.sessionDragType.identifier, visibility: .ownProcess) { done in
+                done(Data(session.id.uuidString.utf8), nil)
+                return nil
+            }
+            return provider
+        }
+        .onDrop(of: [Self.sessionDragType], isTargeted: dropBinding("row:\(session.id)")) { _ in
+            drop(before: session.id, in: session.section)
+        }
+        .overlay(alignment: .top) { dropLine(dropTarget == "row:\(session.id)") }
+    }
+
+    /// Switch straight away, unless the session is working: then ask first,
+    /// as a sheet on the window, since switching ends what it is doing.
+    private func switchAgent(_ session: AgentTerminalSession, to command: String) {
+        guard session.isStarted, session.isRunning else {
+            store.switchAgent(session, to: command)
+            return
+        }
+        let label = AgentLaunch(command: command).label
+        let alert = NSAlert()
+        alert.messageText = "Switch “\(session.title)” to \(label)?"
+        alert.informativeText = "The session is working. Switching ends what it is running and starts \(label) in the same folder."
+        alert.addButton(withTitle: "Switch")
+        alert.addButton(withTitle: "Cancel")
+        let store = store
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            if response == .alertFirstButtonReturn { store.switchAgent(session, to: command) }
+        }
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            alert.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            finish(alert.runModal())
+        }
+    }
+
+    private func dropBinding(_ key: String) -> Binding<Bool> {
+        Binding(get: { dropTarget == key },
+                set: { inside in
+                    if inside { dropTarget = key } else if dropTarget == key { dropTarget = nil }
+                })
+    }
+
+    private func drop(before target: AgentTerminalSession.ID?, in section: String) -> Bool {
+        defer { draggingId = nil; dropTarget = nil }
+        guard let id = draggingId else { return false }
+        store.moveSession(id, before: target, in: section)
+        return true
+    }
+
+    private func dropLine(_ shown: Bool) -> some View {
+        Rectangle().fill(Color.accentColor).frame(height: 2).opacity(shown ? 1 : 0)
+            .allowsHitTesting(false)
+    }
+
+    // MARK: Workspaces
+
+    private var workspacesMenu: some View {
+        Menu {
+            AgentWorkspaceMenuContent(store: store, saveSessions: beginSavingWorkspace)
+        } label: {
+            Label("Workspaces", systemImage: "square.stack.3d.up").labelStyle(.iconOnly)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Open, save and choose the workspace FleetMate opens at launch")
+        .accessibilityLabel("Workspaces")
+    }
+
+    private func beginSavingWorkspace() {
+        workspaceName = store.workspaceFile.launchWorkspace?.name ?? ""
+        savingWorkspace = true
+    }
+
+    /// Drag to widen or narrow the session list; double-click collapses or
+    /// expands it, as the sidebar button and View › Show Session List do.
+    private var listDivider: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor))
+            .frame(width: 1)
+            .contentShape(Rectangle().inset(by: -3))
+            .onHover { inside in
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        if listCollapsed {
+                            store.listCollapsedOverride = false
+                        }
+                        let start = listDragStart ?? (listCollapsed ? Self.listWidthRange.lowerBound : listWidth)
+                        listDragStart = start
+                        listWidth = min(max(start + value.translation.width, Self.listWidthRange.lowerBound),
+                                        Self.listWidthRange.upperBound)
+                    }
+                    .onEnded { _ in listDragStart = nil }
+            )
+            .onTapGesture(count: 2) { store.listCollapsedOverride = !listCollapsed }
+            .help("Drag to resize the session list; double-click to collapse or expand it")
+            .accessibilityElement()
+            .accessibilityLabel("Session list divider")
+            .accessibilityValue(listCollapsed ? "Collapsed" : "\(Int(listWidth)) points")
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(named: listCollapsed ? "Expand Session List" : "Collapse Session List") {
+                store.listCollapsedOverride = !listCollapsed
+            }
+    }
+
+    /// Open the workspaces file in its editor, or show it in Finder, writing
+    /// an empty one first so there is something to edit.
+    static func openWorkspacesFile(reveal: Bool) {
+        let path = TerminalWorkspaceStore.defaultPath
+        if !FileManager.default.fileExists(atPath: path) {
+            try? TerminalWorkspaceStore.save(TerminalWorkspaceFile(), to: path)
+        }
+        let url = URL(fileURLWithPath: path)
+        if reveal {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            // JSON may have no default app; TextEdit always opens it.
+            let editor = NSWorkspace.shared.urlForApplication(toOpen: url)
+                ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.TextEdit")
+            if let editor {
+                NSWorkspace.shared.open([url], withApplicationAt: editor, configuration: NSWorkspace.OpenConfiguration())
+            }
+        }
     }
 
     /// Sessions under their section headers. Filtered, sections with no
@@ -193,9 +409,17 @@ struct AgentTerminalPanel: View {
     private func sectionedRows(filtered: Bool) -> some View {
         let indexed = Array(store.sessions.enumerated())
         let shown = filtered ? indexed.filter { filter.matches(traits($0.element)) } : indexed
+        let pinned = shown.filter { $0.element.pinned }
         return LazyVStack(spacing: 1) {
+            // Pinned sessions head the list, out of their own sections.
+            if !pinned.isEmpty {
+                if !listCollapsed { pinnedHeader }
+                if listCollapsed || filtered || !store.collapsedSections.contains(Self.pinnedSection) {
+                    ForEach(pinned, id: \.element.id) { index, session in row(session, index: index) }
+                }
+            }
             ForEach(store.sections, id: \.self) { section in
-                let rows = shown.filter { $0.element.section == section }
+                let rows = shown.filter { $0.element.section == section && !$0.element.pinned }
                 if !(filtered && rows.isEmpty) {
                     if !listCollapsed { sectionHeader(section) }
                     if listCollapsed || filtered || !store.collapsedSections.contains(section) {
@@ -287,9 +511,26 @@ struct AgentTerminalPanel: View {
         }
     }
 
+    /// The Pinned group's key in the collapsed set; no section can be named it.
+    static let pinnedSection = "\u{1}pinned"
+
+    private var pinnedHeader: some View {
+        Button {
+            if !store.collapsedSections.insert(Self.pinnedSection).inserted { store.collapsedSections.remove(Self.pinnedSection) }
+        } label: {
+            Label("Pinned", systemImage: store.collapsedSections.contains(Self.pinnedSection) ? "chevron.right" : "chevron.down")
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .padding(6)
+        .accessibilityLabel("Pinned")
+        .accessibilityValue(store.collapsedSections.contains(Self.pinnedSection) ? "Collapsed" : "Expanded")
+    }
+
     private func sectionHeader(_ section: String) -> some View {
         Button {
-            if !store.collapsedSections.insert(section).inserted { store.collapsedSections.remove(section) }
+            store.toggleCollapsed(section)
         } label: {
             Label(section, systemImage: store.collapsedSections.contains(section) ? "chevron.right" : "chevron.down")
                 .font(.caption).foregroundStyle(.secondary)
@@ -313,7 +554,17 @@ struct AgentTerminalPanel: View {
                 Button("Remove Section") { store.removeSection(section) }
             }
             Button("New Section…", action: newSection)
+            Divider()
+            Button("Move Section Up") { store.moveSection(section, by: -1) }
+                .disabled(store.sections.first == section)
+            Button("Move Section Down") { store.moveSection(section, by: 1) }
+                .disabled(store.sections.last == section)
         }
+        // A row dropped on the header goes to the end of the section.
+        .onDrop(of: [Self.sessionDragType], isTargeted: dropBinding("section:\(section)")) { _ in
+            drop(before: nil, in: section)
+        }
+        .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(dropTarget == "section:\(section)" ? 0.15 : 0)))
     }
 
     private var sectionNameEditor: some View {
@@ -332,7 +583,7 @@ struct AgentTerminalPanel: View {
         editingSection = nil
         sectionName = ""
         sectionEditor = true
-        listOverride = false
+        store.listCollapsedOverride = false
     }
 
     private var newSessionMenu: some View {
@@ -380,9 +631,19 @@ private struct SessionRow: View {
     let move: (String) -> Void
     let select: () -> Void
     let close: () -> Void
+    let rename: (String) -> Void
+    let pin: (Bool) -> Void
+    /// What the session runs, for the check in Switch Agent.
+    let currentCommand: String
+    let switchAgent: (String) -> Void
+    /// Nil runs the same agent as this session.
+    let duplicate: (String?) -> Void
     @State private var hovered = false
     @State private var renaming = false
     @State private var name = ""
+
+    /// A repository's row that has not started: closing it takes it out of the list.
+    private var isBookmark: Bool { !session.isStarted && session.repoDirectory != nil }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -392,11 +653,23 @@ private struct SessionRow: View {
                     Text(session.title)
                         .appFont(fixed: 11.5, weight: isSelected ? .semibold : .regular)
                         .lineLimit(1)
-                    Text(session.shortDirectory)
+                    Text(session.breadcrumb)
                         .appFont(fixed: 10)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.head)
+                    if session.isStarted {
+                        // Paused reads the terminal's foreground process,
+                        // which publishes nothing; look again on a slow tick.
+                        TimelineView(.periodic(from: .now, by: 1.5)) { _ in statusLine }
+                    } else if session.resume {
+                        // Waiting rows show only their outlined dot; one that
+                        // will pick its conversation up again says so.
+                        Text("Resumes when opened")
+                            .appFont(fixed: 9.5)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
                 Spacer(minLength: 2)
                 if hovered {
@@ -404,7 +677,8 @@ private struct SessionRow: View {
                         Image(systemName: "xmark").appFont(fixed: 9)
                     }
                     .buttonStyle(.borderless)
-                    .help("Close session (⌘W)")
+                    .help(closeHelp)
+                    .accessibilityLabel(closeTitle)
                 } else if index < 9 {
                     Text("⌘\(index + 1)").appFont(fixed: 9).foregroundStyle(.tertiary)
                 }
@@ -419,27 +693,63 @@ private struct SessionRow: View {
         .onHover { hovered = $0 }
         .contextMenu {
             Button("Rename Session…") { name = session.title; renaming = true }
-            Button("Use Automatic Name") { session.customTitle = "" }
+            Button("Use Automatic Name") { rename("") }
                 .disabled(session.customTitle.isEmpty)
+            Button(session.pinned ? "Unpin" : "Pin") { pin(!session.pinned) }
             Menu("Move to Section") {
                 ForEach(sections, id: \.self) { section in
                     Button(section) { move(section) }
                 }
             }
+            Picker("Switch Agent", selection: Binding(get: { currentCommand }, set: switchAgent)) {
+                ForEach(AgentLaunch.installedPresets, id: \.command) { preset in
+                    Text(preset.label).tag(preset.command)
+                }
+            }
+            .pickerStyle(.menu)
+            Menu("Duplicate Session") {
+                Button("Same Agent") { duplicate(nil) }
+                Divider()
+                ForEach(AgentLaunch.installedPresets, id: \.command) { preset in
+                    Button(preset.label) { duplicate(preset.command) }
+                }
+            }
+            Divider()
+            Button("Copy Path") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(session.directory, forType: .string)
+            }
+            Button("Show in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: session.directory)])
+            }
             Divider()
             Button("Scroll to Top") { session.view.scroll(toPosition: 0) }
+                .disabled(!session.isStarted)
             Button("Scroll to Bottom") { session.view.scroll(toPosition: 1) }
-            Button("Close Session", action: close)
+                .disabled(!session.isStarted)
+            Button(closeTitle, action: close)
         }
         .popover(isPresented: $renaming, arrowEdge: .trailing) {
             AgentNamePopover(title: "Rename Session", name: $name,
-                             save: { session.customTitle = name; renaming = false },
+                             save: { rename(name); renaming = false },
                              cancel: { renaming = false })
         }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { select() }
+        .accessibilityAction(named: session.pinned ? "Unpin" : "Pin") { pin(!session.pinned) }
+        .accessibilityAction(named: closeTitle, close)
         .help("\(session.title)\n\(session.shortDirectory)\nProgram: \(session.programTitle ?? session.launch.label)")
+    }
+
+    private var closeTitle: String {
+        if isBookmark { return "Remove from List" }
+        return session.repoDirectory != nil ? "Stop Session" : "Close Session"
+    }
+
+    private var closeHelp: String {
+        if isBookmark { return "Remove this repository from the session list" }
+        return session.repoDirectory != nil ? "Stop the session; the repository stays in the list (⌘W)" : "Close session (⌘W)"
     }
 
     private var rowBackground: SwiftUI.Color {
@@ -448,17 +758,101 @@ private struct SessionRow: View {
         return hovered ? SwiftUI.Color.secondary.opacity(0.08) : .clear
     }
 
-    /// Green while output streams, orange when a session out of sight rang
-    /// its bell (an agent waiting on you), grey when idle or ended.
-    private var statusDot: some View {
-        let color: SwiftUI.Color
-        switch session.activity {
-        case .busy: color = .green
-        case .attention: color = .orange
-        case .idle: color = .secondary.opacity(0.5)
-        case .exited: color = .secondary.opacity(0.2)
+    /// Running with a bolt, Paused, Idle or Ended, for a started session.
+    private var statusLine: some View {
+        let (symbol, text): (String, String) = switch session.status {
+        case .running: ("bolt.fill", "Running")
+        case .paused: ("pause.fill", "Paused")
+        case .idle: ("moon.zzz", "Idle")
+        case .exited: ("stop.fill", "Ended")
+        case .notStarted: ("", "")
         }
-        return Circle().fill(color).frame(width: 7, height: 7).frame(width: 12)
+        return Label(text, systemImage: symbol)
+            .labelStyle(StatusLabelStyle())
+            .appFont(fixed: 9.5)
+            .foregroundStyle(session.status == .running ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+            .lineLimit(1)
+    }
+
+    /// Green while output streams, orange when a session out of sight rang
+    /// its bell (an agent waiting on you), grey when idle or ended, an
+    /// outline while it has not started.
+    @ViewBuilder
+    private var statusDot: some View {
+        if !session.isStarted {
+            Circle().strokeBorder(SwiftUI.Color.secondary.opacity(0.6), lineWidth: 1)
+                .frame(width: 7, height: 7).frame(width: 12)
+        } else {
+            let color: SwiftUI.Color = switch session.activity {
+            case .busy: .green
+            case .attention: .orange
+            case .idle: session.titleWorking ? .green : .secondary.opacity(0.5)
+            case .exited: .secondary.opacity(0.2)
+            }
+            Circle().fill(color).frame(width: 7, height: 7).frame(width: 12)
+        }
+    }
+}
+
+/// An icon and text tight together, for a row's status line.
+private struct StatusLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 3) {
+            configuration.icon
+            configuration.title
+        }
+    }
+}
+
+/// The Workspaces menu, in the session list and under View › Terminal Workspaces.
+struct AgentWorkspaceMenuContent: View {
+    @ObservedObject var store: AgentTerminalStore
+    let saveSessions: () -> Void
+
+    var body: some View {
+        let file = store.workspaceFile
+        if file.workspaces.isEmpty {
+            Text("No Saved Workspaces")
+            if store.hasRepoCheckouts {
+                Button("Create Workspace from Repos") { store.regenerateBaselineWorkspace() }
+            } else {
+                // Someone with nothing cloned yet: the way to get started.
+                Button("Clone a Repository in Repos…") { store.showRepos?() }
+            }
+        } else {
+            Section("Open Workspace") {
+                ForEach(file.workspaces, id: \.name) { workspace in
+                    Button("\(workspace.name) — \(workspace.sessionCount == 1 ? "1 session" : "\(workspace.sessionCount) sessions")") {
+                        store.open(workspace: workspace, show: true)
+                    }
+                }
+            }
+        }
+        Divider()
+        Button("Save Sessions as Workspace…", action: saveSessions)
+            .disabled(store.sessions.isEmpty)
+        if !file.workspaces.isEmpty {
+            Picker("Open at Launch", selection: Binding(
+                get: { file.launchWorkspace?.name ?? "" },
+                set: { store.setOpenAtLaunch($0.isEmpty ? nil : $0) }
+            )) {
+                Text("None").tag("")
+                ForEach(file.workspaces, id: \.name) { Text($0.name).tag($0.name) }
+            }
+            Menu("Delete Workspace") {
+                ForEach(file.workspaces, id: \.name) { workspace in
+                    Button(workspace.name) { store.deleteWorkspace(named: workspace.name) }
+                }
+            }
+        }
+        Divider()
+        Button("Add Missing Repos") { store.addMissingReposToBaseline() }
+            .help("Add checked-out repositories the Repos workspace lacks, keeping your edits")
+        Button("Regenerate Repos Workspace") { store.regenerateBaselineWorkspace() }
+            .help("Rebuild the Repos workspace from your active checkouts; other workspaces are left alone")
+        Divider()
+        Button("Edit Workspaces File") { AgentTerminalPanel.openWorkspacesFile(reveal: false) }
+        Button("Show Workspaces File in Finder") { AgentTerminalPanel.openWorkspacesFile(reveal: true) }
     }
 }
 

@@ -340,3 +340,84 @@ public enum DiffBuilder {
         )
     }
 }
+
+/// How a diff is drawn: old and new side by side, or one column of
+/// removed and added lines.
+public enum DiffLayout: String, Sendable, CaseIterable, Identifiable {
+    case split
+    case inline
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .split: return "Side by Side"
+        case .inline: return "Inline"
+        }
+    }
+
+    public static let storageKey = "diffLayout"
+}
+
+/// One row of a side-by-side diff: the old line on the left, the new line
+/// on the right. A removed line with no matching addition leaves the right
+/// empty, and the reverse.
+public struct DiffSplitRow: Sendable, Hashable, Identifiable {
+    public var left: DiffLine?
+    public var right: DiffLine?
+
+    public var id: String {
+        "\(left?.id.uuidString ?? "-")|\(right?.id.uuidString ?? "-")"
+    }
+
+    public init(left: DiffLine?, right: DiffLine?) {
+        self.left = left
+        self.right = right
+    }
+}
+
+extension DiffHunk {
+    /// The hunk as side-by-side rows. Context lines show on both sides. Each
+    /// run of removed lines is paired, line by line, with the run of added
+    /// lines that follows it, so a changed line sits opposite its new
+    /// version. A "no newline" marker stays on the side it belongs to.
+    public var splitRows: [DiffSplitRow] {
+        var rows: [DiffSplitRow] = []
+        var i = 0
+        while i < lines.count {
+            let line = lines[i]
+            switch line.kind {
+            case .context:
+                rows.append(DiffSplitRow(left: line, right: line))
+                i += 1
+            case .noNewline:
+                // Follows the line it describes; put it on that line's side.
+                let previous = i > 0 ? lines[i - 1].kind : .context
+                switch previous {
+                case .deletion: rows.append(DiffSplitRow(left: line, right: nil))
+                case .addition: rows.append(DiffSplitRow(left: nil, right: line))
+                default: rows.append(DiffSplitRow(left: line, right: line))
+                }
+                i += 1
+            case .deletion, .addition:
+                var removed: [DiffLine] = []
+                while i < lines.count, lines[i].kind == .deletion { removed.append(lines[i]); i += 1 }
+                var removedMarker: DiffLine?
+                if i < lines.count, lines[i].kind == .noNewline, !removed.isEmpty {
+                    removedMarker = lines[i]; i += 1
+                }
+                var added: [DiffLine] = []
+                while i < lines.count, lines[i].kind == .addition { added.append(lines[i]); i += 1 }
+                var leftSide = removed
+                if let removedMarker { leftSide.append(removedMarker) }
+                for index in 0..<max(leftSide.count, added.count) {
+                    rows.append(DiffSplitRow(
+                        left: index < leftSide.count ? leftSide[index] : nil,
+                        right: index < added.count ? added[index] : nil
+                    ))
+                }
+            }
+        }
+        return rows
+    }
+}

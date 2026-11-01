@@ -791,6 +791,8 @@ struct PullRequestDetailView: View {
                         .appFont(.caption2)
                         .foregroundStyle(.orange)
                 }
+                Spacer()
+                if !detail.files.isEmpty { DiffLayoutPicker() }
             }
             if detail.files.isEmpty {
                 Text("The diff couldn't be produced for this pull request.")
@@ -967,6 +969,7 @@ struct DiffHunkCard: View {
     /// Visible width of the hunk, so short lines' tints still run edge to
     /// edge — the scroll content is only as wide as the longest line.
     @State private var visibleWidth: CGFloat = 0
+    @AppStorage(DiffLayout.storageKey) private var layout: DiffLayout = .split
 
     init(hunk: DiffHunk) {
         self.hunk = hunk
@@ -1012,6 +1015,33 @@ struct DiffHunkCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.blue.opacity(0.08))
 
+            if layout == .split {
+                // Side by side wraps long lines, so both halves stay in view.
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(hunk.splitRows) { row in
+                        HStack(spacing: 0) {
+                            DiffSideCell(line: row.left, number: row.left?.oldLine,
+                                         emphasis: row.left.flatMap { emphasis[$0.id] })
+                            Rectangle().fill(Color.secondary.opacity(0.2)).frame(width: 1)
+                            DiffSideCell(line: row.right, number: row.right?.newLine,
+                                         emphasis: row.right.flatMap { emphasis[$0.id] })
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            } else {
+                inlineLines
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
+        )
+        .padding(.top, 6)
+    }
+
+    private var inlineLines: some View {
             // Wide code scrolls inside the hunk, not the page.
             ScrollView(.horizontal, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 0) {
@@ -1028,13 +1058,92 @@ struct DiffHunkCard: View {
                         .onChange(of: geo.size.width) { _, width in visibleWidth = width }
                 }
             )
+    }
+}
+
+/// One half of a side-by-side row: the line number, a coloured gutter and
+/// the wrapped content. An empty half is shaded so the gap reads as "no
+/// line here" rather than a blank line.
+struct DiffSideCell: View {
+    let line: DiffLine?
+    let number: Int?
+    var emphasis: Range<Int>? = nil
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Text(number.map(String.init) ?? "")
+                .appFont(fixed: 11, design: .monospaced)
+                .foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .trailing)
+                .padding(.trailing, 6)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .background(Color.secondary.opacity(0.05))
+            Rectangle().fill(gutterColor).frame(width: 3)
+            Group {
+                if let line {
+                    Text(DiffLineRow.attributed(line, emphasis: emphasis))
+                        .appFont(fixed: 12, design: .monospaced)
+                        .foregroundStyle(line.kind == .noNewline ? Color.secondary : Color.primary)
+                        .textSelection(.enabled)
+                } else {
+                    Color.clear
+                }
+            }
+            .padding(.horizontal, 6)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(background)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(Color.secondary.opacity(0.15), lineWidth: 1)
-        )
-        .padding(.top, 6)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var background: Color {
+        switch line?.kind {
+        case .addition: return Color.green.opacity(0.14)
+        case .deletion: return Color.red.opacity(0.14)
+        case .none: return Color.secondary.opacity(0.06)
+        default: return Color.clear
+        }
+    }
+
+    private var gutterColor: Color {
+        switch line?.kind {
+        case .addition: return Color.green.opacity(0.65)
+        case .deletion: return Color.red.opacity(0.65)
+        default: return Color.clear
+        }
+    }
+
+    private var accessibilityText: String {
+        guard let line else { return "No line" }
+        let kind: String
+        switch line.kind {
+        case .addition: kind = "Added"
+        case .deletion: kind = "Removed"
+        case .context: kind = "Unchanged"
+        case .noNewline: kind = ""
+        }
+        let lineNumber = number.map { "line \($0), " } ?? ""
+        return "\(kind) \(lineNumber)\(line.content)"
+    }
+}
+
+/// Switches every diff between side by side and inline. The choice is
+/// remembered and shared with View › Diff Layout.
+struct DiffLayoutPicker: View {
+    @AppStorage(DiffLayout.storageKey) private var layout: DiffLayout = .split
+
+    var body: some View {
+        Picker("Diff Layout", selection: $layout) {
+            Label("Side by Side", systemImage: "rectangle.split.2x1").tag(DiffLayout.split)
+            Label("Inline", systemImage: "rectangle.grid.1x2").tag(DiffLayout.inline)
+        }
+        .pickerStyle(.segmented)
+        .labelStyle(.iconOnly)
+        .labelsHidden()
+        .fixedSize()
+        .help("Show changes side by side or inline")
     }
 }
 
@@ -1064,17 +1173,29 @@ struct DiffLineRow: View {
     }
 
     private var attributedContent: AttributedString {
+        Self.attributed(line, emphasis: emphasis)
+    }
+
+    /// The line with its `+`/`-` marker and the changed characters tinted
+    /// darker. Shared with the side-by-side cells.
+    static func attributed(_ line: DiffLine, emphasis: Range<Int>?) -> AttributedString {
+        let prefix = marker(line.kind)
         var text = AttributedString(prefix + line.content)
         if let emphasis, emphasis.upperBound <= line.content.count {
             let start = text.characters.index(text.startIndex, offsetBy: prefix.count + emphasis.lowerBound)
             let end = text.characters.index(start, offsetBy: emphasis.count)
-            text[start..<end].backgroundColor = emphasisColor
+            text[start..<end].backgroundColor = line.kind == .addition ? Color.green.opacity(0.32) : Color.red.opacity(0.32)
         }
         return text
     }
 
-    private var emphasisColor: Color {
-        line.kind == .addition ? Color.green.opacity(0.32) : Color.red.opacity(0.32)
+    static func marker(_ kind: DiffLine.Kind) -> String {
+        switch kind {
+        case .addition: return "+ "
+        case .deletion: return "- "
+        case .context: return "  "
+        case .noNewline: return "\\ "
+        }
     }
 
     private func numberCell(_ number: Int?) -> some View {
@@ -1084,15 +1205,6 @@ struct DiffLineRow: View {
             .frame(width: 44, alignment: .trailing)
             .padding(.trailing, 6)
             .background(Color.secondary.opacity(0.05))
-    }
-
-    private var prefix: String {
-        switch line.kind {
-        case .addition: return "+ "
-        case .deletion: return "- "
-        case .context: return "  "
-        case .noNewline: return "\\ "
-        }
     }
 
     private var rowBackground: Color {

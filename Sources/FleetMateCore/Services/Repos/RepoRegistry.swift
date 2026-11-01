@@ -20,18 +20,27 @@ public struct RepoSettings: Codable, Sendable, Equatable {
     public var protectedBranches: [String]
     /// Upper bound on git processes a batch command runs at once.
     public var concurrency: Int
+    /// Whether FleetMate looks for clones that appear in a scan root and
+    /// offers to add them (the Repos sidebar asks; nothing is tracked
+    /// unasked). Applies only once `rootsChosen`. The key keeps its first
+    /// name so files written by either platform stay readable.
+    public var autoTrackNewClones: Bool
+    /// True once the person has chosen the scan roots (onboarding, the Repos
+    /// sidebar's Choose Folder, Settings or the CLI). Until then the roots are
+    /// only the default guess, and nothing is tracked behind their back.
+    public var rootsChosen: Bool
 
     public static let `default` = RepoSettings(
         scanRoots: ["~/Developer"],
         scanDepth: 4,
-        skipDirectories: [".worktrees", "node_modules", ".build", "build", "DerivedData", "Pods", "vendor"],
+        skipDirectories: [".worktrees", "node_modules", ".build", "build", "bin", "obj", "DerivedData", "Pods", "vendor"],
         cloneRoot: "~/Developer",
         gitHubOwners: [],
         protectedBranches: ["main", "master"],
         concurrency: 6
     )
 
-    public init(scanRoots: [String], scanDepth: Int, skipDirectories: [String], cloneRoot: String, gitHubOwners: [String], protectedBranches: [String], concurrency: Int) {
+    public init(scanRoots: [String], scanDepth: Int, skipDirectories: [String], cloneRoot: String, gitHubOwners: [String], protectedBranches: [String], concurrency: Int, autoTrackNewClones: Bool = true, rootsChosen: Bool = false) {
         self.scanRoots = scanRoots
         self.scanDepth = scanDepth
         self.skipDirectories = skipDirectories
@@ -39,6 +48,8 @@ public struct RepoSettings: Codable, Sendable, Equatable {
         self.gitHubOwners = gitHubOwners
         self.protectedBranches = protectedBranches
         self.concurrency = concurrency
+        self.autoTrackNewClones = autoTrackNewClones
+        self.rootsChosen = rootsChosen
     }
 
     /// Missing keys fall back to the defaults, so an older or hand-edited file
@@ -53,6 +64,19 @@ public struct RepoSettings: Codable, Sendable, Equatable {
         gitHubOwners = try c.decodeIfPresent([String].self, forKey: .gitHubOwners) ?? d.gitHubOwners
         protectedBranches = try c.decodeIfPresent([String].self, forKey: .protectedBranches) ?? d.protectedBranches
         concurrency = try c.decodeIfPresent(Int.self, forKey: .concurrency) ?? d.concurrency
+        autoTrackNewClones = try c.decodeIfPresent(Bool.self, forKey: .autoTrackNewClones) ?? d.autoTrackNewClones
+        rootsChosen = try c.decodeIfPresent(Bool.self, forKey: .rootsChosen) ?? d.rootsChosen
+    }
+
+    /// Whether to look for clones not seen before and offer them.
+    public var looksForNewClones: Bool { autoTrackNewClones && rootsChosen }
+
+    /// `path` with the home folder written as `~`, the way roots are stored.
+    public static func abbreviate(_ path: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+        let standard = URL(fileURLWithPath: expand(path)).standardizedFileURL.path
+        if standard == home { return "~" }
+        return standard.hasPrefix(home + "/") ? "~" + standard.dropFirst(home.count) : standard
     }
 
     public static func expand(_ path: String) -> String {
@@ -71,14 +95,44 @@ public struct RepoRegistryEntry: Codable, Sendable, Equatable {
     public var remoteUrl: String?
     public var defaultBranch: String?
     public var addedAt: Date
+    /// Left out of the Repos sidebar while staying tracked: batch commands
+    /// and the CLI still act on it.
+    public var hidden: Bool
 
-    public init(key: RepoKey, path: String, tracked: Bool, remoteUrl: String? = nil, defaultBranch: String? = nil, addedAt: Date = Date()) {
+    public init(key: RepoKey, path: String, tracked: Bool, remoteUrl: String? = nil, defaultBranch: String? = nil, addedAt: Date = Date(), hidden: Bool = false) {
         self.key = key
         self.path = path
         self.tracked = tracked
         self.remoteUrl = remoteUrl
         self.defaultBranch = defaultBranch
         self.addedAt = addedAt
+        self.hidden = hidden
+    }
+
+    enum CodingKeys: String, CodingKey { case key, path, tracked, remoteUrl, defaultBranch, addedAt, hidden }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        key = try c.decode(RepoKey.self, forKey: .key)
+        path = try c.decode(String.self, forKey: .path)
+        tracked = try c.decodeIfPresent(Bool.self, forKey: .tracked) ?? false
+        remoteUrl = try c.decodeIfPresent(String.self, forKey: .remoteUrl)
+        defaultBranch = try c.decodeIfPresent(String.self, forKey: .defaultBranch)
+        addedAt = try c.decodeIfPresent(Date.self, forKey: .addedAt) ?? Date()
+        hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+    }
+
+    /// `hidden` is written only when set, so files stay as they were for
+    /// readers that predate it.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(key, forKey: .key)
+        try c.encode(path, forKey: .path)
+        try c.encode(tracked, forKey: .tracked)
+        try c.encodeIfPresent(remoteUrl, forKey: .remoteUrl)
+        try c.encodeIfPresent(defaultBranch, forKey: .defaultBranch)
+        try c.encode(addedAt, forKey: .addedAt)
+        if hidden { try c.encode(hidden, forKey: .hidden) }
     }
 }
 

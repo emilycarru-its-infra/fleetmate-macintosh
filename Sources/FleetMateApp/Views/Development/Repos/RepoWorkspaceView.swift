@@ -11,13 +11,13 @@ import FleetMateCore
 /// demand. Sort, grouping, filter and which groups are collapsed persist.
 struct ReposListView: View {
     @ObservedObject var model: RepoWorkspaceModel
-    @AppStorage("settings.selectedTab") private var settingsTab: Int = 0
     @AppStorage("repos.sidebar.sort") private var sort: RepoSidebarSort = .name
     @AppStorage("repos.sidebar.grouped") private var grouped = true
     @AppStorage("repos.sidebar.filter") private var filter = ""
     /// Collapsed section and group ids, newline-separated. Collapsed rather
     /// than expanded is stored so a newly tracked project starts open.
     @AppStorage("repos.sidebar.collapsed") private var collapsedStorage = ""
+    @State private var reviewingNewClones = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -25,23 +25,29 @@ struct ReposListView: View {
             Divider()
             filterBar
             Divider()
-            if model.tracked.isEmpty {
-                ContentUnavailableView {
-                    Label("No tracked repositories", systemImage: "folder.badge.gearshape")
-                } description: {
-                    Text("Track repositories in Settings › Repositories, or run `fleetmate repos link <path>` in a terminal.")
-                } actions: {
-                    SettingsLink { Text("Open Settings") }
-                        .simultaneousGesture(TapGesture().onEnded { settingsTab = RepositoriesSettingsView.tabTag })
-                }
-                .frame(maxHeight: .infinity)
+            if !model.newClones.isEmpty { newClonesBar; Divider() }
+            if model.allTracked.isEmpty {
+                emptyState
             } else {
                 repositoryList
             }
         }
+        .alert(
+            removalTitle,
+            isPresented: Binding(get: { model.pendingRemoval != nil }, set: { if !$0 { model.pendingRemoval = nil } }),
+            presenting: model.pendingRemoval
+        ) { pending in
+            Button(pending.check.isSafe ? "Move to Trash" : "Move to Trash Anyway", role: .destructive) {
+                Task { await model.confirmRemoval() }
+            }
+            Button("Cancel", role: .cancel) { model.pendingRemoval = nil }
+        } message: { pending in
+            Text(removalMessage(pending.record, pending.check))
+        }
         .task {
             model.reloadRecords()
             await model.refreshStatuses()
+            await model.findNewClones()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
                 guard !Task.isCancelled else { break }
@@ -52,6 +58,76 @@ struct ReposListView: View {
             model.reloadRecords()
             Task { await model.refreshStatuses() }
         }
+    }
+
+    // MARK: Empty state
+
+    /// With nothing tracked, one button: pick the folder that holds your
+    /// code and every clone in it is tracked.
+    private var emptyState: some View {
+        ContentUnavailableView {
+            Label("Where do you keep your code?", systemImage: "folder.badge.gearshape")
+        } description: {
+            Text("Choose the folder that holds your git clones. FleetMate tracks every one it finds inside, and picks up new ones as they appear.")
+        } actions: {
+            if model.isScanning {
+                ProgressView("Looking for clones…").controlSize(.small)
+            } else {
+                Button("Choose Folder…") { Task { await model.chooseFolders() } }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut("o", modifiers: [.command, .shift])
+                    .help("Choose one or more folders to scan for git clones (⇧⌘O)")
+                if !model.suggestedRoots.isEmpty {
+                    let names = model.suggestedRoots.joined(separator: ", ")
+                    Button("Use \(names)") { Task { await model.trackFolders(model.suggestedRoots) } }
+                        .help("Track every clone in \(names), where FleetMate found some")
+                }
+            }
+        }
+        .frame(maxHeight: .infinity)
+        .task { await model.loadSuggestedRoots() }
+    }
+
+    // MARK: New clones
+
+    /// New clones in the watched folders wait here until the person adds or
+    /// ignores them.
+    private var newClonesBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: model.newClones.contains(where: \.runsCommands) ? "exclamationmark.triangle" : "plus.rectangle.on.folder")
+                .foregroundStyle(model.newClones.contains(where: \.runsCommands) ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint))
+            Text(model.newClonesSummary)
+                .appFont(.callout)
+                .lineLimit(2)
+            Spacer(minLength: 4)
+            Button("Review…") { reviewingNewClones = true }
+                .help("Choose which of them to track")
+                .popover(isPresented: $reviewingNewClones, arrowEdge: .bottom) {
+                    NewClonesReview(model: model) { reviewingNewClones = false }
+                }
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.accentColor.opacity(0.08))
+    }
+
+    // MARK: Removal
+
+    private var removalTitle: String {
+        guard let pending = model.pendingRemoval else { return "" }
+        return pending.check.isSafe
+            ? "Move “\(pending.record.key.name)” to the Trash?"
+            : "“\(pending.record.key.name)” has work that is not on any remote"
+    }
+
+    private func removalMessage(_ record: RepoRecord, _ check: CloneRemovalCheck) -> String {
+        let place = repoAbbreviatedPath(check.path)
+        if check.isSafe {
+            return "\(place) moves to the Trash and FleetMate stops tracking \(record.key.displayName). Everything in it is on its remote."
+        }
+        return "Deleting \(place) would lose:\n\n• " + check.lossDescription.joined(separator: "\n• ")
+            + "\n\nThe folder moves to the Trash, so it can be put back until the Trash is emptied."
     }
 
     // MARK: Mode
@@ -79,7 +155,7 @@ struct ReposListView: View {
         let filtering = !filter.trimmingCharacters(in: .whitespaces).isEmpty
         return List(selection: $model.selectedId) {
             if grouped {
-                let sections = RepoSidebarOrganizer.sections(model.tracked, statuses: model.statuses, sort: sort, matching: filter)
+                let sections = RepoSidebarOrganizer.sections(model.listed, statuses: model.statuses, sort: sort, matching: filter)
                 ForEach(sections) { section in
                     Section(isExpanded: expansion(section.id, forcedOpen: filtering)) {
                         ForEach(section.groups) { group in
@@ -97,24 +173,67 @@ struct ReposListView: View {
                     }
                 }
             } else {
-                ForEach(RepoSidebarOrganizer.flat(model.tracked, statuses: model.statuses, sort: sort, matching: filter)) { record in
+                ForEach(RepoSidebarOrganizer.flat(model.listed, statuses: model.statuses, sort: sort, matching: filter)) { record in
                     row(record, showScope: true)
                 }
             }
         }
         .listStyle(.sidebar)
         .overlay {
-            if filtering, RepoSidebarOrganizer.flat(model.tracked, statuses: [:], sort: .name, matching: filter).isEmpty {
+            if filtering, RepoSidebarOrganizer.flat(model.listed, statuses: [:], sort: .name, matching: filter).isEmpty {
                 ContentUnavailableView.search(text: filter)
+            } else if model.listed.isEmpty {
+                ContentUnavailableView {
+                    Label("Every repository is hidden", systemImage: "eye.slash")
+                } description: {
+                    Text("Click Edit to show some again.")
+                }
             }
         }
     }
 
     private func row(_ record: RepoRecord, showScope: Bool) -> some View {
-        RepoListRow(record: record, status: model.statuses[record.id], isFetching: model.isFetching.contains(record.id), showScope: showScope)
+        HStack(spacing: 6) {
+            RepoListRow(record: record, status: model.statuses[record.id], isFetching: model.isFetching.contains(record.id), showScope: showScope)
+                .opacity(model.isEditing && record.isHidden ? 0.5 : 1)
+            if model.isEditing { editControls(record) }
+        }
             .tag(record.id)
             .contextMenu { rowMenu(record) }
             .agentContextDrag { .repository(record) }
+    }
+
+    /// Edit mode's per-row controls: show or hide, and the removal actions.
+    private func editControls(_ record: RepoRecord) -> some View {
+        HStack(spacing: 4) {
+            Button {
+                model.setHidden(record, !record.isHidden)
+            } label: {
+                Image(systemName: record.isHidden ? "eye.slash" : "eye")
+                    .frame(width: 18)
+            }
+            .buttonStyle(.borderless)
+            .help(record.isHidden ? "Show \(record.key.name) in the sidebar" : "Hide \(record.key.name) from the sidebar; it stays tracked")
+            .accessibilityLabel(record.isHidden ? "Show in Sidebar" : "Hide from Sidebar")
+            Menu {
+                removalItems(record)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Stop tracking or delete this clone")
+            .accessibilityLabel("More actions for \(record.key.name)")
+        }
+    }
+
+    @ViewBuilder
+    private func removalItems(_ record: RepoRecord) -> some View {
+        Button("Stop Tracking") { model.stopTracking(record) }
+            .help("Leave the folder on disk and remove it from Repos")
+        Button("Delete Local Clone…", role: .destructive) { Task { await model.requestRemoval(record) } }
+            .disabled(record.local == nil)
     }
 
     @ViewBuilder
@@ -136,6 +255,9 @@ struct ReposListView: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(record.key.displayName, forType: .string)
         }
+        Divider()
+        Button(record.isHidden ? "Show in Sidebar" : "Hide from Sidebar") { model.setHidden(record, !record.isHidden) }
+        removalItems(record)
     }
 
     private var collapsed: Set<String> {
@@ -192,10 +314,14 @@ struct ReposListView: View {
                 .pickerStyle(.inline)
                 Divider()
                 Toggle("Group by Source", isOn: $grouped)
+                Divider()
+                Button("Add Folder…") { Task { await model.chooseFolders() } }
+                Button("Find New Clones") { Task { await model.findNewClones() } }
+                    .help("Look for clones that appeared in the watched folders")
                 if grouped {
                     Button("Expand All") { collapsedStorage = "" }
                     Button("Collapse All") {
-                        let sections = RepoSidebarOrganizer.sections(model.tracked, statuses: [:], sort: .name)
+                        let sections = RepoSidebarOrganizer.sections(model.listed, statuses: [:], sort: .name)
                         collapsedStorage = sections.flatMap { $0.groups.map(\.id) }.sorted().joined(separator: "\n")
                     }
                 }
@@ -219,9 +345,75 @@ struct ReposListView: View {
             .disabled(model.tracked.isEmpty || !model.isFetching.isEmpty)
             .help("Fetch every tracked repository from its remote")
             .accessibilityLabel("Fetch All")
+
+            Button(model.isEditing ? "Done" : "Edit") {
+                model.isEditing.toggle()
+                model.reloadRecords()
+            }
+            .buttonStyle(.borderless)
+            .disabled(model.allTracked.isEmpty)
+            .help(model.isEditing ? "Finish editing the list" : "Hide repositories, stop tracking them or delete local clones")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+    }
+}
+
+/// The new clones offered in the sidebar, each with a checkbox. A clone
+/// whose git config can run commands is flagged and starts unticked; adding
+/// one is choosing to trust it.
+private struct NewClonesReview: View {
+    @ObservedObject var model: RepoWorkspaceModel
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(model.newClonesSummary).appFont(.headline)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(model.newClones, id: \.path) { clone in
+                        Toggle(isOn: Binding(
+                            get: { model.newClonesSelected.contains(clone.path) },
+                            set: { on in
+                                if on { model.newClonesSelected.insert(clone.path) } else { model.newClonesSelected.remove(clone.path) }
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(clone.key?.displayName ?? (clone.path as NSString).lastPathComponent)
+                                Text(repoAbbreviatedPath(clone.path))
+                                    .appFont(.caption).foregroundStyle(.secondary)
+                                    .lineLimit(1).truncationMode(.middle)
+                                if clone.runsCommands {
+                                    Label("This repository's settings can run commands: \(clone.commandConfig.joined(separator: ", "))",
+                                          systemImage: "exclamationmark.triangle")
+                                        .appFont(.caption)
+                                        .foregroundStyle(.orange)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 320)
+            HStack {
+                Button("Ignore All") { model.ignoreNewClones(); dismiss() }
+                    .help("Do not offer these again. Settings › Repositories can still track them.")
+                Spacer()
+                Button("Cancel", role: .cancel, action: dismiss)
+                    .keyboardShortcut(.cancelAction)
+                Button("Add \(model.newClonesSelected.count)") {
+                    model.addNewClones()
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(model.newClonesSelected.isEmpty)
+            }
+        }
+        .padding(14)
+        .frame(width: 380)
     }
 }
 

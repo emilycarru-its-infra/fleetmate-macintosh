@@ -11,6 +11,8 @@ public struct RepoRecord: Codable, Sendable, Identifiable {
     public var id: String { key.id }
     public var isLocal: Bool { local != nil }
     public var isTracked: Bool { local?.tracked ?? false }
+    /// Tracked but left out of the Repos sidebar.
+    public var isHidden: Bool { local?.hidden ?? false }
     public var defaultBranch: String? { catalog?.defaultBranch ?? local?.defaultBranch }
 
     public init(key: RepoKey, catalog: CatalogRepo?, local: RepoRegistryEntry?) {

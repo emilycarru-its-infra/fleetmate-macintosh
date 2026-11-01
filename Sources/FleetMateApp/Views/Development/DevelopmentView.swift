@@ -1845,6 +1845,8 @@ struct CommitDetailView: View {
                                     .appFont(.caption2)
                                     .foregroundStyle(.orange)
                             }
+                            Spacer()
+                            DiffLayoutPicker()
                         }
                         ForEach(detail.files) { file in
                             DiffFileCard(file: file)

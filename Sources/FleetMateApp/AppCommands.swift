@@ -59,6 +59,7 @@ struct FleetMateCommands: Commands {
     @ObservedObject var appState: AppState
     @Environment(\.openWindow) private var openWindow
     @AppStorage(AppFontScale.storageKey) private var fontScale: Double = AppFontScale.default
+    @AppStorage(DiffLayout.storageKey) private var diffLayout: DiffLayout = .split
 
     /// The settings slider's own step, so the menu and the slider always land
     /// on the same values.
@@ -140,6 +141,16 @@ struct FleetMateCommands: Commands {
                 .disabled(!hasListAndBoard)
 
             Divider()
+
+            // Pull request and commit changes, side by side or inline.
+            if !AppEdition.current.isTicketsOnly {
+                Picker("Diff Layout", selection: $diffLayout) {
+                    ForEach(DiffLayout.allCases) { layout in
+                        Text(layout.title).tag(layout)
+                    }
+                }
+                Divider()
+            }
 
             if !AppEdition.current.isTicketsOnly {
                 Menu("Sort Queries By") {

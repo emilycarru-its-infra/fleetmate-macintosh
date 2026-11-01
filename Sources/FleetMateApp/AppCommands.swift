@@ -146,6 +146,12 @@ struct FleetMateCommands: Commands {
                     QuerySortMenuItems()
                 }
                 .disabled(selectedTab != .projects || !appState.config.isDevOpsConfigured)
+                // Development › Pulls grouped by repository. The model lives on
+                // AppState, so these act on it directly.
+                Button("Expand All Groups") { appState.development.setAllPullGroups(collapsed: false) }
+                    .disabled(selectedTab != .development)
+                Button("Collapse All Groups") { appState.development.setAllPullGroups(collapsed: true) }
+                    .disabled(selectedTab != .development)
 
                 Divider()
             }

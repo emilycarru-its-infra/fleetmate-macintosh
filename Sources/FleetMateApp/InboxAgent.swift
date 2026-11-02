@@ -75,14 +75,23 @@ final class InboxAgent: NSObject, NSApplicationDelegate {
     private var signInTask: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let state = AppState()
-        guard state.config.isTdxConfigured else {
-            dbg.info("Inbox helper exiting: TeamDynamix is not configured", category: "inbox")
-            exit(0)
-        }
         dbg.info("Inbox helper started", category: "inbox")
-        appState = state
-        signInTask = Task { await self.keepSignedIn(state) }
+        signInTask = Task { await self.run() }
+    }
+
+    /// launchd restarts the helper whenever it exits, so it never quits on
+    /// purpose: with TeamDynamix not set up yet it checks again each hour.
+    private func run() async {
+        while !Task.isCancelled {
+            let state = AppState()
+            if state.config.isTdxConfigured {
+                appState = state
+                await keepSignedIn(state)
+                return
+            }
+            dbg.info("Inbox helper waiting: TeamDynamix is not configured", category: "inbox")
+            try? await Task.sleep(for: .seconds(3600))
+        }
     }
 
     /// Sign in, find who "me" is (which starts the inbox), and refresh the

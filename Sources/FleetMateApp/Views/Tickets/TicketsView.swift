@@ -127,6 +127,8 @@ struct TicketsView: View {
     @State private var isLoadingFeed = false
     @State private var showClosed = false
     @State private var meModeApplied = false
+    /// Why the last list load failed, shown in place of an empty list.
+    @State private var ticketsLoadError: String?
 
     /// Tickets found by resolving the search text to a requestor and asking
     /// TDX for their tickets. The loaded set is bounded by the date range and
@@ -260,6 +262,10 @@ struct TicketsView: View {
     @FocusState private var commentFocused: Bool
 
     var tickets: [TdxTicket] { appState.cachedTickets }
+
+    /// The selected ticket's id, known before the ticket itself is: a link
+    /// selects a ticket that may not be in the loaded list yet.
+    var selectedId: Int? { selectedTicketIds.first ?? nil }
 
     var selectedTicket: TdxTicket? {
         guard let id = selectedTicketIds.first, let unwrappedId = id else { return nil }
@@ -709,6 +715,21 @@ struct TicketsView: View {
                 appState.navigateToTicketId = nil
             }
         }
+        // A link can open the app before sign-in finishes; everything loaded
+        // up to then failed. Load it again once the session exists.
+        .onChange(of: appState.tdxSsoAuthenticated) { _, signedIn in
+            guard signedIn else { return }
+            loadTickets()
+            Task {
+                await appState.resolveTdxMe()
+                await loadForms()
+            }
+            if let id = selectedId {
+                saveErrorMessage = nil
+                loadTicketDetail(ticketId: id)
+                loadTicketFeed(ticketId: id)
+            }
+        }
         .onChange(of: appState.navigateToTicketId) { _, newId in
             if let id = newId {
                 selectedTicketIds = [id]
@@ -905,18 +926,16 @@ struct TicketsView: View {
             .frame(maxWidth: .infinity)
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Signing in: \(stage.label)")
-        } else if isLoading && appState.cachedTickets.isEmpty {
+        } else if isLoading && filteredTickets.isEmpty && selectedId == nil {
             VStack {
                 ProgressView("Loading tickets...")
                     .padding(.top, 50)
                 Spacer()
             }
-        } else if filteredTickets.isEmpty {
-            VStack {
-                ContentUnavailableView.search(text: searchText)
-                    .padding(.top, 30)
-                Spacer()
-            }
+        } else if appState.cachedTickets.isEmpty, selectedId == nil, let error = ticketsLoadError {
+            ticketsUnavailableView(error: error)
+        } else if filteredTickets.isEmpty && selectedId == nil {
+            noMatchingTicketsView
         } else {
             switch viewMode {
             case .table:
@@ -930,6 +949,56 @@ struct TicketsView: View {
     }
 
     // MARK: - Table + Detail (50/50)
+
+    /// The list couldn't load. Before sign-in that's expected, so say so and
+    /// offer the way in rather than an empty search result.
+    private func ticketsUnavailableView(error: String) -> some View {
+        VStack {
+            ContentUnavailableView {
+                Label(appState.tdxSsoAuthenticated ? "Tickets Didn't Load" : "Not Signed In",
+                      systemImage: appState.tdxSsoAuthenticated ? "exclamationmark.triangle" : "person.crop.circle.badge.exclamationmark")
+            } description: {
+                Text(appState.tdxSsoAuthenticated ? error : "Sign in to TeamDynamix to see tickets.")
+            } actions: {
+                if !appState.tdxSsoAuthenticated {
+                    Button("Sign In") { appState.triggerTdxSsoLogin() }
+                        .buttonStyle(.borderedProminent)
+                }
+                Button("Try Again") { loadTickets() }
+            }
+            .padding(.top, 30)
+            Spacer()
+        }
+    }
+
+    /// Nothing passes the search or filters. Say which, and offer the way back.
+    @ViewBuilder
+    private var noMatchingTicketsView: some View {
+        VStack {
+            if !searchText.isEmpty {
+                ContentUnavailableView.search(text: searchText)
+            } else {
+                ContentUnavailableView {
+                    Label("No Matching Tickets", systemImage: "line.3.horizontal.decrease.circle")
+                } description: {
+                    Text(assignedToMe ? "No open tickets are assigned to you." : "No tickets match the current filters.")
+                } actions: {
+                    if assignedToMe {
+                        Button("Show All Tickets") { assignedToMe = false }
+                    }
+                    if filters.hasActiveFilters || showClosed || !isDefaultDatePreset {
+                        Button("Clear Filters") {
+                            filters.clearAll()
+                            showClosed = false
+                            resetToCurrentTerm()
+                        }
+                    }
+                }
+            }
+            Spacer()
+        }
+        .padding(.top, 30)
+    }
 
     private var ticketsTableView: some View {
         DetailSplitView(fraction: $detailFraction, showsDetail: selectedTicket != nil) {
@@ -1001,7 +1070,7 @@ struct TicketsView: View {
             onSelectTicket: { ticket in
                 selectedTicketIds = [ticket.id]
             },
-            selectedTicketId: selectedTicket?.id,
+            selectedTicketId: selectedId,
             collapsedTicketIds: $collapsedTicketIds,
             ticketMenu: { AnyView(ticketContextMenu($0)) }
         )
@@ -2572,8 +2641,10 @@ struct TicketsView: View {
                 let fetchedTickets = (try await rangedTickets + (try await openTickets) + mine)
                     .filter { $0.id.map { seen.insert($0).inserted } ?? true }
                 appState.updateTicketsCache(fetchedTickets)
+                ticketsLoadError = nil
             } catch {
-                print("Failed to load tickets: \(error)")
+                dbg.warn("Tickets load failed: \(error)", category: "tickets")
+                ticketsLoadError = error.localizedDescription
             }
         }
     }
@@ -2591,20 +2662,20 @@ struct TicketsView: View {
         isLoadingDetail = true
         Task {
             defer {
-                if detailLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) {
+                if detailLoadGate.accepts(request, selectedTicketId: selectedId) {
                     isLoadingDetail = false
                 }
             }
             do {
                 let full = try await appState.tdxService.getTicket(id: ticketId)
-                guard detailLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) else { return }
+                guard detailLoadGate.accepts(request, selectedTicketId: selectedId) else { return }
                 if let full {
                     detailedTicket = full
                     populateEditFields(from: full)
                     await loadTicketPeople(ticket: full)
                 }
             } catch {
-                guard detailLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) else { return }
+                guard detailLoadGate.accepts(request, selectedTicketId: selectedId) else { return }
                 saveErrorMessage = "Could not load ticket details: \(error.localizedDescription)"
             }
         }
@@ -2617,16 +2688,16 @@ struct TicketsView: View {
         ticketFeed = []
         Task {
             defer {
-                if feedLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) {
+                if feedLoadGate.accepts(request, selectedTicketId: selectedId) {
                     isLoadingFeed = false
                 }
             }
             do {
                 let loadedFeed = try await appState.tdxService.getTicketFeed(ticketId: ticketId)
-                guard feedLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) else { return }
+                guard feedLoadGate.accepts(request, selectedTicketId: selectedId) else { return }
                 ticketFeed = loadedFeed
             } catch {
-                guard feedLoadGate.accepts(request, selectedTicketId: selectedTicket?.id) else { return }
+                guard feedLoadGate.accepts(request, selectedTicketId: selectedId) else { return }
                 ticketFeed = []
                 feedLoadError = "Could not load activity: \(error.localizedDescription)"
             }

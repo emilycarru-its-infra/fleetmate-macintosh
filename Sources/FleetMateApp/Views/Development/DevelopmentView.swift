@@ -456,6 +456,10 @@ final class DevelopmentModel: ObservableObject {
 
     /// Open what a `fleetmate://` link names: switch to its segment and select
     /// it, fetching it by id when the lists don't hold it.
+    /// A link that arrived before Azure DevOps sign-in finished, opened again
+    /// once it does.
+    var linkAwaitingSignIn: FleetMateLink?
+
     func open(_ link: FleetMateLink, appState: AppState) {
         searchText = ""
         Task {
@@ -534,6 +538,12 @@ final class DevelopmentModel: ObservableObject {
                     break // Routed to Projects by AppState.
                 }
             } catch {
+                // Opened from a cold launch, the lookup races sign-in and
+                // loses. Hold the link rather than report a failure.
+                if !appState.devOpsSsoAuthenticated {
+                    linkAwaitingSignIn = link
+                    return
+                }
                 appState.linkError = error.localizedDescription
             }
         }
@@ -864,7 +874,12 @@ private struct DevelopmentContent: View {
             }
         }
         .onChange(of: appState.devOpsSsoAuthenticated) { _, ready in
-            if ready { model.loadPullRequests(appState: appState, force: true) }
+            guard ready else { return }
+            model.loadPullRequests(appState: appState, force: true)
+            if let link = model.linkAwaitingSignIn {
+                model.linkAwaitingSignIn = nil
+                model.open(link, appState: appState)
+            }
         }
         .onAppear {
             consumeLink()

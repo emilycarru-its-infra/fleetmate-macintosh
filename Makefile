@@ -279,8 +279,8 @@ release-app:
 		-c "Add :AssociatedBundleIdentifiers array" \
 		-c "Add :AssociatedBundleIdentifiers:0 string $$BUNDLE_ID" \
 		-c "Add :RunAtLoad bool true" \
-		-c "Add :KeepAlive dict" \
-		-c "Add :KeepAlive:SuccessfulExit bool false" \
+		-c "Add :KeepAlive bool true" \
+		-c "Add :ThrottleInterval integer 60" \
 		-c "Add :ProcessType string Background" \
 		-c "Add :LimitLoadToSessionType string Aqua" \
 		"$$AGENT_PLIST" > /dev/null; \

@@ -154,7 +154,31 @@ final class InboxAgent: NSObject, NSApplicationDelegate {
         openWindowInstance(urls: urls)
     }
 
+    /// Posted by the helper with a link's text as the object, for the window
+    /// copy of the app to open.
+    nonisolated static var openURLNotification: Notification.Name {
+        Notification.Name("\(Bundle.main.bundleIdentifier ?? "ca.ecuad.macadmin.fleetmate").open-url")
+    }
+
+    /// The copy of the app with a window, when one is already running.
+    private var windowInstance: NSRunningApplication? {
+        NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+            .first { $0.processIdentifier != getpid() && !$0.isTerminated && $0.activationPolicy == .regular }
+    }
+
+    /// macOS can hand a Dock click or a link to the helper rather than the
+    /// window copy, since both share the bundle. Pass it on to the window copy
+    /// when one is running, and start one only when none is.
     private func openWindowInstance(urls: [URL]) {
+        if let running = windowInstance {
+            running.activate()
+            for url in urls {
+                DistributedNotificationCenter.default().postNotificationName(
+                    Self.openURLNotification, object: url.absoluteString,
+                    userInfo: nil, deliverImmediately: true)
+            }
+            return
+        }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.createsNewApplicationInstance = true
         configuration.activates = true

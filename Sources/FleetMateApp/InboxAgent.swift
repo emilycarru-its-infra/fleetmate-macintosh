@@ -46,7 +46,16 @@ final class InboxAgent: NSObject, NSApplicationDelegate {
         let service = SMAppService.agent(plistName: plistName)
         switch service.status {
         case .enabled:
-            return
+            // Login Items can say enabled while launchd has no job, after an
+            // install unloads it. Register again so it runs without a re-login.
+            guard !isJobLoaded else { return }
+            do {
+                try? service.unregister()
+                try service.register()
+                dbg.info("Inbox helper was not loaded; registered it again", category: "inbox")
+            } catch {
+                dbg.warn("Inbox helper reload failed: \(error.localizedDescription)", category: "inbox")
+            }
         case .requiresApproval:
             // Turned off in System Settings ▸ Login Items; respect that.
             dbg.info("Inbox helper is turned off in Login Items", category: "inbox")
@@ -58,6 +67,23 @@ final class InboxAgent: NSObject, NSApplicationDelegate {
             } catch {
                 dbg.warn("Inbox helper registration failed: \(error.localizedDescription)", category: "inbox")
             }
+        }
+    }
+
+    /// Whether launchd has the helper's job in this login session.
+    private static var isJobLoaded: Bool {
+        let label = (plistName as NSString).deletingPathExtension
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        task.arguments = ["print", "gui/\(getuid())/\(label)"]
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            task.waitUntilExit()
+            return task.terminationStatus == 0
+        } catch {
+            return true
         }
     }
 

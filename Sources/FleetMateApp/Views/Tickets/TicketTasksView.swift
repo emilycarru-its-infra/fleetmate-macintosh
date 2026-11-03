@@ -27,9 +27,13 @@ struct TicketTasksView: View {
                 }.buttonStyle(.plain)
                     .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
                 Spacer()
-                Button("Apply Template…") { selection = .init(mode: .template) }
+                Button { selection = .init(mode: .template) } label: {
+                    Text("Apply Template…").sharedButtonWidth()
+                }
                     .disabled(isLoading || selection != nil)
-                Button("Add Task…") { selection = .init(mode: .create) }
+                Button { selection = .init(mode: .create) } label: {
+                    Text("Add Task…").sharedButtonWidth()
+                }
                     .disabled(isLoading || selection != nil)
                 Button("Refresh", systemImage: "arrow.clockwise") { reload += 1 }
                     .labelStyle(.iconOnly).help("Refresh tasks")

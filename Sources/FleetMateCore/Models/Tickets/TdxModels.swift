@@ -242,6 +242,44 @@ public struct TdxAttachment: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+/// A person or group the ticketing application allows as a ticket's
+/// responsible — what `GET /api/{appId}/tickets/resources` returns, and the
+/// same set the TDX web UI's Responsible picker offers.
+public struct TdxEligibleAssignment: Codable, Identifiable, Hashable, Sendable {
+    /// A person's UID, or a group's numeric ID as a string.
+    public let value: String
+    public let name: String
+    public let email: String?
+    public let isUser: Bool
+
+    public var id: String { "\(isUser ? "user" : "group"):\(value)" }
+
+    /// The group ID, when this is a group.
+    public var groupId: Int? { isUser ? nil : Int(value) }
+
+    enum CodingKeys: String, CodingKey {
+        case value = "Value"
+        case name = "Name"
+        case email = "Email"
+        case isUser = "IsUser"
+    }
+
+    public init(value: String, name: String, email: String? = nil, isUser: Bool) {
+        self.value = value
+        self.name = name
+        self.email = email
+        self.isUser = isUser
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        value = try container.decode(String.self, forKey: .value)
+        name = (try? container.decodeIfPresent(String.self, forKey: .name)) ?? ""
+        email = try? container.decodeIfPresent(String.self, forKey: .email)
+        isUser = (try? container.decodeIfPresent(Bool.self, forKey: .isUser)) ?? true
+    }
+}
+
 // MARK: - Feed Entry (Comments)
 
 public struct TdxFeedEntry: Codable, Identifiable, Hashable {

@@ -268,7 +268,41 @@ class AppState: ObservableObject {
     /// which account is signed in rather than just a display name.
     @Published var devOpsSsoUserEmail: String?
     @Published var devOpsProjectReady = false
+    /// The last DevOps sign-in attempt failed; cleared when another starts.
+    @Published private(set) var devOpsSignInFailed = false
     private var devOpsSsoViewModel: DevOpsSsoLoginViewModel?
+
+    /// Where Azure DevOps sign-in stands, for views that hold a request
+    /// until it finishes.
+    var devOpsSignInStatus: SignInStatus {
+        if !isDevOpsSsoConfigured { return .notConfigured }
+        if devOpsSsoAuthenticated { return .signedIn }
+        return devOpsSignInFailed ? .failed : .signingIn
+    }
+
+    /// What to do with an Azure DevOps request that failed, given whether
+    /// DevOps was signed in when it started.
+    func devOpsRetry(startedSignedIn: Bool) -> SignInRetry {
+        SignInRetry.afterFailure(startedSignedIn: startedSignedIn, status: devOpsSignInStatus)
+    }
+
+    /// Act on a Retry for an Azure DevOps request. Reloads at once when sign-in
+    /// isn't the problem; otherwise starts the launch-time sign-in (silent
+    /// token, then the headless browser) if none is running and returns false,
+    /// leaving the caller to hold the request and reload from `onDevOpsSignIn`.
+    @discardableResult
+    func retryDevOpsRequest(reload: () -> Void) -> Bool {
+        switch SignInRetryTap.decide(status: devOpsSignInStatus) {
+        case .reload:
+            reload()
+            return true
+        case .signInThenReload, .waitForSignIn:
+            // Waiting also covers launch before the first attempt starts;
+            // asking again is a no-op while one is running.
+            attemptSilentDevOpsSso()
+            return false
+        }
+    }
     
     // MARK: - Cached Data
     // Data caches with timestamps to avoid reloading on tab switches
@@ -524,6 +558,7 @@ class AppState: ObservableObject {
                         )
                     } else {
                         self.devOpsSsoAuthenticated = false
+                        self.devOpsSignInFailed = true
                     }
                 }
             }
@@ -1430,6 +1465,7 @@ class AppState: ObservableObject {
     /// No Keychain prompts. If it fails, Phase 1.5 headless WKWebView is tried next.
     func attemptSilentDevOpsSso() {
         guard devOpsSsoViewModel == nil else { return }
+        devOpsSignInFailed = false
         dbg.info("[DevOps SSO Phase 1] Starting silent token acquisition (az CLI → MSAL cache)", category: "devops-sso")
 
         Task { @MainActor [weak self] in
@@ -1515,6 +1551,7 @@ class AppState: ObservableObject {
             self.devOpsSsoViewModel = nil
             hiddenWindow.close()
             dbg.warn("[DevOps SSO Phase 1.5] Headless SSO FAILED or timed out — auth unavailable (no interactive fallback)", category: "devops-sso")
+            self.devOpsSignInFailed = true
             self.authManager.reportOptionalAuthFailure(.devops, message: "Silent SSO failed")
         }
     }
@@ -1530,6 +1567,7 @@ class AppState: ObservableObject {
         devOpsService.setBearerToken(accessToken, expiry: expiry)
         installDevOpsTokenRefresh()
         devOpsSsoAuthenticated = true
+        devOpsSignInFailed = false
         devOpsSsoUserName = userName
         devOpsSsoUserEmail = userEmail
         showDevOpsSsoLogin = false
@@ -1644,6 +1682,7 @@ class AppState: ObservableObject {
     /// Handle SSO authentication failure or cancellation
     func handleDevOpsSsoFailure(_ error: String?) {
         showDevOpsSsoLogin = false
+        devOpsSignInFailed = true
         if let error = error {
             errorMessage = "DevOps SSO login failed: \(error)"
             authManager.update(.devops, state: .failed(message: error))

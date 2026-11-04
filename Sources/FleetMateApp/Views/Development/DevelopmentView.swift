@@ -458,10 +458,11 @@ final class DevelopmentModel: ObservableObject {
     /// it, fetching it by id when the lists don't hold it.
     /// A link that arrived before Azure DevOps sign-in finished, opened again
     /// once it does.
-    var linkAwaitingSignIn: FleetMateLink?
+    @Published var linkAwaitingSignIn: FleetMateLink?
 
     func open(_ link: FleetMateLink, appState: AppState) {
         searchText = ""
+        let startedSignedIn = appState.devOpsSsoAuthenticated
         Task {
             do {
                 switch link {
@@ -525,14 +526,20 @@ final class DevelopmentModel: ObservableObject {
                     }
 
                 case .azureDevOpsPipeline(let project, let definitionId):
-                    // A pipeline opens on its latest run.
+                    // A pipeline opens on its latest run. The list may not have
+                    // loaded yet (a link from a cold launch), so ask for it.
                     segment = .pipelines
                     pipelineStatusFilter = nil
-                    guard let run = pipelineRuns
+                    if let run = pipelineRuns
                         .filter({ $0.source == .azureDevOps && $0.container == project && $0.pipelineId == definitionId })
-                        .first
-                    else { throw LinkOpenError("Pipeline \(definitionId) in \(project) has no recent runs.") }
-                    selectedRun = run
+                        .first {
+                        selectedRun = run
+                    } else if let run = try await appState.devOpsService
+                        .getLatestPipelineRun(project: project, definitionId: definitionId) {
+                        selectedRun = run
+                    } else {
+                        throw LinkOpenError("Pipeline \(definitionId) in \(project) has no runs.")
+                    }
 
                 case .workItem, .gitHubIssue, .device, .asset, .ticket, .user, .group, .reporting:
                     break // Routed to Projects by AppState.
@@ -540,11 +547,17 @@ final class DevelopmentModel: ObservableObject {
             } catch {
                 // Opened from a cold launch, the lookup races sign-in and
                 // loses. Hold the link rather than report a failure.
-                if !appState.devOpsSsoAuthenticated {
+                let retry: SignInRetry = link.needsAzureDevOps
+                    ? appState.devOpsRetry(startedSignedIn: startedSignedIn)
+                    : .showError
+                switch retry {
+                case .retryNow:
+                    open(link, appState: appState)
+                case .waitForSignIn:
                     linkAwaitingSignIn = link
-                    return
+                case .showError:
+                    appState.linkError = error.localizedDescription
                 }
-                appState.linkError = error.localizedDescription
             }
         }
     }
@@ -873,9 +886,11 @@ private struct DevelopmentContent: View {
                 }
             }
         }
-        .onChange(of: appState.devOpsSsoAuthenticated) { _, ready in
-            guard ready else { return }
+        .onDevOpsSignIn(appState) {
+            // Lists loaded before sign-in left out Azure DevOps entirely.
             model.loadPullRequests(appState: appState, force: true)
+            model.loadCommits(appState: appState, force: true)
+            model.loadPipelines(appState: appState, force: true)
             if let link = model.linkAwaitingSignIn {
                 model.linkAwaitingSignIn = nil
                 model.open(link, appState: appState)
@@ -1391,6 +1406,8 @@ private struct DevelopmentContent: View {
                 }
                 .id(run.id)
                 .environmentObject(appState)
+            } else if model.linkAwaitingSignIn != nil {
+                DevOpsSignInWaitView(subject: "the linked run", error: nil)
             } else {
                 ContentUnavailableView(
                     "Select a run",
@@ -1416,6 +1433,8 @@ private struct DevelopmentContent: View {
             }
             .id(pr.id)
             .environmentObject(appState)
+        } else if model.linkAwaitingSignIn != nil {
+            DevOpsSignInWaitView(subject: "the linked pull request", error: nil)
         } else {
             ContentUnavailableView(
                 "Select a pull request",
@@ -1813,6 +1832,9 @@ struct CommitDetailView: View {
     @EnvironmentObject private var appState: AppState
     @State private var detail: CommitDetail?
     @State private var loadError: String?
+    /// The load failed before Azure DevOps sign-in finished; it runs again
+    /// once sign-in completes.
+    @State private var awaitingSignIn = false
     @State private var copied = false
 
     private var commit: PullRequestCommit { selection.commit }
@@ -1825,6 +1847,9 @@ struct CommitDetailView: View {
             content
         }
         .task { await load() }
+        .onDevOpsSignIn(appState) {
+            if awaitingSignIn { Task { await load() } }
+        }
     }
 
     private var header: some View {
@@ -1894,7 +1919,9 @@ struct CommitDetailView: View {
 
     @ViewBuilder
     private var content: some View {
-        if let loadError {
+        if awaitingSignIn {
+            DevOpsSignInWaitView(subject: "commit \(commit.shortSha)", error: loadError)
+        } else if let loadError {
             ContentUnavailableView("Couldn't load commit", systemImage: "exclamationmark.triangle", description: Text(loadError))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let detail {
@@ -1987,6 +2014,9 @@ struct CommitDetailView: View {
     }
 
     private func load() async {
+        awaitingSignIn = false
+        loadError = nil
+        let startedSignedIn = appState.devOpsSsoAuthenticated
         do {
             switch repository.source {
             case .gitHub:
@@ -2001,7 +2031,18 @@ struct CommitDetailView: View {
                     .getCommitDetail(repositoryId: repoId, sha: commit.id, project: repository.container)
             }
         } catch {
-            loadError = error.localizedDescription
+            let retry: SignInRetry = repository.source == .azureDevOps
+                ? appState.devOpsRetry(startedSignedIn: startedSignedIn)
+                : .showError
+            switch retry {
+            case .retryNow:
+                await load()
+            case .waitForSignIn:
+                awaitingSignIn = true
+                loadError = error.localizedDescription
+            case .showError:
+                loadError = error.localizedDescription
+            }
         }
     }
 }

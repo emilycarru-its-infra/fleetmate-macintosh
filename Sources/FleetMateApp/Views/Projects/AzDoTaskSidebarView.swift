@@ -33,6 +33,9 @@ struct AzDoTaskSidebarView: View {
     @State private var comments: [WorkItemComment] = []
     @State private var isLoadingDetail = false
     @State private var loadError: String?
+    /// The load failed before Azure DevOps sign-in finished; it runs again
+    /// once sign-in completes.
+    @State private var awaitingSignIn = false
 
     // Single edit mode — all fields toggle together
     @State private var isEditing = false
@@ -126,11 +129,13 @@ struct AzDoTaskSidebarView: View {
             Divider()
             if isLoadingDetail {
                 VStack { Spacer(); ProgressView("Loading work item…"); Spacer() }
+            } else if awaitingSignIn {
+                DevOpsSignInWaitView(subject: workItemId.map { "#\($0)" } ?? "this work item", error: loadError)
             } else if let error = loadError {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle").appFont(.largeTitle).foregroundColor(.orange)
                     Text(error).appFont(.body).foregroundColor(.secondary).multilineTextAlignment(.center)
-                    Button("Retry") { loadDetail() }.buttonStyle(.bordered)
+                    Button("Retry") { retryDetail() }.buttonStyle(.bordered)
                     Spacer()
                 }.padding()
             } else if layout == .wide {
@@ -178,6 +183,9 @@ struct AzDoTaskSidebarView: View {
         .task(id: task.id) {
             resetState()
             loadDetail()
+        }
+        .onDevOpsSignIn(appState) {
+            if awaitingSignIn { loadDetail() }
         }
         .alert("Delete work item?", isPresented: $showConfirmRemove) {
             Button("Delete", role: .destructive) { removeWorkItem() }
@@ -1500,6 +1508,7 @@ struct AzDoTaskSidebarView: View {
         isEditing = false
         isLoadingDetail = false
         loadError = nil
+        awaitingSignIn = false
         newCommentText = ""
         actionError = nil
         linkedWorkItemInfo = [:]
@@ -1543,10 +1552,20 @@ struct AzDoTaskSidebarView: View {
 
     // MARK: - Load Detail
 
+    /// Retry that signs in first when the failure was sign-in, since a plain
+    /// reload while signed out fails the same way.
+    private func retryDetail() {
+        if !appState.retryDevOpsRequest(reload: loadDetail) {
+            awaitingSignIn = true
+        }
+    }
+
     private func loadDetail() {
         guard let id = workItemId else { return }
         isLoadingDetail = true
         loadError = nil
+        awaitingSignIn = false
+        let startedSignedIn = appState.devOpsSsoAuthenticated
 
         Task {
             defer { isLoadingDetail = false }
@@ -1555,7 +1574,18 @@ struct AzDoTaskSidebarView: View {
                 loadedItem = try await service.getWorkItem(id: id)
                 workItem = loadedItem
             } catch {
-                loadError = error.localizedDescription
+                // A link that launched the app gets here before sign-in
+                // finishes: hold the item rather than report a failure.
+                switch appState.devOpsRetry(startedSignedIn: startedSignedIn) {
+                case .retryNow:
+                    // Runs after this task's defer, so the reload's spinner stays.
+                    Task { @MainActor in loadDetail() }
+                case .waitForSignIn:
+                    awaitingSignIn = true
+                    loadError = error.localizedDescription
+                case .showError:
+                    loadError = error.localizedDescription
+                }
                 return
             }
             // Read project directly from loaded item (not from @State) to avoid stale reads

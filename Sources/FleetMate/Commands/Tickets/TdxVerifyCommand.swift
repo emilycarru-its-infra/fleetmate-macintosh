@@ -164,7 +164,7 @@ struct VerifySubcommand: AsyncParsableCommand {
 
         Write checks will modify ticket #\(ticketId) on the live service desk:
           • re-save its title (same value, but this records an edit in its history)
-          • post a private comment
+          • post a private comment, reply to it, then delete that reply
 
         """.yellow)
         print("Continue? [y/N] ", terminator: "")
@@ -187,17 +187,33 @@ struct VerifySubcommand: AsyncParsableCommand {
             return "title round-tripped"
         }
 
+        var commentId: Int?
         await check(results, "Add comment", "POST /api/\(appId)/tickets/\(ticketId)/feed") {
             guard let entry = try await service.addComment(
                 ticketId: ticketId,
                 comment: "FleetMate API verification — safe to ignore.",
                 isPrivate: true
             ) else { throw VerifyError.message("no feed entry returned") }
+            commentId = entry.id
             return "feed entry \(entry.id ?? 0)"
         }
 
-        // There is deliberately no threaded-reply check: TDX exposes no route
-        // that posts one. See the note in TdxService above `getFeedEntry`.
+        // The reply goes under the private comment just posted, never anyone
+        // else's, and is deleted again straight away.
+        guard let commentId else { return }
+        var replyId: Int?
+        await check(results, "Reply in thread", "POST /api/feed/\(commentId)/replies") {
+            let reply = try await service.replyToFeedEntry(
+                entryId: commentId, body: "FleetMate API verification reply — safe to ignore.")
+            guard let id = reply.id, id > 0 else { throw VerifyError.message("no reply ID returned") }
+            replyId = id
+            return "reply \(id)"
+        }
+        guard let replyId else { return }
+        await check(results, "Delete reply", "DELETE /api/feed/\(commentId)/replies/\(replyId)") {
+            try await service.deleteFeedReply(entryId: commentId, replyId: replyId)
+            return "reply \(replyId) deleted"
+        }
     }
 
     // MARK: - Plumbing

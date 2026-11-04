@@ -164,6 +164,12 @@ struct TicketsView: View {
     // every parent starts expanded.
     @State private var collapsedTicketIds: Set<Int> = []
 
+    private struct PendingReplyDeletion: Identifiable {
+        let parentId: Int
+        let reply: TdxFeedEntry
+        var id: Int { reply.id ?? 0 }
+    }
+
     private struct CommentDraft: Equatable {
         var text: String
         var isPrivate: Bool
@@ -198,6 +204,15 @@ struct TicketsView: View {
     @State private var isCommentDropTargeted = false
     /// Which upload Post is on, for the progress label ("Uploading 2 of 3…").
     @State private var commentUploadProgress: (done: Int, total: Int)?
+    /// The top-level feed entry whose inline reply composer is open.
+    @State private var replyingToEntryId: Int?
+    /// Unsent replies, by the entry they answer. Feed entry IDs are unique
+    /// site-wide, so one ticket's drafts can't surface on another.
+    @State private var replyDrafts: [Int: FeedReplyDraft] = [:]
+    @State private var postingReplyEntryId: Int?
+    @State private var replyUploadProgress: (done: Int, total: Int)?
+    @State private var replyFocused = false
+    @State private var pendingReplyDeletion: PendingReplyDeletion?
     /// Recipient ids (see `NotifyRecipient`) ticked for the next comment.
     @State private var notifySelection: Set<String> = []
 
@@ -708,6 +723,8 @@ struct TicketsView: View {
             notifySelection = draft?.notify ?? []
             commentAttachments = draft?.attachments ?? []
             isCommentDropTargeted = false
+            replyingToEntryId = nil
+            pendingReplyDeletion = nil
             saveErrorMessage = nextId.flatMap { commentPostErrors[$0] }
             ticketContacts = []
             groupMembers = []
@@ -2224,7 +2241,8 @@ struct TicketsView: View {
                             if !hasCommentDraft { isCommentSectionExpanded = false }
                         }
                     }
-                    .keyboardShortcut(.return, modifiers: .command)
+                    // An open reply composer owns ⌘Return while it is showing.
+                    .keyboardShortcut(replyingToEntryId == nil ? KeyboardShortcut(.return, modifiers: .command) : nil)
                     .disabled(!hasCommentDraft || isAddingComment)
                     .help(commentAttachments.isEmpty ? "Post comment (⌘Return)"
                           : "Upload the files to the ticket, then post the comment (⌘Return)")
@@ -2584,11 +2602,77 @@ struct TicketsView: View {
                 // comment down. Each row already carries its own trailing gap.
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(filteredFeed, id: \.id) { entry in
-                        FeedEntryRow(entry: entry, onQuote: quoteInComment)
+                        feedEntryRow(entry)
                     }
+                }
+                .confirmationDialog(
+                    "Delete this reply?",
+                    isPresented: Binding(get: { pendingReplyDeletion != nil },
+                                         set: { if !$0 { pendingReplyDeletion = nil } }),
+                    presenting: pendingReplyDeletion
+                ) { pending in
+                    Button("Delete Reply", role: .destructive) {
+                        Task { await deleteReply(pending) }
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: { _ in
+                    Text("TeamDynamix replaces the reply with a deletion notice. It can't be restored.")
                 }
             }
         }
+    }
+
+    private func feedEntryRow(_ entry: TdxFeedEntry) -> some View {
+        let isComposing = entry.id != nil && entry.id == replyingToEntryId
+        return FeedEntryRow(
+            entry: entry,
+            onReply: entry.id == nil ? nil : openReplyComposer,
+            onQuote: quoteInComment,
+            onDeleteReply: { reply in
+                guard let parentId = entry.id else { return }
+                pendingReplyDeletion = PendingReplyDeletion(parentId: parentId, reply: reply)
+            },
+            canDeleteReply: isOwnReply,
+            replyComposer: isComposing ? AnyView(replyComposer(for: entry)) : nil,
+            composerAuthor: appState.tdxMe?.fullName
+        )
+    }
+
+    private func replyComposer(for entry: TdxFeedEntry) -> some View {
+        let entryId = entry.id ?? 0
+        return FeedReplyComposer(
+            parentAuthor: entry.createdFullName,
+            parentIsPrivate: entry.isPrivate == true,
+            draft: Binding(
+                get: { replyDrafts[entryId] ?? FeedReplyDraft() },
+                set: { replyDrafts[entryId] = $0.isEmpty ? nil : $0 }
+            ),
+            focusRequested: $replyFocused,
+            isPosting: postingReplyEntryId == entryId,
+            uploadProgress: postingReplyEntryId == entryId ? replyUploadProgress : nil,
+            onPost: {
+                guard let ticketId = selectedTicket?.id else { return }
+                Task { await postReply(to: entry, ticketId: ticketId) }
+            },
+            onCancel: {
+                withAnimation(.easeInOut(duration: 0.15)) { replyingToEntryId = nil }
+            }
+        )
+    }
+
+    private func openReplyComposer(_ entry: TdxFeedEntry) {
+        guard let id = entry.id else { return }
+        withAnimation(.easeInOut(duration: 0.15)) { replyingToEntryId = id }
+        replyFocused = true
+    }
+
+    /// Only the signed-in person's own replies offer Delete. TDX would also let
+    /// someone holding "Delete Any Feed Entry" remove anybody's, but that is a
+    /// moderation job for the web UI, not a context-menu slip.
+    private func isOwnReply(_ reply: TdxFeedEntry) -> Bool {
+        guard let mine = appState.tdxMe?.uid?.lowercased(), !mine.isEmpty,
+              let author = reply.createdUid?.lowercased() else { return false }
+        return mine == author
     }
 
     // MARK: - Date Range Helpers
@@ -3219,6 +3303,98 @@ struct TicketsView: View {
         }
     }
 
+    /// Upload a reply's files to the ticket, then post its text into the thread.
+    ///
+    /// Mirrors `addComment`: files first, private when the comment answered is,
+    /// and the text held back if any file fails so Post can be pressed again
+    /// without the reply posting twice.
+    private func postReply(to entry: TdxFeedEntry, ticketId: Int) async {
+        guard let entryId = entry.id, postingReplyEntryId == nil else { return }
+        let submitted = replyDrafts[entryId] ?? FeedReplyDraft()
+        guard !submitted.isEmpty else { return }
+        let revision = selectionRevision
+        postingReplyEntryId = entryId
+        defer {
+            postingReplyEntryId = nil
+            replyUploadProgress = nil
+        }
+
+        if !submitted.attachments.isEmpty {
+            var failures: [String] = []
+            var uploaded: Set<UUID> = []
+            for (index, attachment) in submitted.attachments.enumerated() {
+                replyUploadProgress = (index, submitted.attachments.count)
+                do {
+                    try await appState.tdxService.uploadAttachment(
+                        ticketId: ticketId,
+                        fileName: attachment.fileName,
+                        data: try attachment.loadData(),
+                        isPrivate: entry.isPrivate == true
+                    )
+                    uploaded.insert(attachment.id)
+                } catch let error as TdxUploadError {
+                    failures.append(error.localizedDescription)
+                } catch {
+                    failures.append("\(attachment.fileName): \(error.localizedDescription)")
+                }
+            }
+            replyUploadProgress = nil
+            if !uploaded.isEmpty {
+                replyDrafts[entryId]?.attachments.removeAll { uploaded.contains($0.id) }
+                if replyDrafts[entryId]?.isEmpty == true { replyDrafts[entryId] = nil }
+                refreshAttachmentList(ticketId: ticketId, revision: revision)
+            }
+            if !failures.isEmpty {
+                let held = submitted.hasText ? " The reply was not posted." : ""
+                if selectionRevision == revision {
+                    saveErrorMessage = "Couldn't attach \(failures.count == 1 ? "a file" : "\(failures.count) files"): "
+                        + failures.joined(separator: "; ") + "." + held
+                }
+                return
+            }
+        }
+
+        if submitted.hasText {
+            do {
+                try await appState.tdxService.replyToFeedEntry(entryId: entryId, body: submitted.text)
+            } catch {
+                if selectionRevision == revision { saveErrorMessage = "Reply failed: \(error.localizedDescription)" }
+                return
+            }
+            // Leave anything typed while the request was running untouched.
+            if replyDrafts[entryId]?.text == submitted.text { replyDrafts[entryId]?.text = "" }
+            if replyDrafts[entryId]?.isEmpty == true { replyDrafts[entryId] = nil }
+        }
+
+        guard selectionRevision == revision else { return }
+        if replyDrafts[entryId] == nil, replyingToEntryId == entryId {
+            withAnimation(.easeInOut(duration: 0.15)) { replyingToEntryId = nil }
+        }
+        await refreshReplies(entryId: entryId, revision: revision)
+    }
+
+    private func deleteReply(_ pending: PendingReplyDeletion) async {
+        guard let replyId = pending.reply.id else { return }
+        let revision = selectionRevision
+        do {
+            try await appState.tdxService.deleteFeedReply(entryId: pending.parentId, replyId: replyId)
+        } catch {
+            if selectionRevision == revision { saveErrorMessage = "Couldn't delete the reply: \(error.localizedDescription)" }
+            return
+        }
+        await refreshReplies(entryId: pending.parentId, revision: revision)
+    }
+
+    /// Re-read one thread rather than the whole feed, so the rest of the
+    /// activity list — and where it is scrolled to — stays put.
+    private func refreshReplies(entryId: Int, revision: UUID) async {
+        guard let fresh = try? await appState.tdxService.getFeedEntry(id: entryId),
+              selectionRevision == revision,
+              let index = ticketFeed.firstIndex(where: { $0.id == entryId }) else { return }
+        // The single-entry read carries the replies and a current RepliesCount.
+        ticketFeed[index] = fresh
+    }
+
     /// Re-read the ticket so its Attachments list shows newly uploaded files,
     /// without resetting fields the user is part-way through editing.
     private func refreshAttachmentList(ticketId: Int, revision: UUID) {
@@ -3240,9 +3416,9 @@ struct TicketsView: View {
 
     /// Seed the comment box with a quote of an existing entry.
     ///
-    /// This is what "replying" amounts to here: TDX renders threads but exposes
-    /// no API to post into one, so the response goes back as a new top-level
-    /// comment that carries the context with it.
+    /// The alternative to a threaded reply, from a card's context menu: a new
+    /// top-level comment carrying the context with it, which — unlike a reply —
+    /// can be private and notify people.
     private func quoteInComment(_ entry: TdxFeedEntry) {
         let author = entry.createdFullName ?? "Unknown"
         let quoted = Self.decodeHtml(entry.body ?? "")
@@ -3499,12 +3675,20 @@ private struct ThreadAvatar: View {
 
 struct FeedEntryRow: View {
     let entry: TdxFeedEntry
-    /// Quotes this entry into the ticket's comment box.
-    ///
-    /// Not a threaded reply: the TDX Web API can read existing threads but has
-    /// no route for posting into one, so a response is a new top-level comment
-    /// that quotes what it answers.
+    /// Opens the inline reply composer under this thread. Always called with
+    /// the top-level entry: TDX threads are one level deep, so answering a
+    /// reply posts into its parent's thread.
+    var onReply: ((TdxFeedEntry) -> Void)? = nil
+    /// Quotes a comment into the ticket's Add Comment box — a new top-level
+    /// comment, which, unlike a reply, can be private and notify people.
     var onQuote: ((TdxFeedEntry) -> Void)? = nil
+    /// Deletes one of this thread's replies. Offered only on replies
+    /// `canDeleteReply` accepts.
+    var onDeleteReply: ((TdxFeedEntry) -> Void)? = nil
+    var canDeleteReply: (TdxFeedEntry) -> Bool = { _ in false }
+    /// The open composer, drawn as the thread's last row; nil when closed.
+    var replyComposer: AnyView? = nil
+    var composerAuthor: String? = nil
 
     // Thread rail geometry. The numbers relate to each other, so they live
     // together: an elbow has to land on the middle of the next avatar, which
@@ -3524,16 +3708,32 @@ struct FeedEntryRow: View {
             threadRow(
                 entry,
                 isReply: false,
-                connector: entry.replyList.isEmpty ? .none : .elbow
+                connector: entry.replyList.isEmpty && replyComposer == nil ? .none : .elbow
             )
 
             ForEach(Array(entry.replyList.enumerated()), id: \.element.id) { index, reply in
                 threadRow(
                     reply,
                     isReply: true,
-                    connector: index == entry.replyList.count - 1 ? .none : .straight
+                    connector: index == entry.replyList.count - 1 && replyComposer == nil ? .none : .straight
                 )
             }
+
+            if let replyComposer {
+                composerRow(replyComposer)
+            }
+        }
+    }
+
+    /// The composer sits where the next reply will land, on the same rail.
+    private func composerRow(_ composer: AnyView) -> some View {
+        HStack(alignment: .top, spacing: Self.railSpacing) {
+            Color.clear.frame(width: Self.replyIndent - Self.railSpacing, height: 0)
+            ThreadAvatar(name: composerAuthor, size: Self.avatarSize)
+                .frame(width: Self.avatarSize)
+                .accessibilityHidden(true)
+            composer
+                .padding(.bottom, Self.rowGap)
         }
     }
 
@@ -3595,18 +3795,26 @@ struct FeedEntryRow: View {
                         .appFont(.caption)
                         .foregroundColor(.secondary)
                 }
-                // Every card can be replied to. The quote carries whichever
-                // comment it was clicked on — reply or top-level — even though
-                // the response posts as a new top-level comment (TeamDynamix
-                // has no API for posting inside a thread).
-                if let onQuote {
+                // Every card can be replied to; a reply to a reply joins the
+                // same thread, since TDX threads are one level deep.
+                if let onReply {
+                    Button(action: { onReply(entry) }) {
+                        Image(systemName: "arrowshape.turn.up.left")
+                            .appFont(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Reply in this thread")
+                    .accessibilityLabel("Reply in thread")
+                } else if let onQuote {
                     Button(action: { onQuote(item) }) {
                         Image(systemName: "arrowshape.turn.up.left")
                             .appFont(.caption)
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Reply — quotes this comment in the comment box")
+                    .help("Quote this comment in a new comment")
+                    .accessibilityLabel("Quote in new comment")
                 }
                 Button(action: { copyToClipboard(item) }) {
                     Image(systemName: "doc.on.doc")
@@ -3615,6 +3823,7 @@ struct FeedEntryRow: View {
                 }
                 .buttonStyle(.plain)
                 .help("Copy to clipboard")
+                .accessibilityLabel("Copy comment")
             }
 
             // Only shown when TDX says who was notified. Replies and most
@@ -3645,6 +3854,23 @@ struct FeedEntryRow: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
         )
+        .contextMenu { cardMenu(item, isReply: isReply) }
+    }
+
+    @ViewBuilder
+    private func cardMenu(_ item: TdxFeedEntry, isReply: Bool) -> some View {
+        if let onReply {
+            Button("Reply in Thread") { onReply(entry) }
+        }
+        if let onQuote {
+            Button("Quote in New Comment") { onQuote(item) }
+        }
+        Divider()
+        Button("Copy") { copyToClipboard(item) }
+        if isReply, let onDeleteReply, canDeleteReply(item) {
+            Divider()
+            Button("Delete Reply…", role: .destructive) { onDeleteReply(item) }
+        }
     }
 
     private func copyToClipboard(_ item: TdxFeedEntry) {

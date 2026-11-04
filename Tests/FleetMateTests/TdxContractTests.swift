@@ -250,8 +250,8 @@ final class TdxContractTests: XCTestCase {
     }
 
     func testFeedEntryIsReadFromTheTenantFeedEndpoint() async throws {
-        // Threads are readable per-entry even though they cannot be written to:
-        // OPTIONS /api/feed/{id} answers `Allow: GET,DELETE`.
+        // Threads are read per-entry from the tenant-wide feed route, not the
+        // ticket's; replies are written under it too (TdxFeedReplyTests).
         StubURLProtocol.reset(stubs: stubs([
             StubURLProtocol.Stub(pathContains: "/feed/", body: #"{"ID":29652860,"RepliesCount":0}"#)
         ]))

@@ -12,6 +12,13 @@
 # BootstrapMate / ReportMate are consumed: every tool comes from a release
 # download, never a private submodule clone or a secret baked into CI.
 #
+# Signing downstream must match `make sign-app`, not a single `codesign --deep`:
+# sign Contents/PlugIns/TicketLinks.appex with its own entitlements, then
+# Contents/Library/LoginItems/<App> Inbox Helper.app with the app's
+# entitlements and `--identifier <app bundle id>` (so the helper keeps the
+# app's designated requirement and opens its keychain items without a prompt),
+# then the app itself.
+#
 # Triggered by pushing a vYYYY.MM.DD.HHMM tag (e.g. v2026.10.07.1530) or manually via workflow_dispatch
 # (which produces a timestamped, non-release build artifact).
 

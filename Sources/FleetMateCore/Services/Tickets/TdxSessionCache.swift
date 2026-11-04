@@ -5,8 +5,10 @@ import Security
 /// the app window or the background helper — can reuse it instead of
 /// signing in again, which takes up to a minute.
 ///
-/// Both processes are the same signed binary, so either can read what the
-/// other wrote without a keychain prompt.
+/// The helper is a copy of the app's binary in a nested bundle, signed with
+/// the app's own signing identifier, so its designated requirement is the
+/// app's and either can read what the other wrote without a keychain prompt.
+/// The service is keyed on the app's bundle id, never the helper's.
 public struct TdxSessionCache: Codable, Sendable {
     public struct Cookie: Codable, Sendable {
         public let name: String
@@ -80,7 +82,7 @@ public struct TdxSessionCache: Codable, Sendable {
     }
 
     private static var service: String {
-        "\(Bundle.main.bundleIdentifier ?? "ca.ecuad.macadmin.fleetmate").tdx-session"
+        "\(AppIdentity.mainBundleIdentifier ?? "ca.ecuad.macadmin.fleetmate").tdx-session"
     }
     private static let account = "session"
 

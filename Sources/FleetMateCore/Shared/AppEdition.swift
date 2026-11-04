@@ -49,7 +49,7 @@ public enum AppEdition: String, Sendable {
     }
 
     public var preferencesDomain: String {
-        preferencesDomain(bundleIdentifier: Bundle.main.bundleIdentifier)
+        preferencesDomain(bundleIdentifier: AppIdentity.mainBundleIdentifier)
     }
 
     static let fleetMateDomain = "ca.ecuad.macadmin.fleetmate"
@@ -66,6 +66,39 @@ public enum AppEdition: String, Sendable {
     /// Expands `name` inside this edition's support folder.
     public func supportPath(_ name: String) -> String {
         NSString(string: "\(supportDirectory)/\(name)").expandingTildeInPath
+    }
+}
+
+/// The app a process belongs to. The background inbox helper is a separate
+/// bundle nested inside the app, with its own bundle id so macOS never treats
+/// it as the app, yet it reads the app's settings, keychain items and launch
+/// agent. Its Info.plist names the app under `mainBundleIdentifierKey`.
+public enum AppIdentity {
+    public static let mainBundleIdentifierKey = "FleetMateMainBundleIdentifier"
+
+    /// Suffix the helper's bundle id and launch agent label add to the app's.
+    public static let inboxHelperSuffix = ".inbox-agent"
+
+    /// The app's bundle id: the one the helper's Info.plist names, otherwise
+    /// the running bundle's own.
+    public static func mainBundleIdentifier(info: [String: Any]?, bundleIdentifier: String?) -> String? {
+        if let named = info?[mainBundleIdentifierKey] as? String {
+            let trimmed = named.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return bundleIdentifier
+    }
+
+    public static let mainBundleIdentifier: String? = mainBundleIdentifier(
+        info: Bundle.main.infoDictionary, bundleIdentifier: Bundle.main.bundleIdentifier)
+
+    /// True inside the nested helper bundle.
+    public static let isInboxHelperBundle: Bool =
+        Bundle.main.object(forInfoDictionaryKey: mainBundleIdentifierKey) != nil
+
+    /// The launch agent label, and the helper's bundle id, for an app.
+    public static func inboxHelperIdentifier(main: String) -> String {
+        main + inboxHelperSuffix
     }
 }
 

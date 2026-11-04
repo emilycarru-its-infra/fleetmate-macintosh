@@ -1071,6 +1071,18 @@ public class AzureDevOpsService {
         return Self.mapBuild(build, project: project)
     }
 
+    /// A pipeline's most recent run, or nil when it has none — what a
+    /// `fleetmate://pipeline/<project>/definition/<id>` link opens.
+    public func getLatestPipelineRun(project: String, definitionId: Int) async throws -> PipelineRun? {
+        let encodedProject = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        let response: AzdoBuilds = try await request(
+            "GET",
+            path: "/_apis/build/builds?definitions=\(definitionId)&$top=1&queryOrder=queueTimeDescending&api-version=7.0",
+            forProject: encodedProject
+        )
+        return response.value?.first.map { Self.mapBuild($0, project: project) }
+    }
+
     /// Fetch a single pull request by ID.
     public func getPullRequest(repositoryId: String, pullRequestId: Int, project: String? = nil) async throws -> GitPullRequest {
         let encodedRepoId = repositoryId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? repositoryId

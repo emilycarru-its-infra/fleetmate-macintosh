@@ -78,6 +78,19 @@ public enum FleetMateLink: Hashable, Sendable {
         return link
     }
 
+    /// Whether opening the link reads from Azure DevOps, and so has to wait
+    /// for Azure DevOps sign-in when it arrives first.
+    public var needsAzureDevOps: Bool {
+        switch self {
+        case .pullRequest(.azureDevOps, _), .commit(.azureDevOps, _),
+             .azureDevOpsRun, .azureDevOpsPipeline, .workItem:
+            return true
+        case .pullRequest(.gitHub, _), .commit(.gitHub, _), .gitHubRun, .gitHubIssue,
+             .device, .asset, .ticket, .user, .group, .reporting:
+            return false
+        }
+    }
+
     private var names: [String] {
         switch self {
         case .pullRequest(let host, _), .commit(let host, _):

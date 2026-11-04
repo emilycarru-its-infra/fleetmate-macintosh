@@ -38,12 +38,16 @@ struct TicketWorkflowView: View {
                 .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
                 .help(isExpanded ? "Hide workflow" : "Show workflow")
                 Spacer()
-                Button("Restart Workflow…") {
+                Button {
                     if let workflow { management = .init(expected: workflow, isRestart: true) }
+                } label: {
+                    Text("Restart Workflow…").sharedButtonWidth()
                 }
                 .disabled(workflow?.workflowConfigurationId.map { $0 > 0 } != true || isLoading || selectedAction != nil || management != nil)
-                Button(workflow == nil ? "Assign Workflow…" : "Change Workflow…") {
+                Button {
                     management = .init(expected: workflow, isRestart: false)
+                } label: {
+                    Text(workflow == nil ? "Assign Workflow…" : "Change Workflow…").sharedButtonWidth()
                 }
                 .disabled(isLoading || errorMessage != nil || selectedAction != nil || management != nil)
                 Button("Refresh", systemImage: "arrow.clockwise") { reloadToken += 1 }

@@ -49,6 +49,7 @@ public class TdxService {
     private var groupCache: [TdxLookupItem] = []
     private var serviceCache: [TdxLookupItem] = []
     private var refDataExpiry: Date = .distantPast
+    private var eligibleCache: [String: (items: [TdxEligibleAssignment], expiry: Date)] = [:]
     private let cacheDuration: TimeInterval
 
     public var isConfigured: Bool {
@@ -880,6 +881,48 @@ public class TdxService {
         }
     }
 
+    /// Upload a file to a ticket.
+    ///
+    /// TDX's feed endpoint takes no attachments, so a comment's files go to the
+    /// ticket itself — the same place the web UI puts them — and appear in its
+    /// Attachments list. `isPrivate` hides the file from the client portal.
+    @discardableResult
+    public func uploadAttachment(
+        ticketId: Int,
+        fileName: String,
+        data: Data,
+        mimeType: String? = nil,
+        isPrivate: Bool = false
+    ) async throws -> TdxAttachment? {
+        guard var headers = await headers() else { throw TdxAuthError.notAuthenticated }
+
+        let form = TdxMultipartForm(fileName: fileName, data: data, mimeType: mimeType)
+        headers.update(name: "Content-Type", value: form.contentType)
+        headers.update(name: "Accept", value: "application/json")
+
+        let url = config.tdxTicketsUrl("\(ticketId)/attachments?isPrivate=\(isPrivate)")
+        dbg.info("TDX uploadAttachment → POST \(url) (\(data.count) bytes)", category: "tdx")
+
+        return try await withCheckedThrowingContinuation { continuation in
+            activeSession.upload(form.body, to: url, method: .post, headers: headers)
+                .validate()
+                .responseData { response in
+                    switch response.result {
+                    case .success(let body):
+                        // The attachment record is a convenience; a 200 whose
+                        // body doesn't decode still means the file landed.
+                        continuation.resume(returning: try? JSONDecoder().decode(TdxAttachment.self, from: body))
+                    case .failure(let error):
+                        let status = response.response?.statusCode ?? 0
+                        let detail = response.data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                        dbg.warn("TDX uploadAttachment \(ticketId) failed (\(status)): \(detail)", category: "tdx")
+                        continuation.resume(throwing: TdxUploadError(fileName: fileName, statusCode: status,
+                                                                     detail: detail, underlying: error))
+                    }
+                }
+        }
+    }
+
     /// Download an attachment into a temporary file and return its path, ready
     /// to hand to Quick Look or the Finder.
     public func stageAttachment(_ attachment: TdxAttachment) async throws -> URL? {
@@ -941,6 +984,27 @@ public class TdxService {
                     }
                 }
         }
+    }
+
+    /// People and groups the ticketing application accepts as a ticket's
+    /// responsible, matching `searchText`.
+    ///
+    /// This is TDX's own eligibility rule — the list its web Responsible
+    /// picker draws from — rather than the whole people directory: users who
+    /// hold the ticketing application, and the groups that can own its
+    /// tickets. TDX answers at most five matches per search, so the picker
+    /// searches as you type. Answers are cached per search for the reference
+    /// data lifetime, since the eligible set changes only with app access.
+    public func searchEligibleResponsibles(searchText: String) async throws -> [TdxEligibleAssignment] {
+        let key = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let cached = eligibleCache[key], Date() < cached.expiry { return cached.items }
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
+
+        let encoded = key.addingPercentEncoding(withAllowedCharacters: .urlQueryValueAllowed) ?? key
+        let items: [TdxEligibleAssignment] = try await get(
+            config.tdxTicketsUrl("resources?searchText=\(encoded)"), headers: headers)
+        eligibleCache[key] = (items, Date().addingTimeInterval(cacheDuration))
+        return items
     }
 
     /// Find the TDX person record for an email address.

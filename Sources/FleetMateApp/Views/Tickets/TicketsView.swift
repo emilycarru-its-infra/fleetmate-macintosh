@@ -113,6 +113,7 @@ enum AcademicTerm: String, CaseIterable {
 
 struct TicketsView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.appFontScale) private var appFontScale
     @Environment(\.compactModuleToolbar) private var compactToolbar
     @State private var isLoading = false
     /// Share of the width the ticket detail takes when it opens.
@@ -167,10 +168,16 @@ struct TicketsView: View {
         var text: String
         var isPrivate: Bool
         var notify: Set<String>
+        var attachments: [PendingCommentAttachment] = []
+
+        var isEmpty: Bool {
+            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
+        }
     }
 
     private var commentDraft: CommentDraft {
-        CommentDraft(text: newComment, isPrivate: isCommentPrivate, notify: notifySelection)
+        CommentDraft(text: newComment, isPrivate: isCommentPrivate, notify: notifySelection,
+                     attachments: commentAttachments)
     }
 
     // Comment state
@@ -185,6 +192,12 @@ struct TicketsView: View {
     @State private var scrollToCommentToken = 0
     @State private var isCommentPrivate = false
     @State private var isAddingComment = false
+    /// Files to upload with the next comment.
+    @State private var commentAttachments: [PendingCommentAttachment] = []
+    @State private var isPickingCommentFiles = false
+    @State private var isCommentDropTargeted = false
+    /// Which upload Post is on, for the progress label ("Uploading 2 of 3…").
+    @State private var commentUploadProgress: (done: Int, total: Int)?
     /// Recipient ids (see `NotifyRecipient`) ticked for the next comment.
     @State private var notifySelection: Set<String> = []
 
@@ -232,11 +245,16 @@ struct TicketsView: View {
     @State private var isSearchingRequestor = false
     @State private var showRequestorResults = false
     @State private var isChangingRequestor = false
-    @State private var responsibleSearchText = ""
-    @State private var responsibleSearchResults: [TdxPerson] = []
-    @State private var isSearchingResponsible = false
-    @State private var showResponsibleResults = false
     @State private var isReassigning = false
+    /// Which ticket-actions variant ViewThatFits is showing, so the Reassign
+    /// popover anchors to the button on screen.
+    @State private var actionsIconOnly = false
+    /// A group picked in the Reassign popover that the Group picker's options,
+    /// drawn from loaded tickets, may not include.
+    @State private var reassignedGroup: TdxLookupItem?
+    /// A row's "Reassign…" menu item selects that ticket first; this opens the
+    /// popover once its detail has loaded rather than losing it to the reset.
+    @State private var pendingReassignTicketId: Int?
     @State private var notifyNewResponsible = true
     // Actions menu
     @State private var showActionsMenu = false
@@ -259,7 +277,8 @@ struct TicketsView: View {
     @State private var isSavingDescription = false
 
     @FocusState private var descriptionFocused: Bool
-    @FocusState private var commentFocused: Bool
+    /// One-shot request to put the cursor in the comment editor.
+    @State private var commentFocused = false
 
     var tickets: [TdxTicket] { appState.cachedTickets }
 
@@ -670,7 +689,7 @@ struct TicketsView: View {
         }
         .onChange(of: selectedTicketIds) { oldIds, newIds in
             if let oldId = oldIds.first ?? nil {
-                commentDrafts[oldId] = newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : commentDraft
+                commentDrafts[oldId] = commentDraft.isEmpty ? nil : commentDraft
             }
             let nextId = newIds.first ?? nil
             let draft = nextId.flatMap { commentDrafts[$0] }
@@ -687,6 +706,8 @@ struct TicketsView: View {
             isCommentSectionExpanded = draft != nil
             isCommentPrivate = draft?.isPrivate ?? false
             notifySelection = draft?.notify ?? []
+            commentAttachments = draft?.attachments ?? []
+            isCommentDropTargeted = false
             saveErrorMessage = nextId.flatMap { commentPostErrors[$0] }
             ticketContacts = []
             groupMembers = []
@@ -776,6 +797,7 @@ struct TicketsView: View {
                 resetToCurrentTerm()
             case .showListView:  viewMode = .table
             case .showBoardView: viewMode = .board
+            case .showInbox:     if appState.ticketInbox.isReady { viewMode = .inbox }
             case .find:          break  // the toolbar search field takes it
             case .scan, .selectOnline: break
             }
@@ -1285,10 +1307,12 @@ struct TicketsView: View {
         }
         .disabled(myUid == nil || ticket.responsibleUid == myUid || editsPending)
         Button {
-            selectedTicketIds = [ticket.id]
-            responsibleSearchText = ""
-            responsibleSearchResults = []
-            isReassigning = true
+            if selectedId == ticket.id {
+                isReassigning = true
+            } else {
+                pendingReassignTicketId = ticket.id
+                selectedTicketIds = [ticket.id]
+            }
         } label: {
             Label("Reassign…", systemImage: "person.2.fill")
         }
@@ -1478,31 +1502,36 @@ struct TicketsView: View {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         descriptionSection(ticket: ticket)
                             .padding(.top, 10)
+                        Divider().padding(.vertical, 8)
+                        peopleSection(ticket: ticket)
                         if let ticketId = ticket.id {
                             Divider().padding(.vertical, 8)
-                            TicketWorkflowView(ticketId: ticketId, service: appState.tdxService, refreshToken: ticketActivityRevision) {
-                                guard selectedTicket?.id == ticketId else { return }
-                                loadTicketDetail(ticketId: ticketId)
-                                loadTicketFeed(ticketId: ticketId)
-                                loadTickets()
+                            // One container so the Workflow and Tasks rows
+                            // share a button width and their buttons line up.
+                            VStack(alignment: .leading, spacing: 0) {
+                                TicketWorkflowView(ticketId: ticketId, service: appState.tdxService, refreshToken: ticketActivityRevision) {
+                                    guard selectedTicket?.id == ticketId else { return }
+                                    loadTicketDetail(ticketId: ticketId)
+                                    loadTicketFeed(ticketId: ticketId)
+                                    loadTickets()
+                                }
+                                .id("workflow-\(ticketId)")
+                                Divider().padding(.vertical, 8)
+                                TicketTasksView(ticketId: ticketId, service: appState.tdxService,
+                                                refreshToken: ticketActivityRevision) {
+                                    guard selectedTicket?.id == ticketId else { return }
+                                    loadTicketDetail(ticketId: ticketId)
+                                    loadTicketFeed(ticketId: ticketId)
+                                    loadTickets()
+                                }
+                                .id("tasks-\(ticketId)")
                             }
-                            .id("workflow-\(ticketId)")
-                            Divider().padding(.vertical, 8)
-                            TicketTasksView(ticketId: ticketId, service: appState.tdxService,
-                                            refreshToken: ticketActivityRevision) {
-                                guard selectedTicket?.id == ticketId else { return }
-                                loadTicketDetail(ticketId: ticketId)
-                                loadTicketFeed(ticketId: ticketId)
-                                loadTickets()
-                            }
-                            .id("tasks-\(ticketId)")
+                            .sharedButtonWidthGroup()
                         }
                         if !ticket.attachmentList.isEmpty {
                             Divider().padding(.vertical, 8)
                             TicketAttachmentsView(attachments: ticket.attachmentList)
                         }
-                        Divider().padding(.vertical, 8)
-                        peopleSection(ticket: ticket)
                         Section {
                             // The compose space opens here, under the Activity
                             // bar's Add Comment button, above the feed it adds to.
@@ -1708,12 +1737,25 @@ struct TicketsView: View {
 
             Button(action: {
                 isReassigning.toggle()
-                responsibleSearchText = ""
-                responsibleSearchResults = []
             }) {
                 Label("Reassign", systemImage: "person.2.fill")
             }
-            .help("Choose a different responsible person")
+            .help("Choose a different responsible person or group")
+            // Only the variant ViewThatFits is showing presents the popover,
+            // so it anchors to the Reassign button actually on screen.
+            .popover(isPresented: Binding(
+                get: { isReassigning && actionsIconOnly == iconOnly },
+                set: { if !$0 { isReassigning = false } }
+            ), arrowEdge: .bottom) {
+                TicketReassignPopover(
+                    service: appState.tdxService,
+                    currentResponsibleUid: editResponsibleUid,
+                    currentGroupId: editResponsibleGroupId ?? ticket.responsibleGroupId,
+                    notifyNewResponsible: $notifyNewResponsible
+                ) { candidate in
+                    applyReassignment(candidate, ticket: ticket)
+                }
+            }
 
             Button(action: {
                 editResponsibleUid = nil
@@ -1755,6 +1797,24 @@ struct TicketsView: View {
         .buttonStyle(.bordered)
         .controlSize(.small)
         .fixedSize()
+        .onAppear { actionsIconOnly = iconOnly }
+    }
+
+    /// Make the chosen candidate the responsible. A group takes the ticket on
+    /// its own, as TDX's picker does: the group becomes responsible and the
+    /// responsible person is cleared.
+    private func applyReassignment(_ candidate: TdxEligibleAssignment, ticket: TdxTicket) {
+        if candidate.isUser {
+            editResponsibleUid = candidate.value
+            editResponsibleName = candidate.name
+        } else if let groupId = candidate.groupId {
+            reassignedGroup = TdxLookupItem(id: groupId, name: candidate.name)
+            editResponsibleGroupId = groupId
+            editResponsibleUid = nil
+            editResponsibleName = ""
+        }
+        isReassigning = false
+        trackEdits(ticket: ticket)
     }
 
     // MARK: - Detail Fields
@@ -1919,38 +1979,21 @@ struct TicketsView: View {
                                    !groupIdOptions.contains(where: { $0.id == gid }) {
                                     Text(gname).tag(gid)
                                 }
+                                if let extra = reassignedGroup, extra.id != ticket.responsibleGroupId,
+                                   !groupIdOptions.contains(where: { $0.id == extra.id }) {
+                                    Text(extra.name).tag(extra.id)
+                                }
                             }
                             .labelsHidden()
                         }
                     } else {
-                        DetailRow(label: "Group", value: ticket.responsibleGroupName ?? "-")
+                        DetailRow(label: "Group", value: (reassignedGroup?.id == editResponsibleGroupId ? reassignedGroup?.name : nil)
+                                  ?? ticket.responsibleGroupName ?? "-")
                     }
 
                     // Responsible — Assign to me / Reassign / Unassign live on
-                    // the ticket number row; Reassign opens the search here.
+                    // the ticket number row; Reassign opens its popover there.
                     DetailRow(label: "Responsible", value: editResponsibleName.isEmpty ? "-" : editResponsibleName)
-                    if isReassigning {
-                        VStack(alignment: .leading, spacing: 4) {
-                            personSearchField(
-                                searchText: $responsibleSearchText,
-                                searchResults: $responsibleSearchResults,
-                                isSearching: $isSearchingResponsible,
-                                showResults: $showResponsibleResults,
-                                onSelect: { person in
-                                    editResponsibleUid = person.uid
-                                    editResponsibleName = person.fullName ?? ""
-                                    responsibleSearchText = ""
-                                    showResponsibleResults = false
-                                    isReassigning = false
-                                    trackEdits(ticket: ticket)
-                                }
-                            )
-                            Toggle("Notify new responsible", isOn: $notifyNewResponsible)
-                                .toggleStyle(.checkbox)
-                                .appFont(.caption)
-                        }
-                        .padding(.leading, 104)
-                    }
 
                     DetailRow(label: "Created", value: formatDateString(ticket.createdDate))
                     DetailRow(label: "Modified", value: formatDateString(ticket.modifiedDate))
@@ -2143,29 +2186,48 @@ struct TicketsView: View {
     private func addCommentSection(ticket: TdxTicket) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Group {
-                TextEditor(text: $newComment)
-                    .appFont(.body)
-                    .frame(height: 80)
-                    .focused($commentFocused)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                    )
+                CommentTextEditor(
+                    text: $newComment,
+                    focusRequested: $commentFocused,
+                    fontSize: (AppTextStyle.body.basePointSize * CGFloat(AppFontScale.clamp(appFontScale))).rounded(),
+                    accessibilityLabel: "Comment",
+                    onAttach: addCommentAttachments,
+                    onDropTargeted: { isCommentDropTargeted = $0 }
+                )
+                .frame(height: 80)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(isCommentDropTargeted ? Color.accentColor : Color.gray.opacity(0.3),
+                                lineWidth: isCommentDropTargeted ? 2 : 1)
+                )
+
+                if !commentAttachments.isEmpty {
+                    FlowLayout(spacing: 6) {
+                        ForEach(commentAttachments) { attachment in
+                            CommentAttachmentChip(attachment: attachment, isDisabled: isAddingComment) {
+                                commentAttachments.removeAll { $0.id == attachment.id }
+                            }
+                        }
+                    }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("\(commentAttachments.count) attachment\(commentAttachments.count == 1 ? "" : "s")")
+                }
 
                 HStack(spacing: 10) {
                     // Blue only once there is something to post: a disabled
                     // prominent button draws as a muddy grey slab.
-                    let postButton = Button("Post Comment") {
+                    let postButton = Button(commentAttachments.isEmpty ? "Post Comment" : "Post with Attachments") {
                         Task {
                             isAddingComment = true
                             await addComment(ticket: ticket)
                             isAddingComment = false
-                            if newComment.isEmpty { isCommentSectionExpanded = false }
+                            if !hasCommentDraft { isCommentSectionExpanded = false }
                         }
                     }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(!hasCommentDraft || isAddingComment)
-                    .help("Post comment (⌘Return)")
+                    .help(commentAttachments.isEmpty ? "Post comment (⌘Return)"
+                          : "Upload the files to the ticket, then post the comment (⌘Return)")
                     if hasCommentDraft {
                         postButton.buttonStyle(.borderedProminent)
                     } else {
@@ -2175,10 +2237,30 @@ struct TicketsView: View {
                         withAnimation(.easeInOut(duration: 0.15)) { isCommentSectionExpanded = false }
                     }
                     .help("Close the comment editor; the draft is kept")
+                    Button {
+                        isPickingCommentFiles = true
+                    } label: {
+                        Label("Attach…", systemImage: "paperclip")
+                    }
+                    .disabled(isAddingComment)
+                    .help("Attach files to this comment — or drag them onto the comment, or paste an image")
                     Toggle("Private", isOn: $isCommentPrivate)
                         .toggleStyle(.checkbox)
                         .appFont(.body)
+                    if isAddingComment, let progress = commentUploadProgress {
+                        ProgressView().controlSize(.small)
+                        Text("Uploading \(min(progress.done + 1, progress.total)) of \(progress.total)…")
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
+                }
+                .fileImporter(isPresented: $isPickingCommentFiles,
+                              allowedContentTypes: [.item],
+                              allowsMultipleSelection: true) { result in
+                    if case .success(let urls) = result {
+                        addCommentAttachments(urls.map(PendingCommentAttachment.init(fileURL:)))
+                    }
                 }
 
                 Text(isCommentPrivate ? "Only users with access to private ticket activity can see this comment." : "This comment is visible to people who can view the ticket.")
@@ -2208,6 +2290,50 @@ struct TicketsView: View {
                             .help(recipient.emails.joined(separator: ", "))
                         }
                     }
+                }
+            }
+        }
+        // The editor takes drops itself; this catches files dropped on the
+        // buttons, chips and notify list around it.
+        .onDrop(of: [.fileURL], isTargeted: $isCommentDropTargeted) { providers in
+            loadDroppedFiles(providers)
+            return true
+        }
+    }
+
+    private func addCommentAttachments(_ added: [PendingCommentAttachment]) {
+        // The same file dropped twice is attached once.
+        let existing = Set(commentAttachments.compactMap { attachment -> URL? in
+            if case .file(let url) = attachment.source { return url.standardizedFileURL }
+            return nil
+        })
+        var pastedIndex = 0
+        for attachment in added {
+            switch attachment.source {
+            case .file(let url):
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                      !isDirectory.boolValue, !existing.contains(url.standardizedFileURL) else { continue }
+                commentAttachments.append(attachment)
+            case .data(let data):
+                // Several images pasted within one second still get distinct names.
+                let taken = Set(commentAttachments.map(\.fileName))
+                var name = attachment.fileName
+                while taken.contains(name) {
+                    pastedIndex += 1
+                    name = PendingCommentAttachment.pastedImageName(index: pastedIndex)
+                }
+                commentAttachments.append(PendingCommentAttachment(imageData: data, fileName: name))
+            }
+        }
+    }
+
+    private func loadDroppedFiles(_ providers: [NSItemProvider]) {
+        for provider in providers {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let url, url.isFileURL else { return }
+                DispatchQueue.main.async {
+                    addCommentAttachments([PendingCommentAttachment(fileURL: url)])
                 }
             }
         }
@@ -2433,7 +2559,7 @@ struct TicketsView: View {
     }
 
     private var hasCommentDraft: Bool {
-        !newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !commentAttachments.isEmpty
     }
 
     private var activityFeed: some View {
@@ -2730,10 +2856,13 @@ struct TicketsView: View {
         requestorSearchText = ""
         requestorSearchResults = []
         showRequestorResults = false
-        responsibleSearchText = ""
-        responsibleSearchResults = []
-        showResponsibleResults = false
-        isReassigning = false
+        reassignedGroup = nil
+        if let pending = pendingReassignTicketId, pending == ticket.id {
+            pendingReassignTicketId = nil
+            isReassigning = true
+        } else {
+            isReassigning = false
+        }
         notifyNewResponsible = true
         isChangingRequestor = false
         hasEdits = false
@@ -2983,6 +3112,13 @@ struct TicketsView: View {
         }
     }
 
+    /// Upload the draft's files to the ticket, then post its text.
+    ///
+    /// TDX keeps attachments on the ticket, not on feed entries, so the files
+    /// land in the ticket's Attachments list (private when the comment is).
+    /// Every file goes up before the comment: if any fails, the comment is
+    /// held back and the failed files stay attached to the draft, so Post can
+    /// be pressed again without posting the text twice.
     private func addComment(ticket: TdxTicket) async {
         guard let ticketId = ticket.id else { return }
         let revision = selectionRevision
@@ -2990,12 +3126,71 @@ struct TicketsView: View {
         let submittedComment = newComment
         let submittedPrivate = isCommentPrivate
         let submittedNotify = notifySelection
+        let submittedAttachments = commentAttachments
         var notificationEmails = notifyRecipients(ticket: ticket)
             .filter { submittedNotify.contains($0.id) }
             .flatMap(\.emails)
         notificationEmails = notificationEmails.reduce(into: []) { result, email in
             guard !result.contains(where: { $0.caseInsensitiveCompare(email) == .orderedSame }) else { return }
             result.append(email)
+        }
+
+        if !submittedAttachments.isEmpty {
+            var failures: [String] = []
+            var uploaded: Set<UUID> = []
+            for (index, attachment) in submittedAttachments.enumerated() {
+                commentUploadProgress = (index, submittedAttachments.count)
+                do {
+                    let data = try attachment.loadData()
+                    try await appState.tdxService.uploadAttachment(
+                        ticketId: ticketId,
+                        fileName: attachment.fileName,
+                        data: data,
+                        isPrivate: submittedPrivate
+                    )
+                    uploaded.insert(attachment.id)
+                } catch let error as TdxUploadError {
+                    failures.append(error.localizedDescription)
+                } catch {
+                    failures.append("\(attachment.fileName): \(error.localizedDescription)")
+                }
+            }
+            commentUploadProgress = nil
+
+            if !uploaded.isEmpty {
+                refreshAttachmentList(ticketId: ticketId, revision: revision)
+                if var stored = commentDrafts[ticketId] {
+                    stored.attachments.removeAll { uploaded.contains($0.id) }
+                    commentDrafts[ticketId] = stored.isEmpty ? nil : stored
+                }
+            }
+            let stillOnTicket = selectionRevision == revision && selectedTicket?.id == ticketId
+            if stillOnTicket {
+                commentAttachments.removeAll { uploaded.contains($0.id) }
+            }
+
+            if !failures.isEmpty {
+                let attachedNote = uploaded.isEmpty ? "" : " \(uploaded.count) other file\(uploaded.count == 1 ? " was" : "s were") attached."
+                let held = submittedComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? "" : " The comment was not posted."
+                let message = "Couldn't attach \(failures.count == 1 ? "a file" : "\(failures.count) files"): "
+                    + failures.joined(separator: "; ") + "." + attachedNote + held
+                commentPostErrors[ticketId] = message
+                if stillOnTicket { saveErrorMessage = message }
+                return
+            }
+        }
+
+        guard !submittedComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            // Files only: nothing to post to the feed.
+            commentPostErrors[ticketId] = nil
+            if commentDrafts[ticketId]?.isEmpty == true { commentDrafts[ticketId] = nil }
+            guard selectionRevision == revision, selectedTicket?.id == ticketId else { return }
+            if isCommentPrivate == submittedPrivate, newComment == submittedComment {
+                isCommentPrivate = false
+            }
+            loadTicketFeed(ticketId: ticketId)
+            return
         }
 
         do {
@@ -3021,6 +3216,16 @@ struct TicketsView: View {
             commentPostErrors[ticketId] = message
             guard selectionRevision == revision, selectedTicket?.id == ticketId else { return }
             saveErrorMessage = message
+        }
+    }
+
+    /// Re-read the ticket so its Attachments list shows newly uploaded files,
+    /// without resetting fields the user is part-way through editing.
+    private func refreshAttachmentList(ticketId: Int, revision: UUID) {
+        Task {
+            guard let fresh = try? await appState.tdxService.getTicket(id: ticketId),
+                  selectionRevision == revision, selectedTicket?.id == ticketId else { return }
+            detailedTicket = fresh
         }
     }
 
@@ -3510,18 +3715,78 @@ struct ViewModePill: View {
     @ObservedObject var inbox: TicketInboxModel
 
     var body: some View {
-        SegmentedPill(
-            selection: $selection,
-            options: inbox.isReady ? [.table, .board, .inbox] : [.table, .board],
-            label: { mode in
-                switch mode {
-                case .table: "List"
-                case .board: "Board"
-                case .inbox: inbox.unreadCount > 0 ? "Inbox \(inbox.unreadCount)" : "Inbox"
+        HStack(spacing: 6) {
+            // The inbox leads, as a mailbox does in Mail: a mail icon carrying
+            // the unread count as the system's red badge. While it is open,
+            // neither List nor Board shows as selected.
+            if inbox.isReady {
+                InboxBadgeButton(isSelected: selection == .inbox, unreadCount: inbox.unreadCount) {
+                    withAnimation(.smooth(duration: 0.2)) { selection = .inbox }
                 }
-            },
-            segmentWidth: nil
-        )
+            }
+            SegmentedPill(
+                selection: $selection,
+                options: [.table, .board],
+                label: { mode in
+                    switch mode {
+                    case .table: "List"
+                    case .board: "Board"
+                    case .inbox: "Inbox"
+                    }
+                },
+                segmentWidth: nil
+            )
+        }
+    }
+}
+
+/// A mail icon with Mail's red count badge: a red capsule, white bold digits,
+/// pinned to the icon's top-trailing corner, hidden at zero.
+struct InboxBadgeButton: View {
+    let isSelected: Bool
+    let unreadCount: Int
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: isSelected ? "envelope.fill" : "envelope")
+                .appFont(fixed: 14, weight: isSelected ? .semibold : .regular)
+                .foregroundStyle(isSelected ? .primary : .secondary)
+                .frame(width: 30, height: 24)
+                .background {
+                    if isSelected { Capsule().fill(.primary.opacity(0.15)) }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if unreadCount > 0 {
+                        UnreadBadge(count: unreadCount)
+                            .offset(x: 6, y: -5)
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(unreadCount > 0 ? "Inbox — \(unreadCount) unread" : "Inbox")
+        .accessibilityLabel("Inbox")
+        .accessibilityValue(unreadCount > 0 ? "\(unreadCount) unread" : "No unread")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// The red notification badge macOS draws on Dock icons and Mail mailboxes.
+struct UnreadBadge: View {
+    let count: Int
+
+    var body: some View {
+        Text(count > 999 ? "999+" : "\(count)")
+            .appFont(fixed: 10, weight: .bold)
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 4)
+            .frame(minWidth: 16, minHeight: 16)
+            .background(Capsule().fill(Color(nsColor: .systemRed)))
+            .accessibilityHidden(true)
     }
 }
 

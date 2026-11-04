@@ -20,6 +20,7 @@ enum AppCommand: Equatable {
     case clearFilters
     case showListView
     case showBoardView
+    case showInbox
     case scan
     case selectOnline
 }
@@ -138,6 +139,9 @@ struct FleetMateCommands: Commands {
                 .disabled(!hasListAndBoard)
             Button("as Board") { appState.perform(.showBoardView) }
                 .keyboardShortcut("2", modifiers: [.command, .option])
+                .disabled(!hasListAndBoard)
+            Button("Inbox") { appState.perform(.showInbox) }
+                .keyboardShortcut("3", modifiers: [.command, .option])
                 .disabled(!hasListAndBoard)
 
             Divider()

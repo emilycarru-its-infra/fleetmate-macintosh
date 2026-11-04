@@ -19,6 +19,10 @@ struct FleetMateApp: App {
 
         // Settings ▸ Appearance ▸ Theme, applied before the first window draws.
         MainActor.assumeIsolated { AppTheme.stored.apply() }
+
+        // An install from before the helper had its own bundle left a job
+        // that runs this executable; point it at the helper straight away.
+        MainActor.assumeIsolated { InboxAgent.migrateLegacyRegistration() }
     }
 
     var body: some Scene {
@@ -29,12 +33,6 @@ struct FleetMateApp: App {
                 .environmentObject(appState)
                 .appFontScale(fontScale)
                 .onOpenURL { url in appState.open(url) }
-                // A link the inbox helper received and passed on.
-                .onReceive(DistributedNotificationCenter.default()
-                    .publisher(for: InboxAgent.openURLNotification)) { note in
-                    guard let text = note.object as? String, let url = URL(string: text) else { return }
-                    appState.open(url)
-                }
                 .task {
                     await appState.preloadAllData()
                 }

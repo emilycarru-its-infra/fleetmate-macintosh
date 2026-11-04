@@ -86,9 +86,19 @@ APP_ENTITLEMENTS := Sources/FleetMateApp/FleetMateApp.entitlements
 APP_DIR := $(BUILD_DIR)/app
 APP_BUNDLE := $(APP_DIR)/$(APP_BUNDLE_NAME)
 SAFARI_EXTENSION_RESOURCES ?= Sources/TicketLinkExtension/Resources
+# The background inbox helper: a copy of the app binary in its own bundle,
+# with its own bundle id, so macOS never sends the app's Dock clicks or links
+# to it. It is signed with the app's signing identifier, which keeps the app's
+# designated requirement, so it opens the app's keychain items without a
+# prompt and satisfies the launch constraint launchd records for the job.
+INBOX_HELPER_NAME := $(APP_DISPLAY_NAME) Inbox Helper
+INBOX_HELPER_EXECUTABLE := $(INBOX_HELPER_NAME)
+INBOX_HELPER_PATH := Contents/Library/LoginItems/$(INBOX_HELPER_NAME).app
 # Both editions carry the Safari link extension, signed on its own with its
 # sandbox entitlements before the outer bundle; --deep would re-sign it with
-# the app's entitlements instead.
+# the app's entitlements instead. The inbox helper is signed on its own too,
+# with the app's signing identifier, which --deep would replace with the
+# helper's bundle id.
 APP_SIGN_DEEP :=
 
 # Build Paths
@@ -267,14 +277,31 @@ release-app:
 		echo "$(GREEN)✓ Info.plist set up for $(APP_DISPLAY_NAME)$(NC)"; \
 	fi; \
 	BUNDLE_ID=$$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$(APP_BUNDLE)/Contents/Info.plist"); \
+	HELPER_DIR="$(APP_BUNDLE)/$(INBOX_HELPER_PATH)"; \
+	mkdir -p "$$HELPER_DIR/Contents/MacOS"; \
+	cp "$$REAL_BIN_PATH" "$$HELPER_DIR/Contents/MacOS/$(INBOX_HELPER_EXECUTABLE)"; \
+	cp "$(APP_BUNDLE)/Contents/Info.plist" "$$HELPER_DIR/Contents/Info.plist"; \
+	/usr/libexec/PlistBuddy \
+		-c "Set :CFBundleIdentifier $$BUNDLE_ID.inbox-agent" \
+		-c "Set :CFBundleName $(INBOX_HELPER_NAME)" \
+		-c "Set :CFBundleExecutable $(INBOX_HELPER_EXECUTABLE)" \
+		-c "Delete :CFBundleURLTypes" \
+		-c "Delete :CFBundleIconFile" \
+		-c "Delete :CFBundleIconName" \
+		-c "Delete :LSApplicationCategoryType" \
+		-c "Add :LSBackgroundOnly bool true" \
+		-c "Add :LSUIElement bool true" \
+		-c "Add :FleetMateMainBundleIdentifier string $$BUNDLE_ID" \
+		"$$HELPER_DIR/Contents/Info.plist"; \
+	echo "$(GREEN)✓ Inbox helper bundle: $(INBOX_HELPER_PATH) ($$BUNDLE_ID.inbox-agent)$(NC)"; \
 	AGENT_DIR="$(APP_BUNDLE)/Contents/Library/LaunchAgents"; \
 	AGENT_PLIST="$$AGENT_DIR/$$BUNDLE_ID.inbox-agent.plist"; \
 	mkdir -p "$$AGENT_DIR"; \
 	/usr/libexec/PlistBuddy \
 		-c "Add :Label string $$BUNDLE_ID.inbox-agent" \
-		-c "Add :BundleProgram string Contents/MacOS/$(APP_BUNDLE_EXECUTABLE)" \
+		-c "Add :BundleProgram string $(INBOX_HELPER_PATH)/Contents/MacOS/$(INBOX_HELPER_EXECUTABLE)" \
 		-c "Add :ProgramArguments array" \
-		-c "Add :ProgramArguments:0 string $(APP_BUNDLE_EXECUTABLE)" \
+		-c "Add :ProgramArguments:0 string $(INBOX_HELPER_EXECUTABLE)" \
 		-c "Add :ProgramArguments:1 string --inbox-agent" \
 		-c "Add :AssociatedBundleIdentifiers array" \
 		-c "Add :AssociatedBundleIdentifiers:0 string $$BUNDLE_ID" \
@@ -346,6 +373,21 @@ sign-app: release-app check-signing-identity
 			codesign --force --options runtime --timestamp \
 				--entitlements Sources/TicketLinkExtension/Extension.entitlements \
 				--sign "$(SIGNING_IDENTITY)" "$(APP_BUNDLE)/Contents/PlugIns/TicketLinks.appex"; \
+		fi; \
+	fi; \
+	APP_SIGNING_ID=$$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$(APP_BUNDLE)/Contents/Info.plist"); \
+	HELPER="$(APP_BUNDLE)/$(INBOX_HELPER_PATH)"; \
+	if [ -d "$$HELPER" ]; then \
+		if [ -n "$(KEYCHAIN)" ]; then \
+			codesign --force --options runtime --timestamp --keychain "$(KEYCHAIN)" \
+				--identifier "$$APP_SIGNING_ID" \
+				--entitlements "$(APP_ENTITLEMENTS)" \
+				--sign "$(SIGNING_IDENTITY)" "$$HELPER"; \
+		else \
+			codesign --force --options runtime --timestamp \
+				--identifier "$$APP_SIGNING_ID" \
+				--entitlements "$(APP_ENTITLEMENTS)" \
+				--sign "$(SIGNING_IDENTITY)" "$$HELPER"; \
 		fi; \
 	fi; \
 	if [ -n "$(KEYCHAIN)" ]; then \

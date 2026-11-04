@@ -59,6 +59,17 @@ jobs:
           make release-app
           make release-app EDITION=ticketsmate
           /usr/libexec/PlistBuddy -c "Print :FleetMateEdition" .build/app/TicketsMate.app/Contents/Info.plist
+          # Each app carries the inbox helper as its own bundle, and the launch
+          # agent runs the helper rather than the app's executable.
+          for app in FleetMate TicketsMate; do
+            helper=".build/app/$app.app/Contents/Library/LoginItems/$app Inbox Helper.app"
+            test -x "$helper/Contents/MacOS/$app Inbox Helper"
+            /usr/libexec/PlistBuddy -c "Print :FleetMateMainBundleIdentifier" "$helper/Contents/Info.plist"
+            if /usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes" "$helper/Contents/Info.plist" >/dev/null 2>&1; then
+              echo "::error::$app's inbox helper claims a URL scheme"; exit 1
+            fi
+            /usr/libexec/PlistBuddy -c "Print :BundleProgram" .build/app/$app.app/Contents/Library/LaunchAgents/*.inbox-agent.plist | grep -q "LoginItems/$app Inbox Helper.app"
+          done
 
       # The test target was never built by CI, so a test could not fail here --
       # it was not compiled, let alone run. Tests that nothing executes are

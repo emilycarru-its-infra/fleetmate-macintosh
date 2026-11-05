@@ -93,6 +93,26 @@ public struct TdxBodyImage: Equatable, Sendable, Hashable {
         return nil
     }
 
+    /// The sources worth trying, in order: the image, then its fallback.
+    public var sources: [Source] { [source] + (fallback.map { [$0] } ?? []) }
+
+    /// True when the image or its fallback lives off the TDX host, so
+    /// loading either would contact a third party.
+    public func hasExternalSource(tdxBase: URL?) -> Bool {
+        sources.contains { Self.isExternal($0, tdxBase: tdxBase) }
+    }
+
+    /// The sources that may be fetched now: inline data and TDX-host images
+    /// always, anything else only once the user has allowed external images.
+    public func loadableSources(tdxBase: URL?, allowExternal: Bool) -> [Source] {
+        sources.filter { allowExternal || !Self.isExternal($0, tdxBase: tdxBase) }
+    }
+
+    static func isExternal(_ source: Source, tdxBase: URL?) -> Bool {
+        guard case .remote(let url) = source else { return false }
+        return !TdxImageAuthPolicy.isTdxHost(url, tdxBase: tdxBase)
+    }
+
     /// A filename for drags, Quick Look and saves, given the image's bytes.
     ///
     /// The extension always comes from the bytes' sniffed type, never from
@@ -307,6 +327,13 @@ public enum TdxBodyImageResolver {
 
 // MARK: - Which requests carry TDX credentials
 
+/// One address a hostname resolved to.
+public enum TdxResolvedAddress: Equatable, Sendable {
+    /// Host byte order.
+    case ipv4(UInt32)
+    case ipv6([UInt8])
+}
+
 public enum TdxImageAuthPolicy {
 
     /// True when an image at `url` may be fetched with the TDX session —
@@ -356,9 +383,78 @@ public enum TdxImageAuthPolicy {
     /// asked for external images: https, and never a host that names a
     /// private, loopback, link-local or otherwise local address, so a comment
     /// can't make the app probe the operator's own network.
+    ///
+    /// This is the literal check only: it looks at the host as written. The
+    /// fetch path also calls `resolvesOnlyToPublicAddresses` before it
+    /// connects.
     public static func mayLoadExternal(_ url: URL) -> Bool {
         guard mayLoad(url), let host = url.host else { return false }
         return !isLocalHost(host)
+    }
+
+    /// The literal check plus a DNS lookup: the host must resolve, and every
+    /// address it resolves to must be public. One private answer among
+    /// public ones is enough to refuse, since the connection may use any.
+    ///
+    /// This narrows but does not close DNS rebinding: the lookup here and
+    /// the one URLSession makes when it connects are separate, so a resolver
+    /// that answers differently between the two can still steer the
+    /// connection. Closing that would mean connecting to the checked address
+    /// directly.
+    public static func mayLoadExternal(
+        _ url: URL,
+        resolve: (String) -> [TdxResolvedAddress]?
+    ) -> Bool {
+        guard mayLoadExternal(url), let host = url.host else { return false }
+        return resolvesOnlyToPublicAddresses(host, resolve: resolve)
+    }
+
+    public static func resolvesOnlyToPublicAddresses(
+        _ host: String,
+        resolve: (String) -> [TdxResolvedAddress]?
+    ) -> Bool {
+        let bare = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        guard let addresses = resolve(bare), !addresses.isEmpty else { return false }
+        return !addresses.contains { address in
+            switch address {
+            case .ipv4(let ip): return isLocalIPv4(ip)
+            case .ipv6(let bytes): return isLocalIPv6(bytes)
+            }
+        }
+    }
+
+    /// Every address `host` resolves to via `getaddrinfo`, or nil when it
+    /// doesn't resolve. Blocking; call off the main thread.
+    public static func systemResolve(_ host: String) -> [TdxResolvedAddress]? {
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+        var result: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, "443", &hints, &result) == 0, let first = result else { return nil }
+        defer { freeaddrinfo(first) }
+
+        var addresses: [TdxResolvedAddress] = []
+        var cursor: UnsafeMutablePointer<addrinfo>? = first
+        while let info = cursor {
+            if let sockaddr = info.pointee.ai_addr {
+                switch Int32(sockaddr.pointee.sa_family) {
+                case AF_INET:
+                    let ip = sockaddr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+                        UInt32(bigEndian: $0.pointee.sin_addr.s_addr)
+                    }
+                    addresses.append(.ipv4(ip))
+                case AF_INET6:
+                    let bytes = sockaddr.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+                        withUnsafeBytes(of: $0.pointee.sin6_addr) { Array($0) }
+                    }
+                    addresses.append(.ipv6(bytes))
+                default:
+                    break
+                }
+            }
+            cursor = info.pointee.ai_next
+        }
+        return addresses
     }
 
     /// Hostnames and literal addresses that point inside the machine or the

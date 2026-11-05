@@ -194,6 +194,8 @@ final class TdxFeedBodyTests: XCTestCase {
         config.tdxAuthMethod = .browserSSO
         let service = TdxService(config: config, sessionConfiguration: StubURLProtocol.sessionConfiguration())
         service.setSsoToken("eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0.sig", expiry: Date().addingTimeInterval(3600))
+        // 93.184.216.34: a public address, so tests never depend on real DNS.
+        service.externalHostResolver = { _ in [.ipv4(0x5DB8D822)] }
         return service
     }
 
@@ -404,5 +406,79 @@ final class TdxFeedBodyTests: XCTestCase {
         } catch {
             XCTAssertTrue(StubURLProtocol.recorded.isEmpty)
         }
+    }
+
+    // MARK: - Consent covers the fallback too
+
+    private let tdxImage = URL(string: "https://tdx.example.edu/full.png")!
+    private let offHostImage = URL(string: "https://images.example.org/thumb.png")!
+
+    func testOffHostFallbackMakesTheImageExternal() {
+        let image = TdxBodyImage(source: .remote(tdxImage), fallback: .remote(offHostImage), alt: nil)
+        XCTAssertTrue(image.hasExternalSource(tdxBase: apiBase))
+        XCTAssertEqual(image.loadableSources(tdxBase: apiBase, allowExternal: false), [.remote(tdxImage)])
+        XCTAssertEqual(image.loadableSources(tdxBase: apiBase, allowExternal: true), [.remote(tdxImage), .remote(offHostImage)])
+    }
+
+    func testOffHostSourceWithTdxFallbackLoadsOnlyTheFallback() {
+        let image = TdxBodyImage(source: .remote(offHostImage), fallback: .remote(tdxImage), alt: nil)
+        XCTAssertTrue(image.hasExternalSource(tdxBase: apiBase))
+        XCTAssertEqual(image.loadableSources(tdxBase: apiBase, allowExternal: false), [.remote(tdxImage)])
+    }
+
+    func testAllTdxOrInlineImageIsNotExternal() {
+        let inline = TdxBodyImage.Source.inline(data: png, mimeType: "image/png")
+        let image = TdxBodyImage(source: .remote(tdxImage), fallback: inline, alt: nil)
+        XCTAssertFalse(image.hasExternalSource(tdxBase: apiBase))
+        XCTAssertEqual(image.loadableSources(tdxBase: apiBase, allowExternal: false).count, 2)
+    }
+
+    func testParsedDataImageUrlOffHostIsHeld() {
+        let html = #"<img data-image-url="https://images.example.org/full.jpg" src="https://tdx.example.edu/thumb.jpg">"#
+        let image = try! XCTUnwrap(TdxFeedBody.parse(html, webRoot: webRoot).images.first)
+        XCTAssertTrue(image.hasExternalSource(tdxBase: apiBase))
+        XCTAssertEqual(image.loadableSources(tdxBase: apiBase, allowExternal: false),
+                       [.remote(URL(string: "https://tdx.example.edu/thumb.jpg")!)])
+    }
+
+    // MARK: - DNS resolution
+
+    func testHostResolvingToAnyPrivateAddressIsRefused() {
+        let url = URL(string: "https://images.example.org/a.png")!
+        XCTAssertTrue(TdxImageAuthPolicy.mayLoadExternal(url) { _ in [.ipv4(0x5DB8D822)] })
+        XCTAssertFalse(TdxImageAuthPolicy.mayLoadExternal(url) { _ in [.ipv4(0x7F000001)] })
+        XCTAssertFalse(TdxImageAuthPolicy.mayLoadExternal(url) { _ in [.ipv4(0x5DB8D822), .ipv4(0xA9FEA9FE)] })
+        let linkLocal6: [UInt8] = [0xFE, 0x80] + Array(repeating: 0, count: 13) + [1]
+        XCTAssertFalse(TdxImageAuthPolicy.mayLoadExternal(url) { _ in [.ipv4(0x5DB8D822), .ipv6(linkLocal6)] })
+    }
+
+    func testHostThatDoesNotResolveIsRefused() {
+        let url = URL(string: "https://images.example.org/a.png")!
+        XCTAssertFalse(TdxImageAuthPolicy.mayLoadExternal(url) { _ in nil })
+        XCTAssertFalse(TdxImageAuthPolicy.mayLoadExternal(url) { _ in [] })
+    }
+
+    func testSystemResolverFindsLoopbackForLocalhostLiteral() {
+        let addresses = TdxImageAuthPolicy.systemResolve("127.0.0.1")
+        XCTAssertEqual(addresses, [.ipv4(0x7F000001)])
+    }
+
+    func testServiceRefusesHostThatResolvesPrivateWithoutARequest() async {
+        StubURLProtocol.reset(stubs: [StubURLProtocol.Stub(pathContains: "/a.gif", body: "GIF89a")])
+        let service = makeService()
+        service.externalHostResolver = { _ in [.ipv4(0x0A000001)] }
+        do {
+            _ = try await service.fetchBodyImage(URL(string: "https://rebind.example.org/a.gif")!)
+            XCTFail("expected refusal")
+        } catch {
+            XCTAssertTrue(StubURLProtocol.recorded.isEmpty)
+        }
+    }
+
+    func testTdxHostImageSkipsTheExternalLookup() async throws {
+        StubURLProtocol.reset(stubs: [StubURLProtocol.Stub(pathContains: "/ok.gif", body: "GIF89a")])
+        let service = makeService()
+        service.externalHostResolver = { _ in XCTFail("TDX host should not be resolved"); return nil }
+        _ = try await service.fetchBodyImage(URL(string: "https://tdx.example.edu/ok.gif")!)
     }
 }

@@ -988,6 +988,10 @@ public class TdxService {
         return Session(configuration: configuration, activityService: "Tickets")
     }()
 
+    /// Resolves an external image's host before it is fetched. Tests swap in
+    /// a canned answer so they never depend on real DNS.
+    var externalHostResolver: @Sendable (String) -> [TdxResolvedAddress]? = { TdxImageAuthPolicy.systemResolve($0) }
+
     /// The largest image a feed entry may pull down. A var so tests can
     /// exercise the limit without megabytes of fixture.
     var bodyImageByteLimit = 25 * 1024 * 1024
@@ -1009,8 +1013,15 @@ public class TdxService {
 
         let tdxBase = URL(string: baseUrl)
         let credentialed = TdxImageAuthPolicy.sendsTdxCredentials(to: url, tdxBase: tdxBase)
-        guard credentialed || TdxImageAuthPolicy.mayLoadExternal(url) else {
-            throw TdxBodyImageError.refused(url)
+        if !credentialed {
+            // The literal check first, then a lookup off the caller's thread:
+            // every address the host resolves to must be public.
+            guard TdxImageAuthPolicy.mayLoadExternal(url) else { throw TdxBodyImageError.refused(url) }
+            let resolve = externalHostResolver
+            let allowed = await Task.detached(priority: .userInitiated) {
+                TdxImageAuthPolicy.mayLoadExternal(url, resolve: resolve)
+            }.value
+            guard allowed else { throw TdxBodyImageError.refused(url) }
         }
 
         var headers: HTTPHeaders = ["Accept": "image/*"]
@@ -1018,11 +1029,12 @@ public class TdxService {
             headers.add(name: "Authorization", value: "Bearer \(token)")
         }
 
+        let resolve = externalHostResolver
         let redirector = Redirector(behavior: .modify { _, request, _ in
             guard let next = request.url else { return nil }
             let allowed = credentialed
                 ? TdxImageAuthPolicy.mayFollowRedirect(to: next, tdxBase: tdxBase)
-                : TdxImageAuthPolicy.mayLoadExternal(next)
+                : TdxImageAuthPolicy.mayLoadExternal(next, resolve: resolve)
             return allowed ? request : nil
         })
 

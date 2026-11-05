@@ -25,7 +25,9 @@ struct FeedBodyView: View {
         let parsed = FeedBodyCache.body(for: html, webRoot: appState.config.tdxWebRootUrl)
         let tdxBase = URL(string: appState.tdxService.baseUrl)
         let allowExternal = loadExternalAlways || loadExternalHere
-        let held = allowExternal ? 0 : parsed.images.filter { isExternal($0, tdxBase: tdxBase) }.count
+        // An image counts as held when its source or its fallback is off-host:
+        // either would contact a third party if tried.
+        let held = allowExternal ? 0 : parsed.images.filter { $0.hasExternalSource(tdxBase: tdxBase) }.count
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(parsed.segments.enumerated()), id: \.offset) { _, segment in
                 switch segment {
@@ -36,8 +38,9 @@ struct FeedBodyView: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 case .image(let image):
-                    if allowExternal || !isExternal(image, tdxBase: tdxBase) {
-                        FeedBodyImageView(image: image, service: appState.tdxService)
+                    let sources = image.loadableSources(tdxBase: tdxBase, allowExternal: allowExternal)
+                    if !sources.isEmpty {
+                        FeedBodyImageView(image: image, sources: sources, service: appState.tdxService)
                     }
                 }
             }
@@ -45,11 +48,6 @@ struct FeedBodyView: View {
                 externalImagesButton(count: held)
             }
         }
-    }
-
-    private func isExternal(_ image: TdxBodyImage, tdxBase: URL?) -> Bool {
-        guard let url = image.remoteURL else { return false }
-        return !TdxImageAuthPolicy.isTdxHost(url, tdxBase: tdxBase)
     }
 
     private func externalImagesButton(count: Int) -> some View {
@@ -111,6 +109,9 @@ private enum FeedBodyCache {
 /// ⌘C copies it, and the context menu copies, saves or opens it.
 struct FeedBodyImageView: View {
     let image: TdxBodyImage
+    /// What may be fetched, in order — already filtered by the external-image
+    /// consent, so a held off-host fallback is never tried behind its back.
+    let sources: [TdxBodyImage.Source]
     let service: TdxService
 
     private enum Phase {
@@ -137,7 +138,7 @@ struct FeedBodyImageView: View {
                 failure
             }
         }
-        .task(id: image.cacheKey) { await load() }
+        .task(id: sources) { await load() }
         .quickLookPreview($previewURL)
     }
 
@@ -230,9 +231,9 @@ struct FeedBodyImageView: View {
 
     private func load() async {
         phase = .loading
-        var loaded = await fetch(image.source)
-        if loaded == nil, let fallback = image.fallback {
-            loaded = await fetch(fallback)
+        var loaded: (NSImage, Data)?
+        for source in sources where loaded == nil {
+            loaded = await fetch(source)
         }
         if let loaded {
             phase = .loaded(loaded.0, loaded.1)

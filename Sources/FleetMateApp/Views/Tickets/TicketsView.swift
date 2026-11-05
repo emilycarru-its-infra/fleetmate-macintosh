@@ -3628,11 +3628,7 @@ struct FeedEntryRow: View {
             }
 
             if let body = item.body, !body.isEmpty {
-                Text(TicketsView.decodeHtml(body))
-                    .appFont(isReply ? .callout : .body)
-                    .foregroundColor(.primary)
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                FeedBodyView(html: body, isReply: isReply)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

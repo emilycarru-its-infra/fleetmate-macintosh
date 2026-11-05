@@ -13,8 +13,19 @@ struct FeedBodyView: View {
     let html: String
     let isReply: Bool
 
+    /// Images from hosts other than TeamDynamix wait for a click, the way
+    /// Mail holds remote content: loading one tells that host the ticket was
+    /// opened, and from where. The setting lifts the hold everywhere.
+    @AppStorage(FeedBodyView.loadExternalImagesKey) private var loadExternalAlways = false
+    @State private var loadExternalHere = false
+
+    static let loadExternalImagesKey = "tickets.loadExternalImages"
+
     var body: some View {
         let parsed = FeedBodyCache.body(for: html, webRoot: appState.config.tdxWebRootUrl)
+        let tdxBase = URL(string: appState.tdxService.baseUrl)
+        let allowExternal = loadExternalAlways || loadExternalHere
+        let held = allowExternal ? 0 : parsed.images.filter { isExternal($0, tdxBase: tdxBase) }.count
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(parsed.segments.enumerated()), id: \.offset) { _, segment in
                 switch segment {
@@ -25,10 +36,31 @@ struct FeedBodyView: View {
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 case .image(let image):
-                    FeedBodyImageView(image: image, service: appState.tdxService)
+                    if allowExternal || !isExternal(image, tdxBase: tdxBase) {
+                        FeedBodyImageView(image: image, service: appState.tdxService)
+                    }
                 }
             }
+            if held > 0 {
+                externalImagesButton(count: held)
+            }
         }
+    }
+
+    private func isExternal(_ image: TdxBodyImage, tdxBase: URL?) -> Bool {
+        guard let url = image.remoteURL else { return false }
+        return !TdxImageAuthPolicy.isTdxHost(url, tdxBase: tdxBase)
+    }
+
+    private func externalImagesButton(count: Int) -> some View {
+        Button {
+            loadExternalHere = true
+        } label: {
+            Label(count == 1 ? "Load External Image" : "Load \(count) External Images",
+                  systemImage: "photo.on.rectangle.angled")
+        }
+        .controlSize(.small)
+        .help("This comment has images from outside TeamDynamix. Loading them lets those sites see that you opened it. Settings › Authentication can load them automatically.")
     }
 
     /// Runs as an AttributedString, links included. `Text` makes `.link`
@@ -89,6 +121,7 @@ struct FeedBodyImageView: View {
 
     @State private var phase: Phase = .loading
     @State private var previewURL: URL?
+    @State private var stagingID = UUID()
     @FocusState private var focused: Bool
 
     private static let maxHeight: CGFloat = 360
@@ -217,7 +250,8 @@ struct FeedBodyImageView: View {
             guard let fetched = try? await service.fetchBodyImage(url) else { return nil }
             data = fetched
         }
-        guard let nsImage = NSImage(data: data), nsImage.isValid else { return nil }
+        guard TdxImageType.sniff(data) != nil,
+              let nsImage = NSImage(data: data), nsImage.isValid else { return nil }
         return (nsImage, data)
     }
 
@@ -238,13 +272,20 @@ struct FeedBodyImageView: View {
     }
 
     private func save(_ data: Data) {
+        guard let name = image.fileName(for: data) else { return }
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = image.suggestedFileName
-        let ext = (image.suggestedFileName as NSString).pathExtension
-        if let type = UTType(filenameExtension: ext) { panel.allowedContentTypes = [type] }
+        panel.nameFieldStringValue = name
+        if let type = UTType(filenameExtension: (name as NSString).pathExtension) {
+            panel.allowedContentTypes = [type]
+        }
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        try? data.write(to: url, options: .atomic)
+        do {
+            try data.write(to: url, options: .atomic)
+            TdxImageStaging.quarantine(url)
+        } catch {
+            NSSound.beep()
+        }
     }
 
     /// Drag as a file (for the Finder, Mail, Messages) and as an image (for
@@ -256,25 +297,21 @@ struct FeedBodyImageView: View {
         } else {
             provider = NSItemProvider(object: nsImage)
         }
-        provider.suggestedName = (image.suggestedFileName as NSString).deletingPathExtension
+        if let name = image.fileName(for: data) {
+            provider.suggestedName = (name as NSString).deletingPathExtension
+        }
         return provider
     }
 
-    /// Write the bytes to a temporary file under the image's own name, which
-    /// Quick Look, drags and the pasteboard's file URL all need.
+    /// Write the bytes to a temporary file under a sanitised name with an
+    /// extension from the sniffed type, quarantined, which Quick Look, drags
+    /// and the pasteboard's file URL all need. Each view stages into its own
+    /// directory so two images called image.png never collide.
     private func stage(_ data: Data) -> URL? {
+        guard let name = image.fileName(for: data) else { return nil }
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("FleetMate-FeedImages", isDirectory: true)
-            .appendingPathComponent(String(UInt(bitPattern: image.cacheKey.hashValue), radix: 16), isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let url = directory.appendingPathComponent(image.suggestedFileName)
-            if !FileManager.default.fileExists(atPath: url.path) {
-                try data.write(to: url, options: .atomic)
-            }
-            return url
-        } catch {
-            return nil
-        }
+            .appendingPathComponent(stagingID.uuidString, isDirectory: true)
+        return try? TdxImageStaging.stage(data, fileName: name, in: directory)
     }
 }

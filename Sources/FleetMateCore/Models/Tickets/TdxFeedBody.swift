@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// A TeamDynamix feed entry's HTML body, split into what the app can show:
@@ -92,39 +93,144 @@ public struct TdxBodyImage: Equatable, Sendable, Hashable {
         return nil
     }
 
-    /// A filename for drags and saves: the URL's last path component when it
-    /// has a usable one, otherwise "image" with an extension for its type.
-    public var suggestedFileName: String {
-        if let url = remoteURL {
-            let last = url.lastPathComponent
-            if !last.isEmpty, last != "/", last.contains(".") { return last }
-            for item in URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
-            where (item.value ?? "").contains(".") {
-                let value = item.value ?? ""
-                if ["png", "jpg", "jpeg", "gif", "heic", "webp", "bmp", "tif", "tiff"]
-                    .contains((value as NSString).pathExtension.lowercased()) {
-                    return (value as NSString).lastPathComponent
-                }
-            }
-            return "image.png"
+    /// A filename for drags, Quick Look and saves, given the image's bytes.
+    ///
+    /// The extension always comes from the bytes' sniffed type, never from
+    /// the URL, so a comment can't stage an `.app`, `.command` or `.html` by
+    /// naming it that. The base name comes from the URL only after
+    /// `TdxImageFileNaming.sanitizedBaseName` has made it a plain, single
+    /// path component; otherwise it is "image". Nil when the bytes are not
+    /// one of the image types the app hands to other apps.
+    public func fileName(for data: Data) -> String? {
+        guard let type = TdxImageType.sniff(data) else { return nil }
+        let base = remoteURL.flatMap(TdxImageFileNaming.baseName(from:)) ?? "image"
+        return "\(base).\(type.fileExtension)"
+    }
+}
+
+/// The image formats the app recognises by their first bytes. Only these are
+/// staged, dragged, copied as files or saved.
+public enum TdxImageType: String, Sendable, CaseIterable {
+    case png, jpeg, gif, heic, webp, tiff
+
+    public var fileExtension: String {
+        switch self {
+        case .jpeg: return "jpg"
+        default: return rawValue
         }
-        if case .inline(_, let mime) = source {
-            return "image.\(Self.fileExtension(forMimeType: mime))"
-        }
-        return "image.png"
     }
 
-    static func fileExtension(forMimeType mime: String) -> String {
-        switch mime.lowercased() {
-        case "image/jpeg", "image/jpg": return "jpg"
-        case "image/gif": return "gif"
-        case "image/webp": return "webp"
-        case "image/heic": return "heic"
-        case "image/bmp": return "bmp"
-        case "image/tiff": return "tiff"
-        case "image/svg+xml": return "svg"
-        default: return "png"
+    public static func sniff(_ data: Data) -> TdxImageType? {
+        let bytes = [UInt8](data.prefix(16))
+        func starts(_ prefix: [UInt8], at offset: Int = 0) -> Bool {
+            bytes.count >= offset + prefix.count && Array(bytes[offset..<offset + prefix.count]) == prefix
         }
+        if starts([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) { return .png }
+        if starts([0xFF, 0xD8, 0xFF]) { return .jpeg }
+        if starts(Array("GIF87a".utf8)) || starts(Array("GIF89a".utf8)) { return .gif }
+        if starts(Array("RIFF".utf8)), starts(Array("WEBP".utf8), at: 8) { return .webp }
+        if starts([0x49, 0x49, 0x2A, 0x00]) || starts([0x4D, 0x4D, 0x00, 0x2A]) { return .tiff }
+        if starts(Array("ftyp".utf8), at: 4), bytes.count >= 12 {
+            let brand = String(decoding: bytes[8..<12], as: UTF8.self)
+            if ["heic", "heix", "hevc", "hevx", "mif1", "msf1"].contains(brand) { return .heic }
+        }
+        return nil
+    }
+}
+
+/// Turning a URL into a filename that is safe to write.
+public enum TdxImageFileNaming {
+
+    /// The base name (no extension) for an image fetched from `url`: the
+    /// `fileName=` query value TDX's viewer uses, else the last path component.
+    public static func baseName(from url: URL) -> String? {
+        // When the URL names its file, that name is used or nothing is; an
+        // unsafe one doesn't fall through to the path ("Viewer").
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        if let named = items.first(where: { $0.name.lowercased() == "filename" }) {
+            return named.value.flatMap(sanitizedBaseName)
+        }
+        return url.path.split(separator: "/").last.map(String.init).flatMap(sanitizedBaseName)
+    }
+
+    /// Reduce `raw` to a single, ordinary filename without its extension, or
+    /// nil when nothing safe is left. Percent-encoding is decoded first (so
+    /// `..%2F` is seen for what it is), then only the last path component is
+    /// kept, and anything with a separator, `..`, a leading dot or a control
+    /// character is refused rather than repaired.
+    public static func sanitizedBaseName(_ raw: String) -> String? {
+        var name = raw
+        // Decode repeatedly: `%252F` is `%2F` is `/`.
+        for _ in 0..<3 {
+            guard let decoded = name.removingPercentEncoding, decoded != name else { break }
+            name = decoded
+        }
+        if name.contains("\\") { name = name.split(separator: "\\").last.map(String.init) ?? "" }
+        name = (name as NSString).lastPathComponent
+        name = (name as NSString).deletingPathExtension
+        name = name.trimmingCharacters(in: .whitespaces)
+
+        guard !name.isEmpty,
+              name.count <= 120,
+              !name.hasPrefix("."),
+              !name.contains("/"), !name.contains(":"), !name.contains(".."),
+              !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        else { return nil }
+        return name
+    }
+}
+
+/// Writing fetched image bytes to disk for Quick Look, drags and the
+/// pasteboard, and marking anything written as downloaded.
+public enum TdxImageStaging {
+
+    public enum StagingError: Error, Equatable {
+        case notAnImage
+        case outsideDirectory
+    }
+
+    /// Write `data` into `directory` under `fileName` and quarantine it.
+    /// Refuses a name that would land anywhere but directly inside
+    /// `directory`, whatever the caller passed.
+    @discardableResult
+    public static func stage(_ data: Data, fileName: String, in directory: URL) throws -> URL {
+        guard TdxImageType.sniff(data) != nil else { throw StagingError.notAnImage }
+        let root = directory.standardizedFileURL.resolvingSymlinksInPath()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let target = root.appendingPathComponent(fileName).standardizedFileURL
+        guard isDirectChild(target, of: root) else { throw StagingError.outsideDirectory }
+        try data.write(to: target, options: .atomic)
+        quarantine(target)
+        return target
+    }
+
+    /// True when `url` sits directly inside `directory`, after `..` and `.`
+    /// have been resolved.
+    public static func isDirectChild(_ url: URL, of directory: URL) -> Bool {
+        let child = url.standardizedFileURL
+        let parent = directory.standardizedFileURL
+        return child.deletingLastPathComponent().path == parent.path
+            && !child.lastPathComponent.isEmpty
+            && child.lastPathComponent != ".."
+            && child.lastPathComponent != "."
+    }
+
+    /// Set `com.apple.quarantine` the way a browser download would, so
+    /// anything opening the file treats it as coming from the internet.
+    public static func quarantine(_ url: URL, agent: String = "FleetMate") {
+        let value = String(format: "0081;%08x;%@;", Int(Date().timeIntervalSince1970), agent)
+        _ = value.withCString { pointer in
+            setxattr(url.path, "com.apple.quarantine", pointer, strlen(pointer), 0, 0)
+        }
+    }
+
+    /// The quarantine attribute's value, if any — for tests and diagnostics.
+    public static func quarantineValue(_ url: URL) -> String? {
+        let size = getxattr(url.path, "com.apple.quarantine", nil, 0, 0, 0)
+        guard size > 0 else { return nil }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard getxattr(url.path, "com.apple.quarantine", &buffer, size, 0, 0) == size else { return nil }
+        return String(decoding: buffer, as: UTF8.self)
     }
 }
 
@@ -231,24 +337,94 @@ public enum TdxImageAuthPolicy {
         sendsTdxCredentials(to: url, tdxBase: tdxBase)
     }
 
-    /// True when `data` is an image: the server says so, or its first bytes
-    /// are a known image signature. HTML (a sign-in page) is never an image.
+    /// True when `data` is one of the image types the app accepts, judged
+    /// by its first bytes alone — a server's Content-Type is not trusted.
+    /// HTML (a sign-in page) is never an image.
     public static func looksLikeImage(_ data: Data, contentType: String?) -> Bool {
-        guard !data.isEmpty else { return false }
-        let type = (contentType ?? "").lowercased()
-        if type.hasPrefix("text/html") { return false }
-        if type.hasPrefix("image/") { return true }
-        let bytes = [UInt8](data.prefix(12))
-        func starts(_ prefix: [UInt8], at offset: Int = 0) -> Bool {
-            bytes.count >= offset + prefix.count && Array(bytes[offset..<offset + prefix.count]) == prefix
+        if (contentType ?? "").lowercased().hasPrefix("text/html") { return false }
+        return TdxImageType.sniff(data) != nil
+    }
+
+    // MARK: Off-host images
+
+    /// True for the TDX host itself — images there load without asking.
+    public static func isTdxHost(_ url: URL, tdxBase: URL?) -> Bool {
+        sendsTdxCredentials(to: url, tdxBase: tdxBase)
+    }
+
+    /// Whether an image on another host may be fetched once the user has
+    /// asked for external images: https, and never a host that names a
+    /// private, loopback, link-local or otherwise local address, so a comment
+    /// can't make the app probe the operator's own network.
+    public static func mayLoadExternal(_ url: URL) -> Bool {
+        guard mayLoad(url), let host = url.host else { return false }
+        return !isLocalHost(host)
+    }
+
+    /// Hostnames and literal addresses that point inside the machine or the
+    /// local network. Literal IPv4 is parsed with `inet_aton`, which accepts
+    /// the same shorthand forms the resolver does (`127.1`, `2130706433`,
+    /// `0x7f.1`), so those can't slip past as "not an address".
+    public static func isLocalHost(_ rawHost: String) -> Bool {
+        var host = rawHost.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        if host.hasSuffix(".") { host.removeLast() }
+        if host.isEmpty { return true }
+        if host == "localhost" || host.hasSuffix(".localhost") || host.hasSuffix(".local")
+            || host.hasSuffix(".internal") || host.hasSuffix(".home.arpa") {
+            return true
         }
-        return starts([0x89, 0x50, 0x4E, 0x47])                 // PNG
-            || starts([0xFF, 0xD8, 0xFF])                          // JPEG
-            || starts(Array("GIF8".utf8))                          // GIF
-            || (starts(Array("RIFF".utf8)) && starts(Array("WEBP".utf8), at: 8))
-            || starts(Array("ftyp".utf8), at: 4)                   // HEIC/AVIF
-            || starts([0x49, 0x49, 0x2A, 0x00]) || starts([0x4D, 0x4D, 0x00, 0x2A]) // TIFF
-            || starts(Array("BM".utf8))                            // BMP
+
+        if host.contains(":") {
+            var addr6 = in6_addr()
+            let zoneless = host.split(separator: "%").first.map(String.init) ?? host
+            guard inet_pton(AF_INET6, zoneless, &addr6) == 1 else { return true }
+            return isLocalIPv6(withUnsafeBytes(of: addr6) { Array($0) })
+        }
+
+        var addr4 = in_addr()
+        if inet_aton(host, &addr4) != 0 {
+            return isLocalIPv4(UInt32(bigEndian: addr4.s_addr))
+        }
+        // A single-label name resolves through the local search domain.
+        return !host.contains(".")
+    }
+
+    static func isLocalIPv4(_ ip: UInt32) -> Bool {
+        func inRange(_ base: UInt32, _ bits: UInt32) -> Bool {
+            let mask: UInt32 = bits == 0 ? 0 : ~UInt32(0) << (32 - bits)
+            return ip & mask == base & mask
+        }
+        return inRange(0x00000000, 8)       // 0.0.0.0/8
+            || inRange(0x0A000000, 8)       // 10/8
+            || inRange(0x64400000, 10)      // 100.64/10 carrier-grade NAT
+            || inRange(0x7F000000, 8)       // loopback
+            || inRange(0xA9FE0000, 16)      // link-local
+            || inRange(0xAC100000, 12)      // 172.16/12
+            || inRange(0xC0000000, 24)      // 192.0.0/24
+            || inRange(0xC0A80000, 16)      // 192.168/16
+            || inRange(0xC6120000, 15)      // 198.18/15 benchmarking
+            || ip >= 0xE0000000             // multicast, reserved, broadcast
+    }
+
+    static func isLocalIPv6(_ b: [UInt8]) -> Bool {
+        guard b.count == 16 else { return true }
+        if b.allSatisfy({ $0 == 0 }) { return true }                              // ::
+        if b[0..<15].allSatisfy({ $0 == 0 }) && b[15] == 1 { return true }        // ::1
+        if b[0] & 0xFE == 0xFC { return true }                                    // fc00::/7
+        if b[0] == 0xFE && b[1] & 0xC0 == 0x80 { return true }                    // fe80::/10
+        if b[0] == 0xFE && b[1] & 0xC0 == 0xC0 { return true }                    // fec0::/10
+        if b[0] == 0xFF { return true }                                           // multicast
+        // IPv4-mapped (::ffff:a.b.c.d) and IPv4-compatible (::a.b.c.d).
+        if b[0..<10].allSatisfy({ $0 == 0 }) && ((b[10] == 0xFF && b[11] == 0xFF) || (b[10] == 0 && b[11] == 0)) {
+            let v4 = UInt32(b[12]) << 24 | UInt32(b[13]) << 16 | UInt32(b[14]) << 8 | UInt32(b[15])
+            return isLocalIPv4(v4)
+        }
+        // NAT64 well-known prefix 64:ff9b::/96 wrapping a private v4.
+        if b[0] == 0x00, b[1] == 0x64, b[2] == 0xFF, b[3] == 0x9B, b[4..<12].allSatisfy({ $0 == 0 }) {
+            let v4 = UInt32(b[12]) << 24 | UInt32(b[13]) << 16 | UInt32(b[14]) << 8 | UInt32(b[15])
+            return isLocalIPv4(v4)
+        }
+        return false
     }
 
     private static func effectivePort(_ url: URL) -> Int {

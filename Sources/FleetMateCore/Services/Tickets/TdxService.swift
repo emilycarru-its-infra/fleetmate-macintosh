@@ -20,13 +20,23 @@ public enum TdxAuthError: LocalizedError {
 public enum TdxBodyImageError: LocalizedError {
     case refused(URL)
     case notAnImage(URL)
+    case tooLarge(URL)
 
     public var errorDescription: String? {
         switch self {
-        case .refused: return "Only https images are loaded."
+        case .refused: return "Only https images from public hosts are loaded."
         case .notAnImage: return "The server did not return an image."
+        case .tooLarge: return "The image is larger than the app will load."
         }
     }
+}
+
+/// A flag set from a network callback and read after the stream ends.
+private final class OneWayFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    func set() { lock.lock(); value = true; lock.unlock() }
+    var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
 }
 
 /// TeamDynamix (TDX) service for ticket management
@@ -978,24 +988,30 @@ public class TdxService {
         return Session(configuration: configuration, activityService: "Tickets")
     }()
 
-    /// The largest image a feed entry may pull down.
-    static let maxBodyImageBytes = 25 * 1024 * 1024
+    /// The largest image a feed entry may pull down. A var so tests can
+    /// exercise the limit without megabytes of fixture.
+    var bodyImageByteLimit = 25 * 1024 * 1024
 
     /// Fetch an image embedded in a feed entry's HTML.
     ///
     /// An image on the TDX host goes through the signed-in session — cookies,
     /// or the bearer token when SSO produced a JWT — and may only redirect
-    /// within that host. Any other https image loads anonymously. Plain http
-    /// is refused. The bytes must be an image: a sign-in page served in its
+    /// within that host. An image anywhere else loads anonymously, and only
+    /// from a public https host (`TdxImageAuthPolicy.mayLoadExternal`); the
+    /// caller decides whether the user has agreed to load it at all. The body
+    /// is streamed and abandoned as soon as it passes the size limit, and a
+    /// declared Content-Length over the limit is refused before any of it is
+    /// read. The bytes must sniff as an image: a sign-in page served in its
     /// place is an error, not a picture.
     public func fetchBodyImage(_ url: URL) async throws -> Data {
         let key = url.absoluteString as NSString
         if let cached = bodyImageCache.object(forKey: key) { return cached as Data }
 
-        guard TdxImageAuthPolicy.mayLoad(url) else { throw TdxBodyImageError.refused(url) }
-
         let tdxBase = URL(string: baseUrl)
         let credentialed = TdxImageAuthPolicy.sendsTdxCredentials(to: url, tdxBase: tdxBase)
+        guard credentialed || TdxImageAuthPolicy.mayLoadExternal(url) else {
+            throw TdxBodyImageError.refused(url)
+        }
 
         var headers: HTTPHeaders = ["Accept": "image/*"]
         if credentialed, hasUserJwt, let token = ssoToken {
@@ -1006,32 +1022,52 @@ public class TdxService {
             guard let next = request.url else { return nil }
             let allowed = credentialed
                 ? TdxImageAuthPolicy.mayFollowRedirect(to: next, tdxBase: tdxBase)
-                : TdxImageAuthPolicy.mayLoad(next)
+                : TdxImageAuthPolicy.mayLoadExternal(next)
             return allowed ? request : nil
         })
 
+        let limit = bodyImageByteLimit
+        let declaredTooLarge = OneWayFlag()
         let session = credentialed ? activeSession : anonymousImageSession
-        let response = await session.request(url, headers: headers)
+        let request = session.streamRequest(url, headers: headers)
             .redirect(using: redirector)
             .validate(statusCode: 200..<300)
-            .serializingData()
-            .response
-
-        switch response.result {
-        case .success(let data):
-            let contentType = response.response?.value(forHTTPHeaderField: "Content-Type")
-            guard data.count <= Self.maxBodyImageBytes,
-                  TdxImageAuthPolicy.looksLikeImage(data, contentType: contentType)
-            else {
-                dbg.warn("TDX feed image was not an image (\(contentType ?? "no type"), \(data.count) bytes)", category: "tdx")
-                throw TdxBodyImageError.notAnImage(url)
+            // Validators run only once the body is in; a declared length
+            // over the limit has to be refused as the headers arrive.
+            .onHTTPResponse(on: .global(qos: .userInitiated)) { response, decide in
+                let tooLarge = response.expectedContentLength > Int64(limit)
+                if tooLarge { declaredTooLarge.set() }
+                decide(tooLarge ? .cancel : .allow)
             }
-            bodyImageCache.setObject(data as NSData, forKey: key, cost: data.count)
-            return data
-        case .failure(let error):
-            dbg.warn("TDX feed image failed (\(response.response?.statusCode ?? 0))", category: "tdx")
-            throw error
+
+        var data = Data()
+        var contentType: String?
+        for await stream in request.streamTask().streamingData() {
+            switch stream.event {
+            case .stream(let result):
+                guard case .success(let chunk) = result else { continue }
+                data.append(chunk)
+                if data.count > limit {
+                    request.cancel()
+                    dbg.warn("TDX feed image passed \(limit) bytes; abandoned", category: "tdx")
+                    throw TdxBodyImageError.tooLarge(url)
+                }
+            case .complete(let completion):
+                if declaredTooLarge.isSet { throw TdxBodyImageError.tooLarge(url) }
+                if let error = completion.error {
+                    dbg.warn("TDX feed image failed (\(completion.response?.statusCode ?? 0))", category: "tdx")
+                    throw error
+                }
+                contentType = completion.response?.value(forHTTPHeaderField: "Content-Type")
+            }
         }
+
+        guard TdxImageAuthPolicy.looksLikeImage(data, contentType: contentType) else {
+            dbg.warn("TDX feed image was not an image (\(contentType ?? "no type"), \(data.count) bytes)", category: "tdx")
+            throw TdxBodyImageError.notAnImage(url)
+        }
+        bodyImageCache.setObject(data as NSData, forKey: key, cost: data.count)
+        return data
     }
 
     /// Fetch a single feed entry with its replies.

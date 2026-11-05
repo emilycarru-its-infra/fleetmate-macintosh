@@ -21,6 +21,7 @@ private struct AuthSettingsContent: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var auth: AuthManager
     @State private var editingSystem: AuthSystemId?
+    @AppStorage(FeedBodyView.loadExternalImagesKey) private var loadExternalTicketImages = false
 
     // Editable fields (populated when editing starts)
     @State private var editGraphTenantId = ""
@@ -412,6 +413,8 @@ private struct AuthSettingsContent: View {
                 if case .failed(let msg) = system.state { errorRow(msg) }
                 checkedRow(system.lastChecked)
             }
+            Toggle("Load images from other sites in ticket comments", isOn: $loadExternalTicketImages)
+                .help("Images hosted on TeamDynamix always load. Images from anywhere else wait for a click on the comment, because loading one tells that site you opened the ticket.")
 
         case .devops:
             detailGrid {

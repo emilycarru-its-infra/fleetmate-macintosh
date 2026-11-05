@@ -495,6 +495,7 @@ class AppState: ObservableObject {
             }
         }
         dbg.info("Log file: \(dbg.logFilePath)", category: "startup")
+        dockBadge = DockBadgeController.make(for: self)
     }
 
     /// Save credential fields to Keychain and reload services.
@@ -1379,6 +1380,8 @@ class AppState: ObservableObject {
     @Published var tdxMe: TdxPerson?
     /// Comments across all tickets that notified `tdxMe`.
     let ticketInbox = TicketInboxModel()
+    /// Mirrors the inbox's unread count onto the Dock icon. Nil in the helper.
+    private var dockBadge: DockBadgeController?
 
     /// Email addresses to try when resolving `tdxMe`, best first.
     private func tdxIdentityCandidates() async -> [String] {

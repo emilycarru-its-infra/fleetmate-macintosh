@@ -226,7 +226,7 @@ extension ManageState {
         content.title = "\(label) finished"
         content.body = "\(succeeded) succeeded, \(failed) failed, \(offline) offline"
         let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
             guard granted else { return }
             center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
         }

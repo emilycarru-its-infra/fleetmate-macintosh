@@ -1,19 +1,24 @@
 import SwiftUI
 import FleetMateCore
 
-/// Settings ▸ Appearance — theme and text size.
+/// Settings ▸ Appearance — theme, text size and the Dock icon's badge.
 ///
 /// macOS has no Dynamic Type for an app to inherit, so FleetMate carries its own
 /// scale. The preview below re-renders live at the chosen scale.
 struct AppearanceSettingsView: View {
     @AppStorage(AppFontScale.storageKey) private var fontScale: Double = AppFontScale.default
     @AppStorage(AppTheme.storageKey) private var theme: AppTheme = .system
+    @AppStorage(InboxBadge.dockSettingKey) private var showDockBadge: Bool = InboxBadge.dockSettingDefault
+    /// False when System Settings ▸ Notifications has badges off for this app.
+    @State private var systemAllowsBadges = true
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 themeSection
                 textSizeSection
+                dockSection
                 previewSection
             }
             .padding(20)
@@ -79,6 +84,43 @@ struct AppearanceSettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(4)
+        }
+    }
+
+    // MARK: Dock
+
+    private var dockSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle(isOn: $showDockBadge) {
+                    Text("Show unread count on Dock icon").appFont(.headline)
+                }
+                .toggleStyle(.switch)
+
+                Text("Badges \(AppEdition.current.displayName)'s Dock icon with the number of unread comments in the Tickets inbox, the way Mail shows unread mail.")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if showDockBadge && !systemAllowsBadges {
+                    HStack(alignment: .firstTextBaseline) {
+                        Label("Badges are turned off for \(AppEdition.current.displayName) in System Settings, so the Dock icon won't show the count.",
+                              systemImage: "exclamationmark.triangle")
+                            .appFont(.caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                        Button("Open Notifications Settings…") {
+                            if let url = DockBadgeSystemSetting.settingsURL { openURL(url) }
+                        }
+                        .appFont(.caption)
+                    }
+                }
+            }
+            .padding(4)
+        }
+        .task { systemAllowsBadges = await DockBadgeSystemSetting.badgesAllowed() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { systemAllowsBadges = await DockBadgeSystemSetting.badgesAllowed() }
         }
     }
 

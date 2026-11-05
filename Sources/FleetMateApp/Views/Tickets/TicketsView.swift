@@ -3777,7 +3777,7 @@ struct UnreadBadge: View {
     let count: Int
 
     var body: some View {
-        Text(count > 999 ? "999+" : "\(count)")
+        Text(InboxBadge.text(count: count) ?? "")
             .appFont(fixed: 10, weight: .bold)
             .monospacedDigit()
             .foregroundStyle(.white)

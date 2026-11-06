@@ -94,20 +94,37 @@ extension AppState {
         config.tdxAuthMethod != .browserSSO && (config.tdxBeid != nil || config.tdxUsername != nil)
     }
 
-    /// The interactive sign-in the banner and the panel's Sign In button
-    /// open. Only ever on the person's request, never by itself.
+    /// What Sign In does (banner, Authentication panel, app menu).
+    ///
+    /// Silent first, always: cached session, the device's PRT, the silent
+    /// SAML chain, then the headless web view. The window opens only when
+    /// every one of those has just failed, and it is never on the renewal
+    /// path — the backoff keeps running while it is open, and a silent
+    /// success closes it.
     func signInToTdxInteractively() {
-        guard !InboxAgent.isAgentProcess, config.isTdxConfigured else { return }
-        showTdxSsoLogin = true
+        guard !InboxAgent.isAgentProcess, config.isTdxConfigured, !showTdxSsoLogin else { return }
+        Task { @MainActor in
+            let silentJustFailed = !tdxSignInInFlight && tdxRenewalFailures > 0
+            if !silentJustFailed {
+                if await renewTdxSessionSilently() { return }
+            }
+            guard !tdxService.hasUsableUserSession() else { return }
+            await primeTdxSsoUpn()
+            dbg.info("[SSO window] Every silent path failed; opening the sign-in window", category: "tdx-sso")
+            showTdxSsoLogin = true
+        }
     }
 
-    /// The interactive sheet finished.
+    /// The sign-in window finished.
     func handleInteractiveTdxResult(_ result: TdxSsoResult) {
         if result.isIdentityRefused {
             rejectTdxSsoIdentity(result)
         } else if result.success, let token = result.token, !token.isEmpty {
             handleTdxSsoSuccess(token: token, expiry: Self.tdxSessionExpiry(for: token),
                                 userId: result.userEmail, userName: result.userName)
+        } else if tdxService.hasUsableUserSession() {
+            // Silent renewal got there first; the window's failure is moot.
+            showTdxSsoLogin = false
         } else {
             handleTdxSsoFailure(result.error)
         }

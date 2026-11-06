@@ -1519,6 +1519,12 @@ struct TicketsView: View {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         descriptionSection(ticket: ticket)
                             .padding(.top, 10)
+                        // Accordions: Attachments, People, Workflow, Tasks,
+                        // then the Activity feed.
+                        if !ticket.attachmentList.isEmpty {
+                            Divider().padding(.vertical, 8)
+                            TicketAttachmentsView(attachments: ticket.attachmentList)
+                        }
                         Divider().padding(.vertical, 8)
                         peopleSection(ticket: ticket)
                         if let ticketId = ticket.id {
@@ -1544,10 +1550,6 @@ struct TicketsView: View {
                                 .id("tasks-\(ticketId)")
                             }
                             .sharedButtonWidthGroup()
-                        }
-                        if !ticket.attachmentList.isEmpty {
-                            Divider().padding(.vertical, 8)
-                            TicketAttachmentsView(attachments: ticket.attachmentList)
                         }
                         Section {
                             // The compose space opens here, under the Activity

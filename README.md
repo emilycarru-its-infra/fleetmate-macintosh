@@ -327,6 +327,7 @@ fleetmate intune device EXAMPLE1 --json | jq .
 | `SECURE_SHELL_DEFAULT_USERNAME` | Default SSH username | `administrator` |
 | `FLEETMATE_TEAMS_API_URL` | Teams channel-search API base URL | `https://search.example.edu` |
 | `FLEETMATE_TEAMS_API_SCOPE` | Token scope for that API | `api://<app-id>/.default` |
+| `FLEETMATE_TEAMS_API_PURPOSE` | Purpose sent as `X-Vantage-Purpose` (optional; has a default) | `purpose.its_teams_channel_search` |
 
 ### Keychain Keys
 

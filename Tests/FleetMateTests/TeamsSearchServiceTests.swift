@@ -98,6 +98,7 @@ final class TeamsSearchServiceTests: XCTestCase {
         XCTAssertEqual(request.path, "/api/v1/teams/search")
         XCTAssertEqual(request.headers["Authorization"], "Bearer cached-token")
         XCTAssertEqual(log.calls.map(\.scope), [scope])
+        XCTAssertEqual(request.headers["X-Vantage-Purpose"], "purpose.its_teams_channel_search")
 
         let response = payload.value
         XCTAssertEqual(response.total, 42)
@@ -169,6 +170,22 @@ final class TeamsSearchServiceTests: XCTestCase {
             XCTAssertEqual(StubURLProtocol.recorded.count, 1, "only a 401 is retried")
         }
         XCTAssertTrue(TeamsSearchError.forbidden.description.contains("not authorized"))
+    }
+
+    func testConfiguredPurposeIsSent() async throws {
+        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/channels", body: #"{"as_of":null,"channels":[]}"#)])
+        let svc = TeamsSearchService(baseUrl: base, scope: scope, purpose: "purpose.other",
+                                     sessionConfiguration: StubURLProtocol.sessionConfiguration(),
+                                     tokenProvider: { _, _ in "t" })
+        _ = try await svc.channels()
+        XCTAssertEqual(StubURLProtocol.recorded.first?.headers["X-Vantage-Purpose"], "purpose.other")
+    }
+
+    func testForbiddenDistinguishesPurposeFromAccess() async throws {
+        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/", statusCode: 403, body: #"{"detail":"purpose_not_granted"}"#)])
+        await assertError(.purposeNotGranted) { _ = try await self.service().channels() }
+        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/", statusCode: 403, body: #"{"detail":"access_denied"}"#)])
+        await assertError(.forbidden) { _ = try await self.service().channels() }
     }
 
     func testOtherFailuresCarrySanitisedDetail() async throws {

@@ -111,6 +111,8 @@ public enum TeamsSearchError: Error, Equatable, CustomStringConvertible, Localiz
     case unauthorized
     /// 403 — signed in, but the account lacks the API's Teams search role.
     case forbidden
+    /// 403 `purpose_not_granted` — the declared purpose is not one the API grants.
+    case purposeNotGranted
     /// 404 — no such thread (or channel).
     case notFound
     /// 503 — the search index has not been built yet.
@@ -128,6 +130,8 @@ public enum TeamsSearchError: Error, Equatable, CustomStringConvertible, Localiz
             return "The Teams search API rejected the sign-in token. Run `fleetmate login` and try again."
         case .forbidden:
             return "Your account is not authorized for Teams search. Ask your IT administrator for Teams search access."
+        case .purposeNotGranted:
+            return "The Teams search API does not grant the configured purpose. Check teams_api_purpose."
         case .notFound:
             return "No such Teams thread or channel in the search index."
         case .indexNotReady:
@@ -156,18 +160,25 @@ public final class TeamsSearchService: Sendable {
 
     private let baseUrl: String
     private let scope: String
+    private let purpose: String
     private let session: URLSession
     private let tokenProvider: TokenProvider
 
     public var isConfigured: Bool { !baseUrl.isEmpty && !scope.isEmpty }
 
-    public init(baseUrl: String?, scope: String?,
+    /// Sent as `X-Vantage-Purpose` on every request unless configured otherwise.
+    public static let defaultPurpose = "purpose.its_teams_channel_search"
+    public static let purposeHeader = "X-Vantage-Purpose"
+
+    public init(baseUrl: String?, scope: String?, purpose: String? = nil,
                 sessionConfiguration: URLSessionConfiguration? = nil,
                 tokenProvider: TokenProvider? = nil) {
         var base = (baseUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         while base.hasSuffix("/") { base.removeLast() }
         self.baseUrl = base
         self.scope = (scope ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let p = (purpose ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        self.purpose = p.isEmpty ? Self.defaultPurpose : p
         let configuration = sessionConfiguration ?? URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 60
         self.session = URLSession(configuration: configuration)
@@ -178,7 +189,7 @@ public final class TeamsSearchService: Sendable {
     }
 
     public convenience init(config: FleetMateConfig) {
-        self.init(baseUrl: config.teamsApiUrl, scope: config.teamsApiScope)
+        self.init(baseUrl: config.teamsApiUrl, scope: config.teamsApiScope, purpose: config.teamsApiPurpose)
     }
 
     // MARK: Requests
@@ -276,7 +287,7 @@ public final class TeamsSearchService: Sendable {
                 throw TeamsSearchError.invalidResponse(String(describing: error))
             }
         case 401: throw TeamsSearchError.unauthorized
-        case 403: throw TeamsSearchError.forbidden
+        case 403: throw Self.detail(from: data).contains("purpose_not_granted") ? TeamsSearchError.purposeNotGranted : TeamsSearchError.forbidden
         case 404: throw TeamsSearchError.notFound
         case 503: throw TeamsSearchError.indexNotReady
         default: throw TeamsSearchError.http(status, Self.detail(from: data))
@@ -289,6 +300,7 @@ public final class TeamsSearchService: Sendable {
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(purpose, forHTTPHeaderField: Self.purposeHeader)
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw TeamsSearchError.invalidResponse("not an HTTP response")

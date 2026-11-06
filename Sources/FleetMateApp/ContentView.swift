@@ -29,6 +29,9 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if appState.tdxNeedsSignIn, selectedTab == .tickets || AppEdition.current.isTicketsOnly {
+                TdxSignInBanner()
+            }
             if !(terminals.isMaximized && terminals.isVisible && !terminals.sessions.isEmpty) {
                 tabContent
                     .frame(maxHeight: .infinity)
@@ -224,6 +227,11 @@ struct ContentView: View {
             .onChange(of: appState.config.isDevOpsConfigured) { _, _ in validateSelectedTab() }
             .onChange(of: appState.config.isManageConfigured) { _, _ in validateSelectedTab() }
             .onChange(of: appState.modules) { _, _ in validateSelectedTab() }
+            .sheet(isPresented: $appState.showTdxSsoLogin) {
+                TdxSsoLoginView(config: appState.config) { result in
+                    appState.handleInteractiveTdxResult(result)
+                }
+            }
             .sheet(isPresented: $appState.showOnboardingWizard) {
                 OnboardingWizardView()
                     .environmentObject(appState)

@@ -178,11 +178,11 @@ public class TdxService {
     }
 
     /// Set SSO cookies for cookie-based auth (when JWT is unavailable)
-    public func setSsoCookies(_ cookies: [HTTPCookie], userName: String? = nil) {
+    public func setSsoCookies(_ cookies: [HTTPCookie], userName: String? = nil, expiry: Date? = nil) {
         self.ssoCookies = cookies
         self.ssoUserName = userName
         self.refusedSsoReason = nil
-        self.ssoTokenExpiry = Date().addingTimeInterval(23 * 60 * 60) // 23h
+        self.ssoTokenExpiry = expiry ?? Date().addingTimeInterval(23 * 60 * 60) // 23h
         self.ssoToken = "cookie-auth" // marker so SSO appears valid
 
         let configuration = URLSessionConfiguration.default
@@ -215,6 +215,58 @@ public class TdxService {
         refusedSsoReason = reason
     }
 
+    // MARK: - Shared session
+
+    /// Reads the session saved in the keychain, which the app window and the
+    /// background helper share. Nil (the default) turns reloading off — a
+    /// build run from outside /Applications, or a test.
+    public var sharedSessionLoader: (() -> TdxSessionCache?)?
+    /// The address a shared session must be verified for to be adopted.
+    public var sharedSessionUpn: String?
+    /// Called after a shared session replaced the one held in memory.
+    public var onSharedSessionAdopted: ((TdxSessionCache) -> Void)?
+    private var lastSharedReload: Date = .distantPast
+
+    /// When the held user session expires, or nil when there is none.
+    public var userSessionExpiry: Date? {
+        guard let token = ssoToken, !token.isEmpty, ssoTokenExpiry > .distantPast else { return nil }
+        return ssoTokenExpiry
+    }
+
+    /// True when a user session is held with at least `margin` left.
+    public func hasUsableUserSession(now: Date = Date(),
+                                     margin: TimeInterval = TdxRenewalSchedule.standard.expiryMargin) -> Bool {
+        guard let token = ssoToken, !token.isEmpty else { return false }
+        return ssoTokenExpiry > now.addingTimeInterval(margin)
+    }
+
+    /// Adopt the shared session when it is good and outlasts the one held
+    /// here — the other process may have renewed it. Throttled to one
+    /// keychain read every few seconds unless `force` is set.
+    @discardableResult
+    public func reloadSharedSession(now: Date = Date(), force: Bool = false) -> Bool {
+        guard refusedSsoReason == nil, let loader = sharedSessionLoader else { return false }
+        guard force || now.timeIntervalSince(lastSharedReload) >= 5 else { return false }
+        lastSharedReload = now
+        guard let cached = loader() else { return false }
+        guard cached.isAdoptable(expectedUpn: sharedSessionUpn, baseUrl: config.tdxBaseUrl, now: now) else {
+            return false
+        }
+        if hasUsableUserSession(now: now), cached.expiry <= ssoTokenExpiry { return false }
+
+        if cached.token.hasPrefix("eyJ"), cached.token.split(separator: ".").count == 3 {
+            setSsoToken(cached.token, expiry: cached.expiry, userId: cached.userId, userName: cached.userName)
+        } else {
+            let cookies = cached.cookies.compactMap(\.httpCookie)
+            guard !cookies.isEmpty else { return false }
+            for cookie in cookies { HTTPCookieStorage.shared.setCookie(cookie) }
+            setSsoCookies(cookies, userName: cached.userName, expiry: cached.expiry)
+        }
+        dbg.info("TDX adopted the shared session (expires in \(Int(cached.expiry.timeIntervalSince(now)))s)", category: "tdx-auth")
+        onSharedSessionAdopted?(cached)
+        return true
+    }
+
     // MARK: - Authentication
 
     private func getAccessToken() async throws -> String? {
@@ -222,6 +274,12 @@ public class TdxService {
         if let reason = refusedSsoReason {
             dbg.warn("TDX sign-in refused, no credential offered: \(reason)", category: "tdx-auth")
             return nil
+        }
+        // The other process may hold a newer session than this one: the
+        // helper renews on its own schedule. Read it before deciding there
+        // is no credential.
+        if !hasUsableUserSession() {
+            reloadSharedSession()
         }
         dbg.debug("TDX getAccessToken (method=\(authMethod), ssoValid=\(ssoToken != nil && Date() < ssoTokenExpiry))", category: "tdx-auth")
         
@@ -359,6 +417,7 @@ public class TdxService {
     /// account if SSO expires while that async resolver is being scheduled.
     private func workflowHeaders() throws -> HTTPHeaders {
         guard refusedSsoReason == nil else { throw TdxAuthError.notAuthenticated }
+        if !hasUsableUserSession() { reloadSharedSession() }
         if let token = ssoToken, Date() < ssoTokenExpiry,
            token.hasPrefix("eyJ"), token.split(separator: ".").count == 3 {
             return ["Authorization": "Bearer \(token)", "Content-Type": "application/json"]

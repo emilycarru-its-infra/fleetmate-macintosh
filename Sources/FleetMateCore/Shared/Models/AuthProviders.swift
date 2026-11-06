@@ -208,6 +208,8 @@ public enum AuthDisplayStatus: Equatable, Sendable {
     case standby
     /// Needs the person to sign in; one action button.
     case needsSignIn
+    /// Was signed in, and the session has lapsed; needs signing in again.
+    case expired
     /// Nothing set up, shown grey.
     case notConfigured
     /// Verification failed; the message is shown in full on the row.
@@ -223,7 +225,7 @@ public enum AuthDisplayStatus: Equatable, Sendable {
         case .configured: self = lastChecked == nil ? .checking(nil) : .needsSignIn
         case .authenticating: self = .checking(nil)
         case .valid: self = .valid
-        case .expired: self = .needsSignIn
+        case .expired: self = .expired
         case .failed(let message): self = .failed(message)
         case .servicePrincipal(let name): self = .failed("Signed in as the service principal \(name), so actions will not show as you.")
         }
@@ -236,6 +238,7 @@ public enum AuthDisplayStatus: Equatable, Sendable {
         case .ready: "Ready"
         case .standby: "Stopped"
         case .needsSignIn: "Needs sign-in"
+        case .expired: "Expired"
         case .notConfigured: "Not configured"
         case .failed: "Failed"
         }
@@ -246,7 +249,7 @@ public enum AuthDisplayStatus: Equatable, Sendable {
         case .checking: .neutral
         case .valid, .ready: .positive
         case .standby: .inactive
-        case .needsSignIn, .failed: .attention
+        case .needsSignIn, .expired, .failed: .attention
         case .notConfigured: .inactive
         }
     }

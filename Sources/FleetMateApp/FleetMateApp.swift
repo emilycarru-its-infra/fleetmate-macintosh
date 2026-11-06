@@ -250,6 +250,21 @@ class AppState: ObservableObject {
     @Published var tdxSsoAuthenticated = false
     @Published var tdxAuthenticatedUserName: String?
     private var ssoViewModel: TdxSsoLoginViewModel?
+    /// True when silent renewal has given up and only the person can sign
+    /// in: drives the Tickets sign-in banner.
+    @Published var tdxNeedsSignIn = false
+    /// Consecutive failed silent sign-ins, for the renewal backoff.
+    @Published var tdxRenewalFailures = 0
+    var tdxLastRenewalAttempt: Date?
+    /// A silent sign-in is running; another request waits for it.
+    var tdxSignInInFlight = false
+    var tdxSignInWaiters: [CheckedContinuation<Bool, Never>] = []
+    var tdxRenewalTask: Task<Void, Never>?
+    /// Set on wake, unlock or a network change: renew now if the session
+    /// is gone, without waiting out the backoff.
+    var tdxRenewalKick = false
+    var tdxRenewalObservers: [Any] = []
+    var tdxPathMonitor: AnyObject?
     
     // MARK: - Snipe-IT SSO State
     @Published var snipeSsoAuthenticated = false
@@ -422,7 +437,7 @@ class AppState: ObservableObject {
     let autopilot = AutopilotStore()
     lazy var devOpsService: AzureDevOpsService = AzureDevOpsService(config: config)
     lazy var devOpsSsoService: DevOpsSsoService = DevOpsSsoService(tenantId: config.devopsTenantId ?? config.graphTenantId)
-    lazy var tdxService: TdxService = TdxService(config: config)
+    lazy var tdxService: TdxService = makeTdxService(config: config)
     lazy var snipeService: SnipeService = SnipeService(config: config)
     lazy var reportMateService: ReportMateService = ReportMateService(config: config)
     /// The Reporting tab's dashboard, kept across tab switches.
@@ -530,7 +545,7 @@ class AppState: ObservableObject {
             graphService = GraphService(config: config)
             devOpsService = AzureDevOpsService(config: config)
             devOpsSsoService = DevOpsSsoService(tenantId: config.devopsTenantId ?? config.graphTenantId)
-            tdxService = TdxService(config: config)
+            tdxService = makeTdxService(config: config)
             snipeService = SnipeService(config: config)
             reportMateService = ReportMateService(config: config)
             appleOrg.configure(sources: enrollmentSources(config))
@@ -1085,7 +1100,9 @@ class AppState: ObservableObject {
     }
 
     func attemptSilentTdxSso(useCache: Bool = true) {
-        guard ssoViewModel == nil else { return }
+        guard !tdxSignInInFlight, ssoViewModel == nil else { return }
+        tdxSignInInFlight = true
+        startTdxRenewal()
         tdxSignInStage = .account
         dbg.info("[SSO Phase 1] Starting silent TDX SSO attempt (authMethod=\(config.tdxAuthMethod), ssoEnabled=\(config.tdxSsoEnabled))", category: "tdx-sso")
 
@@ -1097,6 +1114,7 @@ class AppState: ObservableObject {
             // one, and arriving with it late means the attempt has already
             // timed out onto the service account.
             await self.primeTdxSsoUpn()
+            self.tdxService.sharedSessionUpn = TdxSsoLoginViewModel.fallbackUpn
             self.tdxSignInStage = .microsoft
 
             // A saved sign-in verified for this same address skips the chain.
@@ -1121,7 +1139,7 @@ class AppState: ObservableObject {
                result.success,
                let token = result.token {
                 // Got JWT from cached session — fully silent
-                let expiry = Date().addingTimeInterval(23 * 60 * 60)
+                let expiry = Self.tdxSessionExpiry(for: token)
                 dbg.info("[SSO Phase 1] Silent SSO SUCCEEDED — user=\(result.userName ?? "unknown") email=\(result.userEmail ?? "unknown")", category: "tdx-sso")
                 self.handleTdxSsoSuccess(
                     token: token,
@@ -1144,7 +1162,10 @@ class AppState: ObservableObject {
     /// The Enterprise SSO Extension can intercept WKWebView requests (but not plain URLSession),
     /// so this may complete silently where Phase 1 failed.
     func attemptHeadlessTdxSso() {
-        guard ssoViewModel == nil else { return }
+        guard ssoViewModel == nil else {
+            finishTdxSignIn(succeeded: false)
+            return
+        }
         tdxSignInStage = .browser
         dbg.info("[SSO Phase 1.5] Starting headless WKWebView SSO attempt", category: "tdx-sso")
 
@@ -1184,7 +1205,7 @@ class AppState: ObservableObject {
                     self.ssoViewModel = nil
                     hiddenWindow.close()
                     if result.success, let token = result.token {
-                        let expiry = Date().addingTimeInterval(23 * 60 * 60)
+                        let expiry = Self.tdxSessionExpiry(for: token)
                         dbg.info("[SSO Phase 1.5] Headless WKWebView SSO SUCCEEDED — user=\(result.userName ?? "unknown")", category: "tdx-sso")
                         self.handleTdxSsoSuccess(
                             token: token,
@@ -1212,8 +1233,9 @@ class AppState: ObservableObject {
             // Not "unaffected" any more: with no service account configured,
             // this is the only way in, so a failure here means no TDX access
             // until someone signs in.
-            dbg.warn("[SSO Phase 1.5] Headless WKWebView SSO FAILED or timed out — TDX calls will fail until an interactive sign-in succeeds", category: "tdx-sso")
+            dbg.warn("[SSO Phase 1.5] Headless WKWebView SSO FAILED or timed out — renewal will retry on its backoff", category: "tdx-sso")
             self.tdxSignInStage = nil
+            self.finishTdxSignIn(succeeded: false)
         }
     }
 
@@ -1300,6 +1322,8 @@ class AppState: ObservableObject {
         tdxAuthenticatedUserName = userName
         showTdxSsoLogin = false
         authManager.update(.tdx, state: .valid(user: userName, expiry: expiry))
+        if let upn = userId, upn.contains("@") { tdxService.sharedSessionUpn = upn.lowercased() }
+        finishTdxSignIn(succeeded: true)
 
         // `userId` is the address the identity check just verified.
         if persist && Self.isTdxSessionCacheEnabled,
@@ -1358,6 +1382,8 @@ class AppState: ObservableObject {
         showTdxSsoLogin = false
         authManager.update(.tdx, state: .failed(message: reason))
         invalidateTicketsCache()
+        finishTdxSignIn(succeeded: false)
+        tdxNeedsSignIn = true
     }
 
     /// Handle SSO authentication failure or cancellation

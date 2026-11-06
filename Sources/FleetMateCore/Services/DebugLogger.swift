@@ -25,7 +25,7 @@ public final class DebugLogger {
         let dir = URL(fileURLWithPath: NSString(string: AppEdition.current.logDirectory).expandingTildeInPath)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
-        logFileURL = dir.appendingPathComponent("debug.log")
+        logFileURL = dir.appendingPathComponent(Self.logFileName(isInboxHelper: Self.isInboxHelperProcess))
 
         if let attrs = try? FileManager.default.attributesOfItem(atPath: logFileURL.path),
            let size = attrs[.size] as? UInt64, size > Self.rotateSize {
@@ -97,16 +97,27 @@ public final class DebugLogger {
         }
     }
 
+    /// The background inbox helper keeps its own log. Both processes once
+    /// wrote debug.log through separate handles, each at its own offset, so
+    /// one overwrote the other's lines mid-line.
+    static func logFileName(isInboxHelper: Bool) -> String {
+        isInboxHelper ? "helper.log" : "debug.log"
+    }
+
+    private static var isInboxHelperProcess: Bool {
+        AppIdentity.isInboxHelperBundle || CommandLine.arguments.contains("--inbox-agent")
+    }
+
+    /// Opened for appending, so every write lands at the current end of the
+    /// file even when another process (the CLI) writes the same log. Each
+    /// line goes out in one write call, so lines never interleave.
     private func openLogFile() {
-        if !FileManager.default.fileExists(atPath: logFileURL.path) {
-            FileManager.default.createFile(atPath: logFileURL.path, contents: nil)
-        }
-        fileHandle = FileHandle(forWritingAtPath: logFileURL.path)
-        fileHandle?.seekToEndOfFile()
+        let fd = open(logFileURL.path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o644)
+        fileHandle = fd >= 0 ? FileHandle(fileDescriptor: fd, closeOnDealloc: true) : nil
     }
 
     private func rotate() {
-        let backup = logFileURL.deletingLastPathComponent().appendingPathComponent("debug.log.1")
+        let backup = logFileURL.deletingLastPathComponent().appendingPathComponent(logFileURL.lastPathComponent + ".1")
         try? FileManager.default.removeItem(at: backup)
         try? FileManager.default.moveItem(at: logFileURL, to: backup)
     }
@@ -116,12 +127,12 @@ public final class DebugLogger {
     /// rotated the file away, so lines never keep landing in debug.log.1.
     private func checkLogFile() {
         guard let handle = fileHandle else { return }
-        var open = stat()
+        var held = stat()
         var onDisk = stat()
-        let moved = fstat(handle.fileDescriptor, &open) != 0
+        let moved = fstat(handle.fileDescriptor, &held) != 0
             || stat(logFileURL.path, &onDisk) != 0
-            || open.st_ino != onDisk.st_ino
-        if !moved && UInt64(open.st_size) <= Self.rotateSize { return }
+            || held.st_ino != onDisk.st_ino
+        if !moved && UInt64(held.st_size) <= Self.rotateSize { return }
         handle.closeFile()
         if !moved { rotate() }
         openLogFile()

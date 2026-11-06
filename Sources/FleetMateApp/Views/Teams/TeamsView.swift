@@ -33,6 +33,7 @@ struct TeamsView: View {
     @AppStorage("teams.detailFraction") private var detailFraction = 0.5
 
     private var service: TeamsSearchService { TeamsSearchService(config: appState.config) }
+    private var linkHosts: [String] { TeamsLinkPolicy.hosts(extra: appState.config.teamsLinkHosts) }
 
     private var selectedHit: TeamsSearchHit? {
         results.first { $0.key == selection }
@@ -60,7 +61,7 @@ struct TeamsView: View {
                 Text("All channels").tag("")
                 if !channels.isEmpty { Divider() }
                 ForEach(channels, id: \.channelId) { channel in
-                    Text("\(channel.teamName) › \(channel.channelName)").tag(channel.channelId)
+                    Text("\(TeamsText.line(channel.teamName)) › \(TeamsText.line(channel.channelName))").tag(channel.channelId)
                 }
             }
             .frame(maxWidth: 320)
@@ -125,6 +126,7 @@ struct TeamsView: View {
                 resultList
             } trailing: {
                 TeamsThreadView(
+                    linkHosts: linkHosts,
                     hit: selectedHit,
                     thread: thread,
                     isLoading: isLoadingThread,
@@ -151,14 +153,14 @@ struct TeamsView: View {
     @ViewBuilder
     private func resultMenu(_ hit: TeamsSearchHit) -> some View {
         Button("Open in Teams") { openInTeams(hit) }
-            .disabled(hit.webUrl == nil)
+            .disabled(safeLink(hit) == nil)
         Button("Copy Link") { copyLink(hit) }
-            .disabled(hit.webUrl == nil)
+            .disabled(safeLink(hit) == nil)
         Divider()
         Button("Show Only This Channel") { channelFilter = hit.channelId }
         if let who = hit.authorDisplayName {
-            Button("Threads with \(who)") {
-                author = who
+            Button("Threads with \(TeamsText.line(who))") {
+                author = TeamsText.line(who)
                 runSearch()
             }
         }
@@ -226,29 +228,36 @@ struct TeamsView: View {
         }
     }
 
+    /// The thread's link, only when it is https on an allowed host.
+    private func safeLink(_ hit: TeamsSearchHit) -> URL? {
+        TeamsLinkPolicy.safeURL(hit.webUrl, allowedHosts: linkHosts)
+    }
+
     private func openInTeams(_ hit: TeamsSearchHit) {
-        guard let link = hit.webUrl, let url = URL(string: link) else { return }
+        guard let url = safeLink(hit) else { return }
         NSWorkspace.shared.open(url)
     }
 
     private func copyLink(_ hit: TeamsSearchHit) {
-        guard let link = hit.webUrl, let url = URL(string: link) else { return }
+        guard let url = safeLink(hit) else { return }
         let board = NSPasteboard.general
         board.clearContents()
         board.writeObjects([url as NSURL])
-        board.setString("\(hit.title) — \(link)", forType: .string)
+        board.setString("\(hit.title) — \(url.absoluteString)", forType: .string)
     }
 
     /// ⌘C on the list copies the selected thread's title and link.
     private func copyItems() -> [NSItemProvider] {
         guard let hit = selectedHit else { return [] }
-        var items = [NSItemProvider(object: "\(hit.title) — \(hit.webUrl ?? "")" as NSString)]
-        if let link = hit.webUrl, let url = URL(string: link) { items.append(NSItemProvider(object: url as NSURL)) }
-        return items
+        guard let url = safeLink(hit) else { return [NSItemProvider(object: hit.title as NSString)] }
+        return [
+            NSItemProvider(object: "\(hit.title) — \(url.absoluteString)" as NSString),
+            NSItemProvider(object: url as NSURL),
+        ]
     }
 
     private func dragProvider(_ hit: TeamsSearchHit) -> NSItemProvider {
-        if let link = hit.webUrl, let url = URL(string: link) { return NSItemProvider(object: url as NSURL) }
+        if let url = safeLink(hit) { return NSItemProvider(object: url as NSURL) }
         return NSItemProvider(object: hit.title as NSString)
     }
 }
@@ -269,15 +278,15 @@ private struct TeamsResultRow: View {
                     .appFont(.caption)
                     .foregroundStyle(.secondary)
             }
-            Text("\(hit.teamName) › \(hit.channelName)")
+            Text("\(TeamsText.line(hit.teamName)) › \(TeamsText.line(hit.channelName))")
                 .appFont(.caption)
                 .foregroundStyle(.secondary)
-            Text(hit.snippet)
+            Text(TeamsText.body(hit.snippet))
                 .appFont(.callout)
                 .lineLimit(2)
             HStack(spacing: 10) {
                 if let who = hit.authorDisplayName {
-                    Label(who, systemImage: "person")
+                    Label(TeamsText.line(who), systemImage: "person")
                 }
                 Label(hit.replyCount == 1 ? "1 reply" : "\(hit.replyCount) replies", systemImage: "arrowshape.turn.up.left")
             }
@@ -292,6 +301,7 @@ private struct TeamsResultRow: View {
 // MARK: - Thread
 
 private struct TeamsThreadView: View {
+    let linkHosts: [String]
     let hit: TeamsSearchHit?
     let thread: TeamsThread?
     let isLoading: Bool
@@ -309,7 +319,7 @@ private struct TeamsThreadView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
                         ForEach(thread.messages, id: \.messageId) { message in
-                            TeamsMessageView(message: message, isReply: message.replyToId != nil)
+                            TeamsMessageView(message: message, isReply: message.replyToId != nil, linkHosts: linkHosts)
                         }
                     }
                     .padding()
@@ -324,17 +334,17 @@ private struct TeamsThreadView: View {
     private var header: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(thread?.subject ?? hit?.title ?? "Thread")
+                Text(TeamsText.line(thread?.subject ?? hit?.title ?? "Thread"))
                     .appFont(.title3)
                     .fontWeight(.semibold)
                     .textSelection(.enabled)
                 if let hit {
-                    Text("\(hit.teamName) › \(hit.channelName)")
+                    Text("\(TeamsText.line(hit.teamName)) › \(TeamsText.line(hit.channelName))")
                         .foregroundStyle(.secondary)
                 }
             }
             Spacer()
-            if let link = thread?.webUrl ?? hit?.webUrl, let url = URL(string: link) {
+            if let url = TeamsLinkPolicy.safeURL(thread?.webUrl ?? hit?.webUrl, allowedHosts: linkHosts) {
                 Button("Open in Teams") { NSWorkspace.shared.open(url) }
                     .keyboardShortcut("o", modifiers: [.command, .shift])
                     .help("Open this thread in Microsoft Teams (⇧⌘O)")
@@ -347,11 +357,12 @@ private struct TeamsThreadView: View {
 private struct TeamsMessageView: View {
     let message: TeamsMessage
     let isReply: Bool
+    let linkHosts: [String]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Text(message.authorDisplayName ?? "Unknown")
+                Text(TeamsText.line(message.authorDisplayName ?? "Unknown"))
                     .fontWeight(.semibold)
                 Text(TeamsDates.full(message.createdAt))
                     .foregroundStyle(.secondary)
@@ -360,14 +371,16 @@ private struct TeamsMessageView: View {
                 }
             }
             .appFont(.caption)
-            Text(message.text)
+            Text(TeamsText.body(message.text))
                 .frame(maxWidth: .infinity, alignment: .leading)
-            ForEach(message.attachments, id: \.name) { attachment in
-                if let link = attachment.url, let url = URL(string: link) {
-                    Link(destination: url) { Label(attachment.name, systemImage: "paperclip") }
+            ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
+                // A link opens only when it is https on an allowed host;
+                // anything else is shown as plain text.
+                if let url = TeamsLinkPolicy.safeURL(attachment.url, allowedHosts: linkHosts) {
+                    Link(destination: url) { Label(TeamsText.line(attachment.name), systemImage: "paperclip") }
                         .appFont(.caption)
                 } else {
-                    Label(attachment.name, systemImage: "paperclip")
+                    Label(TeamsText.line(attachment.name), systemImage: "paperclip")
                         .appFont(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -444,8 +457,9 @@ extension TeamsSearchHit {
     /// Thread ids are unique within a channel, not across channels.
     var key: String { "\(channelId)/\(threadId)" }
     var title: String {
-        if let subject, !subject.isEmpty { return subject }
-        let line = snippet.split(separator: "\n").first.map(String.init) ?? snippet
-        return line.isEmpty ? "(no text)" : line
+        let subject = TeamsText.line(subject)
+        if !subject.isEmpty { return subject }
+        let first = TeamsText.line(snippet.split(separator: "\n").first.map(String.init) ?? snippet)
+        return first.isEmpty ? "(no text)" : first
     }
 }

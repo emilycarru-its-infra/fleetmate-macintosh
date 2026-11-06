@@ -39,6 +39,20 @@ public struct FleetMateConfig: Codable {
     /// configuration profile (reportMateOidcAudience).
     public var reportMateOidcAudience: String?
 
+    /// Base URL of the Teams channel-message search API (`fleetmate teams`).
+    /// Unset → Teams search is off. config.yaml `teams_api_url`, profile
+    /// `teamsApiUrl`, or FLEETMATE_TEAMS_API_URL.
+    public var teamsApiUrl: String?
+    /// Scope the operator's `az` token is minted for when calling that API,
+    /// such as `<application id URI>/.default`. config.yaml `teams_api_scope`,
+    /// profile `teamsApiScope`, or FLEETMATE_TEAMS_API_SCOPE.
+    public var teamsApiScope: String?
+    /// Declared purpose sent with every Teams search request as
+    /// `X-Vantage-Purpose`. config.yaml `teams_api_purpose`, profile
+    /// `teamsApiPurpose`, or FLEETMATE_TEAMS_API_PURPOSE; unset → the
+    /// service's default.
+    public var teamsApiPurpose: String?
+
     /// Key Vault holding the Apple School / Business Manager API credentials,
     /// read with the operator's `az` sign-in. Unset → no Apple organization.
     public var appleOrgKeyVault: String?
@@ -212,6 +226,9 @@ public struct FleetMateConfig: Codable {
         case reportMateUrl = "reportmate_url"
         case reportMatePassphrase = "reportmate_passphrase"
         case reportMateOidcAudience = "reportmate_oidc_audience"
+        case teamsApiUrl = "teams_api_url"
+        case teamsApiScope = "teams_api_scope"
+        case teamsApiPurpose = "teams_api_purpose"
         case appleOrgKeyVault = "apple_org_key_vault"
         case appleOrgSecretPrefixes = "apple_org_secret_prefixes"
         case snipeUrl = "snipe_url"
@@ -329,6 +346,9 @@ public struct FleetMateConfig: Codable {
         snipeApiKey = nil
         snipeSsoEnabled = false
         snipeOidcAudience = nil
+        teamsApiUrl = nil
+        teamsApiScope = nil
+        teamsApiPurpose = nil
         devopsOrganization = nil
         tasks = nil
         manage = nil
@@ -414,6 +434,11 @@ public struct FleetMateConfig: Codable {
         if let v = str("reportmate_url"), !v.isEmpty { config.reportMateUrl = v }
         if let v = str("reportmate_passphrase"), !v.isEmpty { config.reportMatePassphrase = v }
         if let v = str("reportmate_oidc_audience"), !v.isEmpty { config.reportMateOidcAudience = v }
+
+        // Teams channel-message search
+        if let v = str("teams_api_url"), !v.isEmpty { config.teamsApiUrl = v }
+        if let v = str("teams_api_scope"), !v.isEmpty { config.teamsApiScope = v }
+        if let v = str("teams_api_purpose"), !v.isEmpty { config.teamsApiPurpose = v }
         
         return true
     }
@@ -435,6 +460,11 @@ public struct FleetMateConfig: Codable {
         // Apple School / Business Manager credentials in Key Vault
         if let v = (yaml["apple_org_key_vault"] ?? yaml["appleOrgKeyVault"]) as? String { config.appleOrgKeyVault = v }
         if let v = (yaml["apple_org_secret_prefixes"] ?? yaml["appleOrgSecretPrefixes"]) as? [String] { config.appleOrgSecretPrefixes = v }
+
+        // Teams channel-message search
+        if let v = (yaml["teams_api_url"] ?? yaml["teamsApiUrl"]) as? String, !v.isEmpty { config.teamsApiUrl = v }
+        if let v = (yaml["teams_api_scope"] ?? yaml["teamsApiScope"]) as? String, !v.isEmpty { config.teamsApiScope = v }
+        if let v = (yaml["teams_api_purpose"] ?? yaml["teamsApiPurpose"]) as? String, !v.isEmpty { config.teamsApiPurpose = v }
 
         // SecureShell (camelCase in existing YAML)
         if let ssh = (yaml["secureShell"] ?? yaml["secure_shell"]) as? [String: Any] {
@@ -619,6 +649,9 @@ public struct FleetMateConfig: Codable {
         if let v = get("azureTenantId")      { config.azureTenantId = v }
         if let v = get("azureSubscriptionId") { config.azureSubscriptionId = v }
         if let v = get("reportMateOidcAudience") { config.reportMateOidcAudience = v }
+        if let v = get("teamsApiUrl"), !v.isEmpty { config.teamsApiUrl = v }
+        if let v = get("teamsApiScope"), !v.isEmpty { config.teamsApiScope = v }
+        if let v = get("teamsApiPurpose"), !v.isEmpty { config.teamsApiPurpose = v }
         if let v = get("appleOrgKeyVault")   { config.appleOrgKeyVault = v }
         if let v = get("appleOrgSecretPrefixes") {
             config.appleOrgSecretPrefixes = v.split(whereSeparator: { $0 == "\n" || $0 == "," }).map(String.init)
@@ -686,6 +719,11 @@ public struct FleetMateConfig: Codable {
         if let v = env["REPORTMATE_URL"] { config.reportMateUrl = v }
         if let v = env["FLEETMATE_APPLE_ORG_KEY_VAULT"], !v.isEmpty { config.appleOrgKeyVault = v }
         if let v = env["REPORTMATE_PASSPHRASE"] { config.reportMatePassphrase = v }
+
+        // Teams channel-message search
+        if let v = env["FLEETMATE_TEAMS_API_URL"], !v.isEmpty { config.teamsApiUrl = v }
+        if let v = env["FLEETMATE_TEAMS_API_SCOPE"], !v.isEmpty { config.teamsApiScope = v }
+        if let v = env["FLEETMATE_TEAMS_API_PURPOSE"], !v.isEmpty { config.teamsApiPurpose = v }
 
 
         // Snipe-IT
@@ -944,6 +982,9 @@ public struct FleetMateConfig: Codable {
 
         set("reportMateUrl", config.reportMateUrl)
         set("reportMatePassphrase", config.reportMatePassphrase)
+        set("teamsApiUrl", config.teamsApiUrl)
+        set("teamsApiScope", config.teamsApiScope)
+        set("teamsApiPurpose", config.teamsApiPurpose)
         set("snipeUrl", config.snipeUrl)
         set("snipeApiKey", config.snipeApiKey)
         set("graphTenantId", config.graphTenantId)

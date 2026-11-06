@@ -23,6 +23,7 @@ struct FleetMate: AsyncParsableCommand {
             UnlockCommand.self,
             CimianCommand.self,
             ReportMateCommand.self,
+            TeamsCommand.self,
             DeadlineCommand.self,
             SnipeCommand.self,
             IntuneCommand.self,

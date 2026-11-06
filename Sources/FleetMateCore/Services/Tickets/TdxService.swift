@@ -841,18 +841,74 @@ public class TdxService {
         }
     }
 
-    // Posting a threaded reply is not possible through the TDX Web API, and no
-    // method for it belongs here. Verified against the live API on 2026-07-28:
-    //
-    //   • OPTIONS /api/feed/{id} answers `Allow: GET,DELETE` — there is no
-    //     POST route under a feed entry at all, under any suffix.
-    //   • POST /api/{appId}/tickets/{id}/feed accepts ParentID,
-    //     ParentFeedEntryID, ReplyToID, and ItemUpdateID without complaint and
-    //     ignores every one of them: each returns 201 having created another
-    //     top-level entry, with the named parent's RepliesCount still 0.
-    //
-    // Existing threads *are* readable — see `getTicketFeed(includeReplies:)`.
-    // The UI offers quoting into a new comment instead.
+    // MARK: - Feed Replies
+
+    /// Post a threaded reply under a feed entry — `POST /api/feed/{id}/replies`,
+    /// added in TeamDynamix 12.3.
+    ///
+    /// The request is TDX's `FeedReplyRequest`, which holds only `Body`: a reply
+    /// cannot be private on its own, notify anyone, or carry files (those go on
+    /// the ticket). Replies only hang off top-level entries, so a reply to a
+    /// reply is posted to that reply's parent.
+    ///
+    /// Before 12.3 there was no such route — `OPTIONS /api/feed/{id}` answered
+    /// `GET,DELETE`, and the ticket feed POST ignored every parent field — which
+    /// is why the UI used to quote into a new top-level comment instead.
+    ///
+    /// - Parameter isRichHtml: false sends `body` as plain text, escaped into
+    ///   the HTML TDX reads every reply body as.
+    @discardableResult
+    public func replyToFeedEntry(entryId: Int, body: String, isRichHtml: Bool = false) async throws -> TdxFeedEntry {
+        guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw TdxFeedReplyError.emptyBody
+        }
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
+
+        let request = TdxFeedReplyRequest(text: body, isRichHtml: isRichHtml)
+        let url = config.tdxGlobalUrl("feed/\(entryId)/replies")
+        dbg.info("TDX replyToFeedEntry → POST \(url)", category: "tdx")
+
+        return try await withCheckedThrowingContinuation { continuation in
+            activeSession.request(url, method: .post, parameters: request, encoder: JSONParameterEncoder.default, headers: headers)
+                .validate()
+                .responseDecodable(of: TdxFeedEntry.self) { response in
+                    switch response.result {
+                    case .success(let reply):
+                        continuation.resume(returning: reply)
+                    case .failure(let error):
+                        let status = response.response?.statusCode ?? 0
+                        let detail = response.data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                        dbg.warn("TDX replyToFeedEntry \(entryId) failed (\(status)): \(detail)", category: "tdx")
+                        continuation.resume(throwing: status == 0 ? error : TdxFeedReplyError.requestFailed(status))
+                    }
+                }
+        }
+    }
+
+    /// Delete a threaded reply — `DELETE /api/feed/{id}/replies/{replyId}`
+    /// (12.3+). TDX replaces its content with a deletion notice; it cannot be
+    /// restored. Needs one of the Delete feed-entry permissions.
+    public func deleteFeedReply(entryId: Int, replyId: Int) async throws {
+        guard let headers = await headers() else { throw TdxAuthError.notAuthenticated }
+
+        let url = config.tdxGlobalUrl("feed/\(entryId)/replies/\(replyId)")
+        dbg.info("TDX deleteFeedReply → DELETE \(url)", category: "tdx")
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            activeSession.request(url, method: .delete, headers: headers)
+                .validate()
+                .responseData(emptyResponseCodes: [200, 204]) { response in
+                    switch response.result {
+                    case .success:
+                        continuation.resume()
+                    case .failure(let error):
+                        let status = response.response?.statusCode ?? 0
+                        dbg.warn("TDX deleteFeedReply \(entryId)/\(replyId) failed (\(status))", category: "tdx")
+                        continuation.resume(throwing: status == 0 ? error : TdxFeedReplyError.requestFailed(status))
+                    }
+                }
+        }
+    }
 
     // MARK: - Attachments
 

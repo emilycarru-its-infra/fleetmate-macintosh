@@ -289,6 +289,9 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
     public let createdDate: String?
     public let createdFullName: String?
     public let createdEmail: String?
+    /// The author's person UID — how FleetMate tells which replies are the
+    /// signed-in user's own, and so may be deleted from here.
+    public let createdUid: String?
     public let itemType: Int?
     public let itemId: Int?
     public let replies: [TdxFeedEntry]?
@@ -320,7 +323,8 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
         itemId: Int?,
         replies: [TdxFeedEntry]?,
         repliesCount: Int?,
-        notifiedList: String? = nil
+        notifiedList: String? = nil,
+        createdUid: String? = nil
     ) {
         self.id = id
         self.body = body
@@ -333,6 +337,7 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
         self.replies = replies
         self.repliesCount = repliesCount
         self.notifiedList = notifiedList
+        self.createdUid = createdUid
     }
 
     /// A copy carrying the given replies.
@@ -348,7 +353,8 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
             itemId: itemId,
             replies: replies,
             repliesCount: repliesCount ?? replies.count,
-            notifiedList: notifiedList
+            notifiedList: notifiedList,
+            createdUid: createdUid
         )
     }
 
@@ -359,6 +365,7 @@ public struct TdxFeedEntry: Codable, Identifiable, Hashable {
         case createdDate = "CreatedDate"
         case createdFullName = "CreatedFullName"
         case createdEmail = "CreatedEmail"
+        case createdUid = "CreatedUid"
         case itemType = "ItemType"
         case itemId = "ItemID"
         case replies = "Replies"
@@ -629,6 +636,65 @@ public struct CreateFeedEntryRequest: Codable {
         case isPrivate = "IsPrivate"
         case isRichHtml = "IsRichHtml"
         case notify = "Notify"
+    }
+}
+
+/// The body of `POST /api/feed/{id}/replies` (TDX 12.3+), per the Web API's
+/// OpenAPI `FeedReplyRequest`: one required `Body`, which TDX always reads as
+/// rich HTML, and `additionalProperties: false`. There is no Notify list,
+/// IsPrivate or IsRichHtml — a reply cannot set any of them.
+public struct TdxFeedReplyRequest: Codable, Equatable {
+    public var body: String
+
+    /// - Parameter isRichHtml: false (the default) treats `text` as plain text
+    ///   and escapes it, so `<`, `&` and line breaks survive as typed.
+    public init(text: String, isRichHtml: Bool = false) {
+        body = isRichHtml ? text : Self.html(fromPlainText: text)
+    }
+
+    /// Plain text as the HTML TDX expects: markup characters escaped, line
+    /// breaks as `<br />`.
+    public static func html(fromPlainText text: String) -> String {
+        var escaped = ""
+        escaped.reserveCapacity(text.count)
+        for character in text.replacingOccurrences(of: "\r\n", with: "\n") {
+            switch character {
+            case "&": escaped += "&amp;"
+            case "<": escaped += "&lt;"
+            case ">": escaped += "&gt;"
+            case "\"": escaped += "&quot;"
+            case "'": escaped += "&#39;"
+            case "\n", "\r": escaped += "<br />"
+            default: escaped.append(character)
+            }
+        }
+        return escaped
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case body = "Body"
+    }
+}
+
+/// Why a feed reply could not be posted or deleted, in words for the person
+/// who tried.
+public enum TdxFeedReplyError: LocalizedError, Equatable {
+    case emptyBody
+    case requestFailed(Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .emptyBody:
+            return "A reply needs some text."
+        case .requestFailed(401):
+            return "Your TeamDynamix session has expired. Sign in again."
+        case .requestFailed(403):
+            return "You don't have permission to do that to this reply."
+        case .requestFailed(404):
+            return "That comment is no longer on the ticket, or this TeamDynamix site predates threaded replies (12.3). Refresh the ticket."
+        case .requestFailed(let status):
+            return "TeamDynamix couldn't complete the reply (HTTP \(status)). Refresh and try again."
+        }
     }
 }
 

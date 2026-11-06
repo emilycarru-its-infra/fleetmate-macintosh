@@ -268,6 +268,7 @@ struct ContentView: View {
         case .projects:  BoardsView()
         case .development: DevelopmentView()
         case .identity:  IdentityView()
+        case .teams:     TeamsView()
         }
     }
 }

@@ -52,6 +52,12 @@ public struct FleetMateConfig: Codable {
     /// `teamsApiPurpose`, or FLEETMATE_TEAMS_API_PURPOSE; unset → the
     /// service's default.
     public var teamsApiPurpose: String?
+    /// Extra hosts whose links in Teams search results may be opened, beside
+    /// the Microsoft Teams and SharePoint hosts allowed by default; comma
+    /// separated, a leading `*.` or bare domain also allows its subdomains.
+    /// config.yaml `teams_link_hosts`, profile `teamsLinkHosts`, or
+    /// FLEETMATE_TEAMS_LINK_HOSTS.
+    public var teamsLinkHosts: String?
 
     /// Key Vault holding the Apple School / Business Manager API credentials,
     /// read with the operator's `az` sign-in. Unset → no Apple organization.
@@ -229,6 +235,7 @@ public struct FleetMateConfig: Codable {
         case teamsApiUrl = "teams_api_url"
         case teamsApiScope = "teams_api_scope"
         case teamsApiPurpose = "teams_api_purpose"
+        case teamsLinkHosts = "teams_link_hosts"
         case appleOrgKeyVault = "apple_org_key_vault"
         case appleOrgSecretPrefixes = "apple_org_secret_prefixes"
         case snipeUrl = "snipe_url"
@@ -349,6 +356,7 @@ public struct FleetMateConfig: Codable {
         teamsApiUrl = nil
         teamsApiScope = nil
         teamsApiPurpose = nil
+        teamsLinkHosts = nil
         devopsOrganization = nil
         tasks = nil
         manage = nil
@@ -439,6 +447,7 @@ public struct FleetMateConfig: Codable {
         if let v = str("teams_api_url"), !v.isEmpty { config.teamsApiUrl = v }
         if let v = str("teams_api_scope"), !v.isEmpty { config.teamsApiScope = v }
         if let v = str("teams_api_purpose"), !v.isEmpty { config.teamsApiPurpose = v }
+        if let v = str("teams_link_hosts"), !v.isEmpty { config.teamsLinkHosts = v }
         
         return true
     }
@@ -465,6 +474,7 @@ public struct FleetMateConfig: Codable {
         if let v = (yaml["teams_api_url"] ?? yaml["teamsApiUrl"]) as? String, !v.isEmpty { config.teamsApiUrl = v }
         if let v = (yaml["teams_api_scope"] ?? yaml["teamsApiScope"]) as? String, !v.isEmpty { config.teamsApiScope = v }
         if let v = (yaml["teams_api_purpose"] ?? yaml["teamsApiPurpose"]) as? String, !v.isEmpty { config.teamsApiPurpose = v }
+        if let v = (yaml["teams_link_hosts"] ?? yaml["teamsLinkHosts"]) as? String, !v.isEmpty { config.teamsLinkHosts = v }
 
         // SecureShell (camelCase in existing YAML)
         if let ssh = (yaml["secureShell"] ?? yaml["secure_shell"]) as? [String: Any] {
@@ -652,6 +662,7 @@ public struct FleetMateConfig: Codable {
         if let v = get("teamsApiUrl"), !v.isEmpty { config.teamsApiUrl = v }
         if let v = get("teamsApiScope"), !v.isEmpty { config.teamsApiScope = v }
         if let v = get("teamsApiPurpose"), !v.isEmpty { config.teamsApiPurpose = v }
+        if let v = get("teamsLinkHosts"), !v.isEmpty { config.teamsLinkHosts = v }
         if let v = get("appleOrgKeyVault")   { config.appleOrgKeyVault = v }
         if let v = get("appleOrgSecretPrefixes") {
             config.appleOrgSecretPrefixes = v.split(whereSeparator: { $0 == "\n" || $0 == "," }).map(String.init)
@@ -724,6 +735,7 @@ public struct FleetMateConfig: Codable {
         if let v = env["FLEETMATE_TEAMS_API_URL"], !v.isEmpty { config.teamsApiUrl = v }
         if let v = env["FLEETMATE_TEAMS_API_SCOPE"], !v.isEmpty { config.teamsApiScope = v }
         if let v = env["FLEETMATE_TEAMS_API_PURPOSE"], !v.isEmpty { config.teamsApiPurpose = v }
+        if let v = env["FLEETMATE_TEAMS_LINK_HOSTS"], !v.isEmpty { config.teamsLinkHosts = v }
 
 
         // Snipe-IT
@@ -856,6 +868,12 @@ public struct FleetMateConfig: Codable {
     }
 
     /// Check if TDX is configured (credentials or SSO mode)
+    /// Teams channel search needs its API URL and token scope.
+    public var isTeamsSearchConfigured: Bool {
+        !(teamsApiUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !(teamsApiScope ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     public var isTdxConfigured: Bool {
         guard tdxBaseUrl != nil, (tdxAppId != nil || tdxTicketingAppId != nil) else { return false }
         if tdxAuthMethod == .browserSSO || tdxSsoEnabled { return true }
@@ -985,6 +1003,7 @@ public struct FleetMateConfig: Codable {
         set("teamsApiUrl", config.teamsApiUrl)
         set("teamsApiScope", config.teamsApiScope)
         set("teamsApiPurpose", config.teamsApiPurpose)
+        set("teamsLinkHosts", config.teamsLinkHosts)
         set("snipeUrl", config.snipeUrl)
         set("snipeApiKey", config.snipeApiKey)
         set("graphTenantId", config.graphTenantId)

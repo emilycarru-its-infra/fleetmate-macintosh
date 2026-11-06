@@ -48,6 +48,14 @@ private func printRaw(_ data: Data) {
     print(String(decoding: data, as: UTF8.self))
 }
 
+/// A link from message content, printed only when it is https on an allowed
+/// host (TeamsLinkPolicy); anything else is withheld so the terminal cannot
+/// turn it into something clickable.
+private func safeLink(_ s: String?) -> String? {
+    let hosts = TeamsLinkPolicy.hosts(extra: (try? FleetMateConfig.load())?.teamsLinkHosts)
+    return TeamsLinkPolicy.safeURL(s, allowedHosts: hosts)?.absoluteString
+}
+
 private func safe(_ s: String?) -> String {
     guard let s, !s.isEmpty else { return "-" }
     return TeamsText.oneLine(s)
@@ -111,7 +119,7 @@ struct TeamsSearchSubcommand: AsyncParsableCommand {
             print(line)
             if hit.subject != nil { print("  " + safe(hit.snippet)) }
             print("  thread " + safe(hit.threadId) + " --channel " + safe(hit.channelId))
-            if let link = hit.webUrl, !link.isEmpty { print("  " + safe(link)) }
+            if let link = safeLink(hit.webUrl) { print("  " + link) }
         }
     }
 }
@@ -139,7 +147,7 @@ struct TeamsThreadSubcommand: AsyncParsableCommand {
         let thread = payload.value
         print(safe(thread.subject ?? thread.messages.first?.text).bold)
         print(safe(thread.teamName) + " › " + safe(thread.channelName))
-        if let link = thread.webUrl, !link.isEmpty { print(safe(link)) }
+        if let link = safeLink(thread.webUrl) { print(link) }
         for message in thread.messages {
             print("")
             var header = safe(message.authorDisplayName) + " · " + TeamsText.localTime(message.createdAt)
@@ -151,7 +159,7 @@ struct TeamsThreadSubcommand: AsyncParsableCommand {
                 print("  " + line)
             }
             for attachment in message.attachments {
-                print("  📎 " + safe(attachment.name) + (attachment.url.map { "  " + safe($0) } ?? ""))
+                print("  📎 " + safe(attachment.name) + (safeLink(attachment.url).map { "  " + $0 } ?? ""))
             }
         }
     }

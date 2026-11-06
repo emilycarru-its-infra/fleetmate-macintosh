@@ -41,6 +41,9 @@ public class TdxSsoLoginViewModel: NSObject, ObservableObject {
     @Published public var authResult: TdxSsoResult?
     @Published public var currentUrl: String = ""
     @Published public var navigationLog: [String] = []
+    /// Set when a step of the silent chain answered 5xx: a passing server
+    /// fault rather than a missing session, so worth one more try.
+    public private(set) var sawServerError = false
 
     /// Log SSO messages to ~/.fleetmate/debug.log via the unified debug logger
     private func ssoLog(_ message: String) {
@@ -972,7 +975,19 @@ public class TdxSsoLoginViewModel: NSObject, ObservableObject {
         let logMsg = "[SILENT] Attempting silent SAML chain via URLSession..."
         dbg.info(logMsg, category: "tdx-sso")
         navigationLog.append(logMsg)
-        let result = await tryFullSilentSamlFlow()
+        sawServerError = false
+        var result = await tryFullSilentSamlFlow()
+        // A 5xx from the identity provider or TeamDynamix is usually a
+        // passing fault, not a missing session. Run the chain once more with
+        // a fresh assertion before calling it a failure.
+        if !result, sawServerError, authResult?.isIdentityRefused != true {
+            let retryMsg = "[SILENT] Server error during the SAML chain — retrying once"
+            dbg.warn(retryMsg, category: "tdx-sso")
+            navigationLog.append(retryMsg)
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            sawServerError = false
+            result = await tryFullSilentSamlFlow()
+        }
         isLoading = false
         if !result {
             let failMsg = "[SILENT] Silent SAML flow failed — interactive auth required"
@@ -1058,6 +1073,9 @@ public class TdxSsoLoginViewModel: NSObject, ObservableObject {
             let statusLog = "[SILENT] Response: \(httpResponse.statusCode) → \(finalUrl.absoluteString)"
             dbg.info(statusLog, category: "tdx-sso")
             await MainActor.run { navigationLog.append(statusLog) }
+            if (500...599).contains(httpResponse.statusCode) {
+                await MainActor.run { sawServerError = true }
+            }
 
             guard let html = String(data: data, encoding: .utf8) else { return false }
 
@@ -1121,6 +1139,9 @@ public class TdxSsoLoginViewModel: NSObject, ObservableObject {
             let respLog = "[SILENT] POST response: \(httpResponse.statusCode) → \(finalUrl.absoluteString)"
             dbg.info(respLog, category: "tdx-sso")
             await MainActor.run { navigationLog.append(respLog) }
+            if (500...599).contains(httpResponse.statusCode) {
+                await MainActor.run { sawServerError = true }
+            }
 
             // Check if the POST response itself returned a JWT (redirect chain ended at loginSSO)
             if let jwt = Self.extractJwtFromResponse(data: data, response: response) {
@@ -1151,6 +1172,9 @@ public class TdxSsoLoginViewModel: NSObject, ObservableObject {
 
         do {
             let (data, response) = try await session.data(for: req)
+            if let status = (response as? HTTPURLResponse)?.statusCode, (500...599).contains(status) {
+                await MainActor.run { sawServerError = true }
+            }
             if let jwt = Self.extractJwtFromResponse(data: data, response: response) {
                 let logMsg = "[SILENT] JWT from loginSSO"
                 dbg.info(logMsg, category: "tdx-sso")

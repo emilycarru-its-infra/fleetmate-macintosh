@@ -167,26 +167,16 @@ final class InboxAgent: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Sign in, find who "me" is (which starts the inbox), and refresh the
-    /// sign-in twice a day, inside the session's one-day lifetime.
+    /// Sign in, find who "me" is (which starts the inbox), and keep the
+    /// session renewed. Renewal is shared with the app window: whichever
+    /// process renews first saves the session, and the other adopts it.
     private func keepSignedIn(_ state: AppState) async {
-        var useCache = true
+        // The first sign-in may reuse the app's saved session.
+        state.attemptSilentTdxSso(useCache: true)
+        state.startTdxRenewal()
         while !Task.isCancelled {
-            // The first sign-in may reuse the app's saved session; each later
-            // one is a fresh sign-in, which renews the saved session for the
-            // app's next launch.
-            state.attemptSilentTdxSso(useCache: useCache)
-            useCache = false
-            for _ in 0..<20 where state.tdxMe == nil {
-                try? await Task.sleep(for: .seconds(30))
-                await state.resolveTdxMe()
-            }
-            if state.tdxMe == nil {
-                dbg.warn("Inbox helper couldn't sign in; retrying in an hour", category: "inbox")
-                try? await Task.sleep(for: .seconds(3600))
-            } else {
-                try? await Task.sleep(for: .seconds(12 * 3600))
-            }
+            await state.resolveTdxMe()
+            try? await Task.sleep(for: .seconds(state.tdxMe == nil ? 30 : 600))
         }
     }
 }

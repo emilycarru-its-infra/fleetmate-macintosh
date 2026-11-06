@@ -160,7 +160,7 @@ private struct AuthSettingsContent: View {
     /// One row's status under the shared model.
     private func displayStatus(_ system: AuthSystemStatus) -> AuthDisplayStatus {
         if isStartingElevation(system) { return .checking("Starting elevated session…") }
-        let status = AuthDisplayStatus(state: system.state, lastChecked: system.lastChecked)
+        let status = AuthDisplayStatus(state: effectiveState(system), lastChecked: system.lastChecked)
         // A verified system that runs through an elevated session reads as
         // that session: Ready while it runs, a grey Stopped when it has
         // stopped. A stopped container is not a credential problem.
@@ -173,6 +173,15 @@ private struct AuthSettingsContent: View {
         case .starting: return .checking("Starting…")
         case .unknown: return .valid
         }
+    }
+
+    /// The state a row may claim. TeamDynamix reads Valid only while a usable
+    /// session is held, so Valid never sits beside "Acting as Nobody".
+    private func effectiveState(_ system: AuthSystemStatus) -> AuthTokenState {
+        guard system.systemId == .tdx else { return system.state }
+        return TdxAuthStatus.effectiveState(reported: system.state,
+                                            hasUserSession: appState.tdxService.actingIdentityIsUser,
+                                            hasServiceAccount: appState.tdxHasServiceAccount)
     }
 
     /// The CLI account's own status, for the providers that have one.
@@ -722,14 +731,18 @@ private struct AuthSettingsContent: View {
                 }
 
             case .tdx:
-                if case .valid = system.state {
+                if case .valid = effectiveState(system) {
                     EmptyView()
                 } else if case .authenticating = system.state {
                     ProgressView().controlSize(.small)
                 } else {
-                    Button("Retry SSO") { appState.attemptSilentTdxSso() }
+                    Button("Retry SSO") { appState.attemptSilentTdxSso(useCache: false) }
+                        .controlSize(.small)
+                        .help("Sign in again in the background, without a window")
+                    Button("Sign In…") { appState.signInToTdxInteractively() }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
+                        .help("Open the TeamDynamix sign-in window")
                 }
 
             case .devops:

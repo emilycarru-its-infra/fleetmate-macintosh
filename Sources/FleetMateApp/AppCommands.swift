@@ -73,6 +73,10 @@ struct FleetMateCommands: Commands {
     }
 
     var body: some Commands {
+        CommandGroup(after: .appSettings) {
+            Button("Sign In to TeamDynamix…") { appState.signInToTdxInteractively() }
+                .disabled(!appState.config.isTdxConfigured)
+        }
         CommandGroup(before: .windowList) {
             Button("Activity Log") { openWindow(id: ActivityLogView.windowId) }
                 .keyboardShortcut("l", modifiers: [.command, .option])

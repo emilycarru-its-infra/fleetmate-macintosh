@@ -115,6 +115,7 @@ public struct TdxSessionCache: Codable, Sendable {
             add[kSecAttrLabel as String] = "TeamDynamix session"
             SecItemAdd(add as CFDictionary, nil)
         }
+        TdxSessionSync.postChanged()
     }
 
     public static func clear() {
@@ -124,5 +125,6 @@ public struct TdxSessionCache: Codable, Sendable {
             kSecAttrAccount as String: account,
         ]
         SecItemDelete(match as CFDictionary)
+        TdxSessionSync.postChanged()
     }
 }

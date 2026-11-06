@@ -16,6 +16,29 @@ public enum TdxAuthError: LocalizedError {
     }
 }
 
+/// Why an image in a feed entry could not be shown.
+public enum TdxBodyImageError: LocalizedError {
+    case refused(URL)
+    case notAnImage(URL)
+    case tooLarge(URL)
+
+    public var errorDescription: String? {
+        switch self {
+        case .refused: return "Only https images from public hosts are loaded."
+        case .notAnImage: return "The server did not return an image."
+        case .tooLarge: return "The image is larger than the app will load."
+        }
+    }
+}
+
+/// A flag set from a network callback and read after the stream ends.
+private final class OneWayFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    func set() { lock.lock(); value = true; lock.unlock() }
+    var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
+}
+
 /// TeamDynamix (TDX) service for ticket management
 /// Uses JWT authentication via SSO, username/password, or BEID
 public class TdxService {
@@ -33,6 +56,8 @@ public class TdxService {
     // Cookie-based SSO (when JWT is unavailable)
     private var ssoCookies: [HTTPCookie]?
     private var cookieSession: Session?
+    /// The test override, kept so the anonymous image session uses it too.
+    private let imageSessionConfiguration: URLSessionConfiguration?
 
     /// Why the last SSO sign-in was refused, when its identity could not be
     /// confirmed as the signed-in user's. While set, no credential is offered at all — not the service
@@ -130,6 +155,7 @@ public class TdxService {
     ///   below runs its real code path without reaching the network.
     public init(config: FleetMateConfig, sessionConfiguration: URLSessionConfiguration? = nil) {
         self.config = config
+        self.imageSessionConfiguration = sessionConfiguration
         self.cacheDuration = TimeInterval(config.cacheMinutes * 60)
 
         let configuration = sessionConfiguration ?? {
@@ -994,6 +1020,122 @@ public class TdxService {
         let fileURL = directory.appendingPathComponent(attachment.displayName)
         try data.write(to: fileURL, options: .atomic)
         return fileURL
+    }
+
+    // MARK: - Images in feed bodies
+
+    /// Fetched feed images, keyed by URL, so scrolling a long feed or
+    /// reopening a ticket doesn't fetch the same screenshot again.
+    private let bodyImageCache: NSCache<NSString, NSData> = {
+        let cache = NSCache<NSString, NSData>()
+        cache.totalCostLimit = 64 * 1024 * 1024
+        return cache
+    }()
+
+    /// Loads images that are not on the TDX host. Ephemeral and cookieless,
+    /// so nothing of the TDX session can ride along to a third party.
+    private lazy var anonymousImageSession: Session = {
+        let configuration = (imageSessionConfiguration?.copy() as? URLSessionConfiguration) ?? .ephemeral
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieAcceptPolicy = .never
+        configuration.urlCredentialStorage = nil
+        configuration.timeoutIntervalForRequest = 30
+        return Session(configuration: configuration, activityService: "Tickets")
+    }()
+
+    /// Resolves an external image's host before it is fetched. Tests swap in
+    /// a canned answer so they never depend on real DNS.
+    var externalHostResolver: @Sendable (String) -> [TdxResolvedAddress]? = { TdxImageAuthPolicy.systemResolve($0) }
+
+    /// The largest image a feed entry may pull down. A var so tests can
+    /// exercise the limit without megabytes of fixture.
+    var bodyImageByteLimit = 25 * 1024 * 1024
+
+    /// Fetch an image embedded in a feed entry's HTML.
+    ///
+    /// An image on the TDX host goes through the signed-in session — cookies,
+    /// or the bearer token when SSO produced a JWT — and may only redirect
+    /// within that host. An image anywhere else loads anonymously, and only
+    /// from a public https host (`TdxImageAuthPolicy.mayLoadExternal`); the
+    /// caller decides whether the user has agreed to load it at all. The body
+    /// is streamed and abandoned as soon as it passes the size limit, and a
+    /// declared Content-Length over the limit is refused before any of it is
+    /// read. The bytes must sniff as an image: a sign-in page served in its
+    /// place is an error, not a picture.
+    public func fetchBodyImage(_ url: URL) async throws -> Data {
+        let key = url.absoluteString as NSString
+        if let cached = bodyImageCache.object(forKey: key) { return cached as Data }
+
+        let tdxBase = URL(string: baseUrl)
+        let credentialed = TdxImageAuthPolicy.sendsTdxCredentials(to: url, tdxBase: tdxBase)
+        if !credentialed {
+            // The literal check first, then a lookup off the caller's thread:
+            // every address the host resolves to must be public.
+            guard TdxImageAuthPolicy.mayLoadExternal(url) else { throw TdxBodyImageError.refused(url) }
+            let resolve = externalHostResolver
+            let allowed = await Task.detached(priority: .userInitiated) {
+                TdxImageAuthPolicy.mayLoadExternal(url, resolve: resolve)
+            }.value
+            guard allowed else { throw TdxBodyImageError.refused(url) }
+        }
+
+        var headers: HTTPHeaders = ["Accept": "image/*"]
+        if credentialed, hasUserJwt, let token = ssoToken {
+            headers.add(name: "Authorization", value: "Bearer \(token)")
+        }
+
+        let resolve = externalHostResolver
+        let redirector = Redirector(behavior: .modify { _, request, _ in
+            guard let next = request.url else { return nil }
+            let allowed = credentialed
+                ? TdxImageAuthPolicy.mayFollowRedirect(to: next, tdxBase: tdxBase)
+                : TdxImageAuthPolicy.mayLoadExternal(next, resolve: resolve)
+            return allowed ? request : nil
+        })
+
+        let limit = bodyImageByteLimit
+        let declaredTooLarge = OneWayFlag()
+        let session = credentialed ? activeSession : anonymousImageSession
+        let request = session.streamRequest(url, headers: headers)
+            .redirect(using: redirector)
+            .validate(statusCode: 200..<300)
+            // Validators run only once the body is in; a declared length
+            // over the limit has to be refused as the headers arrive.
+            .onHTTPResponse(on: .global(qos: .userInitiated)) { response, decide in
+                let tooLarge = response.expectedContentLength > Int64(limit)
+                if tooLarge { declaredTooLarge.set() }
+                decide(tooLarge ? .cancel : .allow)
+            }
+
+        var data = Data()
+        var contentType: String?
+        for await stream in request.streamTask().streamingData() {
+            switch stream.event {
+            case .stream(let result):
+                guard case .success(let chunk) = result else { continue }
+                data.append(chunk)
+                if data.count > limit {
+                    request.cancel()
+                    dbg.warn("TDX feed image passed \(limit) bytes; abandoned", category: "tdx")
+                    throw TdxBodyImageError.tooLarge(url)
+                }
+            case .complete(let completion):
+                if declaredTooLarge.isSet { throw TdxBodyImageError.tooLarge(url) }
+                if let error = completion.error {
+                    dbg.warn("TDX feed image failed (\(completion.response?.statusCode ?? 0))", category: "tdx")
+                    throw error
+                }
+                contentType = completion.response?.value(forHTTPHeaderField: "Content-Type")
+            }
+        }
+
+        guard TdxImageAuthPolicy.looksLikeImage(data, contentType: contentType) else {
+            dbg.warn("TDX feed image was not an image (\(contentType ?? "no type"), \(data.count) bytes)", category: "tdx")
+            throw TdxBodyImageError.notAnImage(url)
+        }
+        bodyImageCache.setObject(data as NSData, forKey: key, cost: data.count)
+        return data
     }
 
     /// Fetch a single feed entry with its replies.

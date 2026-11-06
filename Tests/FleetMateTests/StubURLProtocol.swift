@@ -37,12 +37,16 @@ final class StubURLProtocol: URLProtocol {
         let method: String?
         let statusCode: Int
         let body: String
+        /// Extra response headers, merged over the default JSON content type.
+        let headers: [String: String]
 
-        init(pathContains: String, method: String? = nil, statusCode: Int = 200, body: String) {
+        init(pathContains: String, method: String? = nil, statusCode: Int = 200, body: String,
+             headers: [String: String] = [:]) {
             self.pathContains = pathContains
             self.method = method
             self.statusCode = statusCode
             self.body = body
+            self.headers = headers
         }
     }
 
@@ -100,7 +104,7 @@ final class StubURLProtocol: URLProtocol {
             url: recorded.url,
             statusCode: statusCode,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
+            headerFields: ["Content-Type": "application/json"].merging(stub?.headers ?? [:]) { _, new in new }
         )!
 
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)

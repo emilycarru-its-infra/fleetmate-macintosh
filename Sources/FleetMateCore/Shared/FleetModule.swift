@@ -17,6 +17,7 @@ public enum FleetModule: String, CaseIterable, Codable, Sendable, Identifiable {
     case manage
     case inventory
     case identity
+    case teams
     case tickets
     case enrollment
 
@@ -31,6 +32,7 @@ public enum FleetModule: String, CaseIterable, Codable, Sendable, Identifiable {
         case .manage: "Manage"
         case .inventory: "Inventory"
         case .identity: "Identity"
+        case .teams: "Teams"
         case .tickets: "Tickets"
         case .enrollment: "Enrollment"
         }
@@ -46,6 +48,7 @@ public enum FleetModule: String, CaseIterable, Codable, Sendable, Identifiable {
         case .manage: "Lab operations over SSH and Screen Sharing"
         case .inventory: "Asset inventory and lifecycle"
         case .identity: "Users, groups and directory roles"
+        case .teams: "Search what was said in Teams channels"
         case .tickets: "Service desk tickets"
         case .enrollment: "Mac and Windows enrollment records, joined to Devices"
         }
@@ -60,6 +63,7 @@ public enum FleetModule: String, CaseIterable, Codable, Sendable, Identifiable {
         case .manage: "wrench.and.screwdriver"
         case .inventory: "shippingbox"
         case .identity: "person.2"
+        case .teams: "bubble.left.and.text.bubble.right"
         case .tickets: "ticket"
         case .enrollment: "laptopcomputer.and.arrow.down"
         }
@@ -76,6 +80,7 @@ public enum FleetModule: String, CaseIterable, Codable, Sendable, Identifiable {
         case .manage: config.isManageConfigured
         case .inventory: config.isSnipeConfigured
         case .tickets: config.isTdxConfigured
+        case .teams: config.isTeamsSearchConfigured
         // Windows records come through the Devices connection, Mac records
         // from the enrollment organizations configured in Settings.
         case .enrollment: !config.appleOrgSources.isEmpty || config.isGraphConfigured

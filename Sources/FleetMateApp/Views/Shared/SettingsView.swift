@@ -182,7 +182,7 @@ private struct GeneralSettingsTab: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 NotificationCenter.default.post(name: .editAuthSystem, object: system)
             }
-        case .development, .reporting:
+        case .development, .reporting, .teams:
             break
         }
     }

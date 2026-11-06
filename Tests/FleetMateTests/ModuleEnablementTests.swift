@@ -18,7 +18,7 @@ final class ModuleEnablementTests: XCTestCase {
 
     func testEveryTopLevelModuleIsListed() {
         let names = FleetModule.allCases.map(\.rawValue)
-        for expected in ["development", "projects", "devices", "reporting", "manage", "inventory", "identity", "tickets", "enrollment"] {
+        for expected in ["development", "projects", "devices", "reporting", "manage", "inventory", "identity", "teams", "tickets", "enrollment"] {
             XCTAssertTrue(names.contains(expected), "\(expected) missing")
         }
     }
@@ -65,6 +65,17 @@ final class ModuleEnablementTests: XCTestCase {
         XCTAssertTrue(modules.isActive(.inventory, config: config))
         modules.set(.inventory, on: false)
         XCTAssertFalse(modules.isActive(.inventory, config: config))
+    }
+
+    func testTeamsNeedsBothItsUrlAndScope() {
+        var config = FleetMateConfig()
+        XCTAssertFalse(FleetModule.teams.isConfigured(config))
+        config.teamsApiUrl = "https://search.example.test"
+        XCTAssertFalse(FleetModule.teams.isConfigured(config))
+        config.teamsApiScope = "api://search.example.test/.default"
+        XCTAssertTrue(FleetModule.teams.isConfigured(config))
+        config.teamsApiUrl = "  "
+        XCTAssertFalse(FleetModule.teams.isConfigured(config))
     }
 
     func testSummariesNameNoProducts() {

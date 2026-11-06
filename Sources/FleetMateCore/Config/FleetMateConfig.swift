@@ -856,6 +856,12 @@ public struct FleetMateConfig: Codable {
     }
 
     /// Check if TDX is configured (credentials or SSO mode)
+    /// Teams channel search needs its API URL and token scope.
+    public var isTeamsSearchConfigured: Bool {
+        !(teamsApiUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !(teamsApiScope ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     public var isTdxConfigured: Bool {
         guard tdxBaseUrl != nil, (tdxAppId != nil || tdxTicketingAppId != nil) else { return false }
         if tdxAuthMethod == .browserSSO || tdxSsoEnabled { return true }

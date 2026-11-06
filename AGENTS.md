@@ -107,7 +107,7 @@ TicketsMate is the same app limited to the Tickets tab. Add `EDITION=ticketsmate
 
 - **Use anchored popovers for lightweight editing** — Session and section naming must stay contextual. Focus the name field, support Return to save and Escape/click-away to dismiss, and do not use modal alerts or naming dialogs.
 
-- **No unrequested SSO popups** — Sign-in runs silently/headless, and renewal retries on a backoff. Never open a browser login sheet on the app's own initiative. The one exception is the TeamDynamix sign-in window, opened only when the person clicks Sign In (banner, Authentication panel, or the app menu) after silent renewal has stopped working.
+- **Silent sign-in first, window last** — Sign-in always tries every silent path in order: the saved session, the device's PRT from the Entra broker, the silent SAML chain, then the headless WebView. A failure is retried on the backoff (1, 5, 15 minutes, then every 15, and at once on wake, unlock or a network change); one failed attempt is never final. The TeamDynamix sign-in window is a last resort: it opens only when the person clicks Sign In and every silent path has just failed, never on the app's own initiative. It runs the same flow automatically with the account pre-filled, lets Entra and Platform SSO finish it, closes itself the moment a JWT arrives, and times out on its own. Silent renewal is never blocked by the window: the backoff keeps running while it is open, and a silent success closes it.
 - **No Xcode GUI** — Everything is SPM-driven from the command line.
 - **macOS 14+ target** — Platform is macOS only, minimum deployment target is macOS 14 (Sonoma).
 

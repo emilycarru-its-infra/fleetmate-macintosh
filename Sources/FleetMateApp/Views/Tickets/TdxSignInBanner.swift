@@ -31,12 +31,17 @@ struct TdxSignInBanner: View {
                     .textSelection(.enabled)
             }
             Spacer(minLength: 8)
+            if appState.tdxSignInStage != nil {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Signing in")
+            }
             Button("Try Again") { appState.attemptSilentTdxSso(useCache: false) }
                 .help("Sign in again in the background, without a window")
                 .disabled(appState.tdxSignInStage != nil)
             Button("Sign In…") { appState.signInToTdxInteractively() }
                 .buttonStyle(.borderedProminent)
-                .help("Open the TeamDynamix sign-in window")
+                .help("Sign in again; opens a sign-in window only if the silent sign-in fails")
         }
         .controlSize(.small)
         .padding(.horizontal, 14)

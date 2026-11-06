@@ -28,6 +28,9 @@ BUILD_DIR := .build
 RELEASE_DIR := $(BUILD_DIR)/release
 INSTALL_DIR := /usr/local/bin
 PRODUCT_NAME := FleetMate
+# Pass VERSION=YYYY.MM.DD.HHMM to stamp the app bundle the way the release
+# workflow does: CFBundleShortVersionString YYYY.MM.DD, CFBundleVersion HHMM.
+# The 1.0.0 default leaves Info.plist as committed.
 VERSION := 1.0.0
 
 # Signing Configuration
@@ -259,6 +262,17 @@ release-app:
 	mkdir -p "$(APP_BUNDLE)/Contents/Resources"; \
 	cp "$$REAL_BIN_PATH" "$(APP_BUNDLE)/Contents/MacOS/$(APP_BUNDLE_EXECUTABLE)"; \
 	cp "$(APP_INFO_PLIST)" "$(APP_BUNDLE)/Contents/Info.plist"; \
+	if echo "$(VERSION)" | grep -Eq '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{4}$$'; then \
+		MARKETING_VERSION=$$(echo "$(VERSION)" | sed 's/\.[0-9]*$$//'); \
+		BUILD_NUMBER=$$(echo "$(VERSION)" | sed 's/.*\.//'); \
+		/usr/libexec/PlistBuddy \
+			-c "Set :CFBundleShortVersionString $$MARKETING_VERSION" \
+			-c "Set :CFBundleVersion $$BUILD_NUMBER" \
+			"$(APP_BUNDLE)/Contents/Info.plist"; \
+		echo "$(GREEN)✓ Version $$MARKETING_VERSION ($$BUILD_NUMBER)$(NC)"; \
+	elif [ "$(VERSION)" != "1.0.0" ]; then \
+		echo "$(RED)Error: VERSION must be YYYY.MM.DD.HHMM, not '$(VERSION)'$(NC)"; exit 1; \
+	fi; \
 	GIT_SHA=$$(git rev-parse --short HEAD 2>/dev/null); \
 	if [ -n "$$GIT_SHA" ]; then \
 		/usr/libexec/PlistBuddy -c "Add :FleetMateGitCommit string $$GIT_SHA" "$(APP_BUNDLE)/Contents/Info.plist"; \

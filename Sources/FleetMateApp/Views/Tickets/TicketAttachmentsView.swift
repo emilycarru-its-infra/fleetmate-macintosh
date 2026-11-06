@@ -25,8 +25,9 @@ struct TicketAttachmentsView: View {
                         .appFont(.caption)
                         .foregroundColor(.secondary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    Text("Attachments")
+                    Text("Attachments · \(attachments.count)")
                         .appFont(.headline)
+                        .accessibilityLabel("Attachments, \(attachments.count)")
                     Spacer()
                 }
                 .contentShape(Rectangle())

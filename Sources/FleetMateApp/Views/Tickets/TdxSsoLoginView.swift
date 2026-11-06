@@ -5,16 +5,23 @@ import AuthenticationServices
 
 // MARK: - SSO Login View
 
-/// SwiftUI view for TDX SSO authentication
-/// Presents a WebView that navigates through the SAML/Shibboleth flow
+/// The last-resort TeamDynamix sign-in window, opened only by a Sign In click
+/// after every silent path has failed.
+///
+/// It runs the same flow as the headless sign-in, with the account filled
+/// in, so Entra and Platform SSO usually finish it with no typing. It closes
+/// itself the moment a JWT arrives, and gives up on its own after `timeout`.
 struct TdxSsoLoginView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: TdxSsoLoginViewModel
     
     let onComplete: (TdxSsoResult) -> Void
-    
-    init(config: FleetMateConfig, onComplete: @escaping (TdxSsoResult) -> Void) {
+    let timeout: Duration
+
+    init(config: FleetMateConfig, timeout: Duration = .seconds(180),
+         onComplete: @escaping (TdxSsoResult) -> Void) {
         self._viewModel = StateObject(wrappedValue: TdxSsoLoginViewModel(config: config))
+        self.timeout = timeout
         self.onComplete = onComplete
     }
     
@@ -72,6 +79,13 @@ struct TdxSsoLoginView: View {
         .onAppear {
             viewModel.startAuthentication()
         }
+        .task {
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled, viewModel.authResult == nil else { return }
+            dbg.warn("[SSO window] Timed out with no session; closing", category: "tdx-sso")
+            onComplete(.failure("The sign-in window timed out"))
+            dismiss()
+        }
         .onChange(of: viewModel.authResult) { _, result in
             if let result = result {
                 onComplete(result)
@@ -87,9 +101,9 @@ struct TdxSsoLoginView: View {
     private var headerView: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Sign in to TeamDynamix")
+                Text("Signing in to TeamDynamix")
                     .appFont(.headline)
-                Text("Authenticate with your organization's identity provider")
+                Text("Your account is filled in and single sign-on finishes it. This window closes on its own.")
                     .appFont(.caption)
                     .foregroundColor(.secondary)
             }

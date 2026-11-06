@@ -742,7 +742,7 @@ private struct AuthSettingsContent: View {
                     Button("Sign In…") { appState.signInToTdxInteractively() }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
-                        .help("Open the TeamDynamix sign-in window")
+                        .help("Sign in again; opens a sign-in window only if the silent sign-in fails")
                 }
 
             case .devops:

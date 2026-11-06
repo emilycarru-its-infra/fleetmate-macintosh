@@ -869,9 +869,12 @@ struct TicketsView: View {
                 Toggle(isOn: $assignedToMe) {
                     Label("Assigned to Me", systemImage: assignedToMe ? "person.crop.circle.fill" : "person.crop.circle")
                         .labelStyle(AdaptiveLabelStyle(iconOnly: compactToolbar))
-                        // The toolbar's own "on" bezel is a faint grey; blue
-                        // says plainly that the list is filtered to you.
-                        .foregroundStyle(assignedToMe ? Color.accentColor : Color.primary)
+                        // No foreground colour of our own: depending on the
+                        // Mac's appearance settings the "on" bezel is grey or
+                        // filled with the accent colour, and an accent label on
+                        // an accent bezel is unreadable. The system picks a
+                        // label colour that contrasts with its own bezel, and
+                        // the filled icon still marks the list as yours.
                 }
                 .toggleStyle(.button)
                 .disabled(appState.tdxMe == nil)

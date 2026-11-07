@@ -9,7 +9,9 @@ enum SettingsTab {
     static let appearance = 2
     static let manage = 3
     static let about = 4
+    #if !TICKETSMATE
     static let repositories = RepositoriesSettingsView.tabTag
+    #endif
     static let enrollment = 6
     static let agent = 7
 }
@@ -23,12 +25,14 @@ struct SettingsView: View {
     var body: some View {
         TabView(selection: $selectedTabIndex) {
             // General switches modules on and off; TicketsMate has one.
+            #if !TICKETSMATE
             if !ticketsOnly {
                 GeneralSettingsTab()
                     .environmentObject(appState)
                     .tabItem { Label("General", systemImage: "gear") }
                     .tag(SettingsTab.general)
             }
+            #endif
 
             AuthSettingsView()
                 .environmentObject(appState)
@@ -39,6 +43,7 @@ struct SettingsView: View {
                 .tabItem { Label("Appearance", systemImage: "circle.lefthalf.filled") }
                 .tag(SettingsTab.appearance)
 
+            #if !TICKETSMATE
             if !ticketsOnly {
                 ManageSettingsView()
                     .environmentObject(appState)
@@ -58,6 +63,7 @@ struct SettingsView: View {
                     .tabItem { Label("Repositories", systemImage: "folder.badge.gearshape") }
                     .tag(SettingsTab.repositories)
             }
+            #endif
             AboutSettingsView()
                 .tabItem { Label("About", systemImage: "info.circle") }
                 .tag(SettingsTab.about)
@@ -68,6 +74,7 @@ struct SettingsView: View {
 
 // MARK: - General Settings Tab (Module Toggles)
 
+#if !TICKETSMATE
 private struct GeneralSettingsTab: View {
     @EnvironmentObject var appState: AppState
     @AppStorage("settings.selectedTab") private var selectedTabIndex: Int = 0
@@ -187,6 +194,7 @@ private struct GeneralSettingsTab: View {
         }
     }
 }
+#endif
 
 extension Notification.Name {
     static let editAuthSystem = Notification.Name("editAuthSystem")

@@ -1,0 +1,125 @@
+# .github/workflows/ticketsmate-sync.yml
+#
+# Keeps focusedsystems/ticketsmate-macintosh, the standalone TicketsMate app,
+# in step with this repository. scripts/export-ticketsmate writes the Tickets
+# slice described by ticketsmate/manifest.json, plus the files under
+# ticketsmate/overlay, into a clone of that repository. This workflow builds
+# and tests the result, then opens or updates one pull request there. Nothing
+# in that repository is edited by hand; its own CI and release workflows take
+# over from the pull request.
+#
+# Pull requests here run the export, build and tests too, so a change that
+# breaks the standalone app is caught before it reaches main. Only a push to
+# main writes to the other repository.
+#
+# Needs the repository secret TICKETSMATE_SYNC_TOKEN: a fine-grained token
+# with Contents and Pull requests read/write on
+# focusedsystems/ticketsmate-macintosh. The default GITHUB_TOKEN cannot write
+# to another repository.
+
+name: ticketsmate-sync
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ticketsmate-sync-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TARGET_REPO: focusedsystems/ticketsmate-macintosh
+  SYNC_BRANCH: sync/upstream
+
+jobs:
+  export:
+    name: Export, build and test TicketsMate
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Select newest Xcode 26
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+
+      - name: Decide whether this run pushes
+        id: mode
+        env:
+          HAS_TOKEN: ${{ secrets.TICKETSMATE_SYNC_TOKEN != '' }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            if [ "$HAS_TOKEN" != "true" ]; then
+              echo "::error::TICKETSMATE_SYNC_TOKEN is not set, so the export cannot be pushed to $TARGET_REPO."
+              exit 1
+            fi
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout TicketsMate
+        if: steps.mode.outputs.push == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TARGET_REPO }}
+          token: ${{ secrets.TICKETSMATE_SYNC_TOKEN }}
+          path: ticketsmate-target
+          fetch-depth: 0
+          # The token is only used by the last step, never while the export
+          # builds and runs its tests.
+          persist-credentials: false
+
+      - name: Start from TicketsMate's main
+        if: steps.mode.outputs.push == 'true'
+        working-directory: ticketsmate-target
+        run: git checkout -B "$SYNC_BRANCH" origin/main
+
+      - name: Start an empty target
+        if: steps.mode.outputs.push != 'true'
+        run: mkdir -p ticketsmate-target
+
+      - name: Export
+        run: scripts/export-ticketsmate ticketsmate-target
+
+      - name: Build and test the export
+        working-directory: ticketsmate-target
+        run: |
+          swift build -c release --product TicketsMate
+          make app
+          python3 -m unittest discover -s Tests/Packaging -v
+          swift test
+
+      - name: Open or update the pull request
+        if: steps.mode.outputs.push == 'true'
+        working-directory: ticketsmate-target
+        env:
+          GH_TOKEN: ${{ secrets.TICKETSMATE_SYNC_TOKEN }}
+          UPSTREAM: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet origin/main; then
+            echo "TicketsMate is already up to date."
+            exit 0
+          fi
+          short="${GITHUB_SHA:0:8}"
+          git commit -q -m "Sync from upstream $short" -m "Exported from https://github.com/$UPSTREAM/commit/$GITHUB_SHA by scripts/export-ticketsmate."
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64)" \
+            push --force origin "$SYNC_BRANCH"
+          body="Exported from $UPSTREAM@$GITHUB_SHA by \`scripts/export-ticketsmate\`. This branch is rewritten on every push to upstream main; do not edit it."
+          if [ "$(gh pr view "$SYNC_BRANCH" --repo "$TARGET_REPO" --json state -q .state 2>/dev/null || true)" = OPEN ]; then
+            gh pr edit "$SYNC_BRANCH" --repo "$TARGET_REPO" --title "Sync from upstream $short" --body "$body"
+          else
+            gh pr create --repo "$TARGET_REPO" --base main --head "$SYNC_BRANCH" \
+              --title "Sync from upstream $short" --body "$body"
+          fi

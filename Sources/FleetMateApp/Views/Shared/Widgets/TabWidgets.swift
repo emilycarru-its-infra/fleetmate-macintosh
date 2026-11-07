@@ -4,6 +4,7 @@ import FleetMateCore
 // Each tab's Widgets row. The cards are the ones the Dashboard used to carry,
 // moved next to the list they summarise; a click filters that list in place.
 
+#if !TICKETSMATE
 // MARK: - Devices
 
 struct DevicesWidgetsSection: View {
@@ -125,6 +126,7 @@ struct InventoryWidgetsSection: View {
     }
 }
 
+#endif
 // MARK: - Tickets
 
 struct TicketsWidgetsSection: View {
@@ -350,6 +352,7 @@ func ticketAgeColor(_ bucket: String) -> Color {
 
 // MARK: - Projects
 
+#if !TICKETSMATE
 /// The signed-in user's work items and GitHub issues — the lists that headed
 /// the Dashboard — beside tiles and breakdowns of the same items. Every
 /// figure comes from what the tab has already loaded.
@@ -470,6 +473,7 @@ struct TasksWidget: View {
         }
     }
 }
+#endif
 
 /// A card with nothing to chart: one centred line in the card's own height,
 /// rather than two zero figures over a lone "none" message.

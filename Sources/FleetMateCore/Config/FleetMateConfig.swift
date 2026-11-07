@@ -66,12 +66,14 @@ public struct FleetMateConfig: Codable {
     /// `<prefix>PrivateKeyPem`). Unset → the single default prefix.
     public var appleOrgSecretPrefixes: [String]?
 
+    #if !TICKETSMATE
     /// The Apple organizations to read, one per prefix in the configured vault.
     public var appleOrgSources: [AppleOrgSource] {
         guard let vault = appleOrgKeyVault?.trimmingCharacters(in: .whitespaces), !vault.isEmpty else { return [] }
         let prefixes = (appleOrgSecretPrefixes ?? []).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         return (prefixes.isEmpty ? [AppleOrgSource.defaultPrefix] : prefixes).map { AppleOrgSource(vault: vault, prefix: $0) }
     }
+    #endif
     
 
     // Snipe-IT settings
@@ -174,8 +176,10 @@ public struct FleetMateConfig: Codable {
     // SecureShell settings
     public var secureShell: SecureShellConfig?
 
+    #if !TICKETSMATE
     // Manage tab (lab operations over SSH and Screen Sharing)
     public var manage: ManageConfig?
+    #endif
     
     // Tasks settings (multi-provider task management)
     public var tasks: TasksConfig?
@@ -213,8 +217,10 @@ public struct FleetMateConfig: Codable {
     public var handbookSiteUrl: String?
     /// Clone URL of the repository holding the shared agent skills and hooks.
     public var agentsHubRepoUrl: String?
+    #if !TICKETSMATE
     /// The subnets fleet addresses are chosen from (see `FleetSubnets`).
     public var fleetSubnets = FleetSubnets()
+    #endif
 
     // Elevation sessions (see ElevationSettings). Deployment-specific, so they
     // come from config.yaml (elevation_image, elevation_resource_group,
@@ -276,7 +282,9 @@ public struct FleetMateConfig: Codable {
         case tdxDefaultAccountId = "tdx_default_account_id"
         case tdxResponsibleGroupId = "tdx_responsible_group_id"
         case secureShell = "secure_shell"
+        #if !TICKETSMATE
         case manage
+        #endif
         case tasks = "tasks"
         case deploymentPath = "deployment_path"
         case pkgsinfoPath = "pkgsinfo_path"
@@ -359,7 +367,9 @@ public struct FleetMateConfig: Codable {
         teamsLinkHosts = nil
         devopsOrganization = nil
         tasks = nil
+        #if !TICKETSMATE
         manage = nil
+        #endif
     }
     
     /// Load secrets from a `secrets.yaml` (created by scripts/setup-secrets.sh).
@@ -491,9 +501,11 @@ public struct FleetMateConfig: Codable {
         }
 
         // Graph
+        #if !TICKETSMATE
         if let manage = yaml["manage"] as? [String: Any] {
             config.manage = ManageConfig.from(yaml: manage)
         }
+        #endif
 
         if let graph = yaml["graph"] as? [String: Any] {
             if let v = graph["useAzureCliAuth"] as? Bool, v { /* stored elsewhere */ }
@@ -700,7 +712,9 @@ public struct FleetMateConfig: Codable {
             if config.secureShell == nil { config.secureShell = SecureShellConfig() }
             config.secureShell?.keyVaultName = v
         }
+        #if !TICKETSMATE
         config.manage = ManageConfig.applying(credentials: creds, to: config.manage)
+        #endif
         if let v = get("agentCommand") { config.agentCommand = v }
         if let v = get("agentAutoStart") { config.agentAutoStart = (v as NSString).boolValue }
         if let v = get("repoDefaults") {
@@ -715,12 +729,14 @@ public struct FleetMateConfig: Codable {
         if let v = get("elevationResourceGroup"), !v.isEmpty { config.elevationResourceGroup = v }
         if let v = get("elevationIdentityResourceGroup"), !v.isEmpty { config.elevationIdentityResourceGroup = v }
         if let v = get("elevationTranscriptAccount"), !v.isEmpty { config.elevationTranscriptAccount = v }
+        #if !TICKETSMATE
         if get("fleetWiredSubnets") != nil || get("fleetWirelessSubnets") != nil || get("fleetSubnets") != nil {
             config.fleetSubnets = FleetSubnets(
                 wired: FleetSubnets.parse(get("fleetWiredSubnets")),
                 wireless: FleetSubnets.parse(get("fleetWirelessSubnets")),
                 fleet: FleetSubnets.parse(get("fleetSubnets")))
         }
+        #endif
     }
 
     private static func loadEnvironmentVariables(into config: inout FleetMateConfig) {
@@ -818,8 +834,12 @@ public struct FleetMateConfig: Codable {
 
     /// The Manage tab shows when the module is switched on and its roster exists.
     public var isManageConfigured: Bool {
+        #if TICKETSMATE
+        false
+        #else
         guard let manage, manage.enabled else { return false }
         return manage.hasRoster(repoRoot: repoRoot)
+        #endif
     }
 
 
@@ -1035,9 +1055,11 @@ public struct FleetMateConfig: Codable {
         set("handbookRepoUrl", config.handbookRepoUrl)
         set("handbookSiteUrl", config.handbookSiteUrl)
         set("agentsHubRepoUrl", config.agentsHubRepoUrl)
+        #if !TICKETSMATE
         if let manage = config.manage {
             for (key, value) in manage.credentialValues() { creds[key] = value }
         }
+        #endif
 
         let data = try JSONSerialization.data(withJSONObject: creds, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: URL(fileURLWithPath: path), options: .atomic)

@@ -81,9 +81,13 @@ public enum FleetModule: String, CaseIterable, Codable, Sendable, Identifiable {
         case .inventory: config.isSnipeConfigured
         case .tickets: config.isTdxConfigured
         case .teams: config.isTeamsSearchConfigured
+        #if TICKETSMATE
+        case .enrollment: false
+        #else
         // Windows records come through the Devices connection, Mac records
         // from the enrollment organizations configured in Settings.
         case .enrollment: !config.appleOrgSources.isEmpty || config.isGraphConfigured
+        #endif
         }
     }
 }

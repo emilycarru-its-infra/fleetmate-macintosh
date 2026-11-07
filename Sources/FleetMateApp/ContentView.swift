@@ -15,11 +15,13 @@ struct ContentView: View {
     /// menu, titled buttons to icons) so the module tab bar keeps its room.
     static let compactModuleToolbarBelow: CGFloat = 1400
     @State private var showAuthPopover = false
+    #if !TICKETSMATE
     @ObservedObject private var terminals: AgentTerminalStore
 
     init(terminals: AgentTerminalStore) {
         self.terminals = terminals
     }
+    #endif
 
     private var availableTabs: [AppTab] {
         AppTab.enabledTabs(config: appState.config, modules: appState.modules)
@@ -32,16 +34,24 @@ struct ContentView: View {
             if appState.tdxNeedsSignIn, selectedTab == .tickets || AppEdition.current.isTicketsOnly {
                 TdxSignInBanner()
             }
+            #if !TICKETSMATE
             if !(terminals.isMaximized && terminals.isVisible && !terminals.sessions.isEmpty) {
                 tabContent
                     .frame(maxHeight: .infinity)
                     .environment(\.compactModuleToolbar, windowWidth < Self.compactModuleToolbarBelow)
             }
+            #else
+            tabContent
+                .frame(maxHeight: .infinity)
+                .environment(\.compactModuleToolbar, windowWidth < Self.compactModuleToolbarBelow)
+            #endif
+            #if !TICKETSMATE
             if !AppEdition.current.isTicketsOnly {
                 AgentTerminalDock(store: terminals,
                                   repos: appState.agentRepos,
                                   defaultLaunch: appState.agentDefaultLaunch)
             }
+            #endif
         }
             .frame(minWidth: 500, minHeight: 400)
             // A preference read through a background GeometryReader stopped
@@ -52,6 +62,7 @@ struct ContentView: View {
             .toolbar {
                 // Agent is the app's core action, so it sits at the far left,
                 // ahead of history, on every tab.
+                #if !TICKETSMATE
                 if !AppEdition.current.isTicketsOnly {
                     if #available(macOS 26.0, *) {
                         ToolbarItem(placement: .navigation) {
@@ -65,6 +76,7 @@ struct ContentView: View {
                         }
                     }
                 }
+                #endif
                 // Browser-style history, mirrored on ⌘[ / ⌘].
                 ToolbarItemGroup(placement: .navigation) {
                     Button {
@@ -83,11 +95,13 @@ struct ContentView: View {
                     .disabled(!appState.canGoForward)
                 }
                 // A single tab needs no tab bar.
+                #if !TICKETSMATE
                 if availableTabs.count > 1 {
                     ToolbarItem(placement: .principal) {
                         GlassTabBar(selectedTab: $appState.selectedTab, tabs: availableTabs, onSelect: { terminals.hide() }, availableWidth: windowWidth)
                     }
                 }
+                #endif
                 // The authentication shield belongs to the window, not to the
                 // Dashboard: auth is what breaks any tab, so it has to be
                 // checkable from whichever tab is showing the breakage.
@@ -102,9 +116,11 @@ struct ContentView: View {
                         GraphsToolbarButton(tab: selectedTab).id(selectedTab)
                     }
                 }
+                #if !TICKETSMATE
                 ToolbarItem(placement: .primaryAction) {
                     RecentActivityToolbarButton()
                 }
+                #endif
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: { showAuthPopover.toggle() }) {
                         // A Label, so the overflow menu and Customize Toolbar
@@ -112,7 +128,11 @@ struct ContentView: View {
                         Label {
                             Text("Authentication")
                         } icon: {
+                            #if !TICKETSMATE
                             ElevationShieldLabel()
+                            #else
+                            Image(systemName: "lock.shield")
+                            #endif
                         }
                     }
                     .popover(isPresented: $showAuthPopover, arrowEdge: .bottom) {
@@ -144,10 +164,17 @@ struct ContentView: View {
                     }
                 }
                 // Last, at the far right, where search is looked for.
+                #if !TICKETSMATE
                 ToolbarItem(id: "fleetmate.search", placement: .primaryAction) {
                     GlobalSearchToolbarField(width: windowWidth < Self.compactModuleToolbarBelow ? 200 : 300)
                 }
+                #else
+                ToolbarItem(id: "ticketsmate.search", placement: .primaryAction) {
+                    TabSearchToolbarField(width: windowWidth < Self.compactModuleToolbarBelow ? 200 : 300)
+                }
+                #endif
             }
+            #if !TICKETSMATE
             .onAppear {
                 appState.wireAgentTerminal()
                 terminals.resolveDefaultLaunch = { [weak appState] in appState?.agentDefaultLaunch ?? .shell }
@@ -175,6 +202,7 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                 terminals.terminateAll()
             }
+            #endif
             .onAppear {
                 // Phase 1: Attempt silent SSO in the background (no UI).
                 // If it fails, Phase 2 interactive login is deferred until the
@@ -182,6 +210,7 @@ struct ContentView: View {
                 if !appState.tdxSsoAuthenticated && appState.tdxService.shouldAttemptSso {
                     appState.attemptSilentTdxSso()
                 }
+                #if !TICKETSMATE
                 // DevOps: same 3-phase pattern
                 if !appState.devOpsSsoAuthenticated && appState.isDevOpsSsoConfigured {
                     appState.attemptSilentDevOpsSso()
@@ -190,6 +219,7 @@ struct ContentView: View {
                 if !appState.snipeSsoAuthenticated && appState.snipeService.shouldAttemptSso {
                     appState.attemptSilentSnipeSso()
                 }
+                #endif
             }
             .onChange(of: appState.selectedTab) { _, newTab in
                 // Re-attempt silent SSO when navigating to a tab that needs auth.
@@ -200,6 +230,7 @@ struct ContentView: View {
                    shouldRetrySso(.tdx) {
                     appState.attemptSilentTdxSso()
                 }
+                #if !TICKETSMATE
                 if newTab == .projects || newTab == .development,
                    !appState.devOpsSsoAuthenticated,
                    appState.isDevOpsSsoConfigured,
@@ -212,9 +243,12 @@ struct ContentView: View {
                    shouldRetrySso(.snipe) {
                     appState.attemptSilentSnipeSso()
                 }
+                #endif
             }
             .actionErrorBanner($appState.linkError, title: "Couldn't open link")
+            #if !TICKETSMATE
             .modifier(HandbookReaderHost(knowledge: appState.knowledge))
+            #endif
             .onChange(of: appState.navigateToTab) { _, newTab in
                 if let tab = newTab {
                     appState.selectedTab = tab
@@ -256,6 +290,7 @@ struct ContentView: View {
         }
     }
 
+    #if !TICKETSMATE
     private func writeAgentContext() {
         appState.writeAgentContext()
     }
@@ -264,9 +299,11 @@ struct ContentView: View {
     /// sparkles before that.
     static let agentSymbol = NSImage(systemSymbolName: "apple.intelligence", accessibilityDescription: nil) != nil
         ? "apple.intelligence" : "sparkles"
+    #endif
 
     @ViewBuilder
     private var tabContent: some View {
+        #if !TICKETSMATE
         switch selectedTab {
         case .devices:   DevicesView()
         case .reporting: ReportingView()
@@ -278,13 +315,21 @@ struct ContentView: View {
         case .identity:  IdentityView()
         case .teams:     TeamsView()
         }
+        #else
+        TicketsView()
+        #endif
     }
 }
 
 #if DEBUG
 #Preview {
+    #if !TICKETSMATE
     ContentView(terminals: AgentTerminalStore())
         .environmentObject(AppState())
+    #else
+    ContentView()
+        .environmentObject(AppState())
+    #endif
 }
 #endif
 

@@ -96,7 +96,9 @@ struct ToolbarPriorityBridge: NSViewRepresentable {
                     priority = .high
                 } else if ToolbarPriorityBridge.windowItemLabels.contains(item.label) {
                     priority = .high
+                    #if !TICKETSMATE
                     if item.label == "Agent" { useAgentSymbol(item) }
+                    #endif
                 } else {
                     priority = .low
                 }
@@ -115,6 +117,7 @@ struct ToolbarPriorityBridge: NSViewRepresentable {
             item.menuFormRepresentation = menuItem
         }
 
+        #if !TICKETSMATE
         /// The overflow menu drew Agent with a generic glyph; it is the
         /// agent symbol everywhere.
         private func useAgentSymbol(_ item: NSToolbarItem) {
@@ -125,6 +128,7 @@ struct ToolbarPriorityBridge: NSViewRepresentable {
                 item.menuFormRepresentation = menuItem
             }
         }
+        #endif
 
         @objc private func searchChosen() {
             onSearch?()

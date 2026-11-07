@@ -1,0 +1,53 @@
+# Builds and tests every pull request and every push to main. No signing and
+# no secrets: the app reads its settings at run time, so nothing sensitive is
+# needed to compile it.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Select newest Xcode 26
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app | sort -V | tail -1)"
+
+      - name: Build
+        run: swift build -c release --product TicketsMate
+
+      - name: Assemble the app bundle
+        run: |
+          make app
+          plist=.build/app/TicketsMate.app/Contents/Info.plist
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = systems.focused.ticketsmate
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$plist")" = ticketsmate
+          helper=".build/app/TicketsMate.app/Contents/Library/LoginItems/TicketsMate Inbox Helper.app"
+          test -x "$helper/Contents/MacOS/TicketsMate Inbox Helper"
+          /usr/libexec/PlistBuddy -c "Print :TicketsMateMainBundleIdentifier" "$helper/Contents/Info.plist"
+          if /usr/libexec/PlistBuddy -c "Print :CFBundleURLTypes" "$helper/Contents/Info.plist" >/dev/null 2>&1; then
+            echo "::error::The inbox helper claims a URL scheme"; exit 1
+          fi
+
+      - name: Test Safari extension packaging
+        run: python3 -m unittest discover -s Tests/Packaging -v
+
+      - name: Test
+        run: swift test

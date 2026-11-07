@@ -117,3 +117,24 @@ Adjacent summary cards must share the height of the tallest card. Let ranked
 rows distribute through the available vertical space so shorter lists fill
 their card naturally. Use native, content-driven layout rather than fixed
 card heights or invented placeholder rows.
+
+## TicketsMate export
+
+The Tickets tab is also published as a standalone app, TicketsMate, in
+`focusedsystems/ticketsmate-macintosh`. `scripts/export-ticketsmate <dir>`
+writes it: the files `ticketsmate/manifest.json` lists, renamed as it says,
+with `ticketsmate/overlay/` (Package.swift, Makefile, README, workflows,
+Info.plist) copied on top. `.github/workflows/ticketsmate-sync.yml` builds the
+export on every pull request and pushes it there from `main`. Never edit that
+repository by hand.
+
+- Code a Tickets file needs from another tab is fenced with `#if !TICKETSMATE`
+  (or given a `#if TICKETSMATE` alternative). FleetMate never defines the flag,
+  so it compiles as before; the export strips the fenced code out.
+- A new file the Tickets tab depends on goes in the manifest's `include`.
+- The export fails if the result names FleetMate or an organisation. Keep
+  site-specific values in settings or configuration profile keys.
+
+Check a change against both builds:
+
+    scripts/export-ticketsmate /tmp/ticketsmate && (cd /tmp/ticketsmate && swift build && swift test)

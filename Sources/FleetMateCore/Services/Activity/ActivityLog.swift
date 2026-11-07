@@ -199,7 +199,9 @@ public final class ActivityLog: @unchecked Sendable {
     /// otherwise the error's message with URLs removed. Never a response body.
     static func describe(_ error: Error) -> String {
         if let af = error as? AFError, let code = af.responseCode { return "HTTP \(code)" }
+        #if !TICKETSMATE
         if let throttled = error as? GraphThrottledError { return "HTTP \(throttled.statusCode)" }
+        #endif
         if let url = error as? URLError { return "Network error \(url.code.rawValue)" }
         return sanitizeFailure((error as NSError).localizedDescription)
     }

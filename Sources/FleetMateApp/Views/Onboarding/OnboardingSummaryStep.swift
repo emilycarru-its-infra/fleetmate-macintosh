@@ -20,6 +20,7 @@ struct OnboardingSummaryStep: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    #if !TICKETSMATE
                     if wizardState.enableGraph {
                         summaryCard(
                             icon: "shield.checkered",
@@ -34,6 +35,7 @@ struct OnboardingSummaryStep: View {
                             rows: snipeSummaryRows
                         )
                     }
+                    #endif
                     if wizardState.enableTdx {
                         summaryCard(
                             icon: "ticket",
@@ -41,6 +43,7 @@ struct OnboardingSummaryStep: View {
                             rows: tdxSummaryRows
                         )
                     }
+                    #if !TICKETSMATE
                     if wizardState.enableDevOps {
                         summaryCard(
                             icon: "square.stack.3d.up",
@@ -65,6 +68,7 @@ struct OnboardingSummaryStep: View {
                             rows: manageSummaryRows
                         )
                     }
+                    #endif
 
                     // Test results
                     if !wizardState.testResults.isEmpty {
@@ -116,6 +120,7 @@ struct OnboardingSummaryStep: View {
 
     // MARK: - Summary Row Data
 
+    #if !TICKETSMATE
     private var snipeSummaryRows: [(String, String)] {
         let url = ensureHttps(wizardState.snipeUrl)
         var rows: [(String, String)] = [("URL", url)]
@@ -139,6 +144,7 @@ struct OnboardingSummaryStep: View {
         }
         return rows
     }
+    #endif
 
     private var tdxSummaryRows: [(String, String)] {
         var rows: [(String, String)] = [
@@ -152,6 +158,7 @@ struct OnboardingSummaryStep: View {
         return rows
     }
 
+    #if !TICKETSMATE
     private var manageSummaryRows: [(String, String)] {
         var roster = ManageConfig()
         roster.rosterPath = wizardState.manageRosterPath
@@ -160,7 +167,9 @@ struct OnboardingSummaryStep: View {
         rows.append(("SSH key", wizardState.manageSshKeyPath.isEmpty ? ManageConfig.defaultSshKeyPath : wizardState.manageSshKeyPath))
         return rows
     }
+    #endif
 
+    #if !TICKETSMATE
     private var devOpsSummaryRows: [(String, String)] {
         var rows: [(String, String)] = [
             ("Organization", wizardState.devopsOrganization),
@@ -173,6 +182,7 @@ struct OnboardingSummaryStep: View {
         }
         return rows
     }
+    #endif
 
     // MARK: - Summary Card
 
@@ -225,18 +235,22 @@ struct OnboardingSummaryStep: View {
         let tempConfig = wizardState.buildConfig(base: appState.config)
 
         await withTaskGroup(of: ConnectionTestResult.self) { group in
+            #if !TICKETSMATE
             if wizardState.enableGraph {
                 group.addTask { await testGraph(config: tempConfig) }
             }
             if wizardState.enableSnipe {
                 group.addTask { await testSnipe(config: tempConfig) }
             }
+            #endif
             if wizardState.enableTdx {
                 group.addTask { await testTdx(config: tempConfig) }
             }
+            #if !TICKETSMATE
             if wizardState.enableDevOps {
                 group.addTask { await testDevOps(config: tempConfig) }
             }
+            #endif
 
             for await result in group {
                 wizardState.testResults.append(result)
@@ -246,6 +260,7 @@ struct OnboardingSummaryStep: View {
         wizardState.isTesting = false
     }
 
+    #if !TICKETSMATE
     private func testGraph(config: FleetMateConfig) async -> ConnectionTestResult {
         if wizardState.graphAuthMode == .sso {
             // Check if az CLI is available and logged in to the right tenant
@@ -325,6 +340,7 @@ struct OnboardingSummaryStep: View {
             }
         }
     }
+    #endif
 
     private func testTdx(config: FleetMateConfig) async -> ConnectionTestResult {
         if wizardState.tdxAuthMode == .sso {
@@ -372,6 +388,7 @@ struct OnboardingSummaryStep: View {
         }
     }
 
+    #if !TICKETSMATE
     private func testDevOps(config: FleetMateConfig) async -> ConnectionTestResult {
         // Verify the organization URL is reachable
         guard let org = config.devopsOrganization else {
@@ -392,6 +409,7 @@ struct OnboardingSummaryStep: View {
             return ConnectionTestResult(service: "Azure DevOps", success: false, message: error.localizedDescription)
         }
     }
+    #endif
 
     // MARK: - Helpers
 

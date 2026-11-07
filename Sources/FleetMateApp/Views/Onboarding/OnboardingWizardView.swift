@@ -76,6 +76,7 @@ class OnboardingWizardState: ObservableObject {
     var enableManage: Bool { selectedModules.contains(.manage) }
     var enableDevelopment: Bool { selectedModules.contains(.development) }
 
+    #if !TICKETSMATE
     // Development: where repositories are cloned and found, and which GitHub
     // owners beyond your own memberships to list.
     @Published var repoCloneRoot = RepoSettings.default.cloneRoot
@@ -90,6 +91,7 @@ class OnboardingWizardState: ObservableObject {
     @Published var catalogRepos: [CatalogRepo] = []
     @Published var catalogToClone: Set<String> = []
     var repoRootsPrepared = false
+    #endif
 
     // Graph fields
     @Published var graphTenantId = ""
@@ -179,12 +181,16 @@ class OnboardingWizardState: ObservableObject {
             return true
         case .devops:
             return !devopsOrganization.trimmingCharacters(in: .whitespaces).isEmpty
+        #if !TICKETSMATE
         case .development:
             return !repoCloneRoot.trimmingCharacters(in: .whitespaces).isEmpty
+        #endif
+        #if !TICKETSMATE
         case .manage:
             var c = ManageConfig()
             c.rosterPath = manageRosterPath
             return c.hasRoster(repoRoot: manageRepoRoot)
+        #endif
         default:
             return true
         }
@@ -213,11 +219,13 @@ class OnboardingWizardState: ObservableObject {
         selectedModules = Set(FleetModule.allCases.filter { modules.isActive($0, config: config) })
     }
 
+    #if !TICKETSMATE
     /// Pre-fill Development from the repository settings already saved.
     func populate(repoSettings: RepoSettings) {
         repoCloneRoot = repoSettings.cloneRoot
         repoGitHubOwners = repoSettings.gitHubOwners.joined(separator: ", ")
     }
+    #endif
 
     /// The module switches to save: on for every selected module, off for the
     /// rest.
@@ -259,12 +267,14 @@ class OnboardingWizardState: ObservableObject {
         if let c = config.devopsClientId { devopsClientId = c }
         if let t = config.devopsTenantId { devopsTenantId = t }
 
+        #if !TICKETSMATE
         manageRepoRoot = config.repoRoot
         if let m = config.manage {
             manageRosterPath = m.rosterPath
             manageSshKeyPath = m.sshKeyPath
             manageSshUser = m.sshUser
         }
+        #endif
     }
 
     /// Ensure a URL string has an https:// scheme prefix.
@@ -323,6 +333,7 @@ class OnboardingWizardState: ObservableObject {
             c.devopsTenantId = tenant.isEmpty ? nil : tenant
         }
 
+        #if !TICKETSMATE
         var manage = c.manage ?? ManageConfig()
         if enableManage {
             manage.enabled = true
@@ -331,6 +342,7 @@ class OnboardingWizardState: ObservableObject {
             manage.sshUser = manageSshUser.trimmingCharacters(in: .whitespaces)
         }
         c.manage = manage
+        #endif
 
         return c
     }
@@ -357,14 +369,17 @@ struct OnboardingWizardView: View {
                 switch wizardState.currentStep {
                 case .welcome:
                     OnboardingWelcomeStep()
+                #if !TICKETSMATE
                 case .moduleSelection:
                     OnboardingModuleSelectionStep()
                 case .graph:
                     OnboardingGraphStep()
                 case .snipe:
                     OnboardingSnipeStep()
+                #endif
                 case .tdx:
                     OnboardingTdxStep()
+                #if !TICKETSMATE
                 case .manage:
                     OnboardingManageStep()
                         .environmentObject(wizardState)
@@ -375,8 +390,13 @@ struct OnboardingWizardView: View {
                     OnboardingDevelopmentStep()
                 case .repositories:
                     OnboardingRepositoriesStep()
+                #endif
                 case .summary:
                     OnboardingSummaryStep(onFinish: finish)
+                #if TICKETSMATE
+                default:
+                    EmptyView()
+                #endif
                 }
             }
             .environmentObject(wizardState)
@@ -400,9 +420,11 @@ struct OnboardingWizardView: View {
                 wizardState.populate(from: appState.config)
                 wizardState.populate(modules: appState.modules, config: appState.config)
             }
+            #if !TICKETSMATE
             if let repo = try? RepoManager().settings() {
                 wizardState.populate(repoSettings: repo)
             }
+            #endif
         }
     }
 
@@ -448,22 +470,28 @@ struct OnboardingWizardView: View {
         if !AppEdition.current.isTicketsOnly {
             appState.modules = wizardState.moduleEnablement()
         }
+        #if !TICKETSMATE
         if wizardState.enableDevelopment {
             saveRepoSettings()
         }
+        #endif
         dbg.info("[Wizard] Save complete, error=\(appState.errorMessage ?? "none")", category: "wizard")
         dismiss()
 
         // Trigger SSO flows for newly configured services
+        #if !TICKETSMATE
         if wizardState.enableSnipe && wizardState.snipeAuthMode == .sso {
             appState.attemptSilentSnipeSso()
         }
+        #endif
         if wizardState.enableTdx && wizardState.tdxAuthMode == .sso {
             appState.attemptSilentTdxSso()
         }
+        #if !TICKETSMATE
         if wizardState.enableDevOps {
             appState.attemptSilentDevOpsSso()
         }
+        #endif
 
         // Reload data
         Task {
@@ -471,6 +499,7 @@ struct OnboardingWizardView: View {
         }
     }
 
+    #if !TICKETSMATE
     /// Write the Development step's locations to the same registry
     /// `fleetmate repos` and Settings ▸ Repositories use.
     private func saveRepoSettings() {
@@ -489,4 +518,5 @@ struct OnboardingWizardView: View {
             dbg.error("[Wizard] Saving repository settings failed: \(error.localizedDescription)", category: "wizard")
         }
     }
+    #endif
 }

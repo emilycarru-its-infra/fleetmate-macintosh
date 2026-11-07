@@ -95,6 +95,7 @@ extension FilterState where Category == TicketFilterCategory {
     }
 }
 
+#if !TICKETSMATE
 // MARK: - Device Filters
 
 typealias DeviceFilterCategory = DeviceFacet
@@ -180,3 +181,4 @@ extension FilterState where Category == TaskFilterCategory {
         return true
     }
 }
+#endif

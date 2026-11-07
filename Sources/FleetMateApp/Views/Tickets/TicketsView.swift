@@ -708,7 +708,9 @@ struct TicketsView: View {
             }
             let nextId = newIds.first ?? nil
             let draft = nextId.flatMap { commentDrafts[$0] }
+            #if !TICKETSMATE
             appState.agentSelection = selectedTicket.map(AgentSelection.init(ticket:))
+            #endif
             // A draft belongs to the ticket it was written on — carrying it to
             // the next ticket risks posting it to the wrong conversation.
             selectionRevision = UUID()
@@ -1231,7 +1233,9 @@ struct TicketsView: View {
                                     Divider()
                                     outlineContextMenu
                                 }
+                                #if !TICKETSMATE
                                 .agentContextDrag { appState.agentContext(for: ticket) }
+                                #endif
                                 .onTapGesture {
                                     if let id = ticket.id {
                                         selectedTicketIds = [id]
@@ -1395,10 +1399,12 @@ struct TicketsView: View {
             Label("Refresh", systemImage: "arrow.clockwise")
         }
 
+        #if !TICKETSMATE
         if !AppEdition.current.isTicketsOnly {
             Divider()
             TicketAgentMenuItems(ticket: ticket)
         }
+        #endif
     }
 
     private func copyToPasteboard(_ text: String) {
@@ -1663,7 +1669,9 @@ struct TicketsView: View {
                 .buttonStyle(.plain)
                 .help("Open ticket in web browser")
 
+                #if !TICKETSMATE
                 AgentContextButton(appState.agentContext(for: ticket))
+                #endif
                 
                 Spacer()
 
@@ -3892,6 +3900,7 @@ struct FeedEntryRow: View {
 
 // MARK: - Ticket Status Badge
 
+#if !TICKETSMATE
 extension AppState {
     /// A ticket's agent block, with its TeamDynamix link.
     func agentContext(for ticket: TdxTicket) -> AgentContext {
@@ -3908,6 +3917,7 @@ struct TicketAgentMenuItems: View {
         AgentContextMenuItems(appState.agentContext(for: ticket))
     }
 }
+#endif
 
 struct TicketStatusBadge: View {
     let statusName: String?

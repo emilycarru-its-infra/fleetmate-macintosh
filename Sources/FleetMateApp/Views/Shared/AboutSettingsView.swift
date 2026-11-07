@@ -33,7 +33,11 @@ struct AboutSettingsView: View {
         #endif
     }
 
+    #if TICKETSMATE
+    private static let repository = "github.com/focusedsystems/ticketsmate-macintosh"
+    #else
     private static let repository = "github.com/emilycarru-its-infra/fleetmate-macintosh"
+    #endif
 
     private var summary: String {
         AppEdition.current.isTicketsOnly

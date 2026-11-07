@@ -37,7 +37,7 @@ final class InboxAgent: NSObject, NSApplicationDelegate {
 
     /// The app's bundle id, from the app or from inside the helper.
     nonisolated static var mainBundleIdentifier: String {
-        AppIdentity.mainBundleIdentifier ?? "ca.ecuad.macadmin.fleetmate"
+        AppIdentity.mainBundleIdentifier ?? AppEdition.defaultBundleIdentifier
     }
 
     /// The launchd job label, which is also the helper's bundle id.

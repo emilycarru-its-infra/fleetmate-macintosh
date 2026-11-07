@@ -172,6 +172,12 @@ public struct FleetMateConfig: Codable {
     public var tdxAuthMethod: TdxAuthMethod = .auto
     public var tdxSsoEnabled: Bool = true  // Prefer SSO when available
     public var tdxSsoCallbackPort: Int = 8457  // Localhost callback port
+    /// Hosts the single sign-on chain may post a SAML assertion to, beyond
+    /// the TDX host itself (a separate Shibboleth service provider).
+    public var tdxSsoServiceProviderHosts: [String]?
+    /// Identity provider hosts whose pages may hand over a SAML assertion,
+    /// beyond Microsoft Entra ID's sign-in hosts.
+    public var tdxSsoIdentityProviderHosts: [String]?
     
     // SecureShell settings
     public var secureShell: SecureShellConfig?
@@ -272,6 +278,8 @@ public struct FleetMateConfig: Codable {
         case tdxAuthMethod = "tdx_auth_method"
         case tdxSsoEnabled = "tdx_sso_enabled"
         case tdxSsoCallbackPort = "tdx_sso_callback_port"
+        case tdxSsoServiceProviderHosts = "tdx_sso_service_provider_hosts"
+        case tdxSsoIdentityProviderHosts = "tdx_sso_identity_provider_hosts"
         case tdxPassword = "tdx_password"
         case tdxBeid = "tdx_beid"
         case tdxWebServicesKey = "tdx_web_services_key"
@@ -515,6 +523,8 @@ public struct FleetMateConfig: Codable {
         if let tdx = yaml["tdx"] as? [String: Any] {
             if let v = tdx["baseUrl"] as? String { config.tdxBaseUrl = v }
             if let v = tdx["appId"] as? Int { config.tdxAppId = v }
+            if let v = tdx["ssoServiceProviderHosts"] as? [String] { config.tdxSsoServiceProviderHosts = v }
+            if let v = tdx["ssoIdentityProviderHosts"] as? [String] { config.tdxSsoIdentityProviderHosts = v }
         }
 
         // Log level
@@ -698,6 +708,12 @@ public struct FleetMateConfig: Codable {
         if let v = get("tdxUsername")        { config.tdxUsername = v }
         if let v = get("tdxPassword")        { config.tdxPassword = v }
         if let v = get("tdxBeid")            { config.tdxBeid = v }
+        if let v = get("tdxSsoServiceProviderHosts") {
+            config.tdxSsoServiceProviderHosts = v.split(whereSeparator: { $0 == "\n" || $0 == "," }).map(String.init)
+        }
+        if let v = get("tdxSsoIdentityProviderHosts") {
+            config.tdxSsoIdentityProviderHosts = v.split(whereSeparator: { $0 == "\n" || $0 == "," }).map(String.init)
+        }
         if let v = get("tdxWebServicesKey")  { config.tdxWebServicesKey = v }
         if let id = getInt("tdxResponsibleGroupId") { config.tdxResponsibleGroupId = id }
         if let v = get("sshKeyPath") {

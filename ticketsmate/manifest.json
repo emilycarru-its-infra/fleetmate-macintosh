@@ -20,6 +20,7 @@
     "Sources/FleetMateCore/Shared/FleetModule.swift",
     "Sources/FleetMateCore/Shared/HtmlToMarkdown.swift",
     "Sources/FleetMateCore/Shared/HtmlEntities.swift",
+    "Sources/FleetMateCore/Shared/MarkdownContentPolicy.swift",
     "Sources/FleetMateCore/Shared/InboxHelperJob.swift",
     "Sources/FleetMateCore/Shared/Models",
     "Sources/FleetMateCore/Shared/ODataFilter.swift",
@@ -96,7 +97,9 @@
     "Tests/Packaging",
     "build/embed-safari-extension.py",
     "Sources/FleetMateApp/Assets/TicketsMate.icon",
-    "Sources/FleetMateApp/Assets/TicketsMate.png"
+    "Sources/FleetMateApp/Assets/TicketsMate.png",
+    "Tests/FleetMateTests/TdxSsoTrustTests.swift",
+    "Tests/FleetMateTests/MarkdownContentPolicyTests.swift"
   ],
   "exclude": [
     "Sources/FleetMateCore/Models/Shared/AssetsLoadFailure.swift",

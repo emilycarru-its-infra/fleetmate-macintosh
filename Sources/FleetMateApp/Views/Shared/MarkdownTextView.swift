@@ -25,24 +25,43 @@ struct MarkdownTextView: View {
     /// Opens a Handbook page the policy matched.
     var openPage: ((HandbookPage) -> Void)? = nil
     #endif
-    /// For documents, the one host images may load from (the Handbook site).
-    /// Without it a document shows no remote images.
+    /// The one host beyond TeamDynamix that images may load from: for a
+    /// document, the Handbook site. Without it a document shows no remote
+    /// images, and other text shows them from TeamDynamix only, unless the
+    /// person has chosen to load images from other sites.
     var imageSite: String? = nil
+    @Environment(\.remoteImageAccess) private var remoteImages
+    @AppStorage(FeedBodyView.loadExternalImagesKey) private var loadExternalImages = false
 
     private var theme: MarkdownUI.Theme { document ? .fleetMateDocument : .fleetMate }
 
     var body: some View {
         #if TICKETSMATE
-        rendered
+        inline
         #else
         if document {
             rendered
                 .markdownImageProvider(SiteImageProvider(siteURL: imageSite))
                 .environment(\.openURL, OpenURLAction { url in follow(url) })
         } else {
-            rendered
+            inline
         }
         #endif
+    }
+
+    /// Comments and descriptions come from anyone who can write one, so a
+    /// remote image is a tracking pixel until shown otherwise: it loads from
+    /// TeamDynamix or `imageSite`, or from elsewhere once the person allows
+    /// it, and always through the TDX image fetch's checks. Links open only
+    /// in the browser or mail client.
+    private var inline: some View {
+        let policy = MarkdownImagePolicy(access: remoteImages, site: imageSite, allowExternal: loadExternalImages)
+        return rendered
+            .markdownImageProvider(PolicedImageProvider(policy: policy))
+            .markdownInlineImageProvider(PolicedInlineImageProvider(policy: policy))
+            .environment(\.openURL, OpenURLAction { url in
+                MarkdownContentPolicy.allowsLink(url) ? .systemAction(url) : .discarded
+            })
     }
 
     #if !TICKETSMATE
@@ -107,6 +126,90 @@ private struct SiteImageProvider: ImageProvider {
     }
 }
 #endif
+
+// MARK: - Remote images
+
+/// How rendered text reaches remote images: the TDX host's address, and a
+/// loader that fetches through `TdxService.fetchBodyImage`, which sends the
+/// TDX session only to that host and refuses non-public addresses. Set once
+/// on the main window; without it no remote image loads.
+struct RemoteImageAccess {
+    var tdxBase: URL?
+    var load: @MainActor (URL) async -> Data?
+}
+
+private struct RemoteImageAccessKey: EnvironmentKey {
+    static let defaultValue: RemoteImageAccess? = nil
+}
+
+extension EnvironmentValues {
+    var remoteImageAccess: RemoteImageAccess? {
+        get { self[RemoteImageAccessKey.self] }
+        set { self[RemoteImageAccessKey.self] = newValue }
+    }
+}
+
+private struct MarkdownImagePolicy {
+    let access: RemoteImageAccess?
+    let site: String?
+    let allowExternal: Bool
+
+    /// The loader, when `url` may load at all.
+    func loader(for url: URL?) -> ((URL) async -> Data?)? {
+        guard let access, let url,
+              MarkdownContentPolicy.allowsImage(url, tdxBase: access.tdxBase, site: site, allowExternal: allowExternal)
+        else { return nil }
+        return { await access.load($0) }
+    }
+}
+
+private struct PolicedImageProvider: ImageProvider {
+    let policy: MarkdownImagePolicy
+
+    @ViewBuilder
+    func makeImage(url: URL?) -> some View {
+        if let url, let load = policy.loader(for: url) {
+            PolicedRemoteImage(url: url, load: load)
+        } else if let host = url?.host {
+            Label("Image from \(host) not loaded", systemImage: "photo")
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+                .help("Images from other sites load once Settings ▸ Authentication allows them")
+        }
+    }
+}
+
+private struct PolicedInlineImageProvider: InlineImageProvider {
+    let policy: MarkdownImagePolicy
+
+    func image(with url: URL, label: String) async throws -> Image {
+        guard let load = policy.loader(for: url),
+              let data = await load(url), TdxImageType.sniff(data) != nil,
+              let image = NSImage(data: data), image.isValid else { throw URLError(.cancelled) }
+        return Image(nsImage: image)
+    }
+}
+
+private struct PolicedRemoteImage: View {
+    let url: URL
+    let load: (URL) async -> Data?
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: image.size.width)
+            } else {
+                Color.clear.frame(width: 1, height: 1)
+            }
+        }
+        .task(id: url) {
+            guard let data = await load(url), TdxImageType.sniff(data) != nil,
+                  let fetched = NSImage(data: data), fetched.isValid else { return }
+            image = fetched
+        }
+    }
+}
 
 // MARK: - FleetMate Markdown Theme
 

@@ -66,9 +66,21 @@ sets wins over the one in Settings. Profile keys:
 | `tdxAppId`                    | integer | Legacy single app ID, used when the two above are unset                              |
 | `tdxResponsibleGroupId`       | integer | Group whose tickets the list loads by default                                        |
 | `azureTenantId`               | string  | Microsoft Entra tenant for single sign-on; defaults to `organizations`               |
+| `tdxSsoServiceProviderHosts` | array of strings | Hosts single sign-on may post a SAML assertion to, besides the TDX host. Needed when your Shibboleth service provider runs on another host |
+| `tdxSsoIdentityProviderHosts` | array of strings | Identity provider hosts allowed to hand over a SAML assertion, besides Microsoft Entra ID's sign-in hosts |
 | `tdxBeid`                     | string  | Service account BEID (fallback sign-in)                                              |
 | `tdxWebServicesKey`           | string  | Service account web services key (fallback sign-in)                                  |
 | `tdxUsername` / `tdxPassword` | string  | Username and password sign-in, where TDX allows it                                   |
+
+Single sign-on only ever posts an assertion over https, from the main frame
+of an allowed identity provider's page, to an allowed host. It takes the TDX
+token only from the tenant's own `loginSSO` endpoint. If sign-in stops at
+"Refused to post an assertion", add the host named in the log to
+`tdxSsoServiceProviderHosts`.
+
+Ticket comments load images from TDX only. Images from other sites wait until
+"Load images from other sites in ticket comments" is turned on in Settings ▸
+Authentication. Links open only as http, https or mailto.
 
 Prefer single sign-on to a service account. Anything done through a service
 account is attributed to that account rather than to the person using the app.

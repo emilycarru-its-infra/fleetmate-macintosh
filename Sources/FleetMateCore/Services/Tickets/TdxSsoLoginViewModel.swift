@@ -30,6 +30,23 @@ class SamlMessageHandler: NSObject, WKScriptMessageHandler {
     }
 }
 
+/// Carries the injected scripts' debug lines to the app log. A channel of its
+/// own, so nothing a page posts as a debug line is ever read as an assertion.
+class SsoDebugMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var viewModel: TdxSsoLoginViewModel?
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let viewModel,
+              let body = message.body as? [String: Any],
+              let debug = body["debug"] as? String else { return }
+        let line = String(debug.prefix(500))
+        Task { @MainActor in
+            dbg.info(line, category: "tdx-sso")
+            viewModel.navigationLog.append(line)
+        }
+    }
+}
+
 // MARK: - View Model
 
 /// View model for TDX SSO login
@@ -60,6 +77,9 @@ public class TdxSsoLoginViewModel: NSObject, ObservableObject {
     private let config: FleetMateConfig
     private var urlSession: URLSession?
     private var samlHandler: SamlMessageHandler?
+    private var debugHandler: SsoDebugMessageHandler?
+    /// Where an assertion may come from and go to.
+    private var ssoTrust: TdxSsoTrust { TdxSsoTrust(config: config) }
 
     /// TDX API base URL — auto-appends /TDWebApi if needed
     private var apiBaseUrl: String {
@@ -172,7 +192,7 @@ public class TdxSsoLoginViewModel: NSObject, ObservableObject {
         // console.log in an off-screen WKWebView goes nowhere; every decision
         // this script takes must surface in the app log or it can't be debugged.
         function fmLog(msg) {
-            try { window.webkit.messageHandlers.samlInterceptor.postMessage({debug: msg}); } catch (e) {}
+            try { window.webkit.messageHandlers.ssoDebug.postMessage({debug: msg}); } catch (e) {}
         }
         function fmInventory() {
             if (window.__fmTilesLogged) return;
@@ -377,7 +397,9 @@ public class TdxSsoLoginViewModel: NSObject, ObservableObject {
         let samlScript = WKUserScript(
             source: Self.samlInterceptorScript,
             injectionTime: .atDocumentStart,
-            forMainFrameOnly: false
+            // A frame embedded in the sign-in page must never get to post an
+            // assertion: the native POST carries the app's cookies.
+            forMainFrameOnly: true
         )
 
         let handler = SamlMessageHandler()
@@ -388,6 +410,11 @@ public class TdxSsoLoginViewModel: NSObject, ObservableObject {
         // FIDO fallback scripts are injected on-demand after a timeout if PSSO isn't available.
         webView.configuration.userContentController.addUserScript(samlScript)
         webView.configuration.userContentController.add(handler, name: "samlInterceptor")
+
+        let debug = SsoDebugMessageHandler()
+        debug.viewModel = self
+        self.debugHandler = debug
+        webView.configuration.userContentController.add(debug, name: "ssoDebug")
 
         dbg.info("[SAML] Interceptor installed (WebAuthn/FIDO allowed for Platform SSO)", category: "tdx-sso")
     }
@@ -431,7 +458,7 @@ public class TdxSsoLoginViewModel: NSObject, ObservableObject {
         (function() {
             var filled = false;
             function fmLog(msg) {
-                try { window.webkit.messageHandlers.samlInterceptor.postMessage({debug: msg}); } catch (e) {}
+                try { window.webkit.messageHandlers.ssoDebug.postMessage({debug: msg}); } catch (e) {}
             }
             function tryAutoLogin() {
                 if (filled) return;
@@ -636,11 +663,14 @@ public class TdxSsoLoginViewModel: NSObject, ObservableObject {
 
     /// Called when JavaScript intercepts a SAML form submission
     func handleSamlInterception(_ message: WKScriptMessage) {
-        // Debug lines from the injected scripts — the only way anything they
-        // observe or click inside the off-screen page reaches the app log.
-        if let body = message.body as? [String: Any], let debug = body["debug"] as? String {
-            dbg.info(debug, category: "tdx-sso")
-            navigationLog.append(debug)
+        // Only the main frame of a page from an allowed identity provider, over
+        // https, may hand over an assertion.
+        let origin = message.frameInfo.securityOrigin
+        guard message.frameInfo.isMainFrame,
+              ssoTrust.allowsSender(scheme: origin.protocol, host: origin.host) else {
+            let logMsg = "[SAML] Refused an assertion from \(origin.protocol)://\(origin.host) (not the main frame of an allowed identity provider; see tdxSsoIdentityProviderHosts)"
+            dbg.warn(logMsg, category: "tdx-sso")
+            navigationLog.append(logMsg)
             return
         }
         guard let body = message.body as? [String: Any],
@@ -648,6 +678,13 @@ public class TdxSsoLoginViewModel: NSObject, ObservableObject {
               let actionUrl = URL(string: actionUrlString),
               let formData = body["data"] as? [String: String] else {
             let logMsg = "[SAML] Invalid intercept message"
+            dbg.warn(logMsg, category: "tdx-sso")
+            navigationLog.append(logMsg)
+            return
+        }
+
+        guard ssoTrust.allowsAssertion(to: actionUrl) else {
+            let logMsg = "[SAML] Refused to post an assertion to \(actionUrl.scheme ?? "")://\(actionUrl.host ?? "") (not the TDX host or a host in tdxSsoServiceProviderHosts)"
             dbg.warn(logMsg, category: "tdx-sso")
             navigationLog.append(logMsg)
             return
@@ -732,37 +769,9 @@ public class TdxSsoLoginViewModel: NSObject, ObservableObject {
                 await MainActor.run { navigationLog.append(syncLog) }
             }
 
-            // Check if the SAML redirect chain landed on loginSSO and returned a JWT directly
-            if let responseText = String(data: data, encoding: .utf8) {
-                let cleanToken = responseText
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-
-                if cleanToken.hasPrefix("eyJ") && cleanToken.count > 20 {
-                    let successLog = "[SAML] Got JWT directly from SAML redirect chain (\(cleanToken.prefix(20))...)"
-                    dbg.info(successLog, category: "tdx-sso")
-
-                    let userInfo = Self.extractUserInfoFromJwt(cleanToken)
-
-                    await MainActor.run {
-                        navigationLog.append(successLog)
-
-                        if let name = userInfo.name {
-                            let userLog = "[JWT] User: \(name) (\(userInfo.email ?? ""))"
-                            dbg.info(userLog, category: "tdx-sso")
-                            navigationLog.append(userLog)
-                        }
-
-                        authResult = verifiedSuccess(
-                            token: cleanToken,
-                            userName: userInfo.name,
-                            userEmail: userInfo.email
-                        )
-                    }
-                    return
-                }
-            }
-
+            // The bearer token comes only from the configured loginSSO
+            // endpoint, never from whatever answered the POST.
+            _ = data
             // Now try to get a JWT bearer token from TDX
             await MainActor.run {
                 attemptJwtRetrieval(afterLandingOn: finalUrl)
@@ -1114,6 +1123,12 @@ public class TdxSsoLoginViewModel: NSObject, ObservableObject {
 
     /// POST the SAMLResponse to Shibboleth, then fetch the JWT from loginSSO.
     private func postSamlAndFetchJwt(session: URLSession, saml: SamlFormData, loginSsoUrl: URL, userAgent: String) async -> Bool {
+        guard ssoTrust.allowsAssertion(to: saml.actionUrl) else {
+            let logMsg = "[SILENT] Refused to post an assertion to \(saml.actionUrl.scheme ?? "")://\(saml.actionUrl.host ?? "") (not the TDX host or a host in tdxSsoServiceProviderHosts)"
+            dbg.warn(logMsg, category: "tdx-sso")
+            await MainActor.run { navigationLog.append(logMsg) }
+            return false
+        }
         // Build form-encoded body
         let bodyParts = saml.fields.map { key, value in
             "\(Self.formURLEncode(key))=\(Self.formURLEncode(value))"
@@ -1143,8 +1158,10 @@ public class TdxSsoLoginViewModel: NSObject, ObservableObject {
                 await MainActor.run { sawServerError = true }
             }
 
-            // Check if the POST response itself returned a JWT (redirect chain ended at loginSSO)
-            if let jwt = Self.extractJwtFromResponse(data: data, response: response) {
+            // The POST's redirect chain may end at loginSSO, which then answers
+            // with the token. Take it only from that endpoint.
+            if TdxSsoTrust.isLoginSso(finalUrl, expected: loginSsoUrl),
+               let jwt = Self.extractJwtFromResponse(data: data, response: response) {
                 let jwtLog = "[SILENT] JWT from SAML POST redirect chain"
                 dbg.info(jwtLog, category: "tdx-sso")
                 await MainActor.run { navigationLog.append(jwtLog) }

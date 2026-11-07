@@ -42,9 +42,12 @@ jobs:
     name: Export, build and test TicketsMate
     runs-on: macos-26
     steps:
+      # Upstream and TicketsMate side by side: the export refuses to write
+      # inside the repository it reads from.
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          path: upstream
           persist-credentials: false
 
       - name: Select newest Xcode 26
@@ -87,7 +90,7 @@ jobs:
         run: mkdir -p ticketsmate-target
 
       - name: Export
-        run: scripts/export-ticketsmate ticketsmate-target
+        run: upstream/scripts/export-ticketsmate ticketsmate-target
 
       - name: Build and test the export
         working-directory: ticketsmate-target

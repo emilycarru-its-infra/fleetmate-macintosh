@@ -15,7 +15,7 @@
 # Writes through a GitHub App installed on focusedsystems/ticketsmate-macintosh
 # with Contents and Pull requests read/write. Each run mints a short-lived
 # installation token for that one repository from the repository variable
-# TICKETSMATE_SYNC_APP_ID and the secret TICKETSMATE_SYNC_APP_PRIVATE_KEY.
+# TICKETSMATE_SYNC_CLIENT_ID and the secret TICKETSMATE_SYNC_APP_PRIVATE_KEY.
 # No personal token is used, and the default GITHUB_TOKEN cannot write to
 # another repository.
 
@@ -58,12 +58,12 @@ jobs:
       - name: Decide whether this run pushes
         id: mode
         env:
-          HAS_APP_ID: ${{ vars.TICKETSMATE_SYNC_APP_ID != '' }}
+          HAS_CLIENT_ID: ${{ vars.TICKETSMATE_SYNC_CLIENT_ID != '' }}
           HAS_APP_KEY: ${{ secrets.TICKETSMATE_SYNC_APP_PRIVATE_KEY != '' }}
         run: |
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
             missing=""
-            [ "$HAS_APP_ID" = "true" ] || missing="the repository variable TICKETSMATE_SYNC_APP_ID"
+            [ "$HAS_CLIENT_ID" = "true" ] || missing="the repository variable TICKETSMATE_SYNC_CLIENT_ID"
             if [ "$HAS_APP_KEY" != "true" ]; then
               missing="${missing:+$missing and }the secret TICKETSMATE_SYNC_APP_PRIVATE_KEY"
             fi
@@ -82,7 +82,7 @@ jobs:
         # v3.3.0
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
         with:
-          app-id: ${{ vars.TICKETSMATE_SYNC_APP_ID }}
+          client-id: ${{ vars.TICKETSMATE_SYNC_CLIENT_ID }}
           private-key: ${{ secrets.TICKETSMATE_SYNC_APP_PRIVATE_KEY }}
           owner: focusedsystems
           repositories: ticketsmate-macintosh

@@ -40,9 +40,11 @@ private struct AuthSettingsContent: View {
     @State private var editDevopsClientId = ""
     @State private var editDevopsTenantId = ""
 
+    #if !TICKETSMATE
     // CLI sign-in (az / gh) run from the provider cards
     @State private var runningCliSignIn: CredentialProvider?
     @State private var cliSignInResult: [CredentialProvider: CliSignIn.Outcome] = [:]
+    #endif
 
     private var groups: [(provider: CredentialProvider, systems: [AuthSystemId])] {
         AuthProviderGrouping.group(auth.configuredSystems.map(\.systemId), config: appState.config)
@@ -159,6 +161,7 @@ private struct AuthSettingsContent: View {
 
     /// One row's status under the shared model.
     private func displayStatus(_ system: AuthSystemStatus) -> AuthDisplayStatus {
+        #if !TICKETSMATE
         if isStartingElevation(system) { return .checking("Starting elevated session…") }
         let status = AuthDisplayStatus(state: effectiveState(system), lastChecked: system.lastChecked)
         // A verified system that runs through an elevated session reads as
@@ -173,6 +176,9 @@ private struct AuthSettingsContent: View {
         case .starting: return .checking("Starting…")
         case .unknown: return .valid
         }
+        #else
+        return AuthDisplayStatus(state: effectiveState(system), lastChecked: system.lastChecked)
+        #endif
     }
 
     /// The state a row may claim. TeamDynamix reads Valid only while a usable
@@ -212,6 +218,7 @@ private struct AuthSettingsContent: View {
     @ViewBuilder
     private func providerDetail(_ provider: CredentialProvider) -> some View {
         switch provider {
+        #if !TICKETSMATE
         case .azureCli:
             detailGrid {
                 if let account = auth.azAccount {
@@ -241,22 +248,30 @@ private struct AuthSettingsContent: View {
                     detailRow(outcome.succeeded ? "gh auth" : "Sign-in error", outcome.message)
                 }
             }
+        #endif
         case .browserSso, .storedCredential:
             EmptyView()
+        #if TICKETSMATE
+        default:
+            EmptyView()
+        #endif
         }
     }
 
+    #if !TICKETSMATE
     /// What reads through the gh sign-in.
     private var githubDependents: String {
         var uses = ["Development (repositories, pull requests, Actions)"]
         if appState.config.tasks?.providers.github?.enabled == true { uses.append("Projects (issues)") }
         return uses.joined(separator: ", ")
     }
+    #endif
 
     @ViewBuilder
     private func providerActions(_ provider: CredentialProvider) -> some View {
         HStack(spacing: 6) {
             switch provider {
+            #if !TICKETSMATE
             case .azureCli:
                 if runningCliSignIn == .azureCli {
                     ProgressView().controlSize(.small)
@@ -291,9 +306,15 @@ private struct AuthSettingsContent: View {
                     .controlSize(.small)
                     .help("Opens Terminal to finish the GitHub device/browser flow")
                 }
+            #endif
             case .browserSso, .storedCredential:
                 EmptyView()
+            #if TICKETSMATE
+            default:
+                EmptyView()
+            #endif
             }
+            #if !TICKETSMATE
             if provider == .azureCli || provider == .githubCli {
                 Button {
                     cliSignInResult[provider] = nil
@@ -304,6 +325,7 @@ private struct AuthSettingsContent: View {
                 .controlSize(.small)
                 .help("Re-check the sign-in and every system that uses it")
             }
+            #endif
         }
     }
 
@@ -341,12 +363,14 @@ private struct AuthSettingsContent: View {
         .padding(.vertical, 10)
     }
 
+    #if !TICKETSMATE
     private func isStartingElevation(_ system: AuthSystemStatus) -> Bool {
         guard case .authenticating = system.state,
               let domain = AuthProviderGrouping.elevationDomain(for: system.systemId, config: appState.config)
         else { return false }
         return auth.startingElevation.contains(domain) || appState.elevationStatus(domain) == .starting
     }
+    #endif
 
     // MARK: - Per-System Detail
 
@@ -355,6 +379,7 @@ private struct AuthSettingsContent: View {
         let cfg = appState.config
         switch system.systemId {
 
+        #if !TICKETSMATE
         case .intune, .graph, .entra:
             detailGrid {
                 if let domain = AuthProviderGrouping.elevationDomain(for: system.systemId, config: cfg) {
@@ -395,6 +420,7 @@ private struct AuthSettingsContent: View {
                 if case .failed(let msg) = system.state { errorRow(msg) }
                 checkedRow(system.lastChecked)
             }
+        #endif
 
         case .tdx:
             detailGrid {
@@ -425,6 +451,7 @@ private struct AuthSettingsContent: View {
             Toggle("Load images from other sites in ticket comments", isOn: $loadExternalTicketImages)
                 .help("Images hosted on TeamDynamix always load. Images from anywhere else wait for a click on the comment, because loading one tells that site you opened the ticket.")
 
+        #if !TICKETSMATE
         case .devops:
             detailGrid {
                 // Azure DevOps does NOT go through elevation and must not:
@@ -478,6 +505,10 @@ private struct AuthSettingsContent: View {
                 }
                 checkedRow(system.lastChecked)
             }
+        #else
+        default:
+            EmptyView()
+        #endif
         }
     }
 
@@ -504,6 +535,7 @@ private struct AuthSettingsContent: View {
         }
     }
 
+    #if !TICKETSMATE
     // MARK: - Elevated sessions
 
     /// One row per domain container the app rides on: its state, the managed
@@ -610,6 +642,7 @@ private struct AuthSettingsContent: View {
             .help("Start the \(domain.rawValue) session now, so the next action does not wait for it")
         }
     }
+    #endif
 
     /// A failure in full, wrapped, and selectable so it can be copied.
     private func errorRow(_ message: String) -> some View {
@@ -719,6 +752,7 @@ private struct AuthSettingsContent: View {
 
             // SSO / auth action buttons
             switch system.systemId {
+            #if !TICKETSMATE
             case .snipe where appState.config.snipeOidcAudience?.isEmpty != false:
                 if case .valid = system.state {
                     EmptyView()
@@ -729,6 +763,7 @@ private struct AuthSettingsContent: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                 }
+            #endif
 
             case .tdx:
                 if case .valid = effectiveState(system) {
@@ -745,6 +780,7 @@ private struct AuthSettingsContent: View {
                         .help("Sign in again; opens a sign-in window only if the silent sign-in fails")
                 }
 
+            #if !TICKETSMATE
             case .devops:
                 if case .valid = system.state {
                     EmptyView()
@@ -755,6 +791,7 @@ private struct AuthSettingsContent: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                 }
+            #endif
 
             default:
                 EmptyView()
@@ -776,6 +813,7 @@ private struct AuthSettingsContent: View {
         }
     }
 
+    #if !TICKETSMATE
     // MARK: - CLI sign-in
 
     /// `az login` scoped to the configured tenant, then re-probe everything
@@ -805,10 +843,12 @@ private struct AuthSettingsContent: View {
             )
         }
     }
+    #endif
 
     /// Re-probe one system so its card reflects a sign-in that just happened
     /// outside the app.
     private func recheck(_ id: AuthSystemId) {
+        #if !TICKETSMATE
         Task {
             await auth.probeSystem(
                 id,
@@ -818,8 +858,12 @@ private struct AuthSettingsContent: View {
                 devOpsService: appState.devOpsService
             )
         }
+        #else
+        Task { await auth.probeSystem(id, tdxService: appState.tdxService) }
+        #endif
     }
 
+    #if !TICKETSMATE
     /// The Terminal handoff means the app never sees `gh auth login` finish,
     /// so watch for the session appearing instead of making the user Re-check.
     private func pollForGhLogin() {
@@ -834,6 +878,7 @@ private struct AuthSettingsContent: View {
             }
         }
     }
+    #endif
 
     // MARK: - Colors
 
@@ -976,12 +1021,16 @@ private struct AuthSettingsContent: View {
 
     private func refreshAll() {
         Task {
+            #if !TICKETSMATE
             await auth.probeAll(
                 graphService: appState.graphService,
                 tdxService: appState.tdxService,
                 snipeService: appState.snipeService,
                 devOpsService: appState.devOpsService
             )
+            #else
+            await auth.probeAll(tdxService: appState.tdxService)
+            #endif
         }
     }
 }

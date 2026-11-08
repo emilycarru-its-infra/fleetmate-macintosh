@@ -11,9 +11,11 @@ class AuthManager: ObservableObject {
     @Published var ghAccount: CliAccount?
     /// True once the CLI accounts have been read at least once.
     @Published var cliAccountsChecked = false
+    #if !TICKETSMATE
     /// Elevation domains whose session is cold-starting for a probe, so the
     /// cards read "Starting elevation session…" instead of a bare spinner.
     @Published var startingElevation: Set<GraphDomain> = []
+    #endif
     
     private(set) var config: FleetMateConfig
 
@@ -30,6 +32,7 @@ class AuthManager: ObservableObject {
         if let newConfig { config = newConfig }
         systems.removeAll()
         
+        #if !TICKETSMATE
         // Devices — Graph / Intune (show if tenant ID set, even with CLI SSO)
         if config.isGraphConfigured || config.graphTenantId != nil {
             systems[.intune] = AuthSystemStatus(systemId: .intune, state: .configured)
@@ -40,6 +43,7 @@ class AuthManager: ObservableObject {
         if config.isSnipeConfigured {
             systems[.snipe] = AuthSystemStatus(systemId: .snipe, state: .configured)
         }
+        #endif
 
         // Tickets — TDX. TicketsMate always lists it, unconfigured or not, so
         // its one system can be set up from this panel.
@@ -51,6 +55,7 @@ class AuthManager: ObservableObject {
             )
         }
 
+        #if !TICKETSMATE
         // TicketsMate carries none of the Projects systems below.
         guard !ticketsOnly else { return }
 
@@ -80,6 +85,7 @@ class AuthManager: ObservableObject {
         if config.isSystemsGraphConfigured || config.graphTenantId != nil {
             systems[.entra] = AuthSystemStatus(systemId: .entra, state: .configured)
         }
+        #endif
     }
     
     // MARK: - State Updates
@@ -152,6 +158,20 @@ class AuthManager: ObservableObject {
     /// probe does not start a second one.
     @Published private(set) var isProbingAll = false
 
+    #if TICKETSMATE
+    func probeAll(tdxService: TdxService) async {
+        guard !isProbingAll else { return }
+        isProbingAll = true
+        defer { isProbingAll = false }
+        await probeSystem(.tdx, tdxService: tdxService)
+    }
+
+    /// Probe a single system, so a card's Re-check only spins that card.
+    func probeSystem(_ id: AuthSystemId, tdxService: TdxService) async {
+        guard systems[id] != nil, id == .tdx else { return }
+        await probeTdx(tdxService: tdxService)
+    }
+    #else
     func probeAll(
         graphService: GraphService,
         tdxService: TdxService,
@@ -210,6 +230,7 @@ class AuthManager: ObservableObject {
             break
         }
     }
+    #endif
 
     /// Read who `az` and `gh` are signed in as — one shared check behind
     /// every card that depends on either CLI.
@@ -221,6 +242,7 @@ class AuthManager: ObservableObject {
         cliAccountsChecked = true
     }
 
+    #if !TICKETSMATE
     /// Note a cold start before a probe that rides an elevation session, so
     /// the wait (often over a minute) is shown as progress, not a hang.
     private func noteElevationStart(_ domain: GraphDomain) async {
@@ -290,6 +312,7 @@ class AuthManager: ObservableObject {
             update(.snipe, state: .configured)
         }
     }
+    #endif
 
     private func probeTdx(tdxService: TdxService) async {
         // A refused sign-in keeps its reason; a probe would only replace it
@@ -309,6 +332,7 @@ class AuthManager: ObservableObject {
         }
     }
     
+    #if !TICKETSMATE
     // MARK: - az CLI Login (legacy — kept for manual escape hatch)
 
     /// Launch `az login` (opens browser), then re-probe DevOps state.
@@ -364,4 +388,5 @@ class AuthManager: ObservableObject {
     private func resolveAzPath() -> String {
         ProcessRunner.resolve("az")
     }
+    #endif
 }

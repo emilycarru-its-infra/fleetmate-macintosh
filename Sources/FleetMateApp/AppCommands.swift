@@ -60,7 +60,9 @@ struct FleetMateCommands: Commands {
     @ObservedObject var appState: AppState
     @Environment(\.openWindow) private var openWindow
     @AppStorage(AppFontScale.storageKey) private var fontScale: Double = AppFontScale.default
+    #if !TICKETSMATE
     @AppStorage(DiffLayout.storageKey) private var diffLayout: DiffLayout = .split
+    #endif
 
     /// The settings slider's own step, so the menu and the slider always land
     /// on the same values.
@@ -98,10 +100,13 @@ struct FleetMateCommands: Commands {
             Button("Find") { appState.tabSearchFocusRequest += 1 }
                 .keyboardShortcut("f", modifiers: .command)
                 .disabled(!hasSearchField)
+            #if !TICKETSMATE
             Button("Search Everything") { appState.globalSearchFocusRequest += 1 }
                 .keyboardShortcut("k", modifiers: .command)
+            #endif
         }
 
+        #if !TICKETSMATE
         if !AppEdition.current.isTicketsOnly {
             CommandMenu("Manage") {
                 Button("Scan Room") { appState.perform(.scan) }
@@ -112,6 +117,7 @@ struct FleetMateCommands: Commands {
                     .disabled(selectedTab != .manage)
             }
         }
+        #endif
 
         CommandGroup(before: .toolbar) {
             Button("Back") { appState.goBack() }
@@ -151,6 +157,7 @@ struct FleetMateCommands: Commands {
             Divider()
 
             // Pull request and commit changes, side by side or inline.
+            #if !TICKETSMATE
             if !AppEdition.current.isTicketsOnly {
                 Picker("Diff Layout", selection: $diffLayout) {
                     ForEach(DiffLayout.allCases) { layout in
@@ -159,7 +166,9 @@ struct FleetMateCommands: Commands {
                 }
                 Divider()
             }
+            #endif
 
+            #if !TICKETSMATE
             if !AppEdition.current.isTicketsOnly {
                 Menu("Sort Queries By") {
                     QuerySortMenuItems()
@@ -174,6 +183,7 @@ struct FleetMateCommands: Commands {
 
                 Divider()
             }
+            #endif
 
             Button("Show Filters") { appState.perform(.toggleFilters) }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
@@ -189,6 +199,7 @@ struct FleetMateCommands: Commands {
 
             Divider()
 
+            #if !TICKETSMATE
             if !AppEdition.current.isTicketsOnly {
                 AgentTerminalMenuItems(terminals: appState.terminals,
                                        defaultLaunch: { appState.agentDefaultLaunch })
@@ -209,22 +220,29 @@ struct FleetMateCommands: Commands {
 
                 Divider()
             }
+            #endif
 
             // While a terminal has the keyboard, zoom acts on the terminal's
             // own text, as in Terminal; elsewhere on the whole app.
             Button("Zoom In") {
-                if appState.terminals.hasKeyboardFocus { appState.terminals.adjustFont(by: 1) }
-                else { setScale(fontScale + zoomStep) }
+                #if !TICKETSMATE
+                if appState.terminals.hasKeyboardFocus { appState.terminals.adjustFont(by: 1); return }
+                #endif
+                setScale(fontScale + zoomStep)
             }
                 .keyboardShortcut("+", modifiers: .command)
             Button("Zoom Out") {
-                if appState.terminals.hasKeyboardFocus { appState.terminals.adjustFont(by: -1) }
-                else { setScale(fontScale - zoomStep) }
+                #if !TICKETSMATE
+                if appState.terminals.hasKeyboardFocus { appState.terminals.adjustFont(by: -1); return }
+                #endif
+                setScale(fontScale - zoomStep)
             }
                 .keyboardShortcut("-", modifiers: .command)
             Button("Actual Size") {
-                if appState.terminals.hasKeyboardFocus { appState.terminals.resetFont() }
-                else { fontScale = AppFontScale.default }
+                #if !TICKETSMATE
+                if appState.terminals.hasKeyboardFocus { appState.terminals.resetFont(); return }
+                #endif
+                fontScale = AppFontScale.default
             }
                 .keyboardShortcut("0", modifiers: .command)
         }

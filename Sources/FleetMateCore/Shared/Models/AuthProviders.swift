@@ -80,6 +80,7 @@ public enum AuthProviderGrouping {
         }
     }
 
+    #if !TICKETSMATE
     /// The elevation domain a system's calls run in, when it rides an
     /// elevation session rather than the operator's own token.
     public static func elevationDomain(for system: AuthSystemId, config: FleetMateConfig) -> GraphDomain? {
@@ -90,6 +91,7 @@ public enum AuthProviderGrouping {
         default: return nil
         }
     }
+    #endif
 
     /// Group systems by provider, in provider order, each group in the order
     /// given. Providers with no systems are left out, except the Azure CLI,

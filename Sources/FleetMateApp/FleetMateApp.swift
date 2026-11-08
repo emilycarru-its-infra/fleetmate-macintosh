@@ -25,11 +25,19 @@ struct FleetMateApp: App {
         MainActor.assumeIsolated { InboxAgent.migrateLegacyRegistration() }
     }
 
+    private var mainContent: ContentView {
+        #if TICKETSMATE
+        ContentView()
+        #else
+        ContentView(terminals: appState.terminals)
+        #endif
+    }
+
     var body: some Scene {
         // One window, not a group: FleetMate is a single window, and a
         // fleetmate:// link sent to a WindowGroup opens a new window each time.
         Window(AppEdition.current.displayName, id: "main") {
-            ContentView(terminals: appState.terminals)
+            mainContent
                 .environmentObject(appState)
                 .appFontScale(fontScale)
                 .onOpenURL { url in appState.open(url) }
@@ -80,6 +88,7 @@ class AppState: ObservableObject {
     // MARK: - Onboarding
     @Published var showOnboardingWizard = false
 
+    #if !TICKETSMATE
     // MARK: - Agent terminal
 
     /// The bottom terminal panel's sessions, shared by every tab.
@@ -108,6 +117,7 @@ class AppState: ObservableObject {
         return UserDefaults.standard.object(forKey: AgentSettingsKey.autoStart) as? Bool
             ?? config.agentAutoStart ?? true
     }
+    #endif
 
     // MARK: - Tab Navigation (set by Dashboard to switch tabs)
 
@@ -210,6 +220,13 @@ class AppState: ObservableObject {
             let link = try FleetMateLink.parse(url)
             dbg.info("Opening link \(url.absoluteString)", category: "links")
             switch link {
+            case .ticket(let id):
+                navigateToTicketId = id
+                navigateToTab = .tickets
+            #if TICKETSMATE
+            default:
+                throw FleetMateLinkError.unknownRoute(url.host ?? url.absoluteString)
+            #else
             case .workItem(let id):
                 navigateToWorkItemId = id
                 navigateToTab = .projects
@@ -222,9 +239,6 @@ class AppState: ObservableObject {
             case .asset(let id):
                 navigateToAssetId = id
                 navigateToTab = .inventory
-            case .ticket(let id):
-                navigateToTicketId = id
-                navigateToTab = .tickets
             case .user, .group:
                 navigateToTab = .identity
             case .reporting(let target):
@@ -233,6 +247,7 @@ class AppState: ObservableObject {
             default:
                 pendingDevelopmentLink = link
                 navigateToTab = .development
+            #endif
             }
         } catch {
             linkError = error.localizedDescription
@@ -266,6 +281,7 @@ class AppState: ObservableObject {
     var tdxRenewalObservers: [Any] = []
     var tdxPathMonitor: AnyObject?
     
+    #if !TICKETSMATE
     // MARK: - Snipe-IT SSO State
     @Published var snipeSsoAuthenticated = false
     @Published var snipeAuthenticatedUserName: String?
@@ -316,20 +332,24 @@ class AppState: ObservableObject {
             return false
         }
     }
+    #endif
     
     // MARK: - Cached Data
     // Data caches with timestamps to avoid reloading on tab switches
     
+    #if !TICKETSMATE
     @Published var cachedDevices: [IntuneDevice] = []
     @Published var cachedAssets: [SnipeAsset] = []
     /// Why the assets could not be loaded, or nil. The Inventory widgets show
     /// it instead of "No asset data".
     @Published var assetsLoadError: String?
+    #endif
     @Published var cachedTickets: [TdxTicket] = []
     /// Where the automatic TDX sign-in has got to, from its start until the
     /// first ticket list arrives; nil otherwise. Drives the launch progress.
     @Published var tdxSignInStage: TdxSignInStage?
     var isTdxSigningIn: Bool { tdxSignInStage != nil }
+    #if !TICKETSMATE
     /// The organization's most recently changed work items, anyone's and in
     /// any state: feeds global search and the activity feed.
     @Published var cachedWorkItems: [WorkItem] = []
@@ -342,9 +362,13 @@ class AppState: ObservableObject {
     @Published private(set) var assignedUsersLoadAttempted = false
     @Published private(set) var assignedUsersLoadError: String?
     @Published var cachedGroups: [EntraGroup] = []
+    #endif
     private var isPreloadingAllData = false
     private var preloadAllDataRequested = false
+    #if !TICKETSMATE
     private var sharedQueriesLoadInFlight = false
+    #endif
+    #if !TICKETSMATE
     /// Snipe activity log for the Recent Activity feed — cached so tab switches
     /// don't blank the feed while it refetches.
     @Published var cachedSnipeActivity: [SnipeActivityLog] = []
@@ -398,16 +422,21 @@ class AppState: ObservableObject {
     /// and refetched them from scratch. Projects was the last tab not sharing the
     /// cache the others use.
     @Published var projects = ProjectsCache()
+    #endif
 
 
     // Cache timestamps
+    #if !TICKETSMATE
     private var devicesCacheTime: Date?
     private var assetsCacheTime: Date?
+    #endif
     private var ticketsCacheTime: Date?
+    #if !TICKETSMATE
     private var workItemsCacheTime: Date?
     private var myWorkItemsCacheTime: Date?
     private var usersCacheTime: Date?
     private var groupsCacheTime: Date?
+    #endif
     
     /// Cache duration in seconds (from config.cacheMinutes)
     private var cacheDuration: TimeInterval {
@@ -415,9 +444,11 @@ class AppState: ObservableObject {
     }
 
     // Services (lazy initialization)
+    #if !TICKETSMATE
     lazy var graphService: GraphService = GraphService(config: config)
     /// Apple School / Business Manager for the Devices tab's Mac view.
     let appleOrg = AppleOrgStore()
+    #endif
 
     /// Modules switched off in Settings ▸ General. Disabled modules hide from
     /// the tab bar; Enrollment also stops reading enrollment records.
@@ -425,10 +456,13 @@ class AppState: ObservableObject {
         didSet {
             guard modules != oldValue else { return }
             modules.save()
+            #if !TICKETSMATE
             appleOrg.configure(sources: enrollmentSources(config))
+            #endif
         }
     }
 
+    #if !TICKETSMATE
     /// Enrollment sources, or none while the Enrollment module is off.
     func enrollmentSources(_ config: FleetMateConfig) -> [AppleOrgSource] {
         modules.isOn(.enrollment) ? config.appleOrgSources : []
@@ -437,7 +471,9 @@ class AppState: ObservableObject {
     let autopilot = AutopilotStore()
     lazy var devOpsService: AzureDevOpsService = AzureDevOpsService(config: config)
     lazy var devOpsSsoService: DevOpsSsoService = DevOpsSsoService(tenantId: config.devopsTenantId ?? config.graphTenantId)
+    #endif
     lazy var tdxService: TdxService = makeTdxService(config: config)
+    #if !TICKETSMATE
     lazy var snipeService: SnipeService = SnipeService(config: config)
     lazy var reportMateService: ReportMateService = ReportMateService(config: config)
     /// The Reporting tab's dashboard, kept across tab switches.
@@ -451,6 +487,7 @@ class AppState: ObservableObject {
         reportMate: config.isReportMateConfigured ? reportMateService : nil,
         devOps: { [weak self] in self?.devOpsService }
     )
+    #endif
 
     init() {
         dbg.info("AppState init starting", category: "startup")
@@ -466,8 +503,10 @@ class AppState: ObservableObject {
         }
         self.config = loadedConfig
         self.authManager = AuthManager(config: loadedConfig)
+        #if !TICKETSMATE
         ElevationSettings.apply(ElevationSettings(config: loadedConfig))
         appleOrg.configure(sources: enrollmentSources(loadedConfig))
+        #endif
 
         // Log configuration status
         dbg.info("Graph configured:  \(config.isGraphConfigured)  (tenantId=\(config.graphTenantId != nil), devicesGraphId=\(config.devicesGraphId != nil), systemsGraphId=\(config.systemsGraphId != nil))", category: "config")
@@ -532,8 +571,10 @@ class AppState: ObservableObject {
         do {
             let previous = config
             config = try FleetMateConfig.load()
+            #if !TICKETSMATE
             ElevationSettings.apply(ElevationSettings(config: config))
             restartKnowledgeIfChanged(from: previous)
+            #endif
             
             // Check if secrets are configured
             secretsConfigured = config.isGraphConfigured ||
@@ -542,10 +583,13 @@ class AppState: ObservableObject {
                                config.isDevOpsConfigured
             
             // Reinitialize services
+            #if !TICKETSMATE
             graphService = GraphService(config: config)
             devOpsService = AzureDevOpsService(config: config)
             devOpsSsoService = DevOpsSsoService(tenantId: config.devopsTenantId ?? config.graphTenantId)
+            #endif
             tdxService = makeTdxService(config: config)
+            #if !TICKETSMATE
             snipeService = SnipeService(config: config)
             reportMateService = ReportMateService(config: config)
             appleOrg.configure(sources: enrollmentSources(config))
@@ -554,8 +598,10 @@ class AppState: ObservableObject {
                 repoRoot: config.repoRoot,
                 reportMate: config.isReportMateConfigured ? reportMateService : nil
             )
+            #endif
             errorMessage = nil
 
+            #if !TICKETSMATE
             // Rebuilding devOpsService above threw away its bearer token and
             // refresh handler while devOpsSsoAuthenticated stayed true, so
             // nothing re-triggered SSO — every later call failed with "SSO login
@@ -576,6 +622,7 @@ class AppState: ObservableObject {
                     }
                 }
             }
+            #endif
 
             // Re-bootstrap auth manager with updated config
             authManager.bootstrapFromConfig(with: config)
@@ -604,35 +651,44 @@ class AppState: ObservableObject {
     
     /// Invalidate all caches
     func invalidateAllCaches() {
+        #if !TICKETSMATE
         devicesCacheTime = nil
         assetsCacheTime = nil
+        #endif
         ticketsCacheTime = nil
+        #if !TICKETSMATE
         workItemsCacheTime = nil
         myWorkItemsCacheTime = nil
         usersCacheTime = nil
         groupsCacheTime = nil
         cachedDevices = []
         cachedAssets = []
+        #endif
         cachedTickets = []
+        #if !TICKETSMATE
         cachedWorkItems = []
         cachedMyWorkItems = []
         cachedUsers = []
         cachedEntraUsers = []
         cachedGroups = []
         cachedGroupDevices = [:]
+        #endif
     }
     
     // MARK: - Data Loading with Caching
     
+    #if !TICKETSMATE
     /// Check if devices cache is valid
     var isDevicesCacheValid: Bool { isCacheValid(devicesCacheTime) }
     
     /// Check if assets cache is valid
     var isAssetsCacheValid: Bool { isCacheValid(assetsCacheTime) }
+    #endif
     
     /// Check if tickets cache is valid
     var isTicketsCacheValid: Bool { isCacheValid(ticketsCacheTime) }
     
+    #if !TICKETSMATE
     /// Check if work items cache is valid
     var isWorkItemsCacheValid: Bool { isCacheValid(workItemsCacheTime) }
 
@@ -657,6 +713,7 @@ class AppState: ObservableObject {
         cachedAssets = assets
         assetsCacheTime = Date()
     }
+    #endif
     
     /// Update tickets cache
     func updateTicketsCache(_ tickets: [TdxTicket]) {
@@ -666,6 +723,7 @@ class AppState: ObservableObject {
         if tdxSignInStage == .tickets { tdxSignInStage = nil }
     }
     
+    #if !TICKETSMATE
     /// Update work items cache
     func updateWorkItemsCache(_ workItems: [WorkItem]) {
         cachedWorkItems = workItems
@@ -696,10 +754,12 @@ class AppState: ObservableObject {
     
     /// Invalidate assets cache
     func invalidateAssetsCache() { assetsCacheTime = nil }
+    #endif
     
     /// Invalidate tickets cache
     func invalidateTicketsCache() { ticketsCacheTime = nil }
     
+    #if !TICKETSMATE
     /// Invalidate work items cache
     func invalidateWorkItemsCache() {
         workItemsCacheTime = nil
@@ -711,6 +771,7 @@ class AppState: ObservableObject {
     
     /// Invalidate groups cache
     func invalidateGroupsCache() { groupsCacheTime = nil }
+    #endif
     
     // MARK: - Background Preloading
 
@@ -737,6 +798,7 @@ class AppState: ObservableObject {
         }
     }
 
+    #if !TICKETSMATE
     func warmElevationSessions() async {
         guard config.graphUsesAze else { azeSessionState = .direct; return }
         azeSessionState = .warming
@@ -881,10 +943,13 @@ class AppState: ObservableObject {
             dbg.error("Assigned users preload FAILED: \(error)", category: "preload")
         }
     }
+    #endif
 
     /// Preload all data sources concurrently in the background
     func preloadAllData() async {
+        #if !TICKETSMATE
         startKnowledge()
+        #endif
         guard !isPreloadingAllData else {
             preloadAllDataRequested = true
             dbg.info("preloadAllData already running; queued one reconciliation", category: "preload")
@@ -903,17 +968,22 @@ class AppState: ObservableObject {
         }
 
         dbg.info("preloadAllData starting", category: "preload")
+        #if !TICKETSMATE
         // Pay the container cold start once, up front, for both Graph domains —
         // so the concurrent loads below reuse warm sessions instead of each
         // racing to create one.
         await warmElevationSessions()
         dbg.info("  Graph configured:  \(config.isGraphConfigured), cache valid: \(isDevicesCacheValid)", category: "preload")
         dbg.info("  Snipe configured:  \(config.isSnipeConfigured), cache valid: \(isAssetsCacheValid)", category: "preload")
+        #endif
         dbg.info("  TDX configured:    \(config.isTdxConfigured), cache valid: \(isTicketsCacheValid)", category: "preload")
+        #if !TICKETSMATE
         dbg.info("  Systems Graph:     \(config.isSystemsGraphConfigured), cache valid: \(isGroupsCacheValid)", category: "preload")
         dbg.info("  DevOps configured: \(config.isDevOpsConfigured), cache valid: \(isWorkItemsCacheValid)", category: "preload")
+        #endif
 
         await withTaskGroup(of: Void.self) { group in
+            #if !TICKETSMATE
             // Managed devices also carry the assigned-user roster used by the
             // Users tab and global search, so populate both in one request.
             if config.isGraphConfigured && (!isDevicesCacheValid || cachedEntraUsers.isEmpty) {
@@ -936,6 +1006,7 @@ class AppState: ObservableObject {
                     }
                 }
             }
+            #endif
             
             // Preload tickets
             if config.isTdxConfigured && !isTicketsCacheValid {
@@ -951,6 +1022,7 @@ class AppState: ObservableObject {
                 }
             }
 
+            #if !TICKETSMATE
             if config.isSystemsGraphConfigured {
                 group.addTask { @MainActor in
                     if !self.isGroupsCacheValid {
@@ -1030,9 +1102,11 @@ class AppState: ObservableObject {
                     }
                 }
             }
+            #endif
         }
         dbg.info("preloadAllData finished", category: "preload")
 
+        #if !TICKETSMATE
         // Shared queries load after the fan-out above: they need the resolved
         // project, and their own fan-out (one WIQL per query) is heavy enough
         // not to race the first-paint loads.
@@ -1045,8 +1119,12 @@ class AppState: ObservableObject {
             snipeService: snipeService,
             devOpsService: devOpsService
         )
+        #else
+        await authManager.probeAll(tdxService: tdxService)
+        #endif
     }
     
+    #if !TICKETSMATE
     // MARK: - Task Providers
 
     /// Build the task provider registry (Azure DevOps, GitHub Projects, Gitea)
@@ -1074,6 +1152,7 @@ class AppState: ObservableObject {
         }
         return registry
     }
+    #endif
 
     // MARK: - TDX SSO Authentication
     
@@ -1412,10 +1491,12 @@ class AppState: ObservableObject {
     /// Email addresses to try when resolving `tdxMe`, best first.
     private func tdxIdentityCandidates() async -> [String] {
         var candidates: [String] = []
+        #if !TICKETSMATE
         if let email = devOpsSsoUserEmail, !email.isEmpty { candidates.append(email) }
         if let account = await devOpsService.currentIdentity().account, !account.isEmpty {
             candidates.append(account)
         }
+        #endif
         if let name = tdxAuthenticatedUserName, name.contains("@") { candidates.append(name) }
         return candidates
     }
@@ -1429,6 +1510,7 @@ class AppState: ObservableObject {
     func primeTdxSsoUpn() async {
         guard TdxSsoLoginViewModel.fallbackUpn == nil else { return }
 
+        #if !TICKETSMATE
         if let email = devOpsSsoUserEmail, !email.isEmpty {
             TdxSsoLoginViewModel.fallbackUpn = email.lowercased()
             return
@@ -1437,6 +1519,7 @@ class AppState: ObservableObject {
             TdxSsoLoginViewModel.fallbackUpn = account.lowercased()
             return
         }
+        #endif
         // Last: the device, then the account Office and Company Portal were
         // activated with. The identity check refuses a sign-in with no address
         // to compare against, so an address from any of these beats none.
@@ -1481,6 +1564,7 @@ class AppState: ObservableObject {
         dbg.warn("TDX identity unresolved — no signed-in email matched a TDX person", category: "tdx")
     }
     
+    #if !TICKETSMATE
     // MARK: - Azure DevOps SSO Authentication
     
     /// True if DevOps is configured (org + project set)
@@ -1820,6 +1904,7 @@ class AppState: ObservableObject {
         authManager.update(.snipe, state: .valid(user: userName, expiry: nil))
         invalidateAssetsCache()
     }
+    #endif
 }
 
 /// The steps of the automatic TDX sign-in, in order. Nothing here waits on

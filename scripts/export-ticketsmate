@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Write TicketsMate, the standalone Tickets app, from this repository.
+
+    scripts/export-ticketsmate <destination>
+
+The destination is usually a clone of the TicketsMate repository. Everything in
+it except `.git` is replaced, because the export owns the whole tree: nothing
+there is edited by hand.
+
+What goes into the tree is described by ticketsmate/manifest.json:
+
+- `include` lists the files and folders of the Tickets slice, `exclude` the
+  paths inside them that stay behind.
+- `paths` maps source folders to their place in the export.
+- `renames` are whole-word identifier renames applied to every text file, such
+  as the module name.
+- `overlay` is a folder copied over the result last. It holds the files that
+  belong to TicketsMate alone: its Package.swift, README, CI and release
+  workflows, Info.plist and icon.
+
+Swift sources are run through a small preprocessor first. A block opened by
+`#if TICKETSMATE` keeps its body and drops its `#else` branch; a block opened by
+`#if !TICKETSMATE` is dropped, keeping its `#else` branch. FleetMate never
+defines TICKETSMATE, so it compiles every one of these blocks the usual way,
+and TicketsMate's source carries none of the code they fence off.
+
+After writing, the export scans the tree for anything that names FleetMate or
+an organisation (`forbidden` in the manifest) and fails if one turns up outside
+the allowed list, so a leak breaks the export rather than reaching a release.
+"""
+
+import argparse
+import fnmatch
+import json
+import os
+import re
+import shutil
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+MANIFEST = REPO / "ticketsmate" / "manifest.json"
+
+TEXT_SUFFIXES = {
+    ".swift", ".m", ".h", ".plist", ".entitlements", ".json", ".js", ".html",
+    ".css", ".md", ".py", ".yml", ".yaml", ".txt", ".sh", ".strings",
+}
+
+DIRECTIVE = re.compile(r"^\s*#(if|elseif|else|endif)\b(.*)$")
+
+
+class ExportError(Exception):
+    pass
+
+
+def preprocess_swift(text, path):
+    """Resolve the TICKETSMATE blocks in one Swift file."""
+    out = []
+    # One frame per open #if: None for an unrelated condition, otherwise
+    # whether the current branch of a TICKETSMATE block is kept.
+    stack = []
+
+    def visible():
+        return all(frame is None or frame for frame in stack)
+
+    for number, line in enumerate(text.splitlines(keepends=True), 1):
+        match = DIRECTIVE.match(line)
+        if not match:
+            if visible():
+                out.append(line)
+            continue
+        kind, rest = match.group(1), match.group(2).split("//")[0].strip()
+        if kind == "if":
+            if rest == "TICKETSMATE":
+                stack.append(True)
+                continue
+            if rest == "!TICKETSMATE":
+                stack.append(False)
+                continue
+            if "TICKETSMATE" in rest:
+                raise ExportError(f"{path}:{number}: only `#if TICKETSMATE` and `#if !TICKETSMATE` are supported")
+            stack.append(None)
+        elif kind == "elseif":
+            if not stack:
+                raise ExportError(f"{path}:{number}: #elseif without #if")
+            if stack[-1] is not None:
+                raise ExportError(f"{path}:{number}: #elseif inside a TICKETSMATE block is not supported")
+        elif kind == "else":
+            if not stack:
+                raise ExportError(f"{path}:{number}: #else without #if")
+            if stack[-1] is not None:
+                stack[-1] = not stack[-1]
+                continue
+        elif kind == "endif":
+            if not stack:
+                raise ExportError(f"{path}:{number}: #endif without #if")
+            if stack.pop() is not None:
+                continue
+        if visible():
+            out.append(line)
+    if stack:
+        raise ExportError(f"{path}: unterminated #if")
+    return "".join(out)
+
+
+def matches(rel, patterns):
+    return any(rel == p or rel.startswith(p.rstrip("/") + "/") or fnmatch.fnmatch(rel, p) for p in patterns)
+
+
+def map_path(rel, paths):
+    for source in sorted(paths, key=len, reverse=True):
+        if rel == source or rel.startswith(source.rstrip("/") + "/"):
+            return paths[source] + rel[len(source):]
+    return rel
+
+
+def apply_renames(text, renames):
+    for old, new in renames.items():
+        # Whole words only; a name ending in "_" is a prefix (FLEETMATE_X).
+        tail = r"\b" if old[-1].isalnum() else ""
+        text = re.sub(r"\b" + re.escape(old) + tail, new, text)
+    return text
+
+
+def source_files(manifest):
+    excludes = manifest.get("exclude", [])
+    for entry in manifest["include"]:
+        root = REPO / entry
+        if not root.exists():
+            raise ExportError(f"manifest includes {entry}, which does not exist")
+        candidates = [root] if root.is_file() else sorted(p for p in root.rglob("*") if p.is_file())
+        for path in candidates:
+            rel = path.relative_to(REPO).as_posix()
+            if path.name == ".DS_Store" or matches(rel, excludes):
+                continue
+            yield path, rel
+
+
+def clear(destination):
+    for child in destination.iterdir():
+        if child.name == ".git":
+            continue
+        if child.is_dir() and not child.is_symlink():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+
+def write(path, rel, target, manifest):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix not in TEXT_SUFFIXES:
+        shutil.copy2(path, target)
+        return
+    text = path.read_text(encoding="utf-8")
+    if path.suffix == ".swift":
+        text = preprocess_swift(text, rel)
+    text = apply_renames(text, manifest.get("renames", {}))
+    target.write_text(text, encoding="utf-8")
+    shutil.copymode(path, target)
+
+
+def scan(destination, manifest):
+    rules = manifest.get("forbidden", {})
+    pattern = re.compile(rules.get("pattern", r"(?!)"), re.IGNORECASE)
+    allowed = rules.get("allow", {})
+    problems = []
+    for path in sorted(destination.rglob("*")):
+        if not path.is_file() or ".git" in path.relative_to(destination).parts:
+            continue
+        rel = path.relative_to(destination).as_posix()
+        if pattern.search(rel):
+            problems.append(f"{rel}: path matches")
+        if path.suffix not in TEXT_SUFFIXES and path.name not in {"Makefile", "LICENSE", ".gitignore"}:
+            continue
+        allow = [re.compile(a, re.IGNORECASE) for a in allowed.get(rel, [])]
+        for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            if pattern.search(line) and not any(a.search(line) for a in allow):
+                problems.append(f"{rel}:{number}: {line.strip()[:160]}")
+    return problems
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Write the standalone TicketsMate tree.")
+    parser.add_argument("destination", type=Path, help="folder to write, usually a TicketsMate clone")
+    parser.add_argument("--keep-going", action="store_true",
+                        help="report what the scan finds without failing")
+    args = parser.parse_args()
+
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    destination = args.destination.resolve()
+    if destination == REPO or REPO in destination.parents:
+        raise ExportError("the destination must be outside this repository")
+    destination.mkdir(parents=True, exist_ok=True)
+    clear(destination)
+
+    paths = manifest.get("paths", {})
+    count = 0
+    for path, rel in source_files(manifest):
+        write(path, rel, destination / map_path(rel, paths), manifest)
+        count += 1
+
+    overlay = REPO / manifest["overlay"]
+    for path in sorted(p for p in overlay.rglob("*") if p.is_file()):
+        if path.name == ".DS_Store":
+            continue
+        target = destination / path.relative_to(overlay)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+        count += 1
+
+    print(f"Wrote {count} files to {destination}")
+    problems = scan(destination, manifest)
+    if problems:
+        print(f"{len(problems)} line(s) name FleetMate or an organisation:", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        if not args.keep_going:
+            return 1
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except ExportError as error:
+        print(f"export-ticketsmate: {error}", file=sys.stderr)
+        sys.exit(1)

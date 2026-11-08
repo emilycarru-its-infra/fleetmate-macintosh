@@ -71,5 +71,11 @@ let package = Package(
             dependencies: ["FleetMateCore"],
             path: "Tests/FleetMateTests"
         ),
+        // App-level behaviour that lives in the SwiftUI target.
+        .testTarget(
+            name: "FleetMateAppTests",
+            dependencies: ["FleetMateApp"],
+            path: "Tests/FleetMateAppTests"
+        ),
     ]
 )

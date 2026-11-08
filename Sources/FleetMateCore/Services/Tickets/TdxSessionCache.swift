@@ -82,7 +82,7 @@ public struct TdxSessionCache: Codable, Sendable {
     }
 
     private static var service: String {
-        "\(AppIdentity.mainBundleIdentifier ?? "ca.ecuad.macadmin.fleetmate").tdx-session"
+        "\(AppIdentity.mainBundleIdentifier ?? AppEdition.defaultBundleIdentifier).tdx-session"
     }
     private static let account = "session"
 

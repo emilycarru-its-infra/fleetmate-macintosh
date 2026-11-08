@@ -38,6 +38,7 @@ final class SignInRetryTests: XCTestCase {
         XCTAssertEqual(SignInRetryTap.decide(status: .notConfigured), .reload)
     }
 
+    #if !TICKETSMATE
     func testAzureDevOpsLinksWaitForAzureDevOpsSignIn() throws {
         let waits = [
             "fleetmate://workitem/12",
@@ -61,4 +62,5 @@ final class SignInRetryTests: XCTestCase {
             XCTAssertFalse(try FleetMateLink.parse(URL(string: s)!).needsAzureDevOps, s)
         }
     }
+    #endif
 }

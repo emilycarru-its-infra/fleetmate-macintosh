@@ -27,6 +27,7 @@ struct KPI: Identifiable {
     let tab: AppTab
 }
 
+#if !TICKETSMATE
 // MARK: - Widget Metrics
 
 /// The numbers behind every tab's Widgets section, computed from the shared
@@ -276,3 +277,4 @@ final class WidgetMetrics: ObservableObject {
         }
     }
 }
+#endif

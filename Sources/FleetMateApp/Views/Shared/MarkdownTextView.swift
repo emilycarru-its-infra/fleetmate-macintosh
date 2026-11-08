@@ -15,6 +15,7 @@ struct MarkdownTextView: View {
     /// A whole document (a Handbook page, a SKILL.md) rather than a comment:
     /// real heading sizes and paragraph spacing.
     var document: Bool = false
+    #if !TICKETSMATE
     /// How a clicked link in a document is classified. Documents (Handbook
     /// pages, skills) come from repositories many people edit, so every link
     /// goes through `HandbookLinks`: the default opens only http(s) links. The
@@ -23,22 +24,76 @@ struct MarkdownTextView: View {
     var linkPolicy: ((URL) -> HandbookLinkAction)? = nil
     /// Opens a Handbook page the policy matched.
     var openPage: ((HandbookPage) -> Void)? = nil
-    /// For documents, the one host images may load from (the Handbook site).
-    /// Without it a document shows no remote images.
+    #endif
+    /// Text from a source whose images may load as they are: Projects and
+    /// Development, which have always loaded them. Everything else, ticket
+    /// text above all, is written by anyone who can comment, so by default
+    /// remote images load from TeamDynamix and `imageSite` only, unless the
+    /// person has chosen to load images from other sites.
+    var trustedImages: Bool = false
+    /// The one host images may load from beyond TeamDynamix: for a
+    /// document, the Handbook site. Without it a document shows no remote
+    /// images, and ticket text shows them from TeamDynamix only.
     var imageSite: String? = nil
+    @Environment(\.remoteImageAccess) private var remoteImages
+    @AppStorage(FeedBodyView.loadExternalImagesKey) private var loadExternalImages = false
 
     private var theme: MarkdownUI.Theme { document ? .fleetMateDocument : .fleetMate }
 
     var body: some View {
+        #if TICKETSMATE
+        inline
+        #else
         if document {
             rendered
                 .markdownImageProvider(SiteImageProvider(siteURL: imageSite))
                 .environment(\.openURL, OpenURLAction { url in follow(url) })
         } else {
+            inline
+        }
+        #endif
+    }
+
+    /// Whether remote images go through the TDX image policy.
+    var restrictsImages: Bool {
+        #if TICKETSMATE
+        true
+        #else
+        !trustedImages
+        #endif
+    }
+
+    /// Whether this view would load an image from `url`.
+    func mayLoadImage(_ url: URL, tdxBase: URL?, allowExternal: Bool) -> Bool {
+        guard restrictsImages else { return true }
+        return MarkdownContentPolicy.allowsImage(url, tdxBase: tdxBase, site: imageSite, allowExternal: allowExternal)
+    }
+
+    /// Links open only in the browser or mail client, whatever the text.
+    private var inline: some View {
+        policedImages
+            .environment(\.openURL, OpenURLAction { url in
+                MarkdownContentPolicy.allowsLink(url) ? .systemAction(url) : .discarded
+            })
+    }
+
+    /// In ticket text a remote image is a tracking pixel until shown
+    /// otherwise: it loads from TeamDynamix or `imageSite`, or from elsewhere
+    /// once the person allows it, and always through the TDX image fetch's
+    /// checks. Text marked `trustedImages` loads its images as MarkdownUI does.
+    @ViewBuilder
+    private var policedImages: some View {
+        if restrictsImages {
+            let policy = MarkdownImagePolicy(access: remoteImages, site: imageSite, allowExternal: loadExternalImages)
+            rendered
+                .markdownImageProvider(PolicedImageProvider(policy: policy))
+                .markdownInlineImageProvider(PolicedInlineImageProvider(policy: policy))
+        } else {
             rendered
         }
     }
 
+    #if !TICKETSMATE
     private func follow(_ url: URL) -> OpenURLAction.Result {
         let action = linkPolicy?(url) ?? HandbookLinks.external(url).map(HandbookLinkAction.openInBrowser) ?? .ignore
         switch action {
@@ -53,6 +108,7 @@ struct MarkdownTextView: View {
             return .discarded
         }
     }
+    #endif
 
     @ViewBuilder
     private var rendered: some View {
@@ -83,6 +139,7 @@ struct MarkdownTextView: View {
     }
 }
 
+#if !TICKETSMATE
 /// Images in a document load only over http(s) from the Handbook site's own
 /// host; anything else renders as nothing.
 private struct SiteImageProvider: ImageProvider {
@@ -94,6 +151,91 @@ private struct SiteImageProvider: ImageProvider {
             DefaultImageProvider.default.makeImage(url: url)
         } else {
             EmptyView()
+        }
+    }
+}
+#endif
+
+// MARK: - Remote images
+
+/// How rendered text reaches remote images: the TDX host's address, and a
+/// loader that fetches through `TdxService.fetchBodyImage`, which sends the
+/// TDX session only to that host and refuses non-public addresses. Set once
+/// on the main window; without it no remote image loads.
+struct RemoteImageAccess {
+    var tdxBase: URL?
+    var load: @MainActor (URL) async -> Data?
+}
+
+private struct RemoteImageAccessKey: EnvironmentKey {
+    static let defaultValue: RemoteImageAccess? = nil
+}
+
+extension EnvironmentValues {
+    var remoteImageAccess: RemoteImageAccess? {
+        get { self[RemoteImageAccessKey.self] }
+        set { self[RemoteImageAccessKey.self] = newValue }
+    }
+}
+
+private struct MarkdownImagePolicy {
+    let access: RemoteImageAccess?
+    let site: String?
+    let allowExternal: Bool
+
+    /// The loader, when `url` may load at all.
+    func loader(for url: URL?) -> ((URL) async -> Data?)? {
+        guard let access, let url,
+              MarkdownContentPolicy.allowsImage(url, tdxBase: access.tdxBase, site: site, allowExternal: allowExternal)
+        else { return nil }
+        return { await access.load($0) }
+    }
+}
+
+private struct PolicedImageProvider: ImageProvider {
+    let policy: MarkdownImagePolicy
+
+    @ViewBuilder
+    func makeImage(url: URL?) -> some View {
+        if let url, let load = policy.loader(for: url) {
+            PolicedRemoteImage(url: url, load: load)
+        } else if let host = url?.host {
+            Label("Image from \(host) not loaded", systemImage: "photo")
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+                .help("Images from other sites load once Settings ▸ Authentication allows them")
+        }
+    }
+}
+
+private struct PolicedInlineImageProvider: InlineImageProvider {
+    let policy: MarkdownImagePolicy
+
+    func image(with url: URL, label: String) async throws -> Image {
+        guard let load = policy.loader(for: url),
+              let data = await load(url), TdxImageType.sniff(data) != nil,
+              let image = NSImage(data: data), image.isValid else { throw URLError(.cancelled) }
+        return Image(nsImage: image)
+    }
+}
+
+private struct PolicedRemoteImage: View {
+    let url: URL
+    let load: (URL) async -> Data?
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: image.size.width)
+            } else {
+                Color.clear.frame(width: 1, height: 1)
+            }
+        }
+        .task(id: url) {
+            guard let data = await load(url), TdxImageType.sniff(data) != nil,
+                  let fetched = NSImage(data: data), fetched.isValid else { return }
+            image = fetched
         }
     }
 }
@@ -270,6 +412,8 @@ struct EditableMarkdownField: View {
     @Binding var text: String
     var showPreview: Bool = false
     var hideToggle: Bool = false
+    /// Passed to the preview's `MarkdownTextView`.
+    var trustedImages: Bool = false
     @State private var internalShowPreview = false
 
     private var isPreview: Bool { hideToggle ? showPreview : internalShowPreview }
@@ -291,7 +435,7 @@ struct EditableMarkdownField: View {
 
             if isPreview {
                 ScrollView {
-                    MarkdownTextView(content: text.isEmpty ? "*No content*" : text)
+                    MarkdownTextView(content: text.isEmpty ? "*No content*" : text, trustedImages: trustedImages)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(8)
                 }
@@ -309,6 +453,7 @@ struct EditableMarkdownField: View {
     }
 }
 
+#if !TICKETSMATE
 // MARK: - Mention Text Editor (@ tagging)
 
 /// A TextEditor with `@` mention popup. When user types `@`, shows a filtered list of team members.
@@ -408,3 +553,4 @@ struct MentionTextEditor: View {
         cursorTriggerIndex = nil
     }
 }
+#endif

@@ -1,18 +1,53 @@
 import Foundation
 
 /// Which app this build is. TicketsMate is FleetMate limited to the Tickets
-/// tab: the same binary, bundled under its own name, bundle id and icon, with
-/// `FleetMateEdition` set to `TicketsMate` in its Info.plist. Each edition
-/// keeps its own settings, so the two install and run side by side.
+/// tab. FleetMate bundles it from its own binary, under its own name, bundle
+/// id and icon, with `FleetMateEdition` set to `TicketsMate` in its
+/// Info.plist; scripts/export-ticketsmate also writes it out as a standalone
+/// app, compiled with only the TicketsMate edition. Each edition keeps its own
+/// settings, so the two install and run side by side.
 public enum AppEdition: String, Sendable {
+    #if !TICKETSMATE
     case fleetMate = "FleetMate"
+    #endif
     case ticketsMate = "TicketsMate"
 
+    #if TICKETSMATE
+    public static let current = AppEdition.ticketsMate
+
+    /// The bundle id a process without a bundle (`swift run`) stands in for.
+    public static let defaultBundleIdentifier = "systems.focused.ticketsmate"
+
+    /// The name shown in the window, About box and onboarding.
+    public var displayName: String { rawValue }
+
+    /// True when the app shows only the Tickets tab.
+    public var isTicketsOnly: Bool { true }
+
+    /// The URL scheme links to the app use.
+    public var linkScheme: String { "ticketsmate" }
+
+    /// Per-user folder for config.yaml and credentials.json.
+    public var supportDirectory: String { "~/.ticketsmate" }
+
+    /// Preference domain a configuration profile configures the app through,
+    /// and the Keychain service its secrets are stored under: the bundle id.
+    public func preferencesDomain(bundleIdentifier: String?) -> String {
+        bundleIdentifier ?? Self.defaultBundleIdentifier
+    }
+
+    /// Folder debug.log is written to, the standard per-user Logs folder.
+    public var logDirectory: String { "~/Library/Logs/TicketsMate" }
+    #else
     /// Info.plist key the app bundle declares its edition under. The CLI has no
     /// bundle, so it is always FleetMate.
     public static let infoKey = "FleetMateEdition"
 
     public static let current = AppEdition(infoValue: Bundle.main.object(forInfoDictionaryKey: infoKey) as? String)
+
+    /// The bundle id a process without a bundle (the CLI, `swift run`)
+    /// stands in for.
+    public static let defaultBundleIdentifier = fleetMateDomain
 
     /// An unknown or missing value is FleetMate, so a bundle that predates the
     /// key keeps working.
@@ -48,10 +83,6 @@ public enum AppEdition: String, Sendable {
         }
     }
 
-    public var preferencesDomain: String {
-        preferencesDomain(bundleIdentifier: AppIdentity.mainBundleIdentifier)
-    }
-
     static let fleetMateDomain = "ca.ecuad.macadmin.fleetmate"
 
     /// Folder debug.log is written to. TicketsMate keeps its logs apart from
@@ -61,6 +92,11 @@ public enum AppEdition: String, Sendable {
         case .fleetMate: supportDirectory
         case .ticketsMate: "~/Library/Logs/TicketsMate"
         }
+    }
+    #endif
+
+    public var preferencesDomain: String {
+        preferencesDomain(bundleIdentifier: AppIdentity.mainBundleIdentifier)
     }
 
     /// Expands `name` inside this edition's support folder.
@@ -106,7 +142,7 @@ public enum AppIdentity {
 public enum AppVersionDisplay {
     /// Release builds stamp CFBundleShortVersionString with the date
     /// (YYYY.MM.DD) and CFBundleVersion with the time (HHMM); joined they are
-    /// the same YYYY.MM.DD.HHMM `fleetmate --version` reports. An unstamped
+    /// the same YYYY.MM.DD.HHMM the command-line tool reports. An unstamped
     /// build reads "dev", with the commit it was built from when known.
     public static func string(short: String?, build: String?, commit: String?) -> String {
         let short = short?.trimmingCharacters(in: .whitespaces) ?? ""

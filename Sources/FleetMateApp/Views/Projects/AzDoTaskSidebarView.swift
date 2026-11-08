@@ -686,11 +686,11 @@ struct AzDoTaskSidebarView: View {
             }
 
             if isEditing {
-                EditableMarkdownField(text: $editedDescription, showPreview: showDescriptionPreview, hideToggle: true)
+                EditableMarkdownField(text: $editedDescription, showPreview: showDescriptionPreview, hideToggle: true, trustedImages: true)
             } else {
                 let desc = fields?.description ?? task.description
                 if let desc = desc, !desc.isEmpty {
-                    MarkdownTextView(content: desc)
+                    MarkdownTextView(content: desc, trustedImages: true)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     Text("No description provided.")
@@ -824,9 +824,9 @@ struct AzDoTaskSidebarView: View {
                 Spacer()
             }
             if isEditing {
-                EditableMarkdownField(text: $editedReproSteps, showPreview: showReproPreview, hideToggle: true)
+                EditableMarkdownField(text: $editedReproSteps, showPreview: showReproPreview, hideToggle: true, trustedImages: true)
             } else if let repro = fields?.reproSteps, !repro.isEmpty {
-                MarkdownTextView(content: repro)
+                MarkdownTextView(content: repro, trustedImages: true)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -852,9 +852,9 @@ struct AzDoTaskSidebarView: View {
                 Spacer()
             }
             if isEditing {
-                EditableMarkdownField(text: $editedAcceptance, showPreview: showAcceptancePreview, hideToggle: true)
+                EditableMarkdownField(text: $editedAcceptance, showPreview: showAcceptancePreview, hideToggle: true, trustedImages: true)
             } else if let criteria = fields?.acceptanceCriteria, !criteria.isEmpty {
-                MarkdownTextView(content: criteria)
+                MarkdownTextView(content: criteria, trustedImages: true)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -1993,7 +1993,7 @@ private struct DevOpsCommentBubble: View {
                 let rendered = comment.renderedText
                 let content = (rendered != nil && !rendered!.isEmpty) ? rendered! : (comment.text ?? "")
                 if !content.isEmpty {
-                    MarkdownTextView(content: content)
+                    MarkdownTextView(content: content, trustedImages: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }

@@ -127,7 +127,7 @@ struct CreateIssueView: View {
 
                             if showMarkdownPreview {
                                 ScrollView {
-                                    MarkdownTextView(content: markdownPreviewContent)
+                                    MarkdownTextView(content: markdownPreviewContent, trustedImages: true)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                         .padding(8)
                                 }

@@ -9,7 +9,7 @@ let package = Package(
     ],
     products: [
         .library(name: "TicketsMateCore", targets: ["TicketsMateCore"]),
-        .executable(name: "TicketsMate", targets: ["TicketsMate"])
+        .executable(name: "TicketsMate", targets: ["TicketsMateApp"])
     ],
     dependencies: [
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.0.0"),
@@ -30,7 +30,7 @@ let package = Package(
         ),
         // The SwiftUI app. The same binary runs the background inbox helper.
         .executableTarget(
-            name: "TicketsMate",
+            name: "TicketsMateApp",
             dependencies: [
                 "TicketsMateCore",
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
@@ -42,6 +42,11 @@ let package = Package(
             name: "TicketsMateTests",
             dependencies: ["TicketsMateCore"],
             path: "Tests/TicketsMateTests"
+        ),
+        .testTarget(
+            name: "TicketsMateAppTests",
+            dependencies: ["TicketsMateApp"],
+            path: "Tests/TicketsMateAppTests"
         ),
     ]
 )

@@ -145,7 +145,7 @@ private struct TicketTaskDetail: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(current.typeLabel).foregroundStyle(.secondary)
                             if let description = current.description, !description.isEmpty {
-                                MarkdownTextView(content: HtmlToMarkdown.convert(description), ticketContent: true).textSelection(.enabled)
+                                MarkdownTextView(content: HtmlToMarkdown.convert(description)).textSelection(.enabled)
                             }
                             Text([current.responsibleGroupName, current.responsibleFullName]
                                 .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
@@ -167,11 +167,11 @@ private struct TicketTaskDetail: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text([entry.createdFullName, entry.createdDate.map(dateLabel)].compactMap { $0 }.joined(separator: " · "))
                                         .font(.caption).foregroundStyle(.secondary)
-                                    MarkdownTextView(content: HtmlToMarkdown.convert(entry.body ?? ""), ticketContent: true).textSelection(.enabled)
+                                    MarkdownTextView(content: HtmlToMarkdown.convert(entry.body ?? "")).textSelection(.enabled)
                                     ForEach(Array(entry.replyList.enumerated()), id: \.offset) { _, reply in
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text(reply.createdFullName ?? "Reply").font(.caption).foregroundStyle(.secondary)
-                                            MarkdownTextView(content: HtmlToMarkdown.convert(reply.body ?? ""), ticketContent: true)
+                                            MarkdownTextView(content: HtmlToMarkdown.convert(reply.body ?? ""))
                                                 .textSelection(.enabled)
                                         }.padding(.leading, 16)
                                     }

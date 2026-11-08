@@ -682,7 +682,7 @@ struct PullRequestDetailView: View {
             sectionHeader("Overview")
             if let body = detail.body, !body.isEmpty {
                 GroupBox {
-                    MarkdownTextView(content: body)
+                    MarkdownTextView(content: body, trustedImages: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(6)
                 }
@@ -735,7 +735,7 @@ struct PullRequestDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                MarkdownTextView(content: comment.body)
+                MarkdownTextView(content: comment.body, trustedImages: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(4)

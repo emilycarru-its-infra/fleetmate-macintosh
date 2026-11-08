@@ -25,10 +25,13 @@ struct MarkdownTextView: View {
     /// Opens a Handbook page the policy matched.
     var openPage: ((HandbookPage) -> Void)? = nil
     #endif
-    /// The one host beyond TeamDynamix that images may load from: for a
+    /// Ticket text: written by anyone who can comment, so remote images
+    /// load from TeamDynamix and `imageSite` only, unless the person has
+    /// chosen to load images from other sites.
+    var ticketContent: Bool = false
+    /// The one host images may load from beyond TeamDynamix: for a
     /// document, the Handbook site. Without it a document shows no remote
-    /// images, and other text shows them from TeamDynamix only, unless the
-    /// person has chosen to load images from other sites.
+    /// images, and ticket text shows them from TeamDynamix only.
     var imageSite: String? = nil
     @Environment(\.remoteImageAccess) private var remoteImages
     @AppStorage(FeedBodyView.loadExternalImagesKey) private var loadExternalImages = false
@@ -49,19 +52,33 @@ struct MarkdownTextView: View {
         #endif
     }
 
-    /// Comments and descriptions come from anyone who can write one, so a
-    /// remote image is a tracking pixel until shown otherwise: it loads from
-    /// TeamDynamix or `imageSite`, or from elsewhere once the person allows
-    /// it, and always through the TDX image fetch's checks. Links open only
-    /// in the browser or mail client.
+    /// Links open only in the browser or mail client, whatever the text.
     private var inline: some View {
-        let policy = MarkdownImagePolicy(access: remoteImages, site: imageSite, allowExternal: loadExternalImages)
-        return rendered
-            .markdownImageProvider(PolicedImageProvider(policy: policy))
-            .markdownInlineImageProvider(PolicedInlineImageProvider(policy: policy))
+        policedImages
             .environment(\.openURL, OpenURLAction { url in
                 MarkdownContentPolicy.allowsLink(url) ? .systemAction(url) : .discarded
             })
+    }
+
+    /// In ticket text a remote image is a tracking pixel until shown
+    /// otherwise: it loads from TeamDynamix or `imageSite`, or from elsewhere
+    /// once the person allows it, and always through the TDX image fetch's
+    /// checks. Other text loads its images as MarkdownUI does.
+    @ViewBuilder
+    private var policedImages: some View {
+        #if TICKETSMATE
+        let restrict = true
+        #else
+        let restrict = ticketContent
+        #endif
+        if restrict {
+            let policy = MarkdownImagePolicy(access: remoteImages, site: imageSite, allowExternal: loadExternalImages)
+            rendered
+                .markdownImageProvider(PolicedImageProvider(policy: policy))
+                .markdownInlineImageProvider(PolicedInlineImageProvider(policy: policy))
+        } else {
+            rendered
+        }
     }
 
     #if !TICKETSMATE

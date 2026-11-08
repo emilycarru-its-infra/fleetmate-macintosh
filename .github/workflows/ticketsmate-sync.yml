@@ -12,10 +12,12 @@
 # breaks the standalone app is caught before it reaches main. Only a push to
 # main writes to the other repository.
 #
-# Needs the repository secret TICKETSMATE_SYNC_TOKEN: a fine-grained token
-# with Contents and Pull requests read/write on
-# focusedsystems/ticketsmate-macintosh. The default GITHUB_TOKEN cannot write
-# to another repository.
+# Writes through a GitHub App installed on focusedsystems/ticketsmate-macintosh
+# with Contents and Pull requests read/write. Each run mints a short-lived
+# installation token for that one repository from the repository variable
+# TICKETSMATE_SYNC_APP_ID and the secret TICKETSMATE_SYNC_APP_PRIVATE_KEY.
+# No personal token is used, and the default GITHUB_TOKEN cannot write to
+# another repository.
 
 name: ticketsmate-sync
 
@@ -56,11 +58,17 @@ jobs:
       - name: Decide whether this run pushes
         id: mode
         env:
-          HAS_TOKEN: ${{ secrets.TICKETSMATE_SYNC_TOKEN != '' }}
+          HAS_APP_ID: ${{ vars.TICKETSMATE_SYNC_APP_ID != '' }}
+          HAS_APP_KEY: ${{ secrets.TICKETSMATE_SYNC_APP_PRIVATE_KEY != '' }}
         run: |
           if [ "$GITHUB_EVENT_NAME" != "pull_request" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            if [ "$HAS_TOKEN" != "true" ]; then
-              echo "::error::TICKETSMATE_SYNC_TOKEN is not set, so the export cannot be pushed to $TARGET_REPO."
+            missing=""
+            [ "$HAS_APP_ID" = "true" ] || missing="the repository variable TICKETSMATE_SYNC_APP_ID"
+            if [ "$HAS_APP_KEY" != "true" ]; then
+              missing="${missing:+$missing and }the secret TICKETSMATE_SYNC_APP_PRIVATE_KEY"
+            fi
+            if [ -n "$missing" ]; then
+              echo "::error::The sync GitHub App is not set up: $missing is missing, so the export cannot be pushed to $TARGET_REPO."
               exit 1
             fi
             echo "push=true" >> "$GITHUB_OUTPUT"
@@ -68,12 +76,25 @@ jobs:
             echo "push=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Mint a token for TicketsMate
+        if: steps.mode.outputs.push == 'true'
+        id: app-token
+        # v3.3.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        with:
+          app-id: ${{ vars.TICKETSMATE_SYNC_APP_ID }}
+          private-key: ${{ secrets.TICKETSMATE_SYNC_APP_PRIVATE_KEY }}
+          owner: focusedsystems
+          repositories: ticketsmate-macintosh
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Checkout TicketsMate
         if: steps.mode.outputs.push == 'true'
         uses: actions/checkout@v4
         with:
           repository: ${{ env.TARGET_REPO }}
-          token: ${{ secrets.TICKETSMATE_SYNC_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
           path: ticketsmate-target
           fetch-depth: 0
           # The token is only used by the last step, never while the export
@@ -104,12 +125,14 @@ jobs:
         if: steps.mode.outputs.push == 'true'
         working-directory: ticketsmate-target
         env:
-          GH_TOKEN: ${{ secrets.TICKETSMATE_SYNC_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           UPSTREAM: ${{ github.repository }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          APP_USER_ID="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${APP_USER_ID}+${APP_SLUG}[bot]@users.noreply.github.com"
           git add -A
           if git diff --cached --quiet origin/main; then
             echo "TicketsMate is already up to date."

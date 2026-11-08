@@ -53,8 +53,9 @@ xattr -dr com.apple.quarantine /Applications/TicketsMate.app
 On first launch a short setup asks for the TDX address and ticketing app ID.
 You can change them later in Settings ▸ Authentication.
 
-To configure every Mac at once, deploy a configuration profile for the
-preference domain `systems.focused.ticketsmate`. If you build TicketsMate under
+To configure every Mac at once, deploy a configuration profile whose payload
+targets the preference domain `systems.focused.ticketsmate`, the app's bundle
+ID (a custom settings payload in Jamf, Intune or any other MDM). If you build TicketsMate under
 your own bundle ID, use that ID as the domain instead. A value the profile
 sets wins over the one in Settings. Profile keys:
 

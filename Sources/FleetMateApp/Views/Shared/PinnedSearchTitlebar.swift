@@ -4,13 +4,14 @@ import SwiftUI
 /// Search belongs to the window title bar, outside NSToolbar's overflow system.
 /// A trailing accessory reserves its width before AppKit lays out toolbar items.
 struct PinnedSearchTitlebar: NSViewRepresentable {
+    @Environment(\.appFontScale) private var fontScale
     let appState: AppState
     let width: CGFloat
 
     func makeNSView(context: Context) -> BridgeView { BridgeView() }
 
     func updateNSView(_ view: BridgeView, context: Context) {
-        view.configure(appState: appState, width: width)
+        view.configure(appState: appState, width: width, fontScale: fontScale)
     }
 
     static func dismantleNSView(_ view: BridgeView, coordinator: ()) {
@@ -23,10 +24,12 @@ struct PinnedSearchTitlebar: NSViewRepresentable {
         private weak var attachedWindow: NSWindow?
         private var searchState: AppState?
         private var searchWidth: CGFloat = 320
+        private var fontScale = AppFontScale.default
 
-        func configure(appState: AppState, width: CGFloat) {
+        func configure(appState: AppState, width: CGFloat, fontScale: Double) {
             searchState = appState
             searchWidth = width
+            self.fontScale = fontScale
             install()
         }
 
@@ -40,6 +43,7 @@ struct PinnedSearchTitlebar: NSViewRepresentable {
             guard let window, let searchState else { return }
             let root = AnyView(GlobalSearchToolbarField(width: searchWidth)
                 .environmentObject(searchState)
+                .appFontScale(fontScale)
                 .padding(.horizontal, 8)
                 .frame(width: searchWidth + 16, height: 44))
             if let hosting {

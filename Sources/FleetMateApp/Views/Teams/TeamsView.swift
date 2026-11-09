@@ -362,7 +362,7 @@ struct TeamsView: View {
                     Spacer(minLength: 4)
                     if channelFilter == channel.channelId { Image(systemName: "checkmark") }
                 }
-                Text("\(channel.threads) threads" + (channel.lastActivityAt.map { " · " + TeamsText.localTime($0) } ?? ""))
+                Text((channel.threads == 1 ? "1 thread" : "\(channel.threads) threads") + (channel.lastActivityAt.map { " · " + TeamsText.localTime($0) } ?? ""))
                     .font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1)
             }

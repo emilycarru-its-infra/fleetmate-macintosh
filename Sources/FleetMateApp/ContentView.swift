@@ -143,7 +143,6 @@ struct ContentView: View {
                         .help("One or more systems are logged in as a Service Principal")
                     }
                 }
-
             }
             .environment(\.compactModuleToolbar, windowWidth < Self.compactModuleToolbarBelow)
             .onAppear {

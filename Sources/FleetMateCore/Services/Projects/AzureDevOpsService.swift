@@ -378,14 +378,16 @@ public class AzureDevOpsService {
         var frontier = items
         var requested = Set(items.map(\.id))
         var ancestors: [WorkItem] = []
+        var requestedAncestorCount = 0
         for _ in 0..<16 {
             try Task.checkCancellation()
             let ids = Set(frontier.filter { $0.fields?.workItemType?.lowercased() != "initiative" }
                 .compactMap(\.hierarchyParentId)).subtracting(requested).sorted()
             guard !ids.isEmpty else { break }
-            let bounded = Array(ids.prefix(max(0, 2000 - ancestors.count)))
+            let bounded = Array(ids.prefix(max(0, 2000 - requestedAncestorCount)))
             guard !bounded.isEmpty else { break }
             requested.formUnion(bounded)
+            requestedAncestorCount += bounded.count
             frontier = []
             for chunk in bounded.chunked(into: 200) {
                 let body = try JSONSerialization.data(withJSONObject: [

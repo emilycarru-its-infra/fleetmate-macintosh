@@ -41,4 +41,17 @@ final class InitiativeStatsTests: XCTestCase {
         let result = WorkItemStats.initiatives([task], ancestors: [try item(9, type: "Initiative", title: "Delivery")])
         XCTAssertEqual(result, [.init(label: "Delivery (#9)", value: 1)])
     }
+    func testLoadedSeedHierarchiesStillRespectTheSixteenEdgeLimit() throws {
+        let long = try (1...18).map {
+            try item($0, type: $0 == 18 ? "Initiative" : "Task", title: "Delivery", parent: $0 < 18 ? $0 + 1 : nil)
+        }
+        XCTAssertEqual(WorkItemStats.initiatives(long, ancestors: []), [
+            .init(label: "Delivery (#18)", value: 17), .init(label: "Unavailable", value: 1),
+        ])
+        let atLimit = try (1...17).map {
+            try item($0, type: $0 == 17 ? "Initiative" : "Task", title: "Delivery", parent: $0 < 17 ? $0 + 1 : nil)
+        }
+        XCTAssertEqual(WorkItemStats.initiatives(atLimit, ancestors: []), [.init(label: "Delivery (#17)", value: 17)])
+    }
+
 }

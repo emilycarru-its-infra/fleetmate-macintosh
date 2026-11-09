@@ -1,25 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Decides what the window toolbar gives up first when it runs out of room.
-///
-/// SwiftUI on the macOS 26 SDK has no say over overflow, and AppKit's default
-/// sent the centred module tab bar into the `>>` menu while the current
-/// module's own controls stayed. Search must remain available as a field;
-/// module navigation follows it in priority. This bridges to the window's
-/// `NSToolbar` and ranks its items —
-///
-/// - Search: `.user`, so it remains a field when other items overflow;
-/// - the centred tab bar and window-wide items (history, Graphs, Recent Activity, Agent,
-///   Authentication): `.high`;
-/// - everything else, which is the visible module's own toolbar: `.low`.
-///
-/// Before anything overflows, `compactModuleToolbar` has already folded the
-/// module's segment switch into a menu; this ranking only decides what goes
-/// once even that is too wide.
-///
-/// Search has a stable toolbar ID and an editable-field fallback, so its
-/// priority does not depend on when SwiftUI supplies an item label.
+/// Ranks secondary toolbar actions after the module navigation. Search is
+/// reserved independently by PinnedSearchTitlebar and never enters overflow.
 struct ToolbarPriorityBridge: NSViewRepresentable {
     /// The labels of the window-wide toolbar items, as their `Label` titles.
     static let windowItemLabels: Set<String> = [
@@ -27,21 +10,16 @@ struct ToolbarPriorityBridge: NSViewRepresentable {
         "Authentication", "Search", "Service Principal",
     ]
 
-    /// Run when the search item is chosen from the overflow menu.
-    var onSearch: () -> Void
-
     func makeNSView(context: Context) -> BridgeView {
         BridgeView()
     }
 
     func updateNSView(_ view: BridgeView, context: Context) {
-        view.onSearch = onSearch
         // SwiftUI rebuilds the toolbar's items when the module changes.
         view.scheduleApply()
     }
 
     final class BridgeView: NSView {
-        var onSearch: (() -> Void)?
         private var observers: [NSObjectProtocol] = []
         private var applyPending = false
 
@@ -85,14 +63,7 @@ struct ToolbarPriorityBridge: NSViewRepresentable {
                     continue
                 }
                 let priority: NSToolbarItem.VisibilityPriority
-                let isSearch = item.itemIdentifier.rawValue.contains("fleetmate.search")
-                    || item.label == "Search"
-                    || item.view.map(Self.containsTextField) == true
-                if isSearch {
-                    nameSearchItem(item)
-                    priority = .user
-                    item.view?.setContentCompressionResistancePriority(.required, for: .horizontal)
-                } else if item.itemIdentifier == toolbar.centeredItemIdentifier {
+                if item.itemIdentifier == toolbar.centeredItemIdentifier {
                     priority = .high
                 } else if ToolbarPriorityBridge.windowItemLabels.contains(item.label) {
                     priority = .high
@@ -106,15 +77,6 @@ struct ToolbarPriorityBridge: NSViewRepresentable {
             }
         }
 
-        private func nameSearchItem(_ item: NSToolbarItem) {
-            item.label = "Search"
-            item.paletteLabel = "Search"
-            let menuItem = NSMenuItem(title: "Search", action: #selector(searchChosen), keyEquivalent: "")
-            menuItem.target = self
-            menuItem.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
-            item.menuFormRepresentation = menuItem
-        }
-
         /// The overflow menu drew Agent with a generic glyph; it is the
         /// agent symbol everywhere.
         private func useAgentSymbol(_ item: NSToolbarItem) {
@@ -126,13 +88,5 @@ struct ToolbarPriorityBridge: NSViewRepresentable {
             }
         }
 
-        @objc private func searchChosen() {
-            onSearch?()
-        }
-
-        private static func containsTextField(_ view: NSView) -> Bool {
-            if view is NSTextField, (view as? NSTextField)?.isEditable == true { return true }
-            return view.subviews.contains(where: containsTextField)
-        }
     }
 }

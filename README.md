@@ -177,6 +177,13 @@ fleetmate tdx comment 12345 "Troubleshooting steps taken..."
 
 ### Teams channel search
 
+The Teams tab opens with a channel sidebar grouped by team, including indexed thread counts and latest activity. Select a channel to scope the search, then type in the always-visible window search field and press Return. Channel-loading failures include a retry action.
+
+Set `teams_default_team` to a team ID to select it on first opening. Set `teams_default_channels` to comma- or newline-separated channel IDs for a **Preloaded** sidebar section. Configuration profiles use `teamsDefaultTeam` and `teamsDefaultChannels`; the latter also accepts an array of strings. Environment overrides are `FLEETMATE_TEAMS_DEFAULT_TEAM` and `FLEETMATE_TEAMS_DEFAULT_CHANNELS`. These defaults organize indexed channels and do not grant access or cause additional channels to be indexed. Saved user scope takes precedence after first opening.
+
+A personalized recent-participation feed requires API support for browsing by stable user identity. The current API requires search text and provides display-name filters, so this client does not claim to show all recent threads for the signed-in account.
+
+
 Search an indexed copy of Teams channel messages through a search API. Set `teams_api_url` (the API base URL) and `teams_api_scope` (the scope your `az` token is minted for, such as `<application id URI>/.default`) in `config.yaml`, the configuration profile (`teamsApiUrl`, `teamsApiScope`) or `FLEETMATE_TEAMS_API_URL` / `FLEETMATE_TEAMS_API_SCOPE`. Every call is made as you, with the token from `fleetmate login`; the API decides whether your account has access.
 
 ```bash

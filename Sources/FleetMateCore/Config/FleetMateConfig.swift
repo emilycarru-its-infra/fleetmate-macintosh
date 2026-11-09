@@ -58,6 +58,15 @@ public struct FleetMateConfig: Codable {
     /// config.yaml `teams_link_hosts`, profile `teamsLinkHosts`, or
     /// FLEETMATE_TEAMS_LINK_HOSTS.
     public var teamsLinkHosts: String?
+    /// Team ID selected on first opening Teams, supplied by YAML or managed preferences.
+    public var teamsDefaultTeam: String?
+    /// Channel IDs to preload in the sidebar, separated by commas or newlines.
+    public var teamsDefaultChannels: String?
+
+    public var preloadedTeamsChannelIDs: [String] {
+        (teamsDefaultChannels ?? "").split(whereSeparator: { $0 == "," || $0.isNewline })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    }
 
     /// Key Vault holding the Apple School / Business Manager API credentials,
     /// read with the operator's `az` sign-in. Unset → no Apple organization.
@@ -236,6 +245,8 @@ public struct FleetMateConfig: Codable {
         case teamsApiScope = "teams_api_scope"
         case teamsApiPurpose = "teams_api_purpose"
         case teamsLinkHosts = "teams_link_hosts"
+        case teamsDefaultTeam = "teams_default_team"
+        case teamsDefaultChannels = "teams_default_channels"
         case appleOrgKeyVault = "apple_org_key_vault"
         case appleOrgSecretPrefixes = "apple_org_secret_prefixes"
         case snipeUrl = "snipe_url"
@@ -357,6 +368,8 @@ public struct FleetMateConfig: Codable {
         teamsApiScope = nil
         teamsApiPurpose = nil
         teamsLinkHosts = nil
+        teamsDefaultTeam = nil
+        teamsDefaultChannels = nil
         devopsOrganization = nil
         tasks = nil
         manage = nil
@@ -448,6 +461,8 @@ public struct FleetMateConfig: Codable {
         if let v = str("teams_api_scope"), !v.isEmpty { config.teamsApiScope = v }
         if let v = str("teams_api_purpose"), !v.isEmpty { config.teamsApiPurpose = v }
         if let v = str("teams_link_hosts"), !v.isEmpty { config.teamsLinkHosts = v }
+        if let v = str("teams_default_team") { config.teamsDefaultTeam = v }
+        if let v = str("teams_default_channels") { config.teamsDefaultChannels = v }
         
         return true
     }
@@ -475,6 +490,9 @@ public struct FleetMateConfig: Codable {
         if let v = (yaml["teams_api_scope"] ?? yaml["teamsApiScope"]) as? String, !v.isEmpty { config.teamsApiScope = v }
         if let v = (yaml["teams_api_purpose"] ?? yaml["teamsApiPurpose"]) as? String, !v.isEmpty { config.teamsApiPurpose = v }
         if let v = (yaml["teams_link_hosts"] ?? yaml["teamsLinkHosts"]) as? String, !v.isEmpty { config.teamsLinkHosts = v }
+        if let v = (yaml["teams_default_team"] ?? yaml["teamsDefaultTeam"]) as? String { config.teamsDefaultTeam = v }
+        if let v = (yaml["teams_default_channels"] ?? yaml["teamsDefaultChannels"]) as? String { config.teamsDefaultChannels = v }
+        if let v = (yaml["teams_default_channels"] ?? yaml["teamsDefaultChannels"]) as? [String] { config.teamsDefaultChannels = v.joined(separator: "\n") }
 
         // SecureShell (camelCase in existing YAML)
         if let ssh = (yaml["secureShell"] ?? yaml["secure_shell"]) as? [String: Any] {
@@ -663,6 +681,8 @@ public struct FleetMateConfig: Codable {
         if let v = get("teamsApiScope"), !v.isEmpty { config.teamsApiScope = v }
         if let v = get("teamsApiPurpose"), !v.isEmpty { config.teamsApiPurpose = v }
         if let v = get("teamsLinkHosts"), !v.isEmpty { config.teamsLinkHosts = v }
+        if let v = get("teamsDefaultTeam") { config.teamsDefaultTeam = v }
+        if let v = get("teamsDefaultChannels") { config.teamsDefaultChannels = v }
         if let v = get("appleOrgKeyVault")   { config.appleOrgKeyVault = v }
         if let v = get("appleOrgSecretPrefixes") {
             config.appleOrgSecretPrefixes = v.split(whereSeparator: { $0 == "\n" || $0 == "," }).map(String.init)
@@ -736,6 +756,8 @@ public struct FleetMateConfig: Codable {
         if let v = env["FLEETMATE_TEAMS_API_SCOPE"], !v.isEmpty { config.teamsApiScope = v }
         if let v = env["FLEETMATE_TEAMS_API_PURPOSE"], !v.isEmpty { config.teamsApiPurpose = v }
         if let v = env["FLEETMATE_TEAMS_LINK_HOSTS"], !v.isEmpty { config.teamsLinkHosts = v }
+        if let v = env["FLEETMATE_TEAMS_DEFAULT_TEAM"] { config.teamsDefaultTeam = v }
+        if let v = env["FLEETMATE_TEAMS_DEFAULT_CHANNELS"] { config.teamsDefaultChannels = v }
 
 
         // Snipe-IT
@@ -1004,6 +1026,8 @@ public struct FleetMateConfig: Codable {
         set("teamsApiScope", config.teamsApiScope)
         set("teamsApiPurpose", config.teamsApiPurpose)
         set("teamsLinkHosts", config.teamsLinkHosts)
+        set("teamsDefaultTeam", config.teamsDefaultTeam)
+        set("teamsDefaultChannels", config.teamsDefaultChannels)
         set("snipeUrl", config.snipeUrl)
         set("snipeApiKey", config.snipeApiKey)
         set("graphTenantId", config.graphTenantId)

@@ -15,33 +15,50 @@ public actor GitHubActionsService {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         let sinceDay = String(formatter.string(from: since).prefix(10))
-        let decoder = JSONDecoder()
-
         var firstError: String?
         let runs: [PipelineRun] = await withTaskGroup(of: Result<[PipelineRun], Error>.self) { group in
-            for repo in repositories {
+            var pending = repositories.makeIterator()
+            func enqueue(_ repo: (owner: String, name: String)) {
                 group.addTask {
                     do {
+                        try Task.checkCancellation()
                         let path = "/repos/\(repo.owner)/\(repo.name)/actions/runs?per_page=\(perRepo)&created=%3E%3D\(sinceDay)"
                         let data = try await self.client.executeREST(path: path)
-                        let page = try decoder.decode(RestRunsPage.self, from: data)
+                        let page = try JSONDecoder().decode(RestRunsPage.self, from: data)
                         return .success(page.workflowRuns.map { Self.map($0, owner: repo.owner, repo: repo.name) })
-                    } catch {
-                        return .failure(error)
-                    }
+                    } catch { return .failure(error) }
                 }
             }
+            for _ in 0..<min(6, repositories.count) {
+                if let repo = pending.next() { enqueue(repo) }
+            }
             var all: [PipelineRun] = []
-            for await result in group {
+            while let result = await group.next() {
                 switch result {
                 case .success(let runs): all.append(contentsOf: runs)
                 case .failure(let error): if firstError == nil { firstError = error.localizedDescription }
                 }
+                if !Task.isCancelled, let repo = pending.next() { enqueue(repo) }
             }
             return all
         }
         dbg.info("GitHub getRecentRuns(\(repositories.count) repos) → \(runs.count) runs", category: "github")
         return (runs.sorted { $0.sortDate > $1.sortDate }, firstError)
+    }
+
+    /// One conditional request discovers recently active repositories without loading commits.
+    public func getRecentRepositories() async throws -> [(owner: String, name: String)] {
+        struct Repository: Decodable {
+            struct Owner: Decodable { let login: String }
+            let owner: Owner
+            let name: String
+            let archived: Bool
+            let disabled: Bool?
+        }
+        let data = try await client.executeREST(path: "/user/repos?sort=pushed&direction=desc&per_page=100")
+        return try JSONDecoder().decode([Repository].self, from: data)
+            .filter { !$0.archived && $0.disabled != true }
+            .map { (owner: $0.owner.login, name: $0.name) }
     }
 
     /// Logs for a run, one section per job. Job logs redirect to a signed

@@ -34,7 +34,17 @@ struct FleetMateApp: App {
                 .appFontScale(fontScale)
                 .onOpenURL { url in appState.open(url) }
                 .task {
+                    if AppEdition.current != .ticketsMate { appState.development.startPipelineRefresh(appState: appState) }
                     await appState.preloadAllData()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                    if !AppEdition.current.isTicketsOnly { appState.development.checkPipelineFreshness(appState: appState) }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { _ in
+                    if !AppEdition.current.isTicketsOnly { appState.development.checkPipelineFreshness(appState: appState) }
+                }
+                .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in
+                    if !AppEdition.current.isTicketsOnly { appState.development.checkPipelineFreshness(appState: appState) }
                 }
         }
         .windowStyle(.titleBar)

@@ -47,6 +47,7 @@ public struct WorkItemStats: Equatable, Sendable {
         return DevelopmentStats.ranked(items) { item in
             var current = item
             var seen: Set<Int> = []
+            var edges = 0
             while seen.insert(current.id).inserted {
                 guard let fields = current.fields else { return "Unavailable" }
                 if fields.workItemType?.caseInsensitiveCompare("Initiative") == .orderedSame {
@@ -54,7 +55,8 @@ public struct WorkItemStats: Equatable, Sendable {
                     return title.isEmpty ? "Initiative #\(current.id)" : "\(title) (#\(current.id))"
                 }
                 guard let parent = current.hierarchyParentId else { return "Unassigned" }
-                guard let next = index[parent] else { return "Unavailable" }
+                guard edges < 16, let next = index[parent] else { return "Unavailable" }
+                edges += 1
                 current = next
             }
             return "Unavailable"

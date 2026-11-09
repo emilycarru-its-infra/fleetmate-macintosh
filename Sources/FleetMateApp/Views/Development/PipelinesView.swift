@@ -24,8 +24,8 @@ struct PipelinesListView: View {
                             }
                         }
                     }
-                    if !model.pipelineRepoCounts.isEmpty {
-                        RepoFilterMenu(selection: $model.selectedPipelineRepo, counts: model.pipelineRepoCounts)
+                    if model.pipelineRepositoryOptions.count > 1 || model.selectedPipelineRepo != nil {
+                        RepoFilterMenu(selection: $model.selectedPipelineRepo, entries: model.pipelineRepositoryOptions)
                     }
                     Spacer()
                     if let at = model.pipelinesLoadedAt {

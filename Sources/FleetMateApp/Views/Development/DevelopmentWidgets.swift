@@ -217,7 +217,7 @@ private struct CommitsWidgets: View {
                     empty(loading, "No commits")
                 } else {
                     HorizontalBarList(bars: bars) { label in
-                        model.selectedCommitRepo = model.selectedCommitRepo == label ? nil : label
+                        model.selectedCommitRepo = model.selectedCommitRepoLabel == label ? nil : label
                     }
                 }
             }
@@ -263,7 +263,7 @@ private struct CommitsWidgets: View {
                     RecentList(rows: active.sorted { $0.latestDate > $1.latestDate }.prefix(8).map {
                         (label: $0.displayName, date: $0.latestDate)
                     }) { label in
-                        model.selectedCommitRepo = model.selectedCommitRepo == label ? nil : label
+                        model.selectedCommitRepo = model.selectedCommitRepoLabel == label ? nil : label
                     }
                 }
             }
@@ -411,7 +411,7 @@ private struct PipelinesWidgets: View {
                     empty(loading, "No runs in the last \(windowDays) days")
                 } else {
                     HorizontalBarList(bars: bars) { label in
-                        model.selectedPipelineRepo = model.selectedPipelineRepo == label ? nil : label
+                        model.selectedPipelineRepo = model.selectedPipelineRepoLabel == label ? nil : label
                     }
                 }
             }

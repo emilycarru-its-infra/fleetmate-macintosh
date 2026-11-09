@@ -60,6 +60,7 @@ final class WidgetMetrics: ObservableObject {
     @Published private(set) var activeWorkItems = 0
     @Published private(set) var workItemSlices: [ChartSlice] = []
     @Published private(set) var sprintInfo = ""
+    @Published private(set) var initiativeCounts: [DevelopmentStats.Count] = []
 
     // Inventory
     @Published private(set) var assetCount = 0
@@ -218,9 +219,18 @@ final class WidgetMetrics: ObservableObject {
         let workItems = appState.cachedMyWorkItems
         activeWorkItems = workItems.count
         guard !workItems.isEmpty else {
+            initiativeCounts = []
             workItemSlices = []
             return
         }
+        do {
+            let ancestors = try await appState.devOpsService.getInitiativeAncestors(for: workItems)
+            initiativeCounts = WorkItemStats.initiatives(workItems, ancestors: ancestors)
+        } catch {
+            initiativeCounts = WorkItemStats.initiatives(workItems, ancestors: [])
+            dbg.error("Initiative ancestry unavailable", category: "widgets")
+        }
+
         let states = Dictionary(grouping: workItems, by: { $0.fields?.state ?? "Unknown" })
             .map { (state: $0.key, count: $0.value.count) }
             .sorted { $0.count > $1.count }

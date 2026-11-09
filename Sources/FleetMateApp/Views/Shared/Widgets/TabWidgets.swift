@@ -382,7 +382,18 @@ struct ProjectsWidgetsSection: View {
             }
 
             barCard("By Type", WorkItemStats.ranked(items) { $0.workItemType }, color: .indigo, loading: loading)
-            barCard("By Project", WorkItemStats.ranked(items) { $0.teamProject }, color: .teal, loading: loading)
+            WidgetCard(title: "By Initiative", isLoading: metrics.isLoading(.workItems)) {
+                if metrics.initiativeCounts.isEmpty {
+                    if loading { SkeletonChartCard() } else { WidgetEmptyState("No work item data") }
+                } else {
+                    ScrollView(.vertical) {
+                        HorizontalBarList(bars: metrics.initiativeCounts.map {
+                            ChartBar(label: $0.label, value: $0.value, color: .teal)
+                        })
+                    }
+                    .frame(height: min(190, CGFloat(metrics.initiativeCounts.count) * 24))
+                }
+            }
 
             // The user's work items and GitHub issues, five rows each; the
             // full lists open in a sheet.
@@ -392,7 +403,7 @@ struct ProjectsWidgetsSection: View {
             }
         }
         .task { await metrics.load(.workItems, appState: appState) }
-        .onChange(of: appState.cachedMyWorkItems.count) { _, _ in
+        .onChange(of: appState.cachedMyWorkItems.map { "\($0.id):\($0.rev ?? 0)" }) { _, _ in
             Task { await metrics.load(.workItems, appState: appState, force: true) }
         }
         .onChange(of: appState.devOpsSsoAuthenticated) { _, ready in

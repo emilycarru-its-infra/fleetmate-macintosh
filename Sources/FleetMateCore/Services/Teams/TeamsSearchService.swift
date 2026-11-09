@@ -125,6 +125,7 @@ public enum TeamsSearchError: Error, Equatable, CustomStringConvertible, Localiz
     case notFound
     /// 503 — the search index has not been built yet.
     case indexNotReady
+    case membershipUnavailable
     case http(Int, String)
     case invalidResponse(String)
 
@@ -142,6 +143,8 @@ public enum TeamsSearchError: Error, Equatable, CustomStringConvertible, Localiz
             return "The Teams search API does not grant the configured purpose. Check teams_api_purpose."
         case .notFound:
             return "No such Teams thread or channel in the search index."
+        case .membershipUnavailable:
+            return "Your Teams channel access could not be verified. Reload channels to try again."
         case .indexNotReady:
             return "The Teams search index is not ready yet. Try again later."
         case .http(let status, let detail):
@@ -189,7 +192,7 @@ public final class TeamsSearchService: Sendable {
         self.purpose = p.isEmpty ? Self.defaultPurpose : p
         let configuration = sessionConfiguration ?? URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 60
-        self.session = URLSession(configuration: configuration)
+        self.session = URLSession(configuration: configuration, delegate: TeamsNoRedirectDelegate(), delegateQueue: nil)
         self.tokenProvider = tokenProvider ?? { scope, refresh in
             if refresh { await AzTokenSource.shared.invalidate() }
             return try await AzTokenSource.shared.token(forScope: scope)
@@ -318,8 +321,8 @@ public final class TeamsSearchService: Sendable {
         if !query.isEmpty {
             string += "?" + query.map { "\(Self.encode($0.0))=\(Self.encode($0.1))" }.joined(separator: "&")
         }
-        guard let url = URL(string: string), let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else {
-            throw TeamsSearchError.invalidArgument("teams_api_url is not a valid http(s) URL.")
+        guard let url = URL(string: string), let scheme = url.scheme?.lowercased(), scheme == "https", url.host != nil, url.user == nil, url.password == nil else {
+            throw TeamsSearchError.invalidArgument("teams_api_url must be an HTTPS URL without embedded credentials.")
         }
         return url
     }
@@ -357,13 +360,14 @@ public final class TeamsSearchService: Sendable {
         case 401: throw TeamsSearchError.unauthorized
         case 403: throw Self.detail(from: data).contains("purpose_not_granted") ? TeamsSearchError.purposeNotGranted : TeamsSearchError.forbidden
         case 404: throw TeamsSearchError.notFound
-        case 503: throw TeamsSearchError.indexNotReady
+        case 503: throw Self.detail(from: data).contains("teams_membership") ? TeamsSearchError.membershipUnavailable : TeamsSearchError.indexNotReady
         default: throw TeamsSearchError.http(status, Self.detail(from: data))
         }
     }
 
     private func send(_ url: URL, refresh: Bool, body: Data? = nil) async throws -> (Data, Int) {
         let token = try await tokenProvider(scope, refresh)
+        let membershipToken = try await tokenProvider("https://graph.microsoft.com/.default", refresh)
         var request = URLRequest(url: url)
         request.httpMethod = body == nil ? "GET" : "POST"
         request.httpBody = body
@@ -371,9 +375,14 @@ public final class TeamsSearchService: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(purpose, forHTTPHeaderField: Self.purposeHeader)
+        request.setValue(membershipToken, forHTTPHeaderField: "X-Vantage-Teams-Token")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw TeamsSearchError.invalidResponse("not an HTTP response")
+        }
+        if (200..<300).contains(http.statusCode),
+           http.value(forHTTPHeaderField: "X-Vantage-Teams-Access") != "membership-v1" {
+            throw TeamsSearchError.membershipUnavailable
         }
         return (data, http.statusCode)
     }
@@ -444,5 +453,14 @@ public enum TeamsText {
         f.timeZone = timeZone
         f.dateFormat = "yyyy-MM-dd HH:mm"
         return f.string(from: date)
+    }
+}
+
+/// Authenticated Teams reads never forward either credential through redirects.
+private final class TeamsNoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+                    completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }

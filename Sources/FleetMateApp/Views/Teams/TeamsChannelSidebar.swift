@@ -43,7 +43,7 @@ struct TeamsChannelSidebar: View {
                     }
                 }
                 Section("Your library") {
-                    Label("Saved Threads (\(model.bookmarks.count))", systemImage: "bookmark")
+                    Label("Saved Threads (\(model.authorizedBookmarks.count))", systemImage: "bookmark")
                         .tag(TeamsWorkspaceModel.Scope.saved)
                     ForEach(model.collections, id: \.self) { name in
                         Label(name, systemImage: "folder").tag(TeamsWorkspaceModel.Scope.collection(name))

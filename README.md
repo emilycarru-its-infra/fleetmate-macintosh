@@ -187,7 +187,7 @@ Set `teams_default_team` to a team ID to select it on first opening. Set `teams_
 
 Channel browsing and Following require the service's browse and feed endpoints. A personalized recent-participation feed remains separate: display-name filters do not establish all threads involving the signed-in account.
 
-Search an indexed copy of Teams channel messages through a search API. Set `teams_api_url` (the API base URL) and `teams_api_scope` (the scope your `az` token is minted for, such as `<application id URI>/.default`) in `config.yaml`, the configuration profile (`teamsApiUrl`, `teamsApiScope`) or `FLEETMATE_TEAMS_API_URL` / `FLEETMATE_TEAMS_API_SCOPE`. Every call is made as you, with the token from `fleetmate login`; the API decides whether your account has access.
+Search an indexed copy of Teams channel messages through a search API. Set `teams_api_url` (the API base URL) and `teams_api_scope` (the scope your `az` token is minted for, such as `<application id URI>/.default`) in `config.yaml`, the configuration profile (`teamsApiUrl`, `teamsApiScope`) or `FLEETMATE_TEAMS_API_URL` / `FLEETMATE_TEAMS_API_SCOPE`. Every call is made as you, with existing silent tokens from `fleetmate login`. Teams requests also provide a delegated Microsoft Graph credential so the API can verify the same person and tenant and restrict all reads to current channel membership. Credentials are not persisted or forwarded through redirects, and the connection requires HTTPS. The API decides access; following a channel or saving a bookmark does not grant it.
 
 ```bash
 fleetmate teams search "printer jam" --since 2026-10-01 --limit 10

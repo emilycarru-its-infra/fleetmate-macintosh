@@ -32,7 +32,7 @@ final class TeamsDiscoveryTests: XCTestCase {
     }
 
     func testBrowseDecodesSnapshotAndNextPageThroughAuthorizedTransport() async throws {
-        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/threads", body: """
+        TeamsStub.reset(stubs: [.init(pathContains: "/v1/teams/threads", body: """
         {"as_of":"2026-11-01","index_version":"build-a","total":2,"results":[],"next_offset":1}
         """)])
         let service = TeamsSearchService(baseUrl: "https://search.example.org", scope: "api://example/.default",
@@ -114,7 +114,7 @@ final class TeamsDiscoveryTests: XCTestCase {
     }
 
     func testFollowingSearchSendsFullChannelSetToServerBeforePagination() async throws {
-        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/feed", method: "POST", body: """
+        TeamsStub.reset(stubs: [.init(pathContains: "/v1/teams/feed", method: "POST", body: """
         {"as_of":null,"index_version":"v1","total":9,"results":[],"next_offset":5}
         """)])
         let service = TeamsSearchService(baseUrl: "https://search.example.org", scope: "api://example/.default",
@@ -133,7 +133,7 @@ final class TeamsDiscoveryTests: XCTestCase {
     }
 
     func testFollowingRetryKeepsTheEntireReadRequestBody() async throws {
-        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/feed", statusCode: 401, body: "{}")])
+        TeamsStub.reset(stubs: [.init(pathContains: "/v1/teams/feed", statusCode: 401, body: "{}")])
         let service = TeamsSearchService(baseUrl: "https://search.example.org", scope: "api://example/.default",
                                         sessionConfiguration: StubURLProtocol.sessionConfiguration(),
                                         tokenProvider: { _, refresh in refresh ? "new-token" : "old-token" })

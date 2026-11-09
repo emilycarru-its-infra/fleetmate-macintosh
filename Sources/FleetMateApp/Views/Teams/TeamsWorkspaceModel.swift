@@ -64,7 +64,11 @@ final class TeamsWorkspaceModel: ObservableObject {
         if case .collection = scope { return true }
         return false
     }
-    var collections: [String] { Array(Set(bookmarks.map(\.collection).filter { !$0.isEmpty })).sorted() }
+    var authorizedBookmarks: [TeamsBookmark] {
+        let allowed = Set(channels.map(\.channelId))
+        return bookmarks.filter { allowed.contains($0.channelId) }
+    }
+    var collections: [String] { Array(Set(authorizedBookmarks.map(\.collection).filter { !$0.isEmpty })).sorted() }
     var filteredChannels: [TeamsChannel] {
         let words = channelQuery.split(whereSeparator: \.isWhitespace).map(String.init)
         return channels.filter { channel in
@@ -81,7 +85,7 @@ final class TeamsWorkspaceModel: ObservableObject {
         return ids
     }
     var visibleBookmarks: [TeamsBookmark] {
-        bookmarks.filter { bookmark in
+        authorizedBookmarks.filter { bookmark in
             if case .collection(let name) = scope, bookmark.collection != name { return false }
             let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
             let text = [bookmark.title, bookmark.teamName, bookmark.channelName, bookmark.collection].joined(separator: " ")
@@ -123,6 +127,9 @@ final class TeamsWorkspaceModel: ObservableObject {
         }
         isLoadingChannels = true
         channelError = nil
+        channels = []
+        hits = []
+        closeThread()
         defer { isLoadingChannels = false }
         do {
             let loaded = try await service.channels().value
@@ -265,6 +272,7 @@ final class TeamsWorkspaceModel: ObservableObject {
                 hasLoadedFeed = true
             } catch {
                 guard !Task.isCancelled, generation == requestID else { return }
+                clearUnauthorized(error)
                 if text.isEmpty, let problem = error as? TeamsSearchError, problem == .notFound {
                     feedError = "Channel browsing is not available on this service yet. You can still search this channel above."
                 } else { feedError = error.localizedDescription }
@@ -287,6 +295,7 @@ final class TeamsWorkspaceModel: ObservableObject {
                 thread = value
             } catch {
                 guard !Task.isCancelled, selectedHit?.key == hit.key else { return }
+                clearUnauthorized(error)
                 threadError = error.localizedDescription
             }
         }
@@ -330,6 +339,18 @@ final class TeamsWorkspaceModel: ObservableObject {
             bookmarkError = nil
             if isFollowing { reload() }
         } catch { bookmarkError = error.localizedDescription }
+    }
+
+    private func clearUnauthorized(_ error: Error) {
+        guard let problem = error as? TeamsSearchError,
+              problem == .unauthorized || problem == .forbidden || problem == .purposeNotGranted
+                || problem == .indexNotReady || problem == .membershipUnavailable || problem == .notFound else { return }
+        channels = []
+        hits = []
+        total = 0
+        nextOffset = nil
+        closeThread()
+        channelError = "Channel access could not be verified. Reload channels to try again."
     }
 
     func copy(_ value: String) {

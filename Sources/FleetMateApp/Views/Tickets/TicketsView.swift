@@ -3606,76 +3606,6 @@ struct DetailRow: View {
     }
 }
 
-// MARK: - Thread Rail
-
-/// What the rail below a comment's avatar has to reach.
-enum ThreadConnectorKind {
-    /// Nothing follows at this level — draw no line.
-    case none
-    /// The next comment sits at the same indent: straight down.
-    case straight
-    /// The next comment is indented further right: down, then a rounded turn.
-    case elbow
-}
-
-private struct ThreadConnectorShape: Shape {
-    let kind: ThreadConnectorKind
-    let elbowRun: CGFloat
-
-    /// Radius of the turn. Large enough to read as a curve at 2pt, small
-    /// enough not to eat the whole horizontal run.
-    private let radius: CGFloat = 10
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        guard kind != .none else { return path }
-
-        let x = rect.midX
-        path.move(to: CGPoint(x: x, y: rect.minY))
-
-        switch kind {
-        case .straight:
-            path.addLine(to: CGPoint(x: x, y: rect.maxY))
-        case .elbow:
-            path.addLine(to: CGPoint(x: x, y: rect.maxY - radius))
-            path.addQuadCurve(
-                to: CGPoint(x: x + radius, y: rect.maxY),
-                control: CGPoint(x: x, y: rect.maxY)
-            )
-            path.addLine(to: CGPoint(x: x + elbowRun, y: rect.maxY))
-        case .none:
-            break
-        }
-        return path
-    }
-}
-
-/// The anchor each rail hangs from. TDX's feed carries no photo for a comment's
-/// author, only a name, so this is initials on a neutral disc.
-private struct ThreadAvatar: View {
-    let name: String?
-    let size: CGFloat
-
-    private var initials: String {
-        let parts = (name ?? "")
-            .split(separator: " ")
-            .filter { $0.first?.isLetter == true }
-        let letters = parts.prefix(2).compactMap { $0.first }
-        return letters.isEmpty ? "?" : String(letters).uppercased()
-    }
-
-    var body: some View {
-        Circle()
-            .fill(Color.secondary.opacity(0.18))
-            .frame(width: size, height: size)
-            .overlay(
-                Text(initials)
-                    .appFont(fixed: 10, weight: .semibold)
-                    .foregroundStyle(.secondary)
-            )
-    }
-}
-
 // MARK: - Feed Entry Row
 
 struct FeedEntryRow: View {
@@ -3748,32 +3678,8 @@ struct FeedEntryRow: View {
         isReply: Bool,
         connector: ThreadConnectorKind
     ) -> some View {
-        HStack(alignment: .top, spacing: Self.railSpacing) {
-            if isReply {
-                // Less the stack's own spacing, which lands after this spacer —
-                // charge the full indent here and the avatar sits 10pt right of
-                // where the parent's elbow reaches for it.
-                Color.clear.frame(width: Self.replyIndent - Self.railSpacing, height: 0)
-            }
-
-            VStack(spacing: 0) {
-                ThreadAvatar(name: item.createdFullName, size: Self.avatarSize)
-                ThreadConnectorShape(kind: connector, elbowRun: Self.elbowRun)
-                    .stroke(
-                        Color.secondary.opacity(0.35),
-                        style: StrokeStyle(lineWidth: 2, lineCap: .round)
-                    )
-                    .frame(maxHeight: .infinity)
-                    // Draw past the row's bottom edge so an elbow meets the
-                    // side of the next avatar instead of stopping at its top.
-                    .padding(.bottom, connector == .elbow ? -Self.avatarSize / 2 : 0)
-            }
-            .frame(width: Self.avatarSize)
-
-            // The gap between comments sits inside the row so the rail spans
-            // it — put it between rows and the line breaks at every seam.
+        ConversationThreadRow(author: item.createdFullName, isReply: isReply, connector: connector) {
             commentCard(item, isReply: isReply)
-                .padding(.bottom, Self.rowGap)
         }
     }
 
@@ -3845,16 +3751,7 @@ struct FeedEntryRow: View {
                 FeedBodyView(html: body, isReply: isReply)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(isReply
-                    ? Color.secondary.opacity(0.08)
-                    : Color(nsColor: .controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
-        )
+        .modifier(ConversationCardStyle(isReply: isReply))
         .contextMenu { cardMenu(item, isReply: isReply) }
     }
 

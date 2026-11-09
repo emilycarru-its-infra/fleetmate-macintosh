@@ -27,6 +27,14 @@ public struct TeamsSearchResponse: Codable, Sendable, Equatable {
     public var results: [TeamsSearchHit]
 }
 
+public struct TeamsBrowseResponse: Codable, Sendable, Equatable {
+    public var asOf: String?
+    public var indexVersion: String
+    public var total: Int
+    public var results: [TeamsSearchHit]
+    public var nextOffset: Int?
+}
+
 public struct TeamsAttachment: Codable, Sendable, Equatable {
     public var name: String
     public var url: String?
@@ -198,6 +206,66 @@ public final class TeamsSearchService: Sendable {
         try await get(searchURL(query))
     }
 
+    public func browse(team: String? = nil, channel: String? = nil, author: String? = nil,
+                       since: String? = nil, until: String? = nil, limit: Int = 20,
+                       offset: Int = 0) async throws -> TeamsPayload<TeamsBrowseResponse> {
+        try await get(browseURL(team: team, channel: channel, author: author,
+                                since: since, until: until, limit: limit, offset: offset))
+    }
+
+    public func followedFeed(channels: [String], query: String? = nil, author: String? = nil,
+                             since: String? = nil, until: String? = nil, limit: Int = 20,
+                             offset: Int = 0) async throws -> TeamsPayload<TeamsBrowseResponse> {
+        guard (1...500).contains(channels.count), channels.allSatisfy({
+            let id = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !id.isEmpty && id.count <= 500
+        }) else { throw TeamsSearchError.invalidArgument("Choose between 1 and 500 channels to follow.") }
+        _ = try browseURL(channel: channels[0], since: since, until: until, limit: limit, offset: offset)
+        let text = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard text.count <= 500 else { throw TeamsSearchError.invalidArgument("Search text must be at most 500 characters.") }
+        var body: [String: Any] = ["channels": Array(Set(channels)).sorted(), "limit": limit, "offset": offset]
+        for (key, value) in [("q", text), ("author", author ?? ""), ("since", since ?? ""), ("until", until ?? "")] {
+            if !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { body[key] = value }
+        }
+        return try await get(url("/v1/teams/feed", query: []), body: JSONSerialization.data(withJSONObject: body))
+    }
+
+    /// Claims select a private local bookmark file; the API still authorizes every content read.
+    public func bookmarkAccountKey() async throws -> String {
+        guard isConfigured else { throw TeamsSearchError.notConfigured }
+        let token = try await tokenProvider(scope, false)
+        guard let key = TeamsBookmarkScope.key(endpoint: baseUrl, token: token) else {
+            throw TeamsSearchError.invalidArgument("Saved threads need an identifiable signed-in account.")
+        }
+        return key
+    }
+
+    public func browseURL(team: String? = nil, channel: String? = nil, author: String? = nil,
+                          since: String? = nil, until: String? = nil, limit: Int = 20,
+                          offset: Int = 0) throws -> URL {
+        let team = team?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let channel = channel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !team.isEmpty || !channel.isEmpty else {
+            throw TeamsSearchError.invalidArgument("Choose a team or channel to browse.")
+        }
+        guard (1...100).contains(limit), (0...2_147_483_647).contains(offset) else {
+            throw TeamsSearchError.invalidArgument("Invalid browse page size or offset.")
+        }
+        for date in [since, until].compactMap({ $0 }) where !Self.isDay(date) {
+            throw TeamsSearchError.invalidArgument("Browse dates must use YYYY-MM-DD.")
+        }
+        if let since, let until, since > until {
+            throw TeamsSearchError.invalidArgument("The start date must precede the end date.")
+        }
+        var items: [(String, String)] = []
+        for (key, value) in [("team", team), ("channel", channel), ("author", author ?? ""),
+                             ("since", since ?? ""), ("until", until ?? "")] {
+            if !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { items.append((key, value)) }
+        }
+        items += [("limit", String(limit)), ("offset", String(offset))]
+        return try url("/v1/teams/threads", query: items)
+    }
+
     public func thread(id: String, channel: String) async throws -> TeamsPayload<TeamsThread> {
         try await get(threadURL(id: id, channel: channel))
     }
@@ -274,10 +342,10 @@ public final class TeamsSearchService: Sendable {
 
     // MARK: Transport
 
-    private func get<Value: Decodable & Sendable>(_ url: URL) async throws -> TeamsPayload<Value> {
-        var (data, status) = try await send(url, refresh: false)
+    private func get<Value: Decodable & Sendable>(_ url: URL, body: Data? = nil) async throws -> TeamsPayload<Value> {
+        var (data, status) = try await send(url, refresh: false, body: body)
         if status == 401 {
-            (data, status) = try await send(url, refresh: true)
+            (data, status) = try await send(url, refresh: true, body: body)
         }
         switch status {
         case 200..<300:
@@ -294,10 +362,12 @@ public final class TeamsSearchService: Sendable {
         }
     }
 
-    private func send(_ url: URL, refresh: Bool) async throws -> (Data, Int) {
+    private func send(_ url: URL, refresh: Bool, body: Data? = nil) async throws -> (Data, Int) {
         let token = try await tokenProvider(scope, refresh)
         var request = URLRequest(url: url)
-        request.httpMethod = "GET"
+        request.httpMethod = body == nil ? "GET" : "POST"
+        request.httpBody = body
+        if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(purpose, forHTTPHeaderField: Self.purposeHeader)

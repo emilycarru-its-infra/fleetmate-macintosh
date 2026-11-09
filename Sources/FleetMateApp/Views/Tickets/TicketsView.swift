@@ -16,7 +16,6 @@ enum TicketSortField: String, CaseIterable {
 enum TicketViewMode: String, CaseIterable {
     case table = "Table"
     case board = "Board"
-    case inbox = "Inbox"
 }
 
 // MARK: - Date Range Preset
@@ -235,6 +234,7 @@ struct TicketsView: View {
 
     // View mode
     @State private var viewMode: TicketViewMode = .table
+    @State private var showInboxPopover = false
     @State private var boardGroupBy: BoardGroupBy = .responsible
 
     // Detail editing state
@@ -814,7 +814,7 @@ struct TicketsView: View {
                 resetToCurrentTerm()
             case .showListView:  viewMode = .table
             case .showBoardView: viewMode = .board
-            case .showInbox:     if appState.ticketInbox.isReady { viewMode = .inbox }
+            case .showInbox:     if appState.ticketInbox.isReady { showInboxPopover = true }
             case .find:          break  // the toolbar search field takes it
             case .scan, .selectOnline: break
             }
@@ -823,7 +823,14 @@ struct TicketsView: View {
         .task(id: searchText) { await resolveRequestorHits() }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
-                ViewModePill(selection: $viewMode, inbox: appState.ticketInbox)
+                TicketInboxPopoverButton(
+                    inbox: appState.ticketInbox,
+                    isPresented: $showInboxPopover,
+                    onOpen: { startInbox(scanNow: false) },
+                    onRefresh: { startInbox(scanNow: true) },
+                    onSelect: { item in selectedTicketIds = [item.ticketId] }
+                )
+                ViewModePill(selection: $viewMode)
 
                 if viewMode == .board {
                     // A menu-style Picker in the toolbar draws an empty
@@ -943,9 +950,7 @@ struct TicketsView: View {
 
     @ViewBuilder
     private var contentSection: some View {
-        if appState.config.isTdxConfigured && viewMode == .inbox && appState.ticketInbox.isReady {
-            ticketsInboxView
-        } else if !appState.config.isTdxConfigured {
+        if !appState.config.isTdxConfigured {
             VStack {
                 ContentUnavailableView(
                     "Not Configured",
@@ -984,8 +989,6 @@ struct TicketsView: View {
                 ticketsTableView
             case .board:
                 ticketsBoardView
-            case .inbox:
-                ticketsInboxView
             }
         }
     }
@@ -1051,21 +1054,7 @@ struct TicketsView: View {
         }
     }
 
-    // MARK: - Inbox + Detail
-
-    private var ticketsInboxView: some View {
-        DetailSplitView(fraction: $detailFraction, showsDetail: selectedTicket != nil) {
-            TicketInboxView(
-                inbox: appState.ticketInbox,
-                onRefresh: { startInbox(scanNow: true) },
-                onSelect: { item in selectedTicketIds = [item.ticketId] }
-            )
-        } trailing: {
-            detailSidebarView
-                .background(Color(nsColor: .windowBackgroundColor))
-        }
-        .task(id: appState.tdxMe?.uid) { startInbox(scanNow: false) }
-    }
+    // MARK: - Inbox
 
     /// Start the inbox once the signed-in person is known. It keeps
     /// refreshing on its own after that.
@@ -3741,7 +3730,7 @@ struct FeedEntryRow: View {
             // system entries carry no list, and an empty one says nothing.
             if let notified = item.notifiedList?.trimmingCharacters(in: .whitespacesAndNewlines),
                !notified.isEmpty {
-                Text("Notified: \(TicketsView.decodeHtml(notified))")
+                Text("Notified: \(TdxFeedBody.decodeEntities(notified))")
                     .appFont(.caption)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
@@ -3832,35 +3821,54 @@ struct TicketStatusBadge: View {
 
 // MARK: - View Mode Pill Toggle
 
-/// Thin wrapper preserving the existing call site; the control itself now lives
-/// in SegmentedPill so Projects renders an identical one.
-struct ViewModePill: View {
-    @Binding var selection: TicketViewMode
+/// Observing the inbox here keeps badge/scanner updates out of the List and Board.
+struct TicketInboxPopoverButton: View {
     @ObservedObject var inbox: TicketInboxModel
+    @Binding var isPresented: Bool
+    let onOpen: () -> Void
+    let onRefresh: () -> Void
+    let onSelect: (TicketInboxItem) -> Void
 
     var body: some View {
-        HStack(spacing: 6) {
-            // The inbox leads, as a mailbox does in Mail: a mail icon carrying
-            // the unread count as the system's red badge. While it is open,
-            // neither List nor Board shows as selected.
-            if inbox.isReady {
-                InboxBadgeButton(isSelected: selection == .inbox, unreadCount: inbox.unreadCount) {
-                    withAnimation(.smooth(duration: 0.2)) { selection = .inbox }
-                }
+        if inbox.isReady {
+            InboxBadgeButton(isSelected: isPresented, unreadCount: inbox.unreadCount) {
+                isPresented.toggle()
             }
-            SegmentedPill(
-                selection: $selection,
-                options: [.table, .board],
-                label: { mode in
-                    switch mode {
-                    case .table: "List"
-                    case .board: "Board"
-                    case .inbox: "Inbox"
+            .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+                VStack(spacing: 0) {
+                    HStack {
+                        Label("Ticket Inbox", systemImage: "tray").appFont(.headline)
+                        Spacer()
+                        Button { isPresented = false } label: { Image(systemName: "xmark") }
+                            .buttonStyle(.plain)
+                            .keyboardShortcut(.cancelAction)
+                            .accessibilityLabel("Close Inbox")
                     }
-                },
-                segmentWidth: nil
-            )
+                    .padding(14)
+                    Divider()
+                    TicketInboxView(inbox: inbox, onRefresh: onRefresh) { item in
+                        isPresented = false
+                        onSelect(item)
+                    }
+                }
+                .frame(width: 580, height: min(620, (NSScreen.main?.visibleFrame.height ?? 800) * 0.75))
+                .onAppear(perform: onOpen)
+            }
         }
+    }
+}
+
+/// The ticket workspace stays selected while its Inbox is open.
+struct ViewModePill: View {
+    @Binding var selection: TicketViewMode
+
+    var body: some View {
+        SegmentedPill(
+            selection: $selection,
+            options: [.table, .board],
+            label: { mode in mode == .table ? "List" : "Board" },
+            segmentWidth: nil
+        )
     }
 }
 

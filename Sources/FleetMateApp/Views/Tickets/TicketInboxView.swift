@@ -2,7 +2,7 @@ import SwiftUI
 import FleetMateCore
 
 /// Every comment that notified the signed-in person, across all tickets,
-/// newest first. Selecting one opens its ticket beside the list.
+/// newest first. Its host opens the selected ticket and dismisses the popover.
 struct TicketInboxView: View {
     @ObservedObject var inbox: TicketInboxModel
     let onRefresh: () -> Void

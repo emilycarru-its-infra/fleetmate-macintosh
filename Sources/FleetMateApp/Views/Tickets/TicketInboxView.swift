@@ -5,6 +5,7 @@ import FleetMateCore
 /// newest first. Its host opens the selected ticket and dismisses the popover.
 struct TicketInboxView: View {
     @ObservedObject var inbox: TicketInboxModel
+    var requiresSignIn = false
     let onRefresh: () -> Void
     let onSelect: (TicketInboxItem) -> Void
 
@@ -22,10 +23,11 @@ struct TicketInboxView: View {
             header
             Divider()
             if inbox.inbox == nil {
-                ContentUnavailableView(
-                    "Inbox unavailable",
-                    systemImage: "tray",
-                    description: Text("Your TeamDynamix person record hasn't been found yet.")
+                emptyState(
+                    requiresSignIn ? "Sign in to see your Inbox" : "Inbox unavailable",
+                    message: requiresSignIn
+                        ? "Your ticket session has expired. Reconnect to load comments that notify you."
+                        : "Your TeamDynamix person record hasn't been found yet."
                 )
             } else if items.isEmpty {
                 if inbox.isScanning {
@@ -36,10 +38,9 @@ struct TicketInboxView: View {
                     }
                     .frame(maxWidth: .infinity)
                 } else {
-                    ContentUnavailableView(
-                        showUnreadOnly ? "No unread comments" : "No comments",
-                        systemImage: "tray",
-                        description: Text("Comments that notify you in the last \(TicketInbox.windowDays) days appear here.")
+                    emptyState(
+                        showUnreadOnly ? "You're all caught up" : "No comments yet",
+                        message: "Comments that notify you in the last \(TicketInbox.windowDays) days appear here."
                     )
                 }
             } else {
@@ -62,6 +63,23 @@ struct TicketInboxView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func emptyState(_ title: String, message: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "tray")
+                .font(.system(size: 32))
+                .foregroundStyle(.tertiary)
+            Text(title).appFont(.headline)
+            Text(message)
+                .appFont(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 340)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var header: some View {

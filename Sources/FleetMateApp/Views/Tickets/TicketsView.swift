@@ -814,7 +814,7 @@ struct TicketsView: View {
                 resetToCurrentTerm()
             case .showListView:  viewMode = .table
             case .showBoardView: viewMode = .board
-            case .showInbox:     if appState.ticketInbox.isReady { showInboxPopover = true }
+            case .showInbox:     showInboxPopover = true
             case .find:          break  // the toolbar search field takes it
             case .scan, .selectOnline: break
             }
@@ -826,6 +826,7 @@ struct TicketsView: View {
                 TicketInboxPopoverButton(
                     inbox: appState.ticketInbox,
                     isPresented: $showInboxPopover,
+                    requiresSignIn: appState.requiresTdxSsoLogin,
                     onOpen: { startInbox(scanNow: false) },
                     onRefresh: { startInbox(scanNow: true) },
                     onSelect: { item in selectedTicketIds = [item.ticketId] }
@@ -3825,34 +3826,75 @@ struct TicketStatusBadge: View {
 struct TicketInboxPopoverButton: View {
     @ObservedObject var inbox: TicketInboxModel
     @Binding var isPresented: Bool
+    let requiresSignIn: Bool
+    @State private var hostWindow: NSWindow?
+    @State private var popoverHeight: CGFloat = 620
     let onOpen: () -> Void
     let onRefresh: () -> Void
     let onSelect: (TicketInboxItem) -> Void
 
     var body: some View {
-        if inbox.isReady {
-            InboxBadgeButton(isSelected: isPresented, unreadCount: inbox.unreadCount) {
-                isPresented.toggle()
-            }
-            .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-                VStack(spacing: 0) {
-                    HStack {
-                        Label("Ticket Inbox", systemImage: "tray").appFont(.headline)
-                        Spacer()
-                        Button { isPresented = false } label: { Image(systemName: "xmark") }
-                            .buttonStyle(.plain)
-                            .keyboardShortcut(.cancelAction)
-                            .accessibilityLabel("Close Inbox")
-                    }
-                    .padding(14)
-                    Divider()
-                    TicketInboxView(inbox: inbox, onRefresh: onRefresh) { item in
-                        isPresented = false
-                        onSelect(item)
-                    }
+        InboxBadgeButton(isSelected: isPresented, unreadCount: inbox.unreadCount) {
+            fitToWindow(hostWindow)
+            isPresented.toggle()
+        }
+        .background(TicketInboxWindowAnchor { window in fitToWindow(window) })
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            VStack(spacing: 0) {
+                HStack {
+                    Label("Ticket Inbox", systemImage: "tray").appFont(.headline)
+                    Spacer()
+                    Button { isPresented = false } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.plain)
+                        .keyboardShortcut(.cancelAction)
+                        .accessibilityLabel("Close Inbox")
                 }
-                .frame(width: 580, height: min(620, (NSScreen.main?.visibleFrame.height ?? 800) * 0.75))
-                .onAppear(perform: onOpen)
+                .padding(14)
+                Divider()
+                TicketInboxView(inbox: inbox, requiresSignIn: requiresSignIn, onRefresh: onRefresh) { item in
+                    isPresented = false
+                    onSelect(item)
+                }
+            }
+            .frame(width: 580, height: popoverHeight, alignment: .top)
+            .onAppear {
+                fitToWindow(hostWindow)
+                onOpen()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { note in
+                guard let window = note.object as? NSWindow, window === hostWindow else { return }
+                fitToWindow(window)
+            }
+        }
+    }
+
+    private func fitToWindow(_ window: NSWindow?) {
+        guard let window else { return }
+        hostWindow = window
+        popoverHeight = max(240, window.contentLayoutRect.height - 12)
+    }
+}
+
+/// Read the actual toolbar host even when the app has no active main window.
+private struct TicketInboxWindowAnchor: NSViewRepresentable {
+    let onWindow: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> AnchorView {
+        let view = AnchorView()
+        view.onWindow = onWindow
+        return view
+    }
+
+    func updateNSView(_ view: AnchorView, context: Context) { view.onWindow = onWindow }
+
+    final class AnchorView: NSView {
+        var onWindow: ((NSWindow) -> Void)?
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            Task { @MainActor [weak self, weak window] in
+                guard let self, let window else { return }
+                self.onWindow?(window)
             }
         }
     }

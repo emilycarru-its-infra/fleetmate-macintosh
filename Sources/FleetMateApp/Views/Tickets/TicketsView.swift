@@ -3827,7 +3827,7 @@ struct TicketInboxPopoverButton: View {
     @ObservedObject var inbox: TicketInboxModel
     @Binding var isPresented: Bool
     let requiresSignIn: Bool
-    @State private var hostWindow: NSWindow?
+    @State private var hostWindow = TicketInboxWindowReference()
     @State private var popoverHeight: CGFloat = 620
     let onOpen: () -> Void
     let onRefresh: () -> Void
@@ -3835,7 +3835,7 @@ struct TicketInboxPopoverButton: View {
 
     var body: some View {
         InboxBadgeButton(isSelected: isPresented, unreadCount: inbox.unreadCount) {
-            fitToWindow(hostWindow)
+            fitToWindow(hostWindow.window)
             isPresented.toggle()
         }
         .background(TicketInboxWindowAnchor { window in fitToWindow(window) })
@@ -3858,11 +3858,11 @@ struct TicketInboxPopoverButton: View {
             }
             .frame(width: 580, height: popoverHeight, alignment: .top)
             .onAppear {
-                fitToWindow(hostWindow)
+                fitToWindow(hostWindow.window)
                 onOpen()
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { note in
-                guard let window = note.object as? NSWindow, window === hostWindow else { return }
+                guard let window = note.object as? NSWindow, window === hostWindow.window else { return }
                 fitToWindow(window)
             }
         }
@@ -3870,9 +3870,14 @@ struct TicketInboxPopoverButton: View {
 
     private func fitToWindow(_ window: NSWindow?) {
         guard let window else { return }
-        hostWindow = window
+        hostWindow.window = window
         popoverHeight = max(240, window.contentLayoutRect.height - 12)
     }
+}
+
+@MainActor
+private final class TicketInboxWindowReference {
+    weak var window: NSWindow?
 }
 
 /// Read the actual toolbar host even when the app has no active main window.

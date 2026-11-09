@@ -37,19 +37,32 @@ public struct TeamsBookmark: Codable, Sendable, Equatable, Identifiable {
 public enum TeamsBookmarkScope {
     /// This is storage partitioning, never token validation or an authorization decision.
     public static func key(endpoint: String, token: String) -> String? {
-        let parts = token.split(separator: ".", omittingEmptySubsequences: false)
-        guard parts.count == 3 else { return nil }
-        var encoded = String(parts[1]).replacingOccurrences(of: "-", with: "+")
-            .replacingOccurrences(of: "_", with: "/")
-        encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
-        guard let data = Data(base64Encoded: encoded),
-              let claims = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let claims = claims(token),
               let tenant = claims["tid"] as? String, !tenant.isEmpty,
               let person = claims["oid"] as? String, !person.isEmpty else { return nil }
         var endpoint = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         while endpoint.hasSuffix("/") { endpoint.removeLast() }
         let value = endpoint + "\n" + tenant.lowercased() + "\n" + person.lowercased()
         return SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// A local consistency check only; the server still verifies and authorizes the token.
+    public static func matches(_ account: CliAccount, token: String) -> Bool {
+        guard !account.isServicePrincipal, let claims = claims(token),
+              let tenant = claims["tid"] as? String,
+              let expectedTenant = account.tenantId, tenant.lowercased() == expectedTenant.lowercased() else { return false }
+        let names = ["preferred_username", "upn", "unique_name"].compactMap { claims[$0] as? String }
+        return names.contains { $0.caseInsensitiveCompare(account.user) == .orderedSame }
+    }
+
+    private static func claims(_ token: String) -> [String: Any]? {
+        let parts = token.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 3 else { return nil }
+        var encoded = String(parts[1]).replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        encoded += String(repeating: "=", count: (4 - encoded.count % 4) % 4)
+        guard let data = Data(base64Encoded: encoded) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 }
 

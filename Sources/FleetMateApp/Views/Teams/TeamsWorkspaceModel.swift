@@ -45,9 +45,9 @@ final class TeamsWorkspaceModel: ObservableObject {
     private var defaultsRestored = false
     private var browseMode = false
 
-    init(config: FleetMateConfig) {
+    init(config: FleetMateConfig, account: CliAccount?) {
         self.config = config
-        service = TeamsSearchService(config: config)
+        service = TeamsSearchService(config: config, expectedAccount: account)
         author = UserDefaults.standard.string(forKey: "teams.author") ?? ""
         period = UserDefaults.standard.string(forKey: "teams.period") ?? TeamsPeriod.anyTime.rawValue
     }
@@ -344,7 +344,8 @@ final class TeamsWorkspaceModel: ObservableObject {
     private func clearUnauthorized(_ error: Error) {
         guard let problem = error as? TeamsSearchError,
               problem == .unauthorized || problem == .forbidden || problem == .purposeNotGranted
-                || problem == .indexNotReady || problem == .membershipUnavailable || problem == .notFound else { return }
+                || problem == .indexNotReady || problem == .membershipUnavailable || problem == .notFound
+                || problem == .accountChanged else { return }
         channels = []
         hits = []
         total = 0

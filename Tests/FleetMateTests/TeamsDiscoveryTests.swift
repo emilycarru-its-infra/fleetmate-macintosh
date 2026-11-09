@@ -15,6 +15,27 @@ final class TeamsDiscoveryTests: XCTestCase {
         return "header.\(encoded).signature"
     }
 
+    func testAccountSwitchCannotReadOldWorkspaceOrBookmarkState() async throws {
+        let claims = try JSONSerialization.data(withJSONObject: ["oid": "person-a", "tid": "tenant-a", "preferred_username": "reader@example.test"])
+        let apiToken = "header." + claims.base64EncodedString() + ".signature"
+        let account = CliAccount(user: "reader@example.test", tenantId: "tenant-a")
+        XCTAssertTrue(TeamsBookmarkScope.matches(account, token: apiToken))
+        let changed = [CliAccount(user: "other@example.test", tenantId: "tenant-a"),
+                       CliAccount(user: account.user, tenantId: "tenant-b")]
+        for account in changed {
+            StubURLProtocol.reset(stubs: [])
+            let cfg = URLSessionConfiguration.ephemeral
+            cfg.protocolClasses = [StubURLProtocol.self]
+            let service = TeamsSearchService(baseUrl: "https://search.example.org", scope: "api://example/.default",
+                                             sessionConfiguration: cfg, tokenProvider: { _, _ in apiToken }, expectedAccount: account)
+            do { _ = try await service.channels(); XCTFail("Account mismatch must refuse the read") }
+            catch { XCTAssertEqual(error as? TeamsSearchError, .accountChanged) }
+            do { _ = try await service.bookmarkAccountKey(); XCTFail("Account mismatch must refuse saved state") }
+            catch { XCTAssertEqual(error as? TeamsSearchError, .accountChanged) }
+            XCTAssertTrue(StubURLProtocol.recorded.isEmpty)
+        }
+    }
+
     func testBrowseUsesScopedPagingWithoutAQuery() throws {
         let service = TeamsSearchService(baseUrl: "https://search.example.org", scope: "api://example/.default")
         let url = try service.browseURL(channel: "19:example@thread", author: "Example", since: "2026-11-01", limit: 30, offset: 60)

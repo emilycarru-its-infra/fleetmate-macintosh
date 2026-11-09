@@ -126,6 +126,7 @@ public enum TeamsSearchError: Error, Equatable, CustomStringConvertible, Localiz
     /// 503 — the search index has not been built yet.
     case indexNotReady
     case membershipUnavailable
+    case accountChanged
     case http(Int, String)
     case invalidResponse(String)
 
@@ -143,6 +144,8 @@ public enum TeamsSearchError: Error, Equatable, CustomStringConvertible, Localiz
             return "The Teams search API does not grant the configured purpose. Check teams_api_purpose."
         case .notFound:
             return "No such Teams thread or channel in the search index."
+        case .accountChanged:
+            return "Your Azure sign-in changed. Refresh authentication before opening Teams."
         case .membershipUnavailable:
             return "Your Teams channel access could not be verified. Reload channels to try again."
         case .indexNotReady:
@@ -174,6 +177,7 @@ public final class TeamsSearchService: Sendable {
     private let purpose: String
     private let session: URLSession
     private let tokenProvider: TokenProvider
+    private let expectedAccount: CliAccount?
 
     public var isConfigured: Bool { !baseUrl.isEmpty && !scope.isEmpty }
 
@@ -183,24 +187,27 @@ public final class TeamsSearchService: Sendable {
 
     public init(baseUrl: String?, scope: String?, purpose: String? = nil,
                 sessionConfiguration: URLSessionConfiguration? = nil,
-                tokenProvider: TokenProvider? = nil) {
+                tokenProvider: TokenProvider? = nil, expectedAccount: CliAccount? = nil) {
         var base = (baseUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         while base.hasSuffix("/") { base.removeLast() }
         self.baseUrl = base
         self.scope = (scope ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        self.expectedAccount = expectedAccount
         let p = (purpose ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         self.purpose = p.isEmpty ? Self.defaultPurpose : p
         let configuration = sessionConfiguration ?? URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 60
         self.session = URLSession(configuration: configuration, delegate: TeamsNoRedirectDelegate(), delegateQueue: nil)
+        let tokens = AzTokenSource()
         self.tokenProvider = tokenProvider ?? { scope, refresh in
-            if refresh { await AzTokenSource.shared.invalidate() }
-            return try await AzTokenSource.shared.token(forScope: scope)
+            if refresh { await tokens.invalidate() }
+            return try await tokens.token(forScope: scope)
         }
     }
 
-    public convenience init(config: FleetMateConfig) {
-        self.init(baseUrl: config.teamsApiUrl, scope: config.teamsApiScope, purpose: config.teamsApiPurpose)
+    public convenience init(config: FleetMateConfig, expectedAccount: CliAccount? = nil) {
+        self.init(baseUrl: config.teamsApiUrl, scope: config.teamsApiScope, purpose: config.teamsApiPurpose,
+                  expectedAccount: expectedAccount)
     }
 
     // MARK: Requests
@@ -237,6 +244,7 @@ public final class TeamsSearchService: Sendable {
     public func bookmarkAccountKey() async throws -> String {
         guard isConfigured else { throw TeamsSearchError.notConfigured }
         let token = try await tokenProvider(scope, false)
+        try checkAccount(token)
         guard let key = TeamsBookmarkScope.key(endpoint: baseUrl, token: token) else {
             throw TeamsSearchError.invalidArgument("Saved threads need an identifiable signed-in account.")
         }
@@ -367,6 +375,7 @@ public final class TeamsSearchService: Sendable {
 
     private func send(_ url: URL, refresh: Bool, body: Data? = nil) async throws -> (Data, Int) {
         let token = try await tokenProvider(scope, refresh)
+        try checkAccount(token)
         let membershipToken = try await tokenProvider("https://graph.microsoft.com/.default", refresh)
         var request = URLRequest(url: url)
         request.httpMethod = body == nil ? "GET" : "POST"
@@ -385,6 +394,12 @@ public final class TeamsSearchService: Sendable {
             throw TeamsSearchError.membershipUnavailable
         }
         return (data, http.statusCode)
+    }
+
+    private func checkAccount(_ token: String) throws {
+        if let expectedAccount, !TeamsBookmarkScope.matches(expectedAccount, token: token) {
+            throw TeamsSearchError.accountChanged
+        }
     }
 
     static let decoder: JSONDecoder = {

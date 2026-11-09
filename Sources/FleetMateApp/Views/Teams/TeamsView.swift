@@ -6,9 +6,11 @@ struct TeamsView: View {
     @EnvironmentObject var appState: AppState
 
     var body: some View {
-        TeamsWorkspace(config: appState.config)
+        TeamsWorkspace(config: appState.config, account: appState.authManager.azAccount)
             .id((appState.config.teamsApiUrl ?? "") + "|" + (appState.config.teamsApiScope ?? "")
-                + "|" + (appState.authManager.azAccount?.user ?? ""))
+                + "|" + (appState.authManager.azAccount?.user ?? "")
+                + "|" + (appState.authManager.azAccount?.tenantId ?? "")
+                + "|" + (appState.authManager.azAccount?.type ?? ""))
     }
 }
 
@@ -17,8 +19,8 @@ private struct TeamsWorkspace: View {
     @State private var saveDraft: TeamsSaveDraft?
     @AppStorage("teams.detailFraction") private var detailFraction = 0.5
 
-    init(config: FleetMateConfig) {
-        _model = StateObject(wrappedValue: TeamsWorkspaceModel(config: config))
+    init(config: FleetMateConfig, account: CliAccount?) {
+        _model = StateObject(wrappedValue: TeamsWorkspaceModel(config: config, account: account))
     }
 
     var body: some View {

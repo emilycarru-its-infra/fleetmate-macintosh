@@ -178,6 +178,7 @@ public final class TeamsSearchService: Sendable {
     private let session: URLSession
     private let tokenProvider: TokenProvider
     private let expectedAccount: CliAccount?
+    private let accountIdentity = TeamsAccountIdentity()
 
     public var isConfigured: Bool { !baseUrl.isEmpty && !scope.isEmpty }
 
@@ -244,7 +245,7 @@ public final class TeamsSearchService: Sendable {
     public func bookmarkAccountKey() async throws -> String {
         guard isConfigured else { throw TeamsSearchError.notConfigured }
         let token = try await tokenProvider(scope, false)
-        try checkAccount(token)
+        try await checkAccount(token)
         guard let key = TeamsBookmarkScope.key(endpoint: baseUrl, token: token) else {
             throw TeamsSearchError.invalidArgument("Saved threads need an identifiable signed-in account.")
         }
@@ -375,7 +376,7 @@ public final class TeamsSearchService: Sendable {
 
     private func send(_ url: URL, refresh: Bool, body: Data? = nil) async throws -> (Data, Int) {
         let token = try await tokenProvider(scope, refresh)
-        try checkAccount(token)
+        try await checkAccount(token)
         let membershipToken = try await tokenProvider("https://graph.microsoft.com/.default", refresh)
         var request = URLRequest(url: url)
         request.httpMethod = body == nil ? "GET" : "POST"
@@ -396,10 +397,13 @@ public final class TeamsSearchService: Sendable {
         return (data, http.statusCode)
     }
 
-    private func checkAccount(_ token: String) throws {
-        if let expectedAccount, !TeamsBookmarkScope.matches(expectedAccount, token: token) {
+    private func checkAccount(_ token: String) async throws {
+        guard let expectedAccount else { return }
+        guard TeamsBookmarkScope.matches(expectedAccount, token: token),
+              let identity = TeamsBookmarkScope.key(endpoint: baseUrl, token: token) else {
             throw TeamsSearchError.accountChanged
         }
+        try await accountIdentity.bind(identity)
     }
 
     static let decoder: JSONDecoder = {
@@ -477,5 +481,14 @@ private final class TeamsNoRedirectDelegate: NSObject, URLSessionTaskDelegate, S
                     willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
                     completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
         completionHandler(nil)
+    }
+}
+
+private actor TeamsAccountIdentity {
+    private var identity: String?
+
+    func bind(_ value: String) throws {
+        if let identity, identity != value { throw TeamsSearchError.accountChanged }
+        identity = value
     }
 }

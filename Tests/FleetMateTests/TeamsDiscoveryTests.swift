@@ -36,6 +36,20 @@ final class TeamsDiscoveryTests: XCTestCase {
         }
     }
 
+    func testReusedAccountNameCannotInheritAnotherObjectSavedState() async throws {
+        func jwt(_ object: String) throws -> String {
+            let data = try JSONSerialization.data(withJSONObject: ["oid": object, "tid": "tenant-a", "preferred_username": "reader@example.test"])
+            return "header." + data.base64EncodedString() + ".signature"
+        }
+        let tokens = TeamsTestTokenSequence([try jwt("person-a"), try jwt("person-b")])
+        let service = TeamsSearchService(baseUrl: "https://search.example.org", scope: "api://example/.default",
+                                         tokenProvider: { _, _ in await tokens.next() },
+                                         expectedAccount: CliAccount(user: "reader@example.test", tenantId: "tenant-a"))
+        _ = try await service.bookmarkAccountKey()
+        do { _ = try await service.bookmarkAccountKey(); XCTFail("A different object must start a fresh workspace") }
+        catch { XCTAssertEqual(error as? TeamsSearchError, .accountChanged) }
+    }
+
     func testBrowseUsesScopedPagingWithoutAQuery() throws {
         let service = TeamsSearchService(baseUrl: "https://search.example.org", scope: "api://example/.default")
         let url = try service.browseURL(channel: "19:example@thread", author: "Example", since: "2026-11-01", limit: 30, offset: 60)
@@ -167,4 +181,10 @@ final class TeamsDiscoveryTests: XCTestCase {
         XCTAssertEqual(StubURLProtocol.recorded.last?.headers["Authorization"], "Bearer new-token")
     }
 
+}
+
+private actor TeamsTestTokenSequence {
+    private var values: [String]
+    init(_ values: [String]) { self.values = values }
+    func next() -> String { values.removeFirst() }
 }

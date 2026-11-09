@@ -27,6 +27,14 @@ public struct TeamsSearchResponse: Codable, Sendable, Equatable {
     public var results: [TeamsSearchHit]
 }
 
+public struct TeamsBrowseResponse: Codable, Sendable, Equatable {
+    public var asOf: String?
+    public var indexVersion: String
+    public var total: Int
+    public var results: [TeamsSearchHit]
+    public var nextOffset: Int?
+}
+
 public struct TeamsAttachment: Codable, Sendable, Equatable {
     public var name: String
     public var url: String?
@@ -117,6 +125,8 @@ public enum TeamsSearchError: Error, Equatable, CustomStringConvertible, Localiz
     case notFound
     /// 503 — the search index has not been built yet.
     case indexNotReady
+    case membershipUnavailable
+    case accountChanged
     case http(Int, String)
     case invalidResponse(String)
 
@@ -134,6 +144,10 @@ public enum TeamsSearchError: Error, Equatable, CustomStringConvertible, Localiz
             return "The Teams search API does not grant the configured purpose. Check teams_api_purpose."
         case .notFound:
             return "No such Teams thread or channel in the search index."
+        case .accountChanged:
+            return "Your Azure sign-in changed. Refresh authentication before opening Teams."
+        case .membershipUnavailable:
+            return "Your Teams channel access could not be verified. Reload channels to try again."
         case .indexNotReady:
             return "The Teams search index is not ready yet. Try again later."
         case .http(let status, let detail):
@@ -163,6 +177,8 @@ public final class TeamsSearchService: Sendable {
     private let purpose: String
     private let session: URLSession
     private let tokenProvider: TokenProvider
+    private let expectedAccount: CliAccount?
+    private let accountIdentity = TeamsAccountIdentity()
 
     public var isConfigured: Bool { !baseUrl.isEmpty && !scope.isEmpty }
 
@@ -172,30 +188,94 @@ public final class TeamsSearchService: Sendable {
 
     public init(baseUrl: String?, scope: String?, purpose: String? = nil,
                 sessionConfiguration: URLSessionConfiguration? = nil,
-                tokenProvider: TokenProvider? = nil) {
+                tokenProvider: TokenProvider? = nil, expectedAccount: CliAccount? = nil) {
         var base = (baseUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         while base.hasSuffix("/") { base.removeLast() }
         self.baseUrl = base
         self.scope = (scope ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        self.expectedAccount = expectedAccount
         let p = (purpose ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         self.purpose = p.isEmpty ? Self.defaultPurpose : p
         let configuration = sessionConfiguration ?? URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 60
-        self.session = URLSession(configuration: configuration)
+        self.session = URLSession(configuration: configuration, delegate: TeamsNoRedirectDelegate(), delegateQueue: nil)
+        let tokens = AzTokenSource()
         self.tokenProvider = tokenProvider ?? { scope, refresh in
-            if refresh { await AzTokenSource.shared.invalidate() }
-            return try await AzTokenSource.shared.token(forScope: scope)
+            if refresh { await tokens.invalidate() }
+            return try await tokens.token(forScope: scope)
         }
     }
 
-    public convenience init(config: FleetMateConfig) {
-        self.init(baseUrl: config.teamsApiUrl, scope: config.teamsApiScope, purpose: config.teamsApiPurpose)
+    public convenience init(config: FleetMateConfig, expectedAccount: CliAccount? = nil) {
+        self.init(baseUrl: config.teamsApiUrl, scope: config.teamsApiScope, purpose: config.teamsApiPurpose,
+                  expectedAccount: expectedAccount)
     }
 
     // MARK: Requests
 
     public func search(_ query: TeamsSearchQuery) async throws -> TeamsPayload<TeamsSearchResponse> {
         try await get(searchURL(query))
+    }
+
+    public func browse(team: String? = nil, channel: String? = nil, author: String? = nil,
+                       since: String? = nil, until: String? = nil, limit: Int = 20,
+                       offset: Int = 0) async throws -> TeamsPayload<TeamsBrowseResponse> {
+        try await get(browseURL(team: team, channel: channel, author: author,
+                                since: since, until: until, limit: limit, offset: offset))
+    }
+
+    public func followedFeed(channels: [String], query: String? = nil, author: String? = nil,
+                             since: String? = nil, until: String? = nil, limit: Int = 20,
+                             offset: Int = 0) async throws -> TeamsPayload<TeamsBrowseResponse> {
+        guard (1...500).contains(channels.count), channels.allSatisfy({
+            let id = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !id.isEmpty && id.count <= 500
+        }) else { throw TeamsSearchError.invalidArgument("Choose between 1 and 500 channels to follow.") }
+        _ = try browseURL(channel: channels[0], since: since, until: until, limit: limit, offset: offset)
+        let text = query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard text.count <= 500 else { throw TeamsSearchError.invalidArgument("Search text must be at most 500 characters.") }
+        var body: [String: Any] = ["channels": Array(Set(channels)).sorted(), "limit": limit, "offset": offset]
+        for (key, value) in [("q", text), ("author", author ?? ""), ("since", since ?? ""), ("until", until ?? "")] {
+            if !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { body[key] = value }
+        }
+        return try await get(url("/v1/teams/feed", query: []), body: JSONSerialization.data(withJSONObject: body))
+    }
+
+    /// Claims select a private local bookmark file; the API still authorizes every content read.
+    public func bookmarkAccountKey() async throws -> String {
+        guard isConfigured else { throw TeamsSearchError.notConfigured }
+        let token = try await tokenProvider(scope, false)
+        try await checkAccount(token)
+        guard let key = TeamsBookmarkScope.key(endpoint: baseUrl, token: token) else {
+            throw TeamsSearchError.invalidArgument("Saved threads need an identifiable signed-in account.")
+        }
+        return key
+    }
+
+    public func browseURL(team: String? = nil, channel: String? = nil, author: String? = nil,
+                          since: String? = nil, until: String? = nil, limit: Int = 20,
+                          offset: Int = 0) throws -> URL {
+        let team = team?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let channel = channel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !team.isEmpty || !channel.isEmpty else {
+            throw TeamsSearchError.invalidArgument("Choose a team or channel to browse.")
+        }
+        guard (1...100).contains(limit), (0...2_147_483_647).contains(offset) else {
+            throw TeamsSearchError.invalidArgument("Invalid browse page size or offset.")
+        }
+        for date in [since, until].compactMap({ $0 }) where !Self.isDay(date) {
+            throw TeamsSearchError.invalidArgument("Browse dates must use YYYY-MM-DD.")
+        }
+        if let since, let until, since > until {
+            throw TeamsSearchError.invalidArgument("The start date must precede the end date.")
+        }
+        var items: [(String, String)] = []
+        for (key, value) in [("team", team), ("channel", channel), ("author", author ?? ""),
+                             ("since", since ?? ""), ("until", until ?? "")] {
+            if !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { items.append((key, value)) }
+        }
+        items += [("limit", String(limit)), ("offset", String(offset))]
+        return try url("/v1/teams/threads", query: items)
     }
 
     public func thread(id: String, channel: String) async throws -> TeamsPayload<TeamsThread> {
@@ -250,8 +330,8 @@ public final class TeamsSearchService: Sendable {
         if !query.isEmpty {
             string += "?" + query.map { "\(Self.encode($0.0))=\(Self.encode($0.1))" }.joined(separator: "&")
         }
-        guard let url = URL(string: string), let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else {
-            throw TeamsSearchError.invalidArgument("teams_api_url is not a valid http(s) URL.")
+        guard let url = URL(string: string), let scheme = url.scheme?.lowercased(), scheme == "https", url.host != nil, url.user == nil, url.password == nil else {
+            throw TeamsSearchError.invalidArgument("teams_api_url must be an HTTPS URL without embedded credentials.")
         }
         return url
     }
@@ -274,10 +354,10 @@ public final class TeamsSearchService: Sendable {
 
     // MARK: Transport
 
-    private func get<Value: Decodable & Sendable>(_ url: URL) async throws -> TeamsPayload<Value> {
-        var (data, status) = try await send(url, refresh: false)
+    private func get<Value: Decodable & Sendable>(_ url: URL, body: Data? = nil) async throws -> TeamsPayload<Value> {
+        var (data, status) = try await send(url, refresh: false, body: body)
         if status == 401 {
-            (data, status) = try await send(url, refresh: true)
+            (data, status) = try await send(url, refresh: true, body: body)
         }
         switch status {
         case 200..<300:
@@ -289,23 +369,41 @@ public final class TeamsSearchService: Sendable {
         case 401: throw TeamsSearchError.unauthorized
         case 403: throw Self.detail(from: data).contains("purpose_not_granted") ? TeamsSearchError.purposeNotGranted : TeamsSearchError.forbidden
         case 404: throw TeamsSearchError.notFound
-        case 503: throw TeamsSearchError.indexNotReady
+        case 503: throw Self.detail(from: data).contains("teams_membership") ? TeamsSearchError.membershipUnavailable : TeamsSearchError.indexNotReady
         default: throw TeamsSearchError.http(status, Self.detail(from: data))
         }
     }
 
-    private func send(_ url: URL, refresh: Bool) async throws -> (Data, Int) {
+    private func send(_ url: URL, refresh: Bool, body: Data? = nil) async throws -> (Data, Int) {
         let token = try await tokenProvider(scope, refresh)
+        try await checkAccount(token)
+        let membershipToken = try await tokenProvider("https://graph.microsoft.com/.default", refresh)
         var request = URLRequest(url: url)
-        request.httpMethod = "GET"
+        request.httpMethod = body == nil ? "GET" : "POST"
+        request.httpBody = body
+        if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(purpose, forHTTPHeaderField: Self.purposeHeader)
+        request.setValue(membershipToken, forHTTPHeaderField: "X-Vantage-Teams-Token")
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw TeamsSearchError.invalidResponse("not an HTTP response")
         }
+        if (200..<300).contains(http.statusCode),
+           http.value(forHTTPHeaderField: "X-Vantage-Teams-Access") != "membership-v1" {
+            throw TeamsSearchError.membershipUnavailable
+        }
         return (data, http.statusCode)
+    }
+
+    private func checkAccount(_ token: String) async throws {
+        guard let expectedAccount else { return }
+        guard TeamsBookmarkScope.matches(expectedAccount, token: token),
+              let identity = TeamsBookmarkScope.key(endpoint: baseUrl, token: token) else {
+            throw TeamsSearchError.accountChanged
+        }
+        try await accountIdentity.bind(identity)
     }
 
     static let decoder: JSONDecoder = {
@@ -374,5 +472,23 @@ public enum TeamsText {
         f.timeZone = timeZone
         f.dateFormat = "yyyy-MM-dd HH:mm"
         return f.string(from: date)
+    }
+}
+
+/// Authenticated Teams reads never forward either credential through redirects.
+private final class TeamsNoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+                    completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+private actor TeamsAccountIdentity {
+    private var identity: String?
+
+    func bind(_ value: String) throws {
+        if let identity, identity != value { throw TeamsSearchError.accountChanged }
+        identity = value
     }
 }

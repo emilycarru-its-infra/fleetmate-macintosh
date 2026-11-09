@@ -1,631 +1,228 @@
-import SwiftUI
 import AppKit
-import UniformTypeIdentifiers
 import FleetMateCore
+import SwiftUI
 
-/// Teams channel search: find a thread by what was said in it, read the whole
-/// thread, and jump to it in Teams.
-///
-/// The toolbar search field (⌘F) runs the search; results are threads, not
-/// single messages. The thread opens beside the list. Every result can be
-/// opened in Teams, its link copied, or dragged out as a URL, and the thread's
-/// text can be selected and copied like any other text. Message text is
-/// people's own words: it is shown as data and never interpreted.
 struct TeamsView: View {
     @EnvironmentObject var appState: AppState
 
-    @State private var query = ""
-    @State private var results: [TeamsSearchHit] = []
-    @State private var total = 0
-    @State private var asOf: String?
-    @State private var channels: [TeamsChannel] = []
-    @State private var selection: String?
-    @State private var thread: TeamsThread?
-    @State private var threadError: String?
-    @State private var isSearching = false
-    @State private var isLoadingThread = false
-    @State private var searchError: String?
-    @State private var hasSearched = false
-    @State private var isLoadingChannels = false
-    @State private var channelError: String?
-    @State private var searchTask: Task<Void, Never>?
-    @State private var searchGeneration = UUID()
-    @AppStorage("teams.teamFilter") private var teamFilter = ""
-    @AppStorage("teams.defaultsApplied") private var defaultsApplied = false
+    var body: some View {
+        TeamsWorkspace(config: appState.config, account: appState.authManager.azAccount)
+            .id((appState.config.teamsApiUrl ?? "") + "|" + (appState.config.teamsApiScope ?? "")
+                + "|" + (appState.authManager.azAccount?.user ?? "")
+                + "|" + (appState.authManager.azAccount?.tenantId ?? "")
+                + "|" + (appState.authManager.azAccount?.type ?? ""))
+    }
+}
 
-    @AppStorage("teams.channelFilter") private var channelFilter = ""
-    @AppStorage("teams.period") private var period = TeamsPeriod.anyTime.rawValue
-    @AppStorage("teams.author") private var author = ""
+private struct TeamsWorkspace: View {
+    @StateObject private var model: TeamsWorkspaceModel
+    @State private var saveDraft: TeamsSaveDraft?
     @AppStorage("teams.detailFraction") private var detailFraction = 0.5
 
-    private var service: TeamsSearchService { TeamsSearchService(config: appState.config) }
-    private var linkHosts: [String] { TeamsLinkPolicy.hosts(extra: appState.config.teamsLinkHosts) }
-
-    private var selectedHit: TeamsSearchHit? {
-        results.first { $0.key == selection }
+    init(config: FleetMateConfig, account: CliAccount?) {
+        _model = StateObject(wrappedValue: TeamsWorkspaceModel(config: config, account: account))
     }
 
     var body: some View {
         HSplitView {
-            channelSidebar
-                .frame(minWidth: 180, idealWidth: 240, maxWidth: 340)
+            TeamsChannelSidebar(model: model)
+                .frame(minWidth: 190, idealWidth: 250, maxWidth: 360)
             VStack(spacing: 0) {
-                filterBar
-                    .fixedSize(horizontal: false, vertical: true)
+                filters.fixedSize(horizontal: false, vertical: true)
                 Divider()
-                content
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                GeometryReader { geometry in
+                    if geometry.size.width < 820, model.selectedHit != nil {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Button("Back to Results", systemImage: "chevron.left", action: model.closeThread)
+                                .padding(10)
+                            reader
+                        }
+                    } else {
+                        DetailSplitView(fraction: $detailFraction, showsDetail: model.selectedHit != nil,
+                                        minLeading: 340, minTrailing: 400) {
+                            feed
+                        } trailing: { reader }
+                    }
+                }
             }
-            .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: 300, maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .tabSearch(text: $query, prompt: "Search Teams channels", onSubmit: runSearch)
-        .task { await loadChannels() }
-        .onChange(of: selection) { _, _ in loadThread() }
-        .onChange(of: channelFilter) { _, _ in if hasSearched { runSearch() } }
-        .onChange(of: teamFilter) { _, _ in if hasSearched { runSearch() } }
-        .onDisappear { searchTask?.cancel() }
-        .onChange(of: period) { _, _ in if hasSearched { runSearch() } }
-        .onCopyCommand { copyItems() }
+        .tabSearch(text: $model.query, prompt: model.isSaved ? "Filter saved threads" : "Search Teams channels",
+                   onSubmit: { model.reload() })
+        .task { await model.start() }
+        .onDisappear(perform: model.stop)
+        .onChange(of: model.scope) { _, _ in model.scopeChanged() }
+        .onChange(of: model.period) { _, _ in model.reload() }
+        .onChange(of: model.query) { old, new in
+            if !old.isEmpty && new.isEmpty { model.reload() }
+        }
+        .sheet(item: $saveDraft) { draft in
+            TeamsSaveSheet(draft: draft, collections: model.collections) { title, collection in
+                try model.save(draft.hit, title: title, collection: collection)
+            }
+        }
     }
 
-    // MARK: Filters
-
-    private var filterBar: some View {
+    private var filters: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(scopeTitle).font(.headline).lineLimit(1)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) {
-                    periodPicker
-                    authorField.frame(width: 160)
-                    searchButton
+            HStack(alignment: .firstTextBaseline) {
+                Text(TeamsText.line(model.title)).font(.headline).lineLimit(1)
+                if let channel = model.currentChannel {
+                    Button(model.followedChannelIDs.contains(channel.channelId) ? "Following" : "Follow",
+                           systemImage: model.followedChannelIDs.contains(channel.channelId) ? "star.fill" : "star") {
+                        model.toggleFollowing(channel)
+                    }
+                    .controlSize(.small)
+                    .disabled(!model.canSave)
+                    .help(model.followedChannelIDs.contains(channel.channelId) ? "Unfollow this channel" : "Add this channel to Following")
                 }
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack { periodPicker; searchButton }
-                    authorField
+                Spacer(minLength: 6)
+                if model.isLoadingFeed { ProgressView().controlSize(.small) }
+                Button { model.reload() } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise").labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+                .help("Refresh this view")
+            }
+            if !model.isSaved {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) { periodPicker; person.frame(width: 160); searchButton }
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack { periodPicker; searchButton }
+                        person
+                    }
                 }
             }
-            if isSearching {
-                ProgressView("Searching…").controlSize(.small)
-            } else if hasSearched {
-                Text(summary).foregroundStyle(.secondary).appFont(.caption)
+            if model.isFollowing {
+                Text("Newest activity first · \(model.followedChannelIDs.count) followed channels")
+                    .appFont(.caption).foregroundStyle(.secondary)
+            }
+            if model.hasLoadedFeed {
+                Text("\(model.total) threads" + (model.hits.count < model.total ? " · showing \(model.hits.count)" : "")
+                     + (model.asOf.map { " · index as of \(TeamsDates.day($0) ?? $0)" } ?? ""))
+                    .appFont(.caption).foregroundStyle(.secondary)
             }
         }
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-    }
-
-    private var scopeTitle: String {
-        if let channel = channels.first(where: { $0.channelId == channelFilter }) {
-            return "\(TeamsText.line(channel.teamName)) › \(TeamsText.line(channel.channelName))"
-        }
-        return channels.first(where: { $0.teamId == teamFilter }).map { TeamsText.line($0.teamName) } ?? "All channels"
     }
 
     private var periodPicker: some View {
-        Picker("Period", selection: $period) {
-            ForEach(TeamsPeriod.allCases) { p in Text(p.title).tag(p.rawValue) }
-        }
-        .fixedSize()
+        Picker("Period", selection: $model.period) {
+            ForEach(TeamsPeriod.allCases) { period in Text(period.title).tag(period.rawValue) }
+        }.fixedSize()
     }
 
-    private var authorField: some View {
-        TextField("Person", text: $author)
+    private var person: some View {
+        TextField("Person", text: $model.author)
             .textFieldStyle(.roundedBorder)
-            .onSubmit(runSearch)
-            .help("Only threads this person took part in")
+            .onSubmit { model.reload() }
+            .help("Threads this person participated in")
     }
 
     private var searchButton: some View {
-        Button(action: runSearch) {
-            Label("Search", systemImage: "magnifyingglass")
-        }
-        .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        Button("Search", systemImage: "magnifyingglass") { model.reload() }
+            .disabled(model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
-    private var summary: String {
-        let count = total == 1 ? "1 thread" : "\(total) threads"
-        guard let asOf, let day = TeamsDates.day(asOf) else { return count }
-        return "\(count) · index as of \(day)"
-    }
-
-    // MARK: Content
-
-    @ViewBuilder
-    private var content: some View {
-        if !service.isConfigured {
-            ContentUnavailableView(
-                "Teams Search Not Configured",
-                systemImage: "gear.badge.xmark",
-                description: Text("Set teams_api_url and teams_api_scope in the FleetMate config, or the managed profile's teamsApiUrl and teamsApiScope.")
-            )
-        } else if let searchError {
+    @ViewBuilder private var feed: some View {
+        if model.isSaved {
+            savedFeed
+        } else if model.isFollowing && model.followedChannelIDs.isEmpty {
+            ContentUnavailableView("Follow Your Channels", systemImage: "star",
+                                   description: Text("Choose a channel on the left and click Follow. Its posts will appear here together with the other channels you follow, newest activity first."))
+        } else if model.isLoadingFeed && model.hits.isEmpty {
+            ProgressView(model.isBrowsing ? "Loading posts…" : "Searching…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let error = model.feedError, model.hits.isEmpty {
             ContentUnavailableView {
-                Label("Search Failed", systemImage: "exclamationmark.bubble")
+                Label("Threads Unavailable", systemImage: "exclamationmark.bubble")
+            } description: { Text(error) } actions: {
+                Button("Try Again") { model.reload() }
+            }
+        } else if !model.hasLoadedFeed {
+            ContentUnavailableView {
+                Label("Find a Conversation", systemImage: "bubble.left.and.text.bubble.right")
             } description: {
-                Text(searchError)
+                Text("Choose a channel on the left to browse recent posts, or search all channels above (⌘F). Save useful threads into collections to find them again.")
             } actions: {
-                Button("Try Again", action: runSearch)
+                Button("Saved Threads") { model.scope = .saved }
             }
-        } else if !hasSearched {
-            ContentUnavailableView(
-                "Search Teams Channels",
-                systemImage: "bubble.left.and.text.bubble.right",
-                description: Text("Search above (⌘F) to find a conversation, or choose a team or channel in the sidebar to focus your search.")
-            )
-        } else if results.isEmpty && !isSearching {
-            ContentUnavailableView.search(text: query)
+        } else if model.hits.isEmpty {
+            ContentUnavailableView(model.isBrowsing ? "No Posts in This Period" : "No Matching Threads",
+                                   systemImage: "bubble.left", description: Text("Try a wider period, another channel, or different search words."))
         } else {
-            GeometryReader { geometry in
-                if geometry.size.width < 760, selection != nil {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Button("Back to Results", systemImage: "chevron.left") { selection = nil }
-                            .padding(10)
-                        threadDetail
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    if let notice = model.notice { Text(notice).font(.callout).foregroundStyle(.secondary) }
+                    if let error = model.feedError { Text(error).font(.callout).foregroundStyle(.secondary) }
+                    ForEach(model.hits, id: \.key) { hit in
+                        TeamsPostPreview(hit: hit, selected: model.selectedHit?.key == hit.key,
+                                         saved: model.bookmark(for: hit) != nil, canSave: model.canSave,
+                                         open: { model.open(hit) }, save: { editBookmark(hit) },
+                                         copy: { model.copy(previewText(hit)) })
                     }
-                } else {
-                    DetailSplitView(fraction: $detailFraction, showsDetail: selection != nil,
-                                    minLeading: 280, minTrailing: 360) {
-                        resultList
-                    } trailing: {
-                        threadDetail
+                    if model.nextOffset != nil {
+                        Button(model.isLoadingFeed ? "Loading…" : "Load More Posts") { model.reload(loadMore: true) }
+                            .disabled(model.isLoadingFeed)
+                            .frame(maxWidth: .infinity)
                     }
-                }
+                }.padding(16)
             }
         }
     }
 
-    private var threadDetail: some View {
-        TeamsThreadView(linkHosts: linkHosts, hit: selectedHit, thread: thread,
-                        isLoading: isLoadingThread, error: threadError)
-    }
-
-    private var resultList: some View {
-        List(results, id: \.key, selection: $selection) { hit in
-            TeamsResultRow(hit: hit)
-                .tag(hit.key)
-                .contextMenu { resultMenu(hit) }
-                .onDrag { dragProvider(hit) }
-        }
-        .listStyle(.inset(alternatesRowBackgrounds: true))
-        .contextMenu(forSelectionType: String.self) { _ in
-        } primaryAction: { keys in
-            if let key = keys.first, let hit = results.first(where: { $0.key == key }) { openInTeams(hit) }
-        }
-    }
-
-    @ViewBuilder
-    private func resultMenu(_ hit: TeamsSearchHit) -> some View {
-        Button("Open in Teams") { openInTeams(hit) }
-            .disabled(safeLink(hit) == nil)
-        Button("Copy Link") { copyLink(hit) }
-            .disabled(safeLink(hit) == nil)
-        Divider()
-        Button("Show Only This Channel") { channelFilter = hit.channelId }
-        if let who = hit.authorDisplayName {
-            Button("Threads with \(TeamsText.line(who))") {
-                author = TeamsText.line(who)
-                runSearch()
-            }
-        }
-    }
-
-    // MARK: Actions
-
-    private func runSearch() {
-        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard service.isConfigured, !text.isEmpty else { return }
-        let request = TeamsSearchQuery(
-            text: text,
-            team: teamFilter.isEmpty ? nil : teamFilter,
-            channel: channelFilter.isEmpty ? nil : channelFilter,
-            author: author.trimmingCharacters(in: .whitespaces).isEmpty ? nil : author,
-            since: TeamsPeriod(rawValue: period)?.since,
-            limit: 100
-        )
-        let service = self.service
-        searchTask?.cancel()
-        let generation = UUID()
-        searchGeneration = generation
-        isSearching = true
-        searchError = nil
-        searchTask = Task {
-            defer { if searchGeneration == generation { isSearching = false } }
-            do {
-                let response = try await service.search(request).value
-                guard !Task.isCancelled, searchGeneration == generation else { return }
-                results = response.results
-                total = response.total
-                asOf = response.asOf
-                hasSearched = true
-                if !results.contains(where: { $0.key == selection }) { selection = results.first?.key }
-            } catch {
-                guard !Task.isCancelled, searchGeneration == generation else { return }
-                searchError = error.localizedDescription
-                hasSearched = true
-                results = []
-            }
-        }
-    }
-
-    private func loadChannels() async {
-        guard service.isConfigured else { return }
-        isLoadingChannels = true
-        channelError = nil
-        defer { isLoadingChannels = false }
-        do {
-            let response = try await service.channels().value
-            guard !Task.isCancelled else { return }
-            channels = response.channels.sorted {
-                $0.teamName == $1.teamName
-                    ? $0.channelName.localizedStandardCompare($1.channelName) == .orderedAscending
-                    : $0.teamName.localizedStandardCompare($1.teamName) == .orderedAscending
-            }
-            if !defaultsApplied {
-                teamFilter = appState.config.teamsDefaultTeam ?? ""
-                defaultsApplied = true
-            }
-            if !teamFilter.isEmpty && !channels.contains(where: { $0.teamId == teamFilter }) { teamFilter = "" }
-            if let channel = channels.first(where: { $0.channelId == channelFilter }) {
-                teamFilter = channel.teamId
-            } else if !channelFilter.isEmpty {
-                channelFilter = ""
-            }
-        } catch {
-            guard !Task.isCancelled else { return }
-            channelError = error.localizedDescription
-        }
-    }
-
-    private var channelSidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Channels").font(.headline)
-                Spacer()
-                Button {
-                    Task { await loadChannels() }
-                } label: {
-                    Label("Reload Channels", systemImage: "arrow.clockwise")
-                        .labelStyle(.iconOnly)
-                }
-                .buttonStyle(.borderless)
-                .disabled(isLoadingChannels)
-                .help("Reload channels")
-            }
-            .padding(12)
-            if isLoadingChannels {
-                ProgressView("Loading channels…").controlSize(.small).padding(12)
-            }
-            if let channelError {
-                Text(channelError).font(.callout).foregroundStyle(.secondary).padding(12)
-                Button("Try Again") { Task { await loadChannels() } }.padding(.horizontal, 12)
-            }
-            List {
-                Button {
-                    channelFilter = ""
-                    teamFilter = ""
-                } label: {
-                    Label("All channels", systemImage: "bubble.left.and.bubble.right")
-                        .fontWeight(channelFilter.isEmpty && teamFilter.isEmpty ? .semibold : .regular)
-                }
-                let favorites = channels.filter { appState.config.preloadedTeamsChannelIDs.contains($0.channelId) }
-                if !favorites.isEmpty {
-                    Section("Preloaded") {
-                        ForEach(favorites, id: \.channelId) { channel in channelButton(channel) }
-                    }
-                }
-                ForEach(teamIDs, id: \.self) { teamID in
-                    Section {
-                        Button {
-                            channelFilter = ""
-                            teamFilter = teamID
-                        } label: {
-                            Label("Search this team", systemImage: "person.2")
-                                .fontWeight(teamFilter == teamID && channelFilter.isEmpty ? .semibold : .regular)
-                        }
-                        ForEach(channels.filter { $0.teamId == teamID }, id: \.channelId) { channel in
-                            channelButton(channel)
-                        }
-                    } header: {
-                        Text(TeamsText.line(channels.first { $0.teamId == teamID }?.teamName ?? "Team"))
-                    }
-                }
-            }
-            .listStyle(.sidebar)
-            .buttonStyle(.plain)
-            if channels.isEmpty && !isLoadingChannels && channelError == nil {
-                Text("No indexed channels are available yet.")
-                    .font(.callout).foregroundStyle(.secondary).padding(12)
-            }
-        }
-    }
-
-    private var teamIDs: [String] {
-        var ids: [String] = []
-        for channel in channels where !ids.contains(channel.teamId) { ids.append(channel.teamId) }
-        if let preferred = appState.config.teamsDefaultTeam, let index = ids.firstIndex(of: preferred) {
-            ids.insert(ids.remove(at: index), at: 0)
-        }
-        return ids
-    }
-
-    private func channelButton(_ channel: TeamsChannel) -> some View {
-        Button {
-            teamFilter = channel.teamId
-            channelFilter = channel.channelId
-            appState.tabSearchFocusRequest += 1
-        } label: {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Label(TeamsText.line(channel.channelName), systemImage: "number")
-                    Spacer(minLength: 4)
-                    if channelFilter == channel.channelId { Image(systemName: "checkmark") }
-                }
-                Text((channel.threads == 1 ? "1 thread" : "\(channel.threads) threads") + (channel.lastActivityAt.map { " · " + TeamsText.localTime($0) } ?? ""))
-                    .font(.caption).foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .padding(.vertical, 3)
-            .contentShape(Rectangle())
-        }
-        .help("Search \(TeamsText.line(channel.teamName)) › \(TeamsText.line(channel.channelName))")
-    }
-
-    private func loadThread() {
-        guard let hit = selectedHit else {
-            thread = nil
-            threadError = nil
-            isLoadingThread = false
-            return
-        }
-        let service = self.service
-        thread = nil
-        isLoadingThread = true
-        threadError = nil
-        Task {
-            defer { if selection == hit.key { isLoadingThread = false } }
-            do {
-                let loaded = try await service.thread(id: hit.threadId, channel: hit.channelId).value
-                if selection == hit.key { thread = loaded }
-            } catch {
-                if selection == hit.key { threadError = error.localizedDescription }
-            }
-        }
-    }
-
-    /// The thread's link, only when it is https on an allowed host.
-    private func safeLink(_ hit: TeamsSearchHit) -> URL? {
-        TeamsLinkPolicy.safeURL(hit.webUrl, allowedHosts: linkHosts)
-    }
-
-    private func openInTeams(_ hit: TeamsSearchHit) {
-        guard let url = safeLink(hit) else { return }
-        NSWorkspace.shared.open(url)
-    }
-
-    private func copyLink(_ hit: TeamsSearchHit) {
-        guard let url = safeLink(hit) else { return }
-        let board = NSPasteboard.general
-        board.clearContents()
-        board.writeObjects([url as NSURL])
-        board.setString("\(hit.title) — \(url.absoluteString)", forType: .string)
-    }
-
-    /// ⌘C on the list copies the selected thread's title and link.
-    private func copyItems() -> [NSItemProvider] {
-        guard let hit = selectedHit else { return [] }
-        guard let url = safeLink(hit) else { return [NSItemProvider(object: hit.title as NSString)] }
-        return [
-            NSItemProvider(object: "\(hit.title) — \(url.absoluteString)" as NSString),
-            NSItemProvider(object: url as NSURL),
-        ]
-    }
-
-    private func dragProvider(_ hit: TeamsSearchHit) -> NSItemProvider {
-        if let url = safeLink(hit) { return NSItemProvider(object: url as NSURL) }
-        return NSItemProvider(object: hit.title as NSString)
-    }
-}
-
-// MARK: - Rows
-
-private struct TeamsResultRow: View {
-    let hit: TeamsSearchHit
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(hit.title)
-                    .appFont(.headline)
-                    .lineLimit(1)
-                Spacer()
-                Text(TeamsDates.relative(hit.lastActivityAt))
-                    .appFont(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Text("\(TeamsText.line(hit.teamName)) › \(TeamsText.line(hit.channelName))")
-                .appFont(.caption)
-                .foregroundStyle(.secondary)
-            Text(TeamsText.body(hit.snippet))
-                .appFont(.callout)
-                .lineLimit(2)
-            HStack(spacing: 10) {
-                if let who = hit.authorDisplayName {
-                    Label(TeamsText.line(who), systemImage: "person")
-                }
-                Label(hit.replyCount == 1 ? "1 reply" : "\(hit.replyCount) replies", systemImage: "arrowshape.turn.up.left")
-            }
-            .appFont(.caption)
-            .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 3)
-        .accessibilityElement(children: .combine)
-    }
-}
-
-// MARK: - Thread
-
-private struct TeamsThreadView: View {
-    let linkHosts: [String]
-    let hit: TeamsSearchHit?
-    let thread: TeamsThread?
-    let isLoading: Bool
-    let error: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider()
-            if let error {
-                ContentUnavailableView("Thread Unavailable", systemImage: "exclamationmark.bubble", description: Text(error))
-            } else if isLoading && thread == nil {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let thread {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        ForEach(thread.messages, id: \.messageId) { message in
-                            TeamsMessageView(message: message, isReply: message.replyToId != nil, linkHosts: linkHosts)
-                        }
-                    }
-                    .padding()
-                    .textSelection(.enabled)
-                }
+    private var savedFeed: some View {
+        Group {
+            if model.visibleBookmarks.isEmpty {
+                ContentUnavailableView("No Saved Threads", systemImage: "bookmark",
+                                       description: Text(model.query.isEmpty ? "Use Save Thread on a post or conversation. Give it a useful name and a collection." : "No saved thread matches this filter."))
             } else {
-                ContentUnavailableView("No Thread Selected", systemImage: "bubble.left")
-            }
-        }
-    }
-
-    private var header: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(TeamsText.line(thread?.subject ?? hit?.title ?? "Thread"))
-                    .appFont(.title3)
-                    .fontWeight(.semibold)
-                    .textSelection(.enabled)
-                if let hit {
-                    Text("\(TeamsText.line(hit.teamName)) › \(TeamsText.line(hit.channelName))")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            Spacer()
-            if let url = TeamsLinkPolicy.safeURL(thread?.webUrl ?? hit?.webUrl, allowedHosts: linkHosts) {
-                Button("Open in Teams") { NSWorkspace.shared.open(url) }
-                    .keyboardShortcut("o", modifiers: [.command, .shift])
-                    .help("Open this thread in Microsoft Teams (⇧⌘O)")
-            }
-        }
-        .padding()
-    }
-}
-
-private struct TeamsMessageView: View {
-    let message: TeamsMessage
-    let isReply: Bool
-    let linkHosts: [String]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(TeamsText.line(message.authorDisplayName ?? "Unknown"))
-                    .fontWeight(.semibold)
-                Text(TeamsDates.full(message.createdAt))
-                    .foregroundStyle(.secondary)
-                if message.editedAt != nil {
-                    Text("Edited").foregroundStyle(.secondary)
-                }
-            }
-            .appFont(.caption)
-            Text(TeamsText.body(message.text))
-                .frame(maxWidth: .infinity, alignment: .leading)
-            ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
-                // A link opens only when it is https on an allowed host;
-                // anything else is shown as plain text.
-                if let url = TeamsLinkPolicy.safeURL(attachment.url, allowedHosts: linkHosts) {
-                    Link(destination: url) { Label(TeamsText.line(attachment.name), systemImage: "paperclip") }
-                        .appFont(.caption)
-                } else {
-                    Label(TeamsText.line(attachment.name), systemImage: "paperclip")
-                        .appFont(.caption)
-                        .foregroundStyle(.secondary)
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        ForEach(model.visibleBookmarks) { bookmark in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Button { model.open(bookmark.reference) } label: {
+                                    Text(bookmark.title).font(.headline).frame(maxWidth: .infinity, alignment: .leading)
+                                }.buttonStyle(.plain)
+                                Text("\(bookmark.teamName) › \(bookmark.channelName)").font(.caption).foregroundStyle(.secondary)
+                                HStack {
+                                    Label(bookmark.collection.isEmpty ? "Saved threads" : bookmark.collection, systemImage: "folder")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    Spacer()
+                                    Button("Open Thread") { model.open(bookmark.reference) }
+                                    Menu {
+                                        Button("Edit Bookmark") { editBookmark(bookmark.reference) }
+                                        Button("Remove Bookmark", role: .destructive) { model.remove(bookmark) }
+                                    } label: { Label("Bookmark Actions", systemImage: "ellipsis").labelStyle(.iconOnly) }
+                                }
+                            }
+                            .padding(14)
+                            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+                        }
+                    }.padding(16)
                 }
             }
         }
-        .padding(.leading, isReply ? 18 : 0)
-        .overlay(alignment: .leading) {
-            if isReply {
-                Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 2)
-            }
-        }
-    }
-}
-
-// MARK: - Helpers
-
-enum TeamsPeriod: String, CaseIterable, Identifiable {
-    case anyTime, lastMonth, lastQuarter, lastYear
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .anyTime: "Any time"
-        case .lastMonth: "Last 30 days"
-        case .lastQuarter: "Last 90 days"
-        case .lastYear: "Last year"
-        }
     }
 
-    /// The `since` day for the API, or nil for any time.
-    var since: String? {
-        let days: Int
-        switch self {
-        case .anyTime: return nil
-        case .lastMonth: days = 30
-        case .lastQuarter: days = 90
-        case .lastYear: days = 365
-        }
-        guard let start = Calendar.current.date(byAdding: .day, value: -days, to: Date()) else { return nil }
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .iso8601)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: start)
-    }
-}
-
-enum TeamsDates {
-    static func parse(_ value: String?) -> Date? {
-        guard let value else { return nil }
-        let withFraction = ISO8601DateFormatter()
-        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return withFraction.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    private var reader: some View {
+        TeamsConversationView(hit: model.selectedHit, thread: model.thread, isLoading: model.isLoadingThread,
+                              error: model.threadError, linkHosts: model.linkHosts,
+                              saved: model.selectedBookmark != nil, canSave: model.canSave,
+                              copy: model.copy, save: { if let hit = model.selectedHit { editBookmark(hit) } },
+                              retry: { if let hit = model.selectedHit { model.open(hit) } })
+            .id(model.selectedHit?.key)
     }
 
-    static func relative(_ value: String?) -> String {
-        guard let date = parse(value) else { return "" }
-        return date.formatted(.relative(presentation: .named))
+    private func editBookmark(_ hit: TeamsSearchHit) {
+        saveDraft = TeamsSaveDraft(hit: hit, existing: model.bookmark(for: hit))
     }
 
-    static func full(_ value: String?) -> String {
-        guard let date = parse(value) else { return value ?? "" }
-        return date.formatted(date: .abbreviated, time: .shortened)
-    }
-
-    static func day(_ value: String) -> String? {
-        if let date = parse(value) { return date.formatted(date: .abbreviated, time: .omitted) }
-        return value.isEmpty ? nil : String(value.prefix(10))
-    }
-}
-
-extension TeamsSearchHit {
-    /// Thread ids are unique within a channel, not across channels.
-    var key: String { "\(channelId)/\(threadId)" }
-    var title: String {
-        let subject = TeamsText.line(subject)
-        if !subject.isEmpty { return subject }
-        let first = TeamsText.line(snippet.split(separator: "\n").first.map(String.init) ?? snippet)
-        return first.isEmpty ? "(no text)" : first
+    private func previewText(_ hit: TeamsSearchHit) -> String {
+        var text = hit.title + "\n" + TeamsText.body(hit.snippet)
+        if let url = TeamsLinkPolicy.safeURL(hit.webUrl, allowedHosts: model.linkHosts) { text += "\nSource: " + url.absoluteString }
+        return text
     }
 }

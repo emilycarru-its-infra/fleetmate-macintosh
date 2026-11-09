@@ -177,14 +177,17 @@ fleetmate tdx comment 12345 "Troubleshooting steps taken..."
 
 ### Teams channel search
 
-The Teams tab opens with a channel sidebar grouped by team, including indexed thread counts and latest activity. Select a channel to scope the search, then type in the always-visible window search field and press Return. Channel-loading failures include a retry action.
+The Teams tab keeps search in the window toolbar and provides a separate top-left filter for teams and channels. Select a channel or team to browse its posts without entering search text. Posts open in a threaded reader with connected reply cards, selectable text, and direct Copy Thread, Copy Markdown, Copy Link, and Open in Teams buttons.
+
+Follow channels with the star button beside the channel heading or the channel context menu. **Following**, directly below **All Channels**, combines their posts with newest activity first. Searching Following searches the entire selected channel set before pagination. Period and person filters apply to both browsing and searching.
+
+Save useful threads to **Saved Threads** or a named collection. Following preferences and bookmarks are stored locally, separately for each signed-in account and API endpoint. Bookmarks contain titles and references, not message bodies; opening one retrieves the thread through the API again. Copy Thread includes the complete loaded conversation, including collapsed replies. The reader shortcuts are Shift-Command-C to copy the thread and Shift-Command-O to open it in Teams.
 
 Set `teams_default_team` to a team ID to select it on first opening. Set `teams_default_channels` to comma- or newline-separated channel IDs for a **Preloaded** sidebar section. Configuration profiles use `teamsDefaultTeam` and `teamsDefaultChannels`; the latter also accepts an array of strings. Environment overrides are `FLEETMATE_TEAMS_DEFAULT_TEAM` and `FLEETMATE_TEAMS_DEFAULT_CHANNELS`. These defaults organize indexed channels and do not grant access or cause additional channels to be indexed. Saved user scope takes precedence after first opening.
 
-A personalized recent-participation feed requires API support for browsing by stable user identity. The current API requires search text and provides display-name filters, so this client does not claim to show all recent threads for the signed-in account.
+Channel browsing and Following require the service's browse and feed endpoints. A personalized recent-participation feed remains separate: display-name filters do not establish all threads involving the signed-in account.
 
-
-Search an indexed copy of Teams channel messages through a search API. Set `teams_api_url` (the API base URL) and `teams_api_scope` (the scope your `az` token is minted for, such as `<application id URI>/.default`) in `config.yaml`, the configuration profile (`teamsApiUrl`, `teamsApiScope`) or `FLEETMATE_TEAMS_API_URL` / `FLEETMATE_TEAMS_API_SCOPE`. Every call is made as you, with the token from `fleetmate login`; the API decides whether your account has access.
+Search an indexed copy of Teams channel messages through a search API. Set `teams_api_url` (the API base URL) and `teams_api_scope` (the scope your `az` token is minted for, such as `<application id URI>/.default`) in `config.yaml`, the configuration profile (`teamsApiUrl`, `teamsApiScope`) or `FLEETMATE_TEAMS_API_URL` / `FLEETMATE_TEAMS_API_SCOPE`. Every call is made as you, with existing silent tokens from `fleetmate login`. Teams requests also provide a delegated Microsoft Graph credential so the API can verify the same person and tenant and restrict all reads to current channel membership. Credentials are not persisted or forwarded through redirects, and the connection requires HTTPS. The API decides access; following a channel or saving a bookmark does not grant it.
 
 ```bash
 fleetmate teams search "printer jam" --since 2026-10-01 --limit 10

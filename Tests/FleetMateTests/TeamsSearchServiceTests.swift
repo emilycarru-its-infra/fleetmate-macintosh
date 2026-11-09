@@ -38,7 +38,7 @@ final class TeamsSearchServiceTests: XCTestCase {
     // MARK: Configuration
 
     func testUnconfiguredServiceRefusesWithoutARequest() async throws {
-        StubURLProtocol.reset(stubs: [])
+        TeamsStub.reset(stubs: [])
         for svc in [TeamsSearchService(baseUrl: nil, scope: scope), TeamsSearchService(baseUrl: base, scope: "  ")] {
             XCTAssertFalse(svc.isConfigured)
             do {
@@ -85,10 +85,32 @@ final class TeamsSearchServiceTests: XCTestCase {
         XCTAssertThrowsError(try svc.threadURL(id: "", channel: "c"))
     }
 
+    func testMembershipCredentialsRequireHTTPS() async throws {
+        let log = TokenLog()
+        let svc = TeamsSearchService(baseUrl: "http://search.example.org", scope: scope,
+                                     tokenProvider: { scope, refresh in log.record(scope, refresh); return "token" })
+        do {
+            _ = try await svc.channels()
+            XCTFail("Plaintext transport must be rejected")
+        } catch {
+            XCTAssertTrue(log.calls.isEmpty)
+        }
+    }
+
+    func testUnscopedOlderServerCannotExposeItsGlobalIndex() async throws {
+        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/search", body: searchBody)])
+        do {
+            _ = try await service().search(TeamsSearchQuery(text: "printer"))
+            XCTFail("An older server without membership enforcement must be refused")
+        } catch {
+            XCTAssertEqual(error as? TeamsSearchError, .membershipUnavailable)
+        }
+    }
+
     // MARK: Requests
 
     func testSearchSendsBearerForConfiguredScopeAndDecodes() async throws {
-        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/search", body: searchBody)])
+        TeamsStub.reset(stubs: [.init(pathContains: "/v1/teams/search", body: searchBody)])
         let log = TokenLog()
 
         let payload = try await service(log).search(TeamsSearchQuery(text: "printer", limit: 5))
@@ -97,7 +119,8 @@ final class TeamsSearchServiceTests: XCTestCase {
         XCTAssertEqual(request.method, "GET")
         XCTAssertEqual(request.path, "/api/v1/teams/search")
         XCTAssertEqual(request.headers["Authorization"], "Bearer cached-token")
-        XCTAssertEqual(log.calls.map(\.scope), [scope])
+        XCTAssertEqual(request.headers["X-Vantage-Teams-Token"], "cached-token")
+        XCTAssertEqual(log.calls.map(\.scope), [scope, "https://graph.microsoft.com/.default"])
         XCTAssertEqual(request.headers["X-Vantage-Purpose"], "purpose.its_teams_channel_search")
 
         let response = payload.value
@@ -114,7 +137,7 @@ final class TeamsSearchServiceTests: XCTestCase {
     }
 
     func testThreadDecodesMessagesOldestFirst() async throws {
-        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/threads/", body: """
+        TeamsStub.reset(stubs: [.init(pathContains: "/v1/teams/threads/", body: """
         {"thread_id":"t1","team_id":"team-1","team_name":"Service Desk","channel_id":"c1","channel_name":"General",
          "subject":"Printer","web_url":null,"messages":[
           {"message_id":"t1","reply_to_id":null,"author_display_name":"Alex Example","created_at":"2026-11-01T17:30:00Z",
@@ -135,7 +158,7 @@ final class TeamsSearchServiceTests: XCTestCase {
     }
 
     func testChannelsDecode() async throws {
-        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/channels", body: """
+        TeamsStub.reset(stubs: [.init(pathContains: "/v1/teams/channels", body: """
         {"as_of":null,"channels":[{"team_id":"team-1","team_name":"Service Desk","channel_id":"c1","channel_name":"General",
           "membership_type":"standard","threads":120,"last_activity_at":null},
          {"team_id":"team-2","team_name":"Projects","channel_id":"c2","channel_name":"Shared work",
@@ -153,19 +176,19 @@ final class TeamsSearchServiceTests: XCTestCase {
     // MARK: Errors
 
     func testUnauthorizedRetriesOnceWithAFreshToken() async throws {
-        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/channels", statusCode: 401, body: #"{"detail":"expired"}"#)])
+        TeamsStub.reset(stubs: [.init(pathContains: "/v1/teams/channels", statusCode: 401, body: #"{"detail":"expired"}"#)])
         let log = TokenLog()
 
         await assertError(.unauthorized) { _ = try await self.service(log).channels() }
 
-        XCTAssertEqual(log.calls.map(\.refresh), [false, true])
+        XCTAssertEqual(log.calls.map(\.refresh), [false, false, true, true])
         XCTAssertEqual(StubURLProtocol.recorded.map { $0.headers["Authorization"] },
                        ["Bearer cached-token", "Bearer fresh-token"])
     }
 
     func testForbiddenAndIndexNotReadyAndNotFoundMapToTheirOwnErrors() async throws {
         for (status, expected) in [(403, TeamsSearchError.forbidden), (503, .indexNotReady), (404, .notFound)] {
-            StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/", statusCode: status, body: #"{"detail":"no"}"#)])
+            TeamsStub.reset(stubs: [.init(pathContains: "/v1/teams/", statusCode: status, body: #"{"detail":"no"}"#)])
             await assertError(expected) { _ = try await self.service().channels() }
             XCTAssertEqual(StubURLProtocol.recorded.count, 1, "only a 401 is retried")
         }
@@ -173,7 +196,7 @@ final class TeamsSearchServiceTests: XCTestCase {
     }
 
     func testConfiguredPurposeIsSent() async throws {
-        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/channels", body: #"{"as_of":null,"channels":[]}"#)])
+        TeamsStub.reset(stubs: [.init(pathContains: "/v1/teams/channels", body: #"{"as_of":null,"channels":[]}"#)])
         let svc = TeamsSearchService(baseUrl: base, scope: scope, purpose: "purpose.other",
                                      sessionConfiguration: StubURLProtocol.sessionConfiguration(),
                                      tokenProvider: { _, _ in "t" })
@@ -182,14 +205,14 @@ final class TeamsSearchServiceTests: XCTestCase {
     }
 
     func testForbiddenDistinguishesPurposeFromAccess() async throws {
-        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/", statusCode: 403, body: #"{"detail":"purpose_not_granted"}"#)])
+        TeamsStub.reset(stubs: [.init(pathContains: "/v1/teams/", statusCode: 403, body: #"{"detail":"purpose_not_granted"}"#)])
         await assertError(.purposeNotGranted) { _ = try await self.service().channels() }
-        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/", statusCode: 403, body: #"{"detail":"access_denied"}"#)])
+        TeamsStub.reset(stubs: [.init(pathContains: "/v1/teams/", statusCode: 403, body: #"{"detail":"access_denied"}"#)])
         await assertError(.forbidden) { _ = try await self.service().channels() }
     }
 
     func testOtherFailuresCarrySanitisedDetail() async throws {
-        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/search", statusCode: 422,
+        TeamsStub.reset(stubs: [.init(pathContains: "/v1/teams/search", statusCode: 422,
                                             body: #"{"detail":"bad \u001b[31mlimit"}"#)])
         await assertError(.http(422, "bad [31mlimit")) {
             _ = try await self.service().search(TeamsSearchQuery(text: "x"))
@@ -197,7 +220,7 @@ final class TeamsSearchServiceTests: XCTestCase {
     }
 
     func testMalformedBodyIsAnInvalidResponse() async throws {
-        StubURLProtocol.reset(stubs: [.init(pathContains: "/v1/teams/channels", body: #"{"channels":"nope"}"#)])
+        TeamsStub.reset(stubs: [.init(pathContains: "/v1/teams/channels", body: #"{"channels":"nope"}"#)])
         do {
             _ = try await service().channels()
             XCTFail("expected a decode failure")
@@ -257,5 +280,16 @@ final class TeamsSidebarConfigurationTests: XCTestCase {
         let restored = try JSONDecoder().decode(FleetMateConfig.self, from: data)
         XCTAssertEqual(restored.teamsDefaultTeam, "team-a")
         XCTAssertEqual(restored.preloadedTeamsChannelIDs, ["channel-a", "channel-b"])
+    }
+}
+
+/// Successful Teams fixtures declare that membership was enforced by the service.
+enum TeamsStub {
+    static func reset(stubs: [StubURLProtocol.Stub]) {
+        StubURLProtocol.reset(stubs: stubs.map { stub in
+            StubURLProtocol.Stub(pathContains: stub.pathContains, method: stub.method,
+                                 statusCode: stub.statusCode, body: stub.body,
+                                 headers: ["X-Vantage-Teams-Access": "membership-v1"].merging(stub.headers) { _, new in new })
+        })
     }
 }

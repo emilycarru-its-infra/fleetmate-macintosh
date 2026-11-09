@@ -42,11 +42,15 @@ final class PullRequestQueueModel: ObservableObject {
 
     var visiblePullRequests: [UnifiedPullRequest] {
         guard let selectedRepo else { return sourcePullRequests }
-        return sourcePullRequests.filter { $0.repository == selectedRepo }
+        return sourcePullRequests.filter { $0.repositoryFilterScope.matches(selectedRepo, legacyKey: $0.repository) }
     }
 
     /// Repositories in the current source scope with their PR counts, busiest
     /// first — the secondary filter row. Hidden unless there's a real choice.
+    var repositoryOptions: [RepositoryFilterEntry] {
+        RepositoryFilterEntry.counts(sourcePullRequests, scope: \.repositoryFilterScope)
+    }
+
     var repoCounts: [(repo: String, count: Int)] {
         var counts: [String: Int] = [:]
         for pr in sourcePullRequests { counts[pr.repository, default: 0] += 1 }
@@ -56,7 +60,7 @@ final class PullRequestQueueModel: ObservableObject {
     }
 
     func toggleRepo(_ repo: String) {
-        selectedRepo = (selectedRepo == repo) ? nil : repo
+        selectedRepo = (selectedRepo.map { value in repositoryOptions.first(where: { $0.id == value })?.legacyKey ?? RepositoryFilterScope(id: value)?.repository ?? value } == repo) ? nil : repo
     }
 
     func section(_ relation: PullRequestRelation) -> [UnifiedPullRequest] {
@@ -308,9 +312,9 @@ struct PullRequestQueueSection: View {
     /// Only rendered when there's a real choice to make.
     @ViewBuilder
     private var repoFilterRow: some View {
-        let repos = model.repoCounts
-        if !repos.isEmpty {
-            RepoFilterMenu(selection: $model.selectedRepo, counts: repos)
+        let repos = model.repositoryOptions
+        if repos.count > 1 || model.selectedRepo != nil {
+            RepoFilterMenu(selection: $model.selectedRepo, entries: repos)
         }
     }
 

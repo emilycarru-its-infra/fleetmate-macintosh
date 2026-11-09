@@ -1,45 +1,66 @@
 import SwiftUI
+import FleetMateCore
 
-/// One dropdown for picking a repository, in place of a row of pills that
-/// ran off the edge once there were more than a handful of repositories.
-/// Busiest first, each with its count; "All repositories" clears it.
+/// Provider headings and project/owner submenus keep every repository filter consistent.
 struct RepoFilterMenu: View {
     @Binding var selection: String?
-    let counts: [(repo: String, count: Int)]
+    let entries: [RepositoryFilterEntry]
+
+    private var selectedTitle: String {
+        guard let selection else { return "All repositories" }
+        return entries.first(where: { $0.id == selection })?.scope.displayPath
+            ?? RepositoryFilterScope.displayKey(selection) ?? "All repositories"
+    }
+
+    private var selectedCount: Int? {
+        guard let selection else { return nil }
+        let matching = entries.filter { $0.scope.matches(selection, legacyKey: $0.legacyKey) }
+        return matching.isEmpty ? nil : matching.reduce(0) { $0 + $1.count }
+    }
 
     var body: some View {
         Menu {
-            Button {
-                selection = nil
-            } label: {
+            Button { selection = nil } label: {
                 if selection == nil { Label("All repositories", systemImage: "checkmark") }
                 else { Text("All repositories") }
             }
             Divider()
-            ForEach(counts, id: \.repo) { entry in
-                Button {
-                    selection = entry.repo
-                } label: {
-                    let title = "\(entry.repo)  \(entry.count)"
-                    if selection == entry.repo { Label(title, systemImage: "checkmark") }
-                    else { Text(title) }
+            ForEach(RepositoryFilterProvider.groups(entries)) { provider in
+                Section {
+                    ForEach(provider.containers) { container in
+                        Menu {
+                            ForEach(container.entries) { entry in
+                                Button { selection = entry.id } label: {
+                                    let title = "\(entry.scope.repositoryTitle)  \(entry.count)"
+                                    if let selection, entry.scope.matches(selection, legacyKey: entry.legacyKey) {
+                                        Label(title, systemImage: "checkmark")
+                                    } else { Text(title) }
+                                }
+                            }
+                        } label: {
+                            Label("\(container.name.isEmpty ? "Other" : container.name)  \(container.count)", systemImage: "folder")
+                        }
+                    }
+                } header: {
+                    Text("\(provider.source.displayName)  \(provider.count)")
                 }
             }
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "folder")
-                Text(selection ?? "All repositories")
+                Text(selectedTitle)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                if let selection, let count = counts.first(where: { $0.repo == selection })?.count {
+                    .frame(maxWidth: 220, alignment: .leading)
+                if let count = selectedCount {
                     Text("\(count)").monospacedDigit().foregroundStyle(.secondary)
                 }
             }
             .appFont(.caption2, weight: .medium)
         }
         .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("Filter by repository")
+        .fixedSize(horizontal: false, vertical: true)
+        .help("Filter by provider, project or owner, and repository")
     }
 }
 

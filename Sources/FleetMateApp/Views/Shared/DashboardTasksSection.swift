@@ -88,8 +88,11 @@ struct DashboardTasksPane: View {
 
     private var visibleIssues: [GitHubIssueSummary] {
         guard let repoFilter else { return model.issues }
-        return model.issues.filter {
-            $0.repository.split(separator: "/").last.map(String.init) == repoFilter
+        return model.issues.filter { issue in
+            let parts = issue.repository.split(separator: "/", maxSplits: 1).map(String.init)
+            let name = parts.last ?? issue.repository
+            let scope = RepositoryFilterScope(source: .gitHub, container: parts.count > 1 ? parts[0] : "", repository: name)
+            return scope.matches(repoFilter, legacyKey: name)
         }
     }
 

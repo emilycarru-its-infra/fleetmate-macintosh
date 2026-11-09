@@ -1340,6 +1340,24 @@ public class AzureDevOpsService {
         return runs.sorted { $0.sortDate > $1.sortDate }
     }
 
+    /// A bounded discovery page for a single cached project.
+    public func getRecentPipelineRuns(project: String, since: Date, top: Int = 25) async throws -> [PipelineRun] {
+        let date = ISO8601DateFormatter().string(from: since)
+            .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let encoded = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        let page: AzdoBuilds = try await request("GET", path: "/_apis/build/builds?minTime=\(date)&$top=\(top)&queryOrder=queueTimeDescending&api-version=7.0", forProject: encoded)
+        return (page.value ?? []).map { Self.mapBuild($0, project: project) }
+    }
+
+    /// Active builds in a project share one metadata request; logs are never fetched here.
+    public func getPipelineRuns(project: String, buildIds: [Int]) async throws -> [PipelineRun] {
+        guard !buildIds.isEmpty else { return [] }
+        let encoded = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        let ids = buildIds.map(String.init).joined(separator: ",")
+        let page: AzdoBuilds = try await request("GET", path: "/_apis/build/builds?buildIds=\(ids)&api-version=7.0", forProject: encoded)
+        return (page.value ?? []).map { Self.mapBuild($0, project: project) }
+    }
+
     /// The build's timeline (stages, jobs, tasks) with each record's log
     /// text, so the viewer reads like the web UI's log pane.
     public func getPipelineRunLog(project: String, buildId: Int, maxBytesPerRecord: Int = 400_000) async throws -> PipelineRunLog {

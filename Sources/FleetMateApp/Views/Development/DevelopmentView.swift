@@ -179,6 +179,42 @@ final class DevelopmentModel: ObservableObject {
     static let pipelinesWindow: TimeInterval = 7 * 24 * 3600
 
     private var pipelinesTask: Task<Void, Never>?
+    private var pipelineRefreshTask: Task<Void, Never>?
+    private var pipelineRefresh = PipelineRefreshPolicy()
+    private var pipelineRepos: [(owner: String, name: String)] = []
+    private var pipelineProjects: [String] = []
+    private var repositoryCursor = 0
+    private var projectCursor = 0
+    private var activeCursor = 0
+    private var activeProjectCursor = 0
+    var pipelinesVisible = false
+
+    /// App-owned, one worker: tab changes never create additional pollers.
+    func startPipelineRefresh(appState: AppState) {
+        guard pipelineRefreshTask == nil else { return }
+        pipelineRefreshTask = Task { [weak self, weak appState] in
+            while !Task.isCancelled {
+                guard let self, let appState else { return }
+                self.checkPipelineFreshness(appState: appState)
+                do { try await Task.sleep(for: .seconds(NSApplication.shared.isActive ? 5 : 60)) }
+                catch { return }
+            }
+        }
+    }
+
+    func checkPipelineFreshness(appState: AppState) {
+        guard NSApplication.shared.isActive,
+              NSApplication.shared.windows.contains(where: { $0.identifier?.rawValue == "main" && $0.isVisible && !$0.isMiniaturized }),
+              pipelineRefresh.isDue(now: Date(), visible: pipelinesVisible, activeRuns: pipelineRuns.contains { $0.status.isActive }) else { return }
+        loadPipelines(appState: appState, force: true, discovery: false)
+    }
+
+    private func rotating<T>(_ values: [T], cursor: inout Int, count: Int) -> [T] {
+        guard !values.isEmpty else { return [] }
+        let result = (0..<min(count, values.count)).map { values[(cursor + $0) % values.count] }
+        cursor = (cursor + result.count) % values.count
+        return result
+    }
 
     func visiblePipelineRuns(matching search: String) -> [PipelineRun] {
         var rows = pipelineRuns
@@ -222,14 +258,16 @@ final class DevelopmentModel: ObservableObject {
     }
 
     /// The most recent run of every pipeline, by start date.
-    private var latestRunIDs: Set<String> {
+    private var latestRunIDs: Set<String> = []
+
+    private func updateLatestRunIDs() {
         var latest: [String: PipelineRun] = [:]
         for run in pipelineRuns {
             let key = "\(run.source.rawValue):\(run.container)/\(run.pipelineId.map(String.init) ?? run.pipelineName)"
             if let current = latest[key], current.sortDate >= run.sortDate { continue }
             latest[key] = run
         }
-        return Set(latest.values.map(\.id))
+        latestRunIDs = Set(latest.values.map(\.id))
     }
 
     /// Repositories with commits in the current source scope, by commit count.
@@ -255,57 +293,83 @@ final class DevelopmentModel: ObservableObject {
         pipelineStatusFilter = (pipelineStatusFilter == status) ? nil : status
     }
 
-    func loadPipelines(appState: AppState, force: Bool = false) {
-        if !force {
-            if isLoadingPipelines { return }
-            if let at = pipelinesLoadedAt, Date().timeIntervalSince(at) < Self.freshness { return }
-        }
-        pipelinesTask?.cancel()
-        pipelinesTask = Task { await performPipelinesLoad(appState: appState) }
+    func loadPipelines(appState: AppState, force: Bool = false, discovery: Bool = true) {
+        guard !isLoadingPipelines else { return }
+        if !force, let at = pipelinesLoadedAt, Date().timeIntervalSince(at) < 60 { return }
+        isLoadingPipelines = true
+        pipelinesTask = Task { await performPipelinesLoad(appState: appState, discovery: discovery) }
     }
 
-    private func performPipelinesLoad(appState: AppState) async {
-        isLoadingPipelines = true
+    private func performPipelinesLoad(appState: AppState, discovery: Bool) async {
         defer { isLoadingPipelines = false }
-        let since = Date().addingTimeInterval(-Self.pipelinesWindow)
-        let config = gitHubConfig(appState)
-
-        // GitHub Actions runs come per repository; the repositories with
-        // recent commits are the ones with runs worth showing, so the
-        // Commits segment's list is the scope. Load it first if needed.
-        if repositoryCommits.isEmpty, commitsLoadedAt == nil {
-            await performCommitsLoad(appState: appState)
-        }
-        let gitHubRepos = repositoryCommits
-            .filter { $0.source == .gitHub }
-            .map { (owner: $0.container, name: $0.repository) }
-
-        let gitHubTask = Task.detached(priority: .userInitiated) {
-            await GitHubActionsService(config: config).getRecentRuns(repositories: gitHubRepos, since: since)
-        }
-
-        var merged: [PipelineRun] = []
+        let now = Date()
+        let since = now.addingTimeInterval(-Self.pipelinesWindow)
+        let full = discovery || pipelineRefresh.needsDiscovery(now: now)
+        let github = GitHubActionsService(config: gitHubConfig(appState))
+        var updates: [PipelineRun] = []
         var errors: [String] = []
-        if appState.config.isDevOpsConfigured, await appState.devOpsService.ensureValidToken() {
-            do {
-                merged += try await appState.devOpsService.getRecentPipelineRuns(since: since)
-            } catch {
-                errors.append("Azure DevOps: \(error.localizedDescription)")
+        var succeeded = false
+
+        do {
+            if full { pipelineRepos = try await github.getRecentRepositories() }
+            let repos = full ? pipelineRepos : rotating(pipelineRepos, cursor: &repositoryCursor, count: 2)
+            let result = await github.getRecentRuns(repositories: repos, since: since)
+            updates += result.runs
+            if let error = result.error { throw NSError(domain: "GitHub", code: 1, userInfo: [NSLocalizedDescriptionKey: error]) }
+            if !repos.isEmpty { succeeded = true }
+            if !full {
+                let active = pipelineRuns.filter { $0.source == .gitHub && $0.status.isActive }
+                var targets = rotating(active, cursor: &activeCursor, count: 2)
+                if let selectedRun, selectedRun.source == .gitHub, selectedRun.status.isActive,
+                   !targets.contains(where: { $0.id == selectedRun.id }) {
+                    targets = [selectedRun] + targets.prefix(1)
+                }
+                for run in targets {
+                    guard let repo = run.repository else { continue }
+                    updates.append(try await github.getRun(owner: run.container, repo: repo, runId: run.runId))
+                }
+            }
+        } catch {
+            if !error.localizedDescription.contains("No GitHub authentication token") {
+                errors.append("GitHub: \(error.localizedDescription)")
             }
         }
 
-        let gitHub = await gitHubTask.value
-        merged += gitHub.runs
-        if let error = gitHub.error, !error.contains("No GitHub authentication token") {
-            errors.append("GitHub: \(error)")
+        if appState.config.isDevOpsConfigured {
+            do {
+                guard await appState.devOpsService.ensureValidToken() else {
+                    throw NSError(domain: "Azure DevOps", code: 1, userInfo: [NSLocalizedDescriptionKey: "Sign-in unavailable"])
+                }
+                if full { pipelineProjects = try await appState.devOpsService.listProjects().map(\.name) }
+                let projects = full ? pipelineProjects : rotating(pipelineProjects, cursor: &projectCursor, count: 2)
+                for project in projects {
+                    try Task.checkCancellation()
+                    updates += try await appState.devOpsService.getRecentPipelineRuns(project: project, since: since)
+                }
+                if !full {
+                    let active = pipelineRuns.filter { $0.source == .azureDevOps && $0.status.isActive }
+                    let groups = Dictionary(grouping: active, by: \.container)
+                    let names = rotating(groups.keys.sorted(), cursor: &activeProjectCursor, count: 2)
+                    for project in names {
+                        updates += try await appState.devOpsService.getPipelineRuns(project: project, buildIds: groups[project, default: []].map(\.runId))
+                    }
+                }
+                succeeded = true
+            } catch { errors.append("Azure DevOps: \(error.localizedDescription)") }
         }
 
         guard !Task.isCancelled else { return }
-        pipelineRuns = merged.sorted { $0.sortDate > $1.sortDate }
+        let merged = PipelineRefreshPolicy.merge(pipelineRuns, updates: updates, now: now)
+        if pipelineRuns != merged {
+            pipelineRuns = merged
+            updateLatestRunIDs()
+        }
         pipelinesError = errors.isEmpty ? nil : errors.joined(separator: "\n")
-        pipelinesLoadedAt = Date()
-        if let selected = selectedRun {
-            selectedRun = merged.first { $0.id == selected.id } ?? selected
+        let complete = succeeded && errors.isEmpty
+        pipelineRefresh.finish(now: Date(), succeeded: complete, discovery: full)
+        if complete { pipelinesLoadedAt = Date() }
+        if let selected = selectedRun, let updated = merged.first(where: { $0.id == selected.id }), selected != updated {
+            selectedRun = updated
         }
     }
 
@@ -599,7 +663,7 @@ final class DevelopmentModel: ObservableObject {
         loadPullRequests(appState: appState, force: force)
         loadInbox(appState: appState, force: force)
         loadCommits(appState: appState, force: force)
-        loadPipelines(appState: appState, force: force)
+        loadPipelines(appState: appState, force: force, discovery: force)
     }
 
     func loadPullRequests(appState: AppState, force: Bool = false) {
@@ -879,10 +943,6 @@ private struct DevelopmentContent: View {
                 if tick % 3 == 0 {
                     model.loadPullRequests(appState: appState, force: true)
                     model.loadCommits(appState: appState, force: true)
-                    model.loadPipelines(appState: appState, force: true)
-                } else if model.segment == .pipelines, model.pipelineRuns.contains(where: { $0.status.isActive }) {
-                    // Something is running: keep the list honest while it is watched.
-                    model.loadPipelines(appState: appState, force: true)
                 }
             }
         }
@@ -897,7 +957,16 @@ private struct DevelopmentContent: View {
             }
         }
         .onAppear {
+            model.pipelinesVisible = model.segment == .pipelines
+            model.checkPipelineFreshness(appState: appState)
             consumeLink()
+        }
+        .onDisappear { model.pipelinesVisible = false }
+        .onChange(of: model.segment) { _, segment in
+            model.pipelinesVisible = segment == .pipelines
+            model.checkPipelineFreshness(appState: appState)
+            if segment == .pullRequests { model.loadPullRequests(appState: appState) }
+            if segment == .commits { model.loadCommits(appState: appState) }
         }
         .onChange(of: appState.pendingDevelopmentLink) { _, _ in consumeLink() }
         .actionErrorBanner($model.actionError)

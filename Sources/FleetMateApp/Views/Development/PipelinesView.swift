@@ -215,7 +215,7 @@ struct PipelineRunDetailView: View {
             Divider()
             content
         }
-        .task { await load() }
+        .task(id: run.id) { await load() }
         .actionErrorBanner($actionError)
         .confirmationDialog("Cancel \(run.pipelineName) \(run.runNumber)?", isPresented: $pendingCancel) {
             Button("Cancel run", role: .destructive) { perform("Cancel") }

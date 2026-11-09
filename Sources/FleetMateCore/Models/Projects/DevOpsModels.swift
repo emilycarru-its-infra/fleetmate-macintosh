@@ -8,6 +8,10 @@ public struct WorkItem: Codable, Identifiable {
     public let fields: WorkItemFields?
     public let url: String?
     public let relations: [WorkItemRelation]?
+
+    public var hierarchyParentId: Int? {
+        fields?.parentId ?? relations?.first(where: { $0.relationType == .parent })?.linkedWorkItemId
+    }
 }
 
 public struct WorkItemFields: Codable {
@@ -23,6 +27,7 @@ public struct WorkItemFields: Codable {
     public let areaPath: String?
     public let tags: String?
     public let teamProject: String?
+    public let parentId: Int?
 
     // Extended fields
     public let reason: String?
@@ -56,6 +61,7 @@ public struct WorkItemFields: Codable {
         case areaPath = "System.AreaPath"
         case tags = "System.Tags"
         case teamProject = "System.TeamProject"
+        case parentId = "System.Parent"
         case reason = "System.Reason"
         case createdBy = "System.CreatedBy"
         case changedBy = "System.ChangedBy"

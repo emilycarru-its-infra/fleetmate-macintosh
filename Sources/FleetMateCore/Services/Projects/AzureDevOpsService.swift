@@ -371,6 +371,39 @@ public class AzureDevOpsService {
         return allItems
     }
 
+    /// Resolve shared parents in metadata batches, stopping at an Initiative.
+    /// Missing or inaccessible parents remain unresolved instead of being guessed.
+    public func getInitiativeAncestors(for items: [WorkItem]) async throws -> [WorkItem] {
+        var index = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { _, item in item })
+        var frontier = items
+        var requested = Set(items.map(\.id))
+        var ancestors: [WorkItem] = []
+        for _ in 0..<16 {
+            try Task.checkCancellation()
+            let ids = Set(frontier.filter { $0.fields?.workItemType?.lowercased() != "initiative" }
+                .compactMap(\.hierarchyParentId)).subtracting(requested).sorted()
+            guard !ids.isEmpty else { break }
+            let bounded = Array(ids.prefix(max(0, 2000 - ancestors.count)))
+            guard !bounded.isEmpty else { break }
+            requested.formUnion(bounded)
+            frontier = []
+            for chunk in bounded.chunked(into: 200) {
+                let body = try JSONSerialization.data(withJSONObject: [
+                    "ids": chunk,
+                    "fields": ["System.Id", "System.Title", "System.WorkItemType", "System.Parent"],
+                    "errorPolicy": "Omit",
+                ])
+                let batch: WorkItemBatchResponse = try await request("POST", path: "/_apis/wit/workitemsbatch?api-version=7.0", body: body, orgLevel: true)
+                for item in batch.value ?? [] where index[item.id] == nil {
+                    index[item.id] = item
+                    ancestors.append(item)
+                    frontier.append(item)
+                }
+            }
+        }
+        return ancestors
+    }
+
     public func getWorkItems(state: String? = nil, type: String? = nil, assignedTo: String? = nil, limit: Int = 50) async throws -> [WorkItem] {
         // Query across all projects at org level — no project filter needed
         var conditions: [String] = []

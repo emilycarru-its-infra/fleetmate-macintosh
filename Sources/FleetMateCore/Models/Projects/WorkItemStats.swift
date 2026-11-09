@@ -41,6 +41,26 @@ public struct WorkItemStats: Equatable, Sendable {
         DevelopmentStats.ranked(items) { $0.fields.flatMap(key) }
     }
 
+    /// Count only the supplied items; ancestors supply labels, never extra work.
+    public static func initiatives(_ items: [WorkItem], ancestors: [WorkItem]) -> [DevelopmentStats.Count] {
+        let index = Dictionary((ancestors + items).map { ($0.id, $0) }, uniquingKeysWith: { _, item in item })
+        return DevelopmentStats.ranked(items) { item in
+            var current = item
+            var seen: Set<Int> = []
+            while seen.insert(current.id).inserted {
+                guard let fields = current.fields else { return "Unavailable" }
+                if fields.workItemType?.caseInsensitiveCompare("Initiative") == .orderedSame {
+                    let title = fields.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    return title.isEmpty ? "Initiative #\(current.id)" : "\(title) (#\(current.id))"
+                }
+                guard let parent = current.hierarchyParentId else { return "Unassigned" }
+                guard let next = index[parent] else { return "Unavailable" }
+                current = next
+            }
+            return "Unavailable"
+        }
+    }
+
     /// Azure DevOps dates come with and without fractional seconds.
     static func date(_ raw: String?) -> Date? {
         guard let raw, !raw.isEmpty else { return nil }

@@ -13,7 +13,7 @@ struct ContentView: View {
     @State private var windowWidth: CGFloat = 1000
     /// Below this width the visible module folds its toolbar (segments into a
     /// menu, titled buttons to icons) so the module tab bar keeps its room.
-    static let compactModuleToolbarBelow: CGFloat = 1400
+    static let compactModuleToolbarBelow: CGFloat = 1900
     @State private var showAuthPopover = false
     @ObservedObject private var terminals: AgentTerminalStore
 
@@ -35,7 +35,6 @@ struct ContentView: View {
             if !(terminals.isMaximized && terminals.isVisible && !terminals.sessions.isEmpty) {
                 tabContent
                     .frame(maxHeight: .infinity)
-                    .environment(\.compactModuleToolbar, windowWidth < Self.compactModuleToolbarBelow)
             }
             if !AppEdition.current.isTicketsOnly {
                 AgentTerminalDock(store: terminals,
@@ -48,7 +47,8 @@ struct ContentView: View {
             // updating once the window had been narrowed, so widening it
             // again left the toolbar compact. Observe the geometry directly.
             .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
-            .background(ToolbarPriorityBridge { appState.globalSearchFocusRequest += 1 })
+            .background(ToolbarPriorityBridge())
+            .background(PinnedSearchTitlebar(appState: appState, width: windowWidth < 1200 ? 240 : 320))
             .toolbar {
                 // Agent is the app's core action, so it sits at the far left,
                 // ahead of history, on every tab.
@@ -143,11 +143,8 @@ struct ContentView: View {
                         .help("One or more systems are logged in as a Service Principal")
                     }
                 }
-                // Last, at the far right, where search is looked for.
-                ToolbarItem(id: "fleetmate.search", placement: .primaryAction) {
-                    GlobalSearchToolbarField(width: windowWidth < Self.compactModuleToolbarBelow ? 200 : 300)
-                }
             }
+            .environment(\.compactModuleToolbar, windowWidth < Self.compactModuleToolbarBelow)
             .onAppear {
                 appState.wireAgentTerminal()
                 terminals.resolveDefaultLaunch = { [weak appState] in appState?.agentDefaultLaunch ?? .shell }

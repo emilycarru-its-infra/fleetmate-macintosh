@@ -10,11 +10,33 @@ struct GlassTabBar: View {
     let availableWidth: CGFloat
 
     /// Below this window width the tab names give way to icons.
-    static let compactBelow: CGFloat = 1750
+    static let compactBelow: CGFloat = 2300
     private var compact: Bool { availableWidth < Self.compactBelow }
     @Namespace private var selectionNS
 
     var body: some View {
+        if availableWidth < 1700 {
+            Menu {
+                ForEach(tabs) { tab in
+                    Button {
+                        onSelect()
+                        selectedTab = tab
+                    } label: {
+                        Label(tab.rawValue, systemImage: tab.icon)
+                    }
+                }
+            } label: {
+                Label(selectedTab.rawValue, systemImage: selectedTab.icon)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .accessibilityLabel("Module: \(selectedTab.rawValue)")
+        } else {
+            tabButtons
+        }
+    }
+
+    private var tabButtons: some View {
         HStack(spacing: 0) {
             ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                 // Separator between tabs (not before first or after selected)

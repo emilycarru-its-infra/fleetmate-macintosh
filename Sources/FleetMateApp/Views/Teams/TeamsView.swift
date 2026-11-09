@@ -26,6 +26,12 @@ struct TeamsView: View {
     @State private var isLoadingThread = false
     @State private var searchError: String?
     @State private var hasSearched = false
+    @State private var isLoadingChannels = false
+    @State private var channelError: String?
+    @State private var searchTask: Task<Void, Never>?
+    @State private var searchGeneration = UUID()
+    @AppStorage("teams.teamFilter") private var teamFilter = ""
+    @AppStorage("teams.defaultsApplied") private var defaultsApplied = false
 
     @AppStorage("teams.channelFilter") private var channelFilter = ""
     @AppStorage("teams.period") private var period = TeamsPeriod.anyTime.rawValue
@@ -40,15 +46,25 @@ struct TeamsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            filterBar
-            Divider()
-            content
+        HSplitView {
+            channelSidebar
+                .frame(minWidth: 180, idealWidth: 240, maxWidth: 340)
+            VStack(spacing: 0) {
+                filterBar
+                    .fixedSize(horizontal: false, vertical: true)
+                Divider()
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(minWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .tabSearch(text: $query, prompt: "Search Teams channels", onSubmit: runSearch)
         .task { await loadChannels() }
         .onChange(of: selection) { _, _ in loadThread() }
         .onChange(of: channelFilter) { _, _ in if hasSearched { runSearch() } }
+        .onChange(of: teamFilter) { _, _ in if hasSearched { runSearch() } }
+        .onDisappear { searchTask?.cancel() }
         .onChange(of: period) { _, _ in if hasSearched { runSearch() } }
         .onCopyCommand { copyItems() }
     }
@@ -56,39 +72,56 @@ struct TeamsView: View {
     // MARK: Filters
 
     private var filterBar: some View {
-        HStack(spacing: 12) {
-            Picker("Channel", selection: $channelFilter) {
-                Text("All channels").tag("")
-                if !channels.isEmpty { Divider() }
-                ForEach(channels, id: \.channelId) { channel in
-                    Text("\(TeamsText.line(channel.teamName)) › \(TeamsText.line(channel.channelName))").tag(channel.channelId)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(scopeTitle).font(.headline).lineLimit(1)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    periodPicker
+                    authorField.frame(width: 160)
+                    searchButton
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack { periodPicker; searchButton }
+                    authorField
                 }
             }
-            .frame(maxWidth: 320)
-
-            Picker("Period", selection: $period) {
-                ForEach(TeamsPeriod.allCases) { p in Text(p.title).tag(p.rawValue) }
-            }
-            .frame(maxWidth: 200)
-
-            TextField("Person", text: $author)
-                .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 180)
-                .onSubmit(runSearch)
-                .help("Only threads this person took part in")
-
-            Spacer()
-
             if isSearching {
-                ProgressView().controlSize(.small)
+                ProgressView("Searching…").controlSize(.small)
             } else if hasSearched {
-                Text(summary)
-                    .foregroundStyle(.secondary)
-                    .appFont(.caption)
+                Text(summary).foregroundStyle(.secondary).appFont(.caption)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal)
         .padding(.vertical, 8)
+    }
+
+    private var scopeTitle: String {
+        if let channel = channels.first(where: { $0.channelId == channelFilter }) {
+            return "\(TeamsText.line(channel.teamName)) › \(TeamsText.line(channel.channelName))"
+        }
+        return channels.first(where: { $0.teamId == teamFilter }).map { TeamsText.line($0.teamName) } ?? "All channels"
+    }
+
+    private var periodPicker: some View {
+        Picker("Period", selection: $period) {
+            ForEach(TeamsPeriod.allCases) { p in Text(p.title).tag(p.rawValue) }
+        }
+        .fixedSize()
+    }
+
+    private var authorField: some View {
+        TextField("Person", text: $author)
+            .textFieldStyle(.roundedBorder)
+            .onSubmit(runSearch)
+            .help("Only threads this person took part in")
+    }
+
+    private var searchButton: some View {
+        Button(action: runSearch) {
+            Label("Search", systemImage: "magnifyingglass")
+        }
+        .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     private var summary: String {
@@ -108,32 +141,44 @@ struct TeamsView: View {
                 description: Text("Set teams_api_url and teams_api_scope in the FleetMate config, or the managed profile's teamsApiUrl and teamsApiScope.")
             )
         } else if let searchError {
-            ContentUnavailableView(
-                "Search Failed",
-                systemImage: "exclamationmark.bubble",
-                description: Text(searchError)
-            )
+            ContentUnavailableView {
+                Label("Search Failed", systemImage: "exclamationmark.bubble")
+            } description: {
+                Text(searchError)
+            } actions: {
+                Button("Try Again", action: runSearch)
+            }
         } else if !hasSearched {
             ContentUnavailableView(
                 "Search Teams Channels",
                 systemImage: "bubble.left.and.text.bubble.right",
-                description: Text("Type in the search field (⌘F) and press Return to find threads in standard and shared channels.")
+                description: Text("Search above (⌘F) to find a conversation, or choose a team or channel in the sidebar to focus your search.")
             )
         } else if results.isEmpty && !isSearching {
             ContentUnavailableView.search(text: query)
         } else {
-            DetailSplitView(fraction: $detailFraction, showsDetail: selection != nil) {
-                resultList
-            } trailing: {
-                TeamsThreadView(
-                    linkHosts: linkHosts,
-                    hit: selectedHit,
-                    thread: thread,
-                    isLoading: isLoadingThread,
-                    error: threadError
-                )
+            GeometryReader { geometry in
+                if geometry.size.width < 760, selection != nil {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Button("Back to Results", systemImage: "chevron.left") { selection = nil }
+                            .padding(10)
+                        threadDetail
+                    }
+                } else {
+                    DetailSplitView(fraction: $detailFraction, showsDetail: selection != nil,
+                                    minLeading: 280, minTrailing: 360) {
+                        resultList
+                    } trailing: {
+                        threadDetail
+                    }
+                }
             }
         }
+    }
+
+    private var threadDetail: some View {
+        TeamsThreadView(linkHosts: linkHosts, hit: selectedHit, thread: thread,
+                        isLoading: isLoadingThread, error: threadError)
     }
 
     private var resultList: some View {
@@ -173,24 +218,30 @@ struct TeamsView: View {
         guard service.isConfigured, !text.isEmpty else { return }
         let request = TeamsSearchQuery(
             text: text,
+            team: teamFilter.isEmpty ? nil : teamFilter,
             channel: channelFilter.isEmpty ? nil : channelFilter,
             author: author.trimmingCharacters(in: .whitespaces).isEmpty ? nil : author,
             since: TeamsPeriod(rawValue: period)?.since,
             limit: 100
         )
         let service = self.service
+        searchTask?.cancel()
+        let generation = UUID()
+        searchGeneration = generation
         isSearching = true
         searchError = nil
-        Task {
-            defer { isSearching = false }
+        searchTask = Task {
+            defer { if searchGeneration == generation { isSearching = false } }
             do {
                 let response = try await service.search(request).value
+                guard !Task.isCancelled, searchGeneration == generation else { return }
                 results = response.results
                 total = response.total
                 asOf = response.asOf
                 hasSearched = true
                 if !results.contains(where: { $0.key == selection }) { selection = results.first?.key }
             } catch {
+                guard !Task.isCancelled, searchGeneration == generation else { return }
                 searchError = error.localizedDescription
                 hasSearched = true
                 results = []
@@ -200,25 +251,140 @@ struct TeamsView: View {
 
     private func loadChannels() async {
         guard service.isConfigured else { return }
-        if let response = try? await service.channels().value {
+        isLoadingChannels = true
+        channelError = nil
+        defer { isLoadingChannels = false }
+        do {
+            let response = try await service.channels().value
+            guard !Task.isCancelled else { return }
             channels = response.channels.sorted {
                 $0.teamName == $1.teamName
                     ? $0.channelName.localizedStandardCompare($1.channelName) == .orderedAscending
                     : $0.teamName.localizedStandardCompare($1.teamName) == .orderedAscending
             }
+            if !defaultsApplied {
+                teamFilter = appState.config.teamsDefaultTeam ?? ""
+                defaultsApplied = true
+            }
+            if !teamFilter.isEmpty && !channels.contains(where: { $0.teamId == teamFilter }) { teamFilter = "" }
+            if let channel = channels.first(where: { $0.channelId == channelFilter }) {
+                teamFilter = channel.teamId
+            } else if !channelFilter.isEmpty {
+                channelFilter = ""
+            }
+        } catch {
+            guard !Task.isCancelled else { return }
+            channelError = error.localizedDescription
         }
+    }
+
+    private var channelSidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Channels").font(.headline)
+                Spacer()
+                Button {
+                    Task { await loadChannels() }
+                } label: {
+                    Label("Reload Channels", systemImage: "arrow.clockwise")
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+                .disabled(isLoadingChannels)
+                .help("Reload channels")
+            }
+            .padding(12)
+            if isLoadingChannels {
+                ProgressView("Loading channels…").controlSize(.small).padding(12)
+            }
+            if let channelError {
+                Text(channelError).font(.callout).foregroundStyle(.secondary).padding(12)
+                Button("Try Again") { Task { await loadChannels() } }.padding(.horizontal, 12)
+            }
+            List {
+                Button {
+                    channelFilter = ""
+                    teamFilter = ""
+                } label: {
+                    Label("All channels", systemImage: "bubble.left.and.bubble.right")
+                        .fontWeight(channelFilter.isEmpty && teamFilter.isEmpty ? .semibold : .regular)
+                }
+                let favorites = channels.filter { appState.config.preloadedTeamsChannelIDs.contains($0.channelId) }
+                if !favorites.isEmpty {
+                    Section("Preloaded") {
+                        ForEach(favorites, id: \.channelId) { channel in channelButton(channel) }
+                    }
+                }
+                ForEach(teamIDs, id: \.self) { teamID in
+                    Section {
+                        Button {
+                            channelFilter = ""
+                            teamFilter = teamID
+                        } label: {
+                            Label("Search this team", systemImage: "person.2")
+                                .fontWeight(teamFilter == teamID && channelFilter.isEmpty ? .semibold : .regular)
+                        }
+                        ForEach(channels.filter { $0.teamId == teamID }, id: \.channelId) { channel in
+                            channelButton(channel)
+                        }
+                    } header: {
+                        Text(TeamsText.line(channels.first { $0.teamId == teamID }?.teamName ?? "Team"))
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .buttonStyle(.plain)
+            if channels.isEmpty && !isLoadingChannels && channelError == nil {
+                Text("No indexed channels are available yet.")
+                    .font(.callout).foregroundStyle(.secondary).padding(12)
+            }
+        }
+    }
+
+    private var teamIDs: [String] {
+        var ids: [String] = []
+        for channel in channels where !ids.contains(channel.teamId) { ids.append(channel.teamId) }
+        if let preferred = appState.config.teamsDefaultTeam, let index = ids.firstIndex(of: preferred) {
+            ids.insert(ids.remove(at: index), at: 0)
+        }
+        return ids
+    }
+
+    private func channelButton(_ channel: TeamsChannel) -> some View {
+        Button {
+            teamFilter = channel.teamId
+            channelFilter = channel.channelId
+            appState.tabSearchFocusRequest += 1
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Label(TeamsText.line(channel.channelName), systemImage: "number")
+                    Spacer(minLength: 4)
+                    if channelFilter == channel.channelId { Image(systemName: "checkmark") }
+                }
+                Text((channel.threads == 1 ? "1 thread" : "\(channel.threads) threads") + (channel.lastActivityAt.map { " · " + TeamsText.localTime($0) } ?? ""))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
+        }
+        .help("Search \(TeamsText.line(channel.teamName)) › \(TeamsText.line(channel.channelName))")
     }
 
     private func loadThread() {
         guard let hit = selectedHit else {
             thread = nil
+            threadError = nil
+            isLoadingThread = false
             return
         }
         let service = self.service
+        thread = nil
         isLoadingThread = true
         threadError = nil
         Task {
-            defer { isLoadingThread = false }
+            defer { if selection == hit.key { isLoadingThread = false } }
             do {
                 let loaded = try await service.thread(id: hit.threadId, channel: hit.channelId).value
                 if selection == hit.key { thread = loaded }

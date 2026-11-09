@@ -238,3 +238,24 @@ final class TeamsSearchServiceTests: XCTestCase {
         }
     }
 }
+
+final class TeamsSidebarConfigurationTests: XCTestCase {
+    func testPreloadedChannelsAcceptManagedStringArrayRepresentationAndCommaList() {
+        var config = FleetMateConfig()
+        XCTAssertTrue(config.preloadedTeamsChannelIDs.isEmpty)
+        config.teamsDefaultChannels = " channel-a, channel-b\nchannel-c\n  \n"
+        XCTAssertEqual(config.preloadedTeamsChannelIDs, ["channel-a", "channel-b", "channel-c"])
+    }
+
+    func testSidebarDefaultsSurviveConfigurationRoundTrip() throws {
+        var config = FleetMateConfig()
+        config.teamsDefaultTeam = "team-a"
+        config.teamsDefaultChannels = "channel-a\nchannel-b"
+        let data = try JSONEncoder().encode(config)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(object["teams_default_team"] as? String, "team-a")
+        let restored = try JSONDecoder().decode(FleetMateConfig.self, from: data)
+        XCTAssertEqual(restored.teamsDefaultTeam, "team-a")
+        XCTAssertEqual(restored.preloadedTeamsChannelIDs, ["channel-a", "channel-b"])
+    }
+}

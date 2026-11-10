@@ -2038,6 +2038,7 @@ struct TaskListRow: View {
                     }
                 }
             }
+            CopyTitleLinkButton(title: task.title, link: task.externalUrl)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

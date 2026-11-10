@@ -12,7 +12,10 @@ public actor GitHubGraphQLClient {
     
     public init(config: GitHubProviderConfig, deviceFlowPrompt: ((String, URL) async -> Void)? = nil) {
         self.tokenSource = GitHubTokenSource(config: config, deviceFlowPrompt: deviceFlowPrompt)
-        let configuration = URLSessionConfiguration.default
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.httpCookieStorage = nil
+        configuration.urlCredentialStorage = nil
         configuration.timeoutIntervalForRequest = 30
         self.session = Session(configuration: configuration, activityService: "GitHub")
     }
@@ -159,7 +162,9 @@ public actor GitHubGraphQLClient {
     public func executeREST(
         method: String = "GET",
         path: String,
-        body: [String: Any]? = nil
+        body: [String: Any]? = nil,
+        useCache: Bool = true,
+        accept: String = "application/vnd.github+json"
     ) async throws -> Data {
         try GitHubRateLimitGate.check(.core)
         let token = try await ensureToken()
@@ -172,7 +177,7 @@ public actor GitHubGraphQLClient {
         // A conditional GET answered 304 does not count against the hourly
         // budget, so every poll of an unchanged list is free. Inside the
         // interval GitHub asks for (X-Poll-Interval), don't ask at all.
-        let cached = method == "GET" ? GitHubLocalCache.shared.restEntry(for: path) : nil
+        let cached = method == "GET" && useCache ? GitHubLocalCache.shared.restEntry(for: path) : nil
         if let cached, cached.isWithinPollInterval {
             return cached.body
         }
@@ -184,7 +189,8 @@ public actor GitHubGraphQLClient {
         // URLSession's own cache would answer the 304 itself and hide it.
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue(accept, forHTTPHeaderField: "Accept")
+        if !useCache { request.setValue("no-store", forHTTPHeaderField: "Cache-Control") }
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         request.setValue("FleetMate", forHTTPHeaderField: "User-Agent")
 
@@ -210,7 +216,7 @@ public actor GitHubGraphQLClient {
                             continuation.resume(returning: cached.body)
                             return
                         }
-                        if method == "GET", let http {
+                        if method == "GET", useCache, let http {
                             GitHubLocalCache.shared.storeREST(
                                 path: path, body: data,
                                 etag: http.value(forHTTPHeaderField: "ETag"),

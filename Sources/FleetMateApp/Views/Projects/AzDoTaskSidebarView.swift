@@ -272,6 +272,7 @@ struct AzDoTaskSidebarView: View {
             Spacer()
 
             AgentContextButton(.workItem(task))
+            CopyTitleLinkButton(title: task.title, link: task.externalUrl)
 
             if let error = actionError {
                 Text(error)
@@ -864,10 +865,19 @@ struct AzDoTaskSidebarView: View {
 
     @ViewBuilder
     private func relationsSection(_ relations: [WorkItemRelation]) -> some View {
-        let nonArtifactRelations = relations.filter { $0.relationType != .artifact }
+        let attachments = relations.filter { $0.rel == "AttachedFile" }
+        let nonArtifactRelations = relations.filter { $0.relationType != .artifact && $0.rel != "AttachedFile" }
         VStack(alignment: .leading, spacing: 10) {
-            Text("Relations (\(nonArtifactRelations.count))")
-                .appFont(.headline)
+            if !attachments.isEmpty {
+                Text("Attachments (\(attachments.count))").appFont(.headline)
+                ForEach(Array(attachments.enumerated()), id: \.offset) { _, attachment in
+                    relationRow(attachment)
+                }
+            }
+            if !nonArtifactRelations.isEmpty {
+                Text("Relations (\(nonArtifactRelations.count))")
+                    .appFont(.headline)
+            }
 
             let grouped = Dictionary(grouping: nonArtifactRelations, by: { $0.relationType })
             let order: [WorkItemRelation.RelationType] = [.parent, .child, .related, .predecessor, .successor, .other]
@@ -891,12 +901,26 @@ struct AzDoTaskSidebarView: View {
     @ViewBuilder
     private func relationRow(_ relation: WorkItemRelation) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: relationIcon(relation.relationType))
-                .appFont(.subheadline)
-                .foregroundColor(.secondary)
-                .frame(width: 16)
+            if relation.rel != "AttachedFile" {
+                Image(systemName: relationIcon(relation.relationType))
+                    .appFont(.subheadline)
+                    .foregroundColor(.secondary)
+                    .frame(width: 16)
+            }
 
-            if relation.relationType != .artifact, let id = relation.linkedWorkItemId {
+            if relation.rel == "AttachedFile", let raw = relation.url, let url = URL(string: raw),
+               let organization = URL(string: appState.devOpsService.baseUrl) {
+                WorkItemAttachmentButton(
+                    attachment: WorkItemAttachment(url: url, name: relation.attributes?.name ?? "Attachment"),
+                    access: .azureDevOps(organization: organization),
+                    authorize: {
+                        guard let token = await appState.devOpsService.currentToken() else {
+                            throw AttachmentDownload.DownloadError.signIn
+                        }
+                        return AttachmentAuthorization(url: url, token: token)
+                    }
+                )
+            } else if relation.relationType != .artifact, let id = relation.linkedWorkItemId {
                 // Work item relation — show title, state badge, and date
                 Button(action: { onSelectWorkItem?(id) }) {
                     HStack(spacing: 4) {

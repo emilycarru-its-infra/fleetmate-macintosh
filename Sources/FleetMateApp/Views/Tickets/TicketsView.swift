@@ -111,10 +111,13 @@ enum AcademicTerm: String, CaseIterable {
 }
 
 struct TicketsView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject var appState: AppState
     @Environment(\.appFontScale) private var appFontScale
     @Environment(\.compactModuleToolbar) private var compactToolbar
     @State private var isLoading = false
+    @State private var lastAutomaticListRefresh = Date.distantPast
+    @State private var lastAutomaticDetailRefresh = Date.distantPast
     /// Share of the width the ticket detail takes when it opens.
     @State private var detailFraction = 0.5
     /// Narrows the list to tickets the signed-in person is responsible for.
@@ -240,6 +243,7 @@ struct TicketsView: View {
     // Detail editing state
     @State private var detailedTicket: TdxTicket? = nil
     @State private var isLoadingDetail = false
+    @State private var detailLoadFailed = false
     @State private var ticketActivityRevision = 0
     @State private var editTitle = ""
     @State private var editStatusId: Int? = nil
@@ -702,6 +706,13 @@ struct TicketsView: View {
             }
             contentSection
         }
+        .task(id: scenePhase) {
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                automaticRefresh()
+                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+            }
+        }
         .onChange(of: selectedTicketIds) { oldIds, newIds in
             if let oldId = oldIds.first ?? nil {
                 commentDrafts[oldId] = commentDraft.isEmpty ? nil : commentDraft
@@ -756,7 +767,14 @@ struct TicketsView: View {
         // A link can open the app before sign-in finishes; everything loaded
         // up to then failed. Load it again once the session exists.
         .onChange(of: appState.tdxSsoAuthenticated) { _, signedIn in
-            guard signedIn else { return }
+            guard signedIn else {
+                selectionRevision = UUID()
+                detailLoadGate.invalidate()
+                feedLoadGate.invalidate()
+                isLoadingDetail = false
+                isLoadingFeed = false
+                return
+            }
             loadTickets()
             Task {
                 await appState.resolveTdxMe()
@@ -764,8 +782,8 @@ struct TicketsView: View {
             }
             if let id = selectedId {
                 saveErrorMessage = nil
-                loadTicketDetail(ticketId: id)
-                loadTicketFeed(ticketId: id)
+                loadTicketDetail(ticketId: id, preservingEdits: true)
+                loadTicketFeed(ticketId: id, preservingContent: true)
             }
         }
         .onChange(of: appState.navigateToTicketId) { _, newId in
@@ -2800,9 +2818,10 @@ struct TicketsView: View {
     }
 
     private func loadTickets() {
-        guard appState.config.isTdxConfigured else { return }
+        guard appState.config.isTdxConfigured, !isLoading else { return }
+        isLoading = true
+        lastAutomaticListRefresh = Date()
         Task {
-            isLoading = true
             defer { isLoading = false }
             do {
                 let range = activeDateRange
@@ -2810,6 +2829,7 @@ struct TicketsView: View {
                 formatter.formatOptions = [.withInternetDateTime]
                 let groupIds = appState.config.tdxResponsibleGroupId.map { [$0] }
                 let service = appState.tdxService
+                let personUid = appState.tdxMe?.uid
 
                 // Tickets created in the selected range.
                 let ranged = TicketSearchRequest(
@@ -2839,18 +2859,38 @@ struct TicketsView: View {
                         responsibleUids: [myUid],
                         maxResults: 1000
                     )
-                    mine = (try? await service.searchTickets(search: request, maxResults: 1000)) ?? []
+                    mine = try await service.searchTickets(search: request, maxResults: 1000)
                 }
 
                 var seen: Set<Int> = []
                 let fetchedTickets = (try await rangedTickets + (try await openTickets) + mine)
                     .filter { $0.id.map { seen.insert($0).inserted } ?? true }
+                guard appState.tdxService === service, appState.tdxMe?.uid == personUid else { return }
                 appState.updateTicketsCache(fetchedTickets)
                 ticketsLoadError = nil
             } catch {
                 dbg.warn("Tickets load failed: \(error)", category: "tickets")
                 ticketsLoadError = error.localizedDescription
             }
+        }
+    }
+
+    /// The view task stops when hidden/inactive. Background helpers have their own slower cadence.
+    private func automaticRefresh() {
+        guard scenePhase == .active, NSApp.isActive, appState.selectedTab == .tickets,
+              appState.tdxSsoAuthenticated, !appState.tdxNeedsSignIn else { return }
+        let now = Date()
+        let listInterval: TimeInterval = ticketsLoadError == nil ? 120 : 300
+        let detailInterval: TimeInterval = feedLoadError == nil && !detailLoadFailed ? 60 : 300
+        if now.timeIntervalSince(lastAutomaticListRefresh) >= listInterval, !isLoading {
+            lastAutomaticListRefresh = now
+            loadTickets()
+        }
+        if now.timeIntervalSince(lastAutomaticDetailRefresh) >= detailInterval, let id = selectedId,
+           !isLoadingDetail, !isLoadingFeed, !hasEdits, !isEditingDescription, !isSaving, !isSavingDescription, !isAddingContact {
+            lastAutomaticDetailRefresh = now
+            loadTicketDetail(ticketId: id, preservingEdits: true)
+            loadTicketFeed(ticketId: id, preservingContent: true)
         }
     }
 
@@ -2861,10 +2901,13 @@ struct TicketsView: View {
         loadTicketFeed(ticketId: id)
     }
 
-    private func loadTicketDetail(ticketId: Int) {
+    private func loadTicketDetail(ticketId: Int, preservingEdits: Bool = false) {
+        lastAutomaticDetailRefresh = Date()
         ticketActivityRevision += 1
         let request = detailLoadGate.begin(ticketId: ticketId)
         isLoadingDetail = true
+        let service = appState.tdxService
+        let personUid = appState.tdxMe?.uid
         Task {
             defer {
                 if detailLoadGate.accepts(request, selectedTicketId: selectedId) {
@@ -2872,25 +2915,34 @@ struct TicketsView: View {
                 }
             }
             do {
-                let full = try await appState.tdxService.getTicket(id: ticketId)
-                guard detailLoadGate.accepts(request, selectedTicketId: selectedId) else { return }
+                let full = try await service.getTicket(id: ticketId)
+                guard detailLoadGate.accepts(request, selectedTicketId: selectedId),
+                      appState.tdxService === service, appState.tdxMe?.uid == personUid else { return }
                 if let full {
+                    if preservingEdits && (hasEdits || isEditingDescription || isSaving || isSavingDescription || isAddingContact) { return }
+                    detailLoadFailed = false
                     detailedTicket = full
-                    populateEditFields(from: full)
+                    if !preservingEdits || (!hasEdits && !isEditingDescription && !isSaving && !isSavingDescription) {
+                        populateEditFields(from: full)
+                    }
                     await loadTicketPeople(ticket: full)
                 }
             } catch {
-                guard detailLoadGate.accepts(request, selectedTicketId: selectedId) else { return }
+                guard detailLoadGate.accepts(request, selectedTicketId: selectedId),
+                      appState.tdxService === service, appState.tdxMe?.uid == personUid else { return }
+                detailLoadFailed = true
                 saveErrorMessage = "Could not load ticket details: \(error.localizedDescription)"
             }
         }
     }
 
-    private func loadTicketFeed(ticketId: Int) {
+    private func loadTicketFeed(ticketId: Int, preservingContent: Bool = false) {
         let request = feedLoadGate.begin(ticketId: ticketId)
         isLoadingFeed = true
         feedLoadError = nil
-        ticketFeed = []
+        if !preservingContent { ticketFeed = [] }
+        let service = appState.tdxService
+        let personUid = appState.tdxMe?.uid
         Task {
             defer {
                 if feedLoadGate.accepts(request, selectedTicketId: selectedId) {
@@ -2898,12 +2950,14 @@ struct TicketsView: View {
                 }
             }
             do {
-                let loadedFeed = try await appState.tdxService.getTicketFeed(ticketId: ticketId)
-                guard feedLoadGate.accepts(request, selectedTicketId: selectedId) else { return }
+                let loadedFeed = try await service.getTicketFeed(ticketId: ticketId)
+                guard feedLoadGate.accepts(request, selectedTicketId: selectedId),
+                      appState.tdxService === service, appState.tdxMe?.uid == personUid else { return }
                 ticketFeed = loadedFeed
             } catch {
-                guard feedLoadGate.accepts(request, selectedTicketId: selectedId) else { return }
-                ticketFeed = []
+                guard feedLoadGate.accepts(request, selectedTicketId: selectedId),
+                      appState.tdxService === service, appState.tdxMe?.uid == personUid else { return }
+                if !preservingContent { ticketFeed = [] }
                 feedLoadError = "Could not load activity: \(error.localizedDescription)"
             }
         }

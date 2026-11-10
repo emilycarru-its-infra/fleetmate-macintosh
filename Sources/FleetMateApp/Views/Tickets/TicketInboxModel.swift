@@ -25,9 +25,8 @@ final class TicketInboxModel: ObservableObject {
 
     var errorMessage: String? { readStateErrorMessage ?? scanErrorMessage }
 
-    /// Spacing between feed calls, under TDX's rate limit with room left for
-    /// the rest of the app.
-    private let pace: Duration = .milliseconds(1200)
+    /// Leave room below the per-user limit when both editions scan, plus foreground reads.
+    private let pace: Duration = .milliseconds(2500)
     private var scanTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var scope: TicketInboxScope?

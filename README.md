@@ -657,3 +657,16 @@ The two-squares action copies a title and URL as plain text and a rich-text link
 copy actions keep their meaning. Copy for Agent shows the exact clipboard text in an anchored
 preview for five seconds; another copy replaces the preview and restarts its timer. Successful
 Send to Agent insertion keeps its existing terminal behavior.
+
+### Background ticket preparation
+
+The nested Inbox helper uses existing silent platform SSO and never opens a sign-in window.
+Managed installers can call the installed app with `--register-inbox-helper` in each GUI user's
+session to register or reload that helper without opening the app. A disabled Login Item remains
+disabled. The helper prepares its edition's ticket snapshot after resolving the signed-in person;
+snapshot reuse requires the same ticket service and person. Unscoped legacy snapshots are preserved
+but are no longer shown at startup.
+
+While the Tickets view is active, lists refresh every two minutes and selected ticket details and
+activity every minute. Inactive views stop their refresh task. Automatic refresh does not overlap
+loads or overwrite in-progress edits; existing activity stays visible during its refresh.

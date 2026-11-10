@@ -8,7 +8,12 @@ import FleetMateCore
 @main
 enum AppMain {
     static func main() {
-        if InboxAgent.isAgentProcess {
+        if CommandLine.arguments.contains("--register-inbox-helper") {
+            MainActor.assumeIsolated {
+                NSApplication.shared.setActivationPolicy(.prohibited)
+                InboxAgent.registerIfInstalled(reload: true)
+            }
+        } else if InboxAgent.isAgentProcess {
             InboxAgent.run()
         } else {
             FleetMateApp.main()
@@ -50,7 +55,7 @@ final class InboxAgent: NSObject, NSApplicationDelegate {
 
     /// Register the helper with macOS, once, from an installed copy of the
     /// app. A build run from anywhere else would register its own path.
-    static func registerIfInstalled() {
+    static func registerIfInstalled(reload: Bool = false) {
         guard !isAgentProcess, Bundle.main.bundlePath.hasPrefix("/Applications/") else { return }
         let plist = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Library/LaunchAgents/\(plistName)")
@@ -64,7 +69,7 @@ final class InboxAgent: NSObject, NSApplicationDelegate {
             // still runs the app's own executable instead of the helper.
             // Register again so the current helper runs without a re-login.
             let state = jobState
-            guard InboxHelperJob.needsReload(state) else { return }
+            guard reload || InboxHelperJob.needsReload(state) else { return }
             do {
                 try? service.unregister()
                 try service.register()
@@ -176,6 +181,9 @@ final class InboxAgent: NSObject, NSApplicationDelegate {
         state.startTdxRenewal()
         while !Task.isCancelled {
             await state.resolveTdxMe()
+            if state.tdxSsoAuthenticated, state.tdxService.hasUsableUserSession(), state.tdxMe != nil {
+                await state.preloadTickets()
+            }
             try? await Task.sleep(for: .seconds(state.tdxMe == nil ? 30 : 600))
         }
     }

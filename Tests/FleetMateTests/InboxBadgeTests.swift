@@ -53,10 +53,29 @@ final class InboxBadgeTests: XCTestCase {
         let name = "InboxBadgeTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!
         defer { defaults.removePersistentDomain(forName: name) }
+        XCTAssertFalse(InboxBadge.isDockBadgeEnabled(in: defaults))
+        defaults.set(true, forKey: InboxBadge.settingKey)
         XCTAssertTrue(InboxBadge.isDockBadgeEnabled(in: defaults))
         defaults.set(false, forKey: InboxBadge.dockSettingKey)
         XCTAssertFalse(InboxBadge.isDockBadgeEnabled(in: defaults))
         defaults.set(true, forKey: InboxBadge.dockSettingKey)
         XCTAssertTrue(InboxBadge.isDockBadgeEnabled(in: defaults))
+    }
+}
+
+
+extension InboxBadgeTests {
+    func testEditionDefaultsAndIndependentDockPreference() {
+        let name = "InboxBadgeTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        XCTAssertFalse(InboxBadge.isEnabled(in: defaults, edition: .fleetMate))
+        XCTAssertTrue(InboxBadge.isEnabled(in: defaults, edition: .ticketsMate))
+        defaults.set(true, forKey: InboxBadge.settingKey)
+        defaults.set(false, forKey: InboxBadge.dockSettingKey)
+        XCTAssertTrue(InboxBadge.isEnabled(in: defaults, edition: .fleetMate))
+        XCTAssertFalse(InboxBadge.isDockBadgeEnabled(in: defaults))
+        defaults.set(false, forKey: InboxBadge.settingKey)
+        XCTAssertFalse(InboxBadge.isEnabled(in: defaults, edition: .ticketsMate))
     }
 }

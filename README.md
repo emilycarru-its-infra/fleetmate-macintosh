@@ -627,3 +627,20 @@ make release-app EDITION=ticketsmate SAFARI_EXTENSION_RESOURCES=/path/to/web-ext
 ```
 
 The app-signing target signs the sandboxed extension first and then the containing app. Notarization covers the complete app bundle. A deployment that replaces web resources must repeat that signing order and verify the nested signature. The extension is distributed and updated with the containing application.
+
+### Shared ticket Inbox status
+
+FleetMate and TicketsMate share only read decisions for the same operating-system user,
+canonical ticket collection endpoint, and ticketing person identifier. Message bodies and scan
+caches remain edition-owned. Changes are applied per message under a cross-process lock;
+marking a message unread remains authoritative even when another edition imports old history.
+
+Ticket Inbox badges default off in FleetMate and on in TicketsMate. The user can change
+`tickets.showInboxBadges` in Appearance settings; `tickets.showDockBadge` still controls the Dock
+independently within that master setting. Administrators can supply a default with
+`tickets.inboxBadgesDefault` without forcing the editable user preference.
+
+Old caches did not identify their source service. They remain untouched and are not adopted
+unless an administrator declares `tickets.legacyServiceKey`, the lowercase SHA256 of the
+canonical full ticket collection endpoint. Only that edition's current-person cache and read
+marks are then imported, once; explicit shared read/unread decisions take precedence.

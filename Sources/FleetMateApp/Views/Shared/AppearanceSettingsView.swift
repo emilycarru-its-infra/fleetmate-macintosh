@@ -9,6 +9,7 @@ struct AppearanceSettingsView: View {
     @AppStorage(AppFontScale.storageKey) private var fontScale: Double = AppFontScale.default
     @AppStorage(AppTheme.storageKey) private var theme: AppTheme = .system
     @AppStorage(InboxBadge.dockSettingKey) private var showDockBadge: Bool = InboxBadge.dockSettingDefault
+    @AppStorage(InboxBadge.settingKey) private var showInboxBadges: Bool = InboxBadge.defaultValue()
     /// False when System Settings ▸ Notifications has badges off for this app.
     @State private var systemAllowsBadges = true
     @Environment(\.openURL) private var openURL
@@ -92,17 +93,25 @@ struct AppearanceSettingsView: View {
     private var dockSection: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
+                Toggle("Ticket Inbox badges", isOn: $showInboxBadges)
+                    .appFont(.headline)
+                    .toggleStyle(.switch)
+                Text("Shows unread counts on the Inbox button and optionally the Dock. FleetMate defaults off so TicketsMate can handle badges when both apps are installed.")
+                    .appFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Toggle(isOn: $showDockBadge) {
                     Text("Show unread count on Dock icon").appFont(.headline)
                 }
                 .toggleStyle(.switch)
+                .disabled(!showInboxBadges)
 
                 Text("Badges \(AppEdition.current.displayName)'s Dock icon with the number of unread comments in the Tickets inbox, the way Mail shows unread mail.")
                     .appFont(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                if showDockBadge && !systemAllowsBadges {
+                if showInboxBadges && showDockBadge && !systemAllowsBadges {
                     HStack(alignment: .firstTextBaseline) {
                         Label("Badges are turned off for \(AppEdition.current.displayName) in System Settings, so the Dock icon won't show the count.",
                               systemImage: "exclamationmark.triangle")

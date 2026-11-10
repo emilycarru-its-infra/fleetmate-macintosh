@@ -37,6 +37,7 @@ public struct TicketInbox: Codable, Sendable {
     public static let windowDays = 90
 
     public var personUid: String
+    public var serviceKey: String?
     public var items: [TicketInboxItem] = []
     /// When the last full pass started. The next pass asks only for tickets
     /// modified since then.
@@ -131,6 +132,39 @@ public struct TicketInbox: Codable, Sendable {
         return inbox
     }
 
+    public static func fileURL(scope: TicketInboxScope, root: URL? = nil) -> URL {
+        directory(root: root).appendingPathComponent(scope.identifier, isDirectory: true)
+            .appendingPathComponent("inbox.json")
+    }
+
+    public static func load(scope: TicketInboxScope, legacyServiceKey: String? = nil, root: URL? = nil) -> TicketInbox {
+        if let data = try? Data(contentsOf: fileURL(scope: scope, root: root)),
+           let inbox = try? JSONDecoder().decode(TicketInbox.self, from: data),
+           inbox.personUid.lowercased() == scope.personUid, inbox.serviceKey == scope.serviceKey {
+            return inbox
+        }
+        // Only an explicit administrator declaration can bind an old UID-only cache.
+        if legacyServiceKey == scope.serviceKey {
+            var legacy = load(personUid: scope.personUid, root: root)
+            legacy.serviceKey = scope.serviceKey
+            return legacy
+        }
+        var inbox = TicketInbox(personUid: scope.personUid)
+        inbox.serviceKey = scope.serviceKey
+        return inbox
+    }
+
+    public func save(scope: TicketInboxScope, root: URL? = nil) throws {
+        guard personUid.lowercased() == scope.personUid, serviceKey == scope.serviceKey else {
+            throw CocoaError(.fileWriteInvalidFileName)
+        }
+        let url = Self.fileURL(scope: scope, root: root)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        try JSONEncoder().encode(self).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
     public func save(root: URL? = nil) throws {
         let url = Self.fileURL(personUid: personUid, root: root)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -174,14 +208,26 @@ public final class TicketInboxScanLock {
     /// Nil when another process holds the lock.
     public init?(personUid: String, root: URL? = nil) {
         let url = TicketInbox.directory(root: root).appendingPathComponent("\(personUid).lock")
+        guard let descriptor = Self.acquire(url: url) else { return nil }
+        self.descriptor = descriptor
+    }
+
+    public init?(scope: TicketInboxScope, root: URL? = nil) {
+        let url = TicketInbox.fileURL(scope: scope, root: root).deletingLastPathComponent()
+            .appendingPathComponent("scan.lock")
+        guard let descriptor = Self.acquire(url: url) else { return nil }
+        self.descriptor = descriptor
+    }
+
+    private static func acquire(url: URL) -> Int32? {
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let fd = open(url.path, O_CREAT | O_RDWR, 0o644)
+        let fd = open(url.path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0o600)
         guard fd >= 0 else { return nil }
         guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
             close(fd)
             return nil
         }
-        descriptor = fd
+        return fd
     }
 
     deinit {

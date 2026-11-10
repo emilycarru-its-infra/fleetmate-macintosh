@@ -89,6 +89,8 @@ public class TdxService {
         }
         return raw
     }
+
+    public var ticketInboxEndpoint: String { config.tdxTicketsUrl() }
     
     /// Returns true if SSO authentication is active and valid
     public var isSsoAuthenticated: Bool {

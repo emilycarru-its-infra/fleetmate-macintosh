@@ -3824,6 +3824,7 @@ struct TicketStatusBadge: View {
 
 /// Observing the inbox here keeps badge/scanner updates out of the List and Board.
 struct TicketInboxPopoverButton: View {
+    @AppStorage(InboxBadge.settingKey) private var showInboxBadges: Bool = InboxBadge.defaultValue()
     @ObservedObject var inbox: TicketInboxModel
     @Binding var isPresented: Bool
     let requiresSignIn: Bool
@@ -3834,7 +3835,7 @@ struct TicketInboxPopoverButton: View {
     let onSelect: (TicketInboxItem) -> Void
 
     var body: some View {
-        InboxBadgeButton(isSelected: isPresented, unreadCount: inbox.unreadCount) {
+        InboxBadgeButton(isSelected: isPresented, unreadCount: inbox.unreadCount, showBadge: showInboxBadges) {
             fitToWindow(hostWindow.window)
             isPresented.toggle()
         }
@@ -3924,6 +3925,7 @@ struct ViewModePill: View {
 struct InboxBadgeButton: View {
     let isSelected: Bool
     let unreadCount: Int
+    var showBadge = true
     let action: () -> Void
 
     var body: some View {
@@ -3936,7 +3938,7 @@ struct InboxBadgeButton: View {
                     if isSelected { Capsule().fill(.primary.opacity(0.15)) }
                 }
                 .overlay(alignment: .topTrailing) {
-                    if unreadCount > 0 {
+                    if showBadge && unreadCount > 0 {
                         UnreadBadge(count: unreadCount)
                             .offset(x: 6, y: -5)
                     }

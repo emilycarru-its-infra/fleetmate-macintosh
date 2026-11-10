@@ -555,6 +555,8 @@ class AppState: ObservableObject {
             graphService = GraphService(config: config)
             devOpsService = AzureDevOpsService(config: config)
             devOpsSsoService = DevOpsSsoService(tenantId: config.devopsTenantId ?? config.graphTenantId)
+            ticketInbox.stop()
+            tdxMe = nil
             tdxService = makeTdxService(config: config)
             snipeService = SnipeService(config: config)
             reportMateService = ReportMateService(config: config)
@@ -1389,6 +1391,7 @@ class AppState: ObservableObject {
         tdxSignInStage = nil
         tdxAuthenticatedUserName = nil
         tdxMe = nil
+        ticketInbox.stop()
         showTdxSsoLogin = false
         authManager.update(.tdx, state: .failed(message: reason))
         invalidateTicketsCache()

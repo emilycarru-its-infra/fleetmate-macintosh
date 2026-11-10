@@ -192,6 +192,7 @@ struct PullRequestDetailView: View {
                 .foregroundStyle(.secondary)
 
             AgentContextButton(.pullRequest(pullRequest))
+            CopyTitleLinkButton(title: pullRequest.title, link: pullRequest.webUrl)
             Button {
                 if let url = URL(string: pullRequest.webUrl) { NSWorkspace.shared.openInBrowser(url) }
             } label: {

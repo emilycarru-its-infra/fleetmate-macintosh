@@ -4,16 +4,20 @@ import FleetMateCore
 
 /// Puts `AgentContext` blocks on the pasteboard and into drags: the Markdown
 /// as plain text, plus the item's link as a URL where it has one.
+@MainActor
 enum AgentContextPasteboard {
-    static func write(_ contexts: [AgentContext], to pasteboard: NSPasteboard = .general) {
+    static func write(_ contexts: [AgentContext], to pasteboard: NSPasteboard = .general, anchor: NSView? = nil) {
         guard !contexts.isEmpty else { return }
         let item = NSPasteboardItem()
-        item.setString(AgentContextRenderer.render(contexts), forType: .string)
+        let text = AgentContextRenderer.render(contexts)
+        item.setString(text, forType: .string)
         if contexts.count == 1, let link = contexts[0].url, let url = URL(string: link) {
             item.setString(url.absoluteString, forType: .URL)
         }
         pasteboard.clearContents()
-        pasteboard.writeObjects([item])
+        if pasteboard.writeObjects([item]), pasteboard === NSPasteboard.general {
+            ClipboardPreview.show(text, heading: "Copied for Agent", anchor: anchor)
+        }
     }
 
     /// A drag carries the text alone, so wherever it lands (the agent
@@ -27,10 +31,10 @@ extension AppState {
     /// Paste the blocks into a running agent's input, never pressing Return.
     /// With no agent running, copy them and open the terminal idle, so the
     /// person pastes them alongside their own request.
-    func sendToAgent(_ contexts: [AgentContext]) {
+    func sendToAgent(_ contexts: [AgentContext], anchor: NSView? = nil) {
         guard !contexts.isEmpty else { return }
         if !terminals.insert(AgentContextRenderer.render(contexts)) {
-            AgentContextPasteboard.write(contexts)
+            AgentContextPasteboard.write(contexts, anchor: anchor)
             terminals.show(defaultLaunch: agentDefaultLaunch)
         }
     }
@@ -69,6 +73,7 @@ struct AgentContextMenuItems: View {
 /// The detail-view button: click sends to the agent session, the menu copies.
 /// TicketsMate has no agent terminal, so there it is not shown.
 struct AgentContextButton: View {
+    @StateObject private var anchor = ClipboardAnchor()
     @EnvironmentObject private var appState: AppState
     let context: AgentContext?
 
@@ -80,13 +85,14 @@ struct AgentContextButton: View {
 
     private var button: some View {
         Menu {
-            Button("Send to Agent") { if let context { appState.sendToAgent([context]) } }
-            Button("Copy for Agent") { if let context { AgentContextPasteboard.write([context]) } }
+            Button("Send to Agent") { if let context { appState.sendToAgent([context], anchor: anchor.view) } }
+            Button("Copy for Agent") { if let context { AgentContextPasteboard.write([context], anchor: anchor.view) } }
         } label: {
             Label("Agent", systemImage: ContentView.agentSymbol)
         } primaryAction: {
-            if let context { appState.sendToAgent([context]) }
+            if let context { appState.sendToAgent([context], anchor: anchor.view) }
         }
+        .background(ClipboardAnchorView(anchor: anchor).accessibilityHidden(true))
         .labelStyle(.iconOnly)
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

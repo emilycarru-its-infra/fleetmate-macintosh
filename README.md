@@ -644,3 +644,16 @@ Old caches did not identify their source service. They remain untouched and are 
 unless an administrator declares `tickets.legacyServiceKey`, the lowercase SHA256 of the
 canonical full ticket collection endpoint. Only that edition's current-person cache and read
 marks are then imported, once; explicit shared read/unread decisions take precedence.
+
+### Work item attachments and copying
+
+Azure DevOps attachment relations and uploaded files in GitHub issue descriptions/comments offer
+native Quick Look previews, Save As, and an original browser link. Downloads are cancellable and
+limited to 50 MB; credentials stay on the configured provider origin and are removed from redirects.
+Private GitHub assets are resolved from a freshly authorized, uncached response. Unsupported or
+unavailable attachments retain the browser fallback.
+
+The two-squares action copies a title and URL as plain text and a rich-text link. Existing ID-only
+copy actions keep their meaning. Copy for Agent shows the exact clipboard text in an anchored
+preview for five seconds; another copy replaces the preview and restarts its timer. Successful
+Send to Agent insertion keeps its existing terminal behavior.

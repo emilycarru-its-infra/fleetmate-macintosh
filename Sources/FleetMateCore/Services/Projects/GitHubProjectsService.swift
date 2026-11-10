@@ -749,6 +749,18 @@ public actor GitHubProjectsService {
         return try restDecoder().decode(GitHubIssueDetail.self, from: data)
     }
 
+    /// Bypass account-agnostic response caches before resolving a private attachment.
+    public func currentAttachmentSources(owner: String, repo: String, number: Int) async throws -> String {
+        let path = "/repos/\(owner)/\(repo)/issues/\(number)"
+        let issue = try await client.executeREST(path: path, useCache: false, accept: "application/vnd.github.full+json")
+        let comments = try await client.executeREST(path: path + "/comments?per_page=100", useCache: false, accept: "application/vnd.github.full+json")
+        func bodies(_ object: Any) -> [String] {
+            let records = (object as? [[String: Any]]) ?? (object as? [String: Any]).map { [$0] } ?? []
+            return records.flatMap { record in [record["body"] as? String, record["body_html"] as? String].compactMap { $0 } }
+        }
+        return try (bodies(JSONSerialization.jsonObject(with: issue)) + bodies(JSONSerialization.jsonObject(with: comments))).joined(separator: "\n")
+    }
+
     /// Lists comments on an issue (up to 100).
     public func listIssueComments(owner: String, repo: String, number: Int) async throws -> [GitHubComment] {
         let data = try await client.executeREST(path: "/repos/\(owner)/\(repo)/issues/\(number)/comments?per_page=100")

@@ -538,6 +538,8 @@ struct PullRequestRow: View {
         HStack(spacing: 6) {
             leadingCluster
             rowButton
+            CopyTitleLinkButton(title: pullRequest.title, link: pullRequest.webUrl)
+                .padding(.trailing, 6)
             if showsActions {
                 actionButtons
             }

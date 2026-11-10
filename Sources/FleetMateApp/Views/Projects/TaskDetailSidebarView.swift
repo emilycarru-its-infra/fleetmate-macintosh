@@ -50,6 +50,7 @@ struct GenericTaskSidebarView: View {
                     .foregroundColor(.secondary)
                 Spacer()
                 AgentContextButton(.workItem(task))
+            CopyTitleLinkButton(title: task.title, link: task.externalUrl)
                 if let url = task.externalUrl, let urlObj = URL(string: url) {
                     Link(destination: urlObj) {
                         Image(systemName: "arrow.up.right.square")

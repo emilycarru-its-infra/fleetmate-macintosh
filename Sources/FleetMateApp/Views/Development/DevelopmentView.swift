@@ -1561,6 +1561,7 @@ struct CodePullRequestRow: View {
     @State private var isHovering = false
 
     var body: some View {
+        HStack(spacing: 6) {
         Button(action: onSelect) {
             HStack(alignment: .center, spacing: 8) {
                 Rectangle()
@@ -1638,6 +1639,9 @@ struct CodePullRequestRow: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(String(pullRequest.number), forType: .string)
             }
+        }
+        CopyTitleLinkButton(title: pullRequest.title, link: pullRequest.webUrl)
+            .padding(.trailing, 8)
         }
     }
 

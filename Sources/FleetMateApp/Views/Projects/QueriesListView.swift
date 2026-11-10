@@ -282,6 +282,7 @@ struct QueriesListView<MenuContent: View>: View {
             headerCell(.changed)
                 .frame(width: columnWidths.changed, alignment: .trailing)
             resizeHandle(.changed)
+            Color.clear.frame(width: 54, height: 1)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 5)
@@ -704,6 +705,11 @@ struct QueryWorkItemRow: View {
                 .foregroundColor(.secondary)
                 .frame(width: widths.changed, alignment: .trailing)
             spacer(.changed)
+            HStack(spacing: 10) {
+                AgentContextButton(.workItem(task))
+                CopyTitleLinkButton(title: task.title, link: task.externalUrl)
+            }
+            .frame(width: 54)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 5)

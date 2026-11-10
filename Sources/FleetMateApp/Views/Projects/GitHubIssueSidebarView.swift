@@ -83,6 +83,7 @@ struct GitHubIssueSidebarView: View {
                             issueTitleSection
                             Divider().padding(.vertical, 8)
                             issueBodySection
+                        attachmentsSection
                             Divider().padding(.vertical, 8)
                             commentsSection
                             Divider().padding(.vertical, 8)
@@ -110,6 +111,7 @@ struct GitHubIssueSidebarView: View {
                         issueTitleSection
                         Divider().padding(.vertical, 8)
                         issueBodySection
+                        attachmentsSection
                         Divider().padding(.vertical, 8)
                         issueMetadataSection
                         Divider().padding(.vertical, 8)
@@ -177,6 +179,7 @@ struct GitHubIssueSidebarView: View {
             }
 
             AgentContextButton(.workItem(task))
+            CopyTitleLinkButton(title: task.title, link: task.externalUrl)
 
             if let onOpenInProjects {
                 Button(action: onOpenInProjects) {
@@ -439,6 +442,39 @@ struct GitHubIssueSidebarView: View {
             } else {
                 ForEach(comments) { comment in
                     CommentBubble(comment: comment)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var attachmentsSection: some View {
+        let attachments = WorkItemAttachment.github(in: ([detail?.body ?? ""] + comments.map(\.body)).joined(separator: "\n"))
+        if !attachments.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Attachments", systemImage: "paperclip").font(.headline)
+                ForEach(attachments) { attachment in
+                    WorkItemAttachmentButton(attachment: attachment, access: .github) {
+                        guard var configuration = config, let parsed = ownerRepoParsed, let number = issueNumber,
+                              let token = await GitHubTokenSource(config: configuration).token() else {
+                            throw AttachmentDownload.DownloadError.signIn
+                        }
+                        configuration.token = token
+                        let service = GitHubProjectsService(config: configuration)
+                        let sources = try await service.currentAttachmentSources(owner: parsed.owner, repo: parsed.repo, number: number)
+                        let current = WorkItemAttachment.github(in: sources)
+                        guard current.contains(where: { $0.url == attachment.url }) else {
+                            throw AttachmentDownload.DownloadError.unavailable
+                        }
+                        // GitHub renders private image assets as short-lived, signed URLs.
+                        // Resolve only from this freshly authorized response, never old cached HTML.
+                        let identifier = attachment.url.lastPathComponent
+                        let resolved = current.first { candidate in
+                            candidate.url.host != "github.com" && identifier.count >= 32
+                                && candidate.url.lastPathComponent.contains(identifier)
+                        }?.url ?? attachment.url
+                        return AttachmentAuthorization(url: resolved, token: token)
+                    }
                 }
             }
         }

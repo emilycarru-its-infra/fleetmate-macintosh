@@ -1,6 +1,5 @@
 import CryptoKit
 import Foundation
-import LocalAuthentication
 import Security
 
 /// The CLI's own verified session. Keychain access never opens an authorization
@@ -22,7 +21,7 @@ public enum TdxCliSessionCache {
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+        guard NoninteractiveKeychain.copyMatching(query as CFDictionary, &item) == errSecSuccess,
               let data = item as? Data, data.count <= 65_536,
               let record = try? JSONDecoder().decode(Record.self, from: data) else { return nil }
         return validated(record, baseURL: baseURL, expectedUpn: expected, now: Date())
@@ -36,18 +35,18 @@ public enum TdxCliSessionCache {
         guard let data = try? JSONEncoder().encode(record), data.count <= 65_536 else { return }
         let query = key(baseURL: baseURL, email: expected)
         let values = [kSecValueData as String: data] as [String: Any]
-        let status = SecItemUpdate(query as CFDictionary, values as CFDictionary)
+        let status = NoninteractiveKeychain.update(query as CFDictionary, values as CFDictionary)
         if status == errSecItemNotFound {
             var item = query
             item[kSecValueData as String] = data
             item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            _ = SecItemAdd(item as CFDictionary, nil)
+            _ = NoninteractiveKeychain.add(item as CFDictionary, nil)
         }
     }
 
     public static func clear(baseURL: String, expectedUpn: String?) {
         guard let expected = TdxSsoIdentity.normalized(expectedUpn) else { return }
-        _ = SecItemDelete(key(baseURL: baseURL, email: expected) as CFDictionary)
+        _ = NoninteractiveKeychain.delete(key(baseURL: baseURL, email: expected) as CFDictionary)
     }
 
     static func validated(_ record: Record, baseURL: String, expectedUpn: String?, now: Date) -> TdxSsoResult? {
@@ -62,12 +61,9 @@ public enum TdxCliSessionCache {
     private static func key(baseURL: String, email: String) -> [String: Any] {
         let digest = SHA256.hash(data: Data((baseURL + "\n" + email).utf8))
             .map { String(format: "%02x", $0) }.joined()
-        let context = LAContext()
-        context.interactionNotAllowed = true
         return [kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,
-                kSecAttrAccount as String: digest,
-                kSecUseAuthenticationContext as String: context]
+                kSecAttrAccount as String: digest]
     }
 
     static func tokenExpiry(_ token: String) -> Date? {

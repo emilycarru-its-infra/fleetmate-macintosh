@@ -15,7 +15,7 @@ private func keychainRead() -> String? {
         kSecMatchLimit as String: kSecMatchLimitOne
     ]
     var item: AnyObject?
-    guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+    guard NoninteractiveKeychain.copyMatching(query as CFDictionary, &item) == errSecSuccess,
           let data = item as? Data else { return nil }
     return String(data: data, encoding: .utf8)
 }
@@ -28,8 +28,8 @@ private func keychainWrite(_ token: String) {
         kSecAttrAccount as String: keychainAccount,
         kSecValueData as String: data
     ]
-    SecItemDelete(attrs as CFDictionary)
-    SecItemAdd(attrs as CFDictionary, nil)
+    NoninteractiveKeychain.delete(attrs as CFDictionary)
+    NoninteractiveKeychain.add(attrs as CFDictionary, nil)
 }
 
 // MARK: - GitHubTokenSource

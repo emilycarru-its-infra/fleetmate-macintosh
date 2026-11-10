@@ -5,10 +5,9 @@ import Security
 /// the app window or the background helper — can reuse it instead of
 /// signing in again, which takes up to a minute.
 ///
-/// The helper is a copy of the app's binary in a nested bundle, signed with
-/// the app's own signing identifier, so its designated requirement is the
-/// app's and either can read what the other wrote without a keychain prompt.
-/// The service is keyed on the app's bundle id, never the helper's.
+/// Cache access is noninteractive for both legacy and modern Keychain items.
+/// Each helper uses its parent's cache identity. Protected legacy entries stay
+/// untouched and are not read; a fresh verified sign-in populates the current namespace.
 public struct TdxSessionCache: Codable, Sendable {
     public struct Cookie: Codable, Sendable {
         public let name: String
@@ -82,7 +81,7 @@ public struct TdxSessionCache: Codable, Sendable {
     }
 
     private static var service: String {
-        "\(AppIdentity.mainBundleIdentifier ?? "ca.ecuad.macadmin.fleetmate").tdx-session"
+        "\(AppIdentity.mainBundleIdentifier ?? "ca.ecuad.macadmin.fleetmate").tdx-session.v2"
     }
     private static let account = "session"
 
@@ -94,28 +93,29 @@ public struct TdxSessionCache: Codable, Sendable {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
+        var result: CFTypeRef?
+        guard NoninteractiveKeychain.copyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data, data.count <= 1_048_576 else { return nil }
         return try? JSONDecoder().decode(TdxSessionCache.self, from: data)
     }
 
     public func save() {
-        guard let data = try? JSONEncoder().encode(self) else { return }
+        guard let data = try? JSONEncoder().encode(self), data.count <= 1_048_576 else { return }
         let match: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: Self.service,
             kSecAttrAccount as String: Self.account,
         ]
         let update: [String: Any] = [kSecValueData as String: data]
-        if SecItemUpdate(match as CFDictionary, update as CFDictionary) == errSecItemNotFound {
+        var status = NoninteractiveKeychain.update(match as CFDictionary, update as CFDictionary)
+        if status == errSecItemNotFound {
             var add = match
             add[kSecValueData as String] = data
             add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             add[kSecAttrLabel as String] = "TeamDynamix session"
-            SecItemAdd(add as CFDictionary, nil)
+            status = NoninteractiveKeychain.add(add as CFDictionary, nil)
         }
-        TdxSessionSync.postChanged()
+        if status == errSecSuccess { TdxSessionSync.postChanged() }
     }
 
     public static func clear() {
@@ -124,7 +124,7 @@ public struct TdxSessionCache: Codable, Sendable {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        SecItemDelete(match as CFDictionary)
+        NoninteractiveKeychain.delete(match as CFDictionary)
         TdxSessionSync.postChanged()
     }
 }

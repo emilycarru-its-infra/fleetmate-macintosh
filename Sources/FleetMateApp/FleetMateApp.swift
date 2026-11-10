@@ -510,15 +510,7 @@ class AppState: ObservableObject {
         }
         dbg.info("secretsConfigured = \(secretsConfigured)", category: "startup")
 
-        // Show the last session's tickets straight away; they are replaced
-        // as soon as sign-in finishes and a fresh list loads. The cache time
-        // stays unset, so that load still happens.
-        if config.isTdxConfigured, !InboxAgent.isAgentProcess {
-            cachedTickets = TicketSnapshot.load()
-            if !cachedTickets.isEmpty {
-                dbg.info("Showing \(cachedTickets.count) tickets from the last session", category: "startup")
-            }
-        }
+        // A snapshot is restored only after the service and signed-in person are confirmed.
         dbg.info("Log file: \(dbg.logFilePath)", category: "startup")
         dockBadge = DockBadgeController.make(for: self)
     }
@@ -556,7 +548,9 @@ class AppState: ObservableObject {
             devOpsService = AzureDevOpsService(config: config)
             devOpsSsoService = DevOpsSsoService(tenantId: config.devopsTenantId ?? config.graphTenantId)
             ticketInbox.stop()
+            cachedTickets = []
             tdxMe = nil
+            tdxSsoAuthenticated = false
             tdxService = makeTdxService(config: config)
             snipeService = SnipeService(config: config)
             reportMateService = ReportMateService(config: config)
@@ -594,6 +588,7 @@ class AppState: ObservableObject {
             
             // Clear caches on config reload
             invalidateAllCaches()
+            if config.isTdxConfigured, tdxService.shouldAttemptSso { attemptSilentTdxSso() }
         } catch {
             errorMessage = "Failed to reload config: \(error.localizedDescription)"
         }
@@ -670,11 +665,29 @@ class AppState: ObservableObject {
         assetsCacheTime = Date()
     }
     
+    private var ticketSnapshotScope: TicketInboxScope? {
+        guard tdxSsoAuthenticated, tdxService.hasUsableUserSession(), let uid = tdxMe?.uid else { return nil }
+        return TicketInboxScope(ticketEndpoint: tdxService.ticketInboxEndpoint, personUid: uid)
+    }
+
+    private func restoreTicketSnapshot() {
+        guard !InboxAgent.isAgentProcess, cachedTickets.isEmpty, let scope = ticketSnapshotScope else { return }
+        Task { @MainActor [weak self] in
+            let cached = await Task.detached(priority: .utility) { TicketSnapshot.load(scope: scope) }.value
+            guard let self, self.ticketSnapshotScope == scope, self.cachedTickets.isEmpty,
+                  self.ticketsCacheTime == nil else { return }
+            self.cachedTickets = cached
+        }
+        // A stored snapshot is a starting point, never proof that a fresh request is unnecessary.
+    }
+
     /// Update tickets cache
     func updateTicketsCache(_ tickets: [TdxTicket]) {
         cachedTickets = tickets
         ticketsCacheTime = Date()
-        TicketSnapshot.save(tickets)
+        if let scope = ticketSnapshotScope {
+            TicketSnapshot.save(tickets, scope: scope)
+        }
         if tdxSignInStage == .tickets { tdxSignInStage = nil }
     }
     
@@ -1292,6 +1305,7 @@ class AppState: ObservableObject {
         handleTdxSsoSuccess(token: cached.token, expiry: cached.expiry,
                             userId: cached.userId, userName: cached.userName, persist: false)
         if let me = cached.confirmedMe {
+            restoreTicketSnapshot()
             ticketInbox.start(service: tdxService, me: me)
             InboxAgent.registerIfInstalled()
         }
@@ -1392,6 +1406,7 @@ class AppState: ObservableObject {
         tdxAuthenticatedUserName = nil
         tdxMe = nil
         ticketInbox.stop()
+        cachedTickets = []
         showTdxSsoLogin = false
         authManager.update(.tdx, state: .failed(message: reason))
         invalidateTicketsCache()
@@ -1476,6 +1491,7 @@ class AppState: ObservableObject {
                 if let person = try await tdxService.findPerson(email: email) {
                     dbg.info("TDX identity resolved: \(person.fullName ?? "?") via \(email)", category: "tdx")
                     tdxMe = person
+                    restoreTicketSnapshot()
                     if Self.isTdxSessionCacheEnabled, var cached = TdxSessionCache.load(),
                        person.primaryEmail?.lowercased() == cached.confirmedUpn {
                         cached.me = person

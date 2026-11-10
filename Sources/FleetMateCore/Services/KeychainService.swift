@@ -78,7 +78,7 @@ public class KeychainService {
         ]
 
         // Delete any existing item
-        let delStatus = SecItemDelete(baseQuery as CFDictionary)
+        let delStatus = NoninteractiveKeychain.delete(baseQuery as CFDictionary)
         if delStatus != errSecSuccess && delStatus != errSecItemNotFound {
             dbg.warn("[Keychain] Delete for \(key.rawValue) returned \(delStatus)", category: "config")
         }
@@ -86,14 +86,14 @@ public class KeychainService {
         // Add new item
         var addQuery = baseQuery
         addQuery[kSecValueData] = data
-        let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+        let addStatus = NoninteractiveKeychain.add(addQuery as CFDictionary, nil)
 
         dbg.info("[Keychain] \(key.rawValue): del=\(delStatus) add=\(addStatus) len=\(data.count)", category: "config")
 
         if addStatus == errSecDuplicateItem {
             // Item exists but we couldn't delete it (different ACL?) — try update instead
             let updateAttrs: [CFString: Any] = [kSecValueData: data]
-            let updateStatus = SecItemUpdate(baseQuery as CFDictionary, updateAttrs as CFDictionary)
+            let updateStatus = NoninteractiveKeychain.update(baseQuery as CFDictionary, updateAttrs as CFDictionary)
             if updateStatus != errSecSuccess {
                 dbg.error("[Keychain] Update fallback FAILED for \(key.rawValue): \(updateStatus)", category: "config")
                 throw KeychainError.saveFailed(status: updateStatus, key: key.rawValue)
@@ -115,7 +115,7 @@ public class KeychainService {
         ]
 
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let status = NoninteractiveKeychain.copyMatching(query as CFDictionary, &result)
 
         guard status == errSecSuccess,
               let data = result as? Data,
@@ -134,7 +134,7 @@ public class KeychainService {
             kSecAttrAccount: key.rawValue
         ]
         
-        let status = SecItemDelete(query as CFDictionary)
+        let status = NoninteractiveKeychain.delete(query as CFDictionary)
         
         if status != errSecSuccess && status != errSecItemNotFound {
             throw KeychainError.deleteFailed(status: status, key: key.rawValue)

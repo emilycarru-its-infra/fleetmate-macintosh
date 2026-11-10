@@ -55,7 +55,9 @@ public enum TicketSnapshot {
             let snapshot = ScopedSnapshot(version: 1, scopeIdentifier: scope.identifier, tickets: tickets)
             guard let data = try? JSONEncoder().encode(snapshot) else { return }
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            try? data.write(to: url, options: [.atomic, .completeFileProtection])
+            // File-protection classes are not available on every macOS volume.
+            // The private directory and file permissions protect this cache.
+            try? data.write(to: url, options: [.atomic])
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         }
     }

@@ -3,6 +3,21 @@ import Foundation
 /// The unread count the ticket inbox shows as a red badge: on the toolbar's
 /// mail icon, and on the app's Dock icon the way Mail shows unread mail.
 public enum InboxBadge {
+    public static let settingKey = "tickets.showInboxBadges"
+    public static let managedDefaultKey = "tickets.inboxBadgesDefault"
+
+    public static func defaultValue(in defaults: UserDefaults = .standard, edition: AppEdition = .current) -> Bool {
+        defaults.object(forKey: managedDefaultKey) as? Bool ?? settingDefault(edition: edition)
+    }
+
+    public static func settingDefault(edition: AppEdition = .current) -> Bool {
+        edition.isTicketsOnly
+    }
+
+    public static func isEnabled(in defaults: UserDefaults = .standard, edition: AppEdition = .current) -> Bool {
+        defaults.object(forKey: settingKey) as? Bool ?? defaultValue(in: defaults, edition: edition)
+    }
+
     /// UserDefaults key for Settings ▸ Appearance ▸ "Show unread count on
     /// Dock icon".
     public static let dockSettingKey = "tickets.showDockBadge"
@@ -36,6 +51,6 @@ public enum InboxBadge {
 
     /// The Settings switch, defaulting on when nothing is stored.
     public static func isDockBadgeEnabled(in defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: dockSettingKey) as? Bool ?? dockSettingDefault
+        isEnabled(in: defaults) && (defaults.object(forKey: dockSettingKey) as? Bool ?? dockSettingDefault)
     }
 }

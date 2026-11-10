@@ -746,13 +746,20 @@ class AppState: ObservableObject {
     /// made before TDX sign-in finishes fails quietly and the sign-in retries.
     func preloadTickets() async {
         guard config.isTdxConfigured else { return }
+        let started = Date()
+        let service = tdxService
+        let personUid = tdxMe?.uid
+        let account = service.sharedSessionUpn
         dbg.info("Preloading tickets...", category: "preload")
         do {
             var search = TicketSearchRequest(maxResults: 500)
             if let groupId = config.tdxResponsibleGroupId {
                 search.responsibleGroupIds = [groupId]
             }
-            let tickets = try await tdxService.searchTickets(search: search, maxResults: 500)
+            let tickets = try await service.searchTickets(search: search, maxResults: 500)
+            guard tdxService === service, service.sharedSessionUpn == account,
+                  personUid == nil || tdxMe?.uid == personUid,
+                  (ticketsCacheTime ?? .distantPast) <= started else { return }
             updateTicketsCache(tickets)
             dbg.info("Tickets preloaded: \(tickets.count) tickets", category: "preload")
             if tdxSignInStage == .tickets { tdxSignInStage = nil }

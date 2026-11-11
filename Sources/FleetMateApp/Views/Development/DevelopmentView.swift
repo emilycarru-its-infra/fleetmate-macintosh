@@ -178,6 +178,13 @@ final class DevelopmentModel: ObservableObject {
     /// How far back the Pipelines segment looks.
     static let pipelinesWindow: TimeInterval = 7 * 24 * 3600
 
+    /// Pending approvals holding Azure Pipelines runs, keyed by `approvalKey`.
+    @Published private(set) var pendingApprovals: [String: [PipelineApproval]] = [:]
+    /// The run whose approval sheet is open, set from the row's context menu too.
+    @Published var reviewingApprovalRunID: String?
+    /// Approval id → build id, once a timeline has resolved it; ids never move.
+    private var approvalBuilds: [String: Int] = [:]
+
     private var pipelinesTask: Task<Void, Never>?
     private var pipelineRefreshTask: Task<Void, Never>?
     private var pipelineRefresh = PipelineRefreshPolicy()
@@ -206,6 +213,69 @@ final class DevelopmentModel: ObservableObject {
         guard NSApplication.shared.isActive,
               NSApplication.shared.windows.contains(where: { $0.identifier?.rawValue == "main" && $0.isVisible && !$0.isMiniaturized }),
               pipelineRefresh.isDue(now: Date(), visible: pipelinesVisible, activeRuns: pipelineRuns.contains { $0.status.isActive }) else { return }
+        loadPipelines(appState: appState, force: true, discovery: false)
+    }
+
+    private static func approvalKey(project: String, buildId: Int) -> String { "\(project)#\(buildId)" }
+
+    func approvals(for run: PipelineRun) -> [PipelineApproval] {
+        guard run.source == .azureDevOps, run.status.isActive else { return [] }
+        return pendingApprovals[Self.approvalKey(project: run.container, buildId: run.runId)] ?? []
+    }
+
+    func isAwaitingApproval(_ run: PipelineRun) -> Bool { !approvals(for: run).isEmpty }
+
+    /// Reads pending approvals for the projects that have active runs and
+    /// pins each to its run. Environment approvals name their build;
+    /// ManualValidation ones are found in the active runs' timelines.
+    func refreshApprovals(appState: AppState, projects: Set<String>? = nil) async {
+        let active = pipelineRuns.filter { $0.source == .azureDevOps && $0.status.isActive }
+        let byProject = Dictionary(grouping: active, by: \.container)
+        let targets = projects ?? Set(byProject.keys)
+        var next = pendingApprovals.filter { key, _ in
+            !targets.contains(where: { key.hasPrefix("\($0)#") }) && active.contains { Self.approvalKey(project: $0.container, buildId: $0.runId) == key }
+        }
+        for project in targets.sorted() {
+            guard let runs = byProject[project], !runs.isEmpty else { continue }
+            guard let approvals = try? await appState.devOpsService.getPendingApprovals(project: project) else {
+                // Keep what we knew rather than dropping the badge on a blip.
+                for run in runs {
+                    let key = Self.approvalKey(project: project, buildId: run.runId)
+                    if let known = pendingApprovals[key] { next[key] = known }
+                }
+                continue
+            }
+            var resolved: [PipelineApproval] = approvals.compactMap { approval in
+                if let build = approval.buildId ?? approvalBuilds[approval.id.lowercased()] { return approval.assigned(to: build) }
+                return nil
+            }
+            let unresolved = approvals.filter { approval in !resolved.contains { $0.id == approval.id } }
+            if !unresolved.isEmpty {
+                for run in runs {
+                    guard let open = try? await appState.devOpsService.getOpenTimelineIdentifiers(project: project, buildId: run.runId) else { continue }
+                    for approval in unresolved where open.contains(approval.id.lowercased()) {
+                        approvalBuilds[approval.id.lowercased()] = run.runId
+                        resolved.append(approval.assigned(to: run.runId))
+                    }
+                }
+            }
+            for approval in resolved {
+                guard let build = approval.buildId else { continue }
+                next[Self.approvalKey(project: project, buildId: build), default: []].append(approval)
+            }
+        }
+        guard !Task.isCancelled else { return }
+        if next != pendingApprovals { pendingApprovals = next }
+    }
+
+    /// Approves or rejects, then drops the approval locally and re-reads the run.
+    func respond(to approval: PipelineApproval, approve: Bool, comment: String, appState: AppState) async throws {
+        try await appState.devOpsService.respondToApproval(project: approval.project, approvalId: approval.id, approve: approve, comment: comment)
+        if let build = approval.buildId {
+            let key = Self.approvalKey(project: approval.project, buildId: build)
+            pendingApprovals[key]?.removeAll { $0.id == approval.id }
+            if pendingApprovals[key]?.isEmpty == true { pendingApprovals[key] = nil }
+        }
         loadPipelines(appState: appState, force: true, discovery: false)
     }
 
@@ -371,6 +441,7 @@ final class DevelopmentModel: ObservableObject {
         if let selected = selectedRun, let updated = merged.first(where: { $0.id == selected.id }), selected != updated {
             selectedRun = updated
         }
+        if appState.config.isDevOpsConfigured { await refreshApprovals(appState: appState) }
     }
 
     // Comment activity, shown in the toolbar's Recent Activity popover.
@@ -1503,7 +1574,7 @@ private struct DevelopmentContent: View {
             }
         } else if model.segment == .pipelines {
             if let run = model.selectedRun {
-                PipelineRunDetailView(run: run) {
+                PipelineRunDetailView(run: run, model: model) {
                     model.loadPipelines(appState: appState, force: true)
                 }
                 .id(run.id)

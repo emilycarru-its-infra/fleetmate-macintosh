@@ -63,7 +63,15 @@ struct PipelinesListView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(runs) { run in
-                            PipelineRunRow(run: run, isSelected: model.selectedRun?.id == run.id) {
+                            PipelineRunRow(
+                                run: run,
+                                isSelected: model.selectedRun?.id == run.id,
+                                awaitingApproval: model.isAwaitingApproval(run),
+                                onReviewApproval: {
+                                    model.selectedRun = run
+                                    model.reviewingApprovalRunID = run.id
+                                }
+                            ) {
                                 model.selectedRun = run
                             }
                             Divider().padding(.leading, 12)
@@ -110,6 +118,8 @@ extension PipelinesListView {
 struct PipelineRunRow: View {
     let run: PipelineRun
     let isSelected: Bool
+    var awaitingApproval = false
+    var onReviewApproval: (() -> Void)?
     let onSelect: () -> Void
 
     @State private var isHovering = false
@@ -124,7 +134,12 @@ struct PipelineRunRow: View {
                 Image(systemName: run.status.symbolName)
                     .appFont(fixed: 13)
                     .foregroundStyle(run.status.tint)
+                    .overlay(alignment: .bottomTrailing) {
+                        if awaitingApproval { ApprovalBadge().offset(x: 5, y: 5) }
+                    }
                     .frame(width: 18)
+                    .help(awaitingApproval ? "Waiting for approval" : run.status.displayName)
+                    .accessibilityLabel(awaitingApproval ? "Waiting for approval" : run.status.displayName)
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
                         Text(run.pipelineName)
@@ -178,6 +193,10 @@ struct PipelineRunRow: View {
         .onHover { isHovering = $0 }
         .agentContextDrag { .pipelineRun(run) }
         .contextMenu {
+            if awaitingApproval, let onReviewApproval {
+                Button("Review Approval…", action: onReviewApproval)
+                Divider()
+            }
             AgentContextMenuItems(.pipelineRun(run))
             Divider()
             Button("Open in Browser") {
@@ -191,12 +210,141 @@ struct PipelineRunRow: View {
     }
 }
 
+// MARK: - Approvals
+
+/// Small hand on a run's status icon while an approval holds it. A symbol,
+/// never a count, and never red.
+struct ApprovalBadge: View {
+    var body: some View {
+        Image(systemName: "hand.raised.circle.fill")
+            .appFont(fixed: 10)
+            .symbolRenderingMode(.palette)
+            .foregroundStyle(.white, .orange)
+            .background(Circle().fill(Color(nsColor: .windowBackgroundColor)).padding(-1))
+            .accessibilityHidden(true)
+    }
+}
+
+/// The Review panel: the pipeline's instructions, an optional comment, and
+/// Approve or Reject. Rejecting asks first, because it fails the run.
+struct ApprovalReviewSheet: View {
+    let run: PipelineRun
+    @ObservedObject var model: DevelopmentModel
+
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var comment = ""
+    @State private var working: Bool?
+    @State private var error: String?
+    @State private var confirmReject = false
+
+    private var approval: PipelineApproval? { model.approvals(for: run).first }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
+                Text("Review \(run.pipelineName) \(run.runNumber)").appFont(.title3, weight: .semibold).lineLimit(1)
+            }
+            if let approval {
+                HStack(spacing: 6) {
+                    if let created = approval.createdOn {
+                        Text("Waiting since \(created.formatted(date: .abbreviated, time: .shortened))")
+                    }
+                    if !approval.approvers.isEmpty {
+                        Text("·")
+                        Text("Approvers: \(approval.approvers.joined(separator: ", "))").lineLimit(1)
+                    }
+                }
+                .appFont(.caption)
+                .foregroundStyle(.secondary)
+
+                ScrollView {
+                    Text(approval.instructions.isEmpty ? "No instructions given." : approval.instructions)
+                        .appFont(.callout)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                }
+                .frame(minHeight: 120, maxHeight: 320)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.2)))
+
+                TextField("Comment (optional)", text: $comment, axis: .vertical)
+                    .lineLimit(2...5)
+                    .textFieldStyle(.roundedBorder)
+
+                if let error {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .appFont(.caption)
+                        .foregroundStyle(.orange)
+                }
+
+                HStack {
+                    if model.approvals(for: run).count > 1 {
+                        Text("\(model.approvals(for: run).count - 1) more after this one")
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Cancel") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
+                    Button {
+                        confirmReject = true
+                    } label: {
+                        if working == false { ProgressView().controlSize(.small) } else { Text("Reject") }
+                    }
+                    .tint(.orange)
+                    Button {
+                        respond(approval, approve: true)
+                    } label: {
+                        if working == true { ProgressView().controlSize(.small) } else { Text("Approve") }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.green)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .help("Approve (⌘↩)")
+                }
+                .disabled(working != nil)
+                .confirmationDialog("Reject \(run.pipelineName) \(run.runNumber)?", isPresented: $confirmReject) {
+                    Button("Reject") { respond(approval, approve: false) }
+                    Button("Keep waiting", role: .cancel) {}
+                } message: {
+                    Text("The run stops at this step.")
+                }
+            } else {
+                Text("Nothing is waiting for approval on this run.").appFont(.callout).foregroundStyle(.secondary)
+                HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }
+            }
+        }
+        .padding(18)
+        .frame(width: 560)
+    }
+
+    private func respond(_ approval: PipelineApproval, approve: Bool) {
+        working = approve
+        error = nil
+        Task {
+            defer { working = nil }
+            do {
+                try await model.respond(to: approval, approve: approve, comment: comment, appState: appState)
+                comment = ""
+                if model.approvals(for: run).isEmpty { dismiss() }
+            } catch {
+                self.error = "Could not \(approve ? "approve" : "reject"): \(error.localizedDescription)"
+            }
+        }
+    }
+}
+
 // MARK: - Run detail
 
 /// One run: header with the verbs, then the log split into the provider's
 /// sections, each collapsible, failed ones open by default.
 struct PipelineRunDetailView: View {
     let run: PipelineRun
+    @ObservedObject var model: DevelopmentModel
     /// Called after Rerun or Cancel so the list refreshes.
     var onChanged: (() -> Void)?
 
@@ -213,9 +361,22 @@ struct PipelineRunDetailView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
+            if !approvals.isEmpty {
+                approvalBanner
+                Divider()
+            }
             content
         }
         .task(id: run.id) { await load() }
+        .task(id: run.id) {
+            if run.source == .azureDevOps, run.status.isActive {
+                await model.refreshApprovals(appState: appState, projects: [run.container])
+            }
+        }
+        .sheet(isPresented: reviewBinding) {
+            ApprovalReviewSheet(run: run, model: model)
+                .environmentObject(appState)
+        }
         .actionErrorBanner($actionError)
         .confirmationDialog("Cancel \(run.pipelineName) \(run.runNumber)?", isPresented: $pendingCancel) {
             Button("Cancel run", role: .destructive) { perform("Cancel") }
@@ -223,20 +384,50 @@ struct PipelineRunDetailView: View {
         }
     }
 
+    private var approvals: [PipelineApproval] { model.approvals(for: run) }
+
+    private var reviewBinding: Binding<Bool> {
+        Binding(
+            get: { model.reviewingApprovalRunID == run.id && !approvals.isEmpty },
+            set: { if !$0 { model.reviewingApprovalRunID = nil } }
+        )
+    }
+
+    private var approvalBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
+            Text(approvals.count == 1
+                 ? "1 approval needs your review before this run can continue"
+                 : "\(approvals.count) approvals need your review before this run can continue")
+                .appFont(.callout)
+            Spacer()
+            Button("Review…") { model.reviewingApprovalRunID = run.id }
+                .buttonStyle(.borderedProminent)
+                .help("Read the instructions, then approve or reject")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.08))
+    }
+
     private var header: some View {
         HStack(spacing: 10) {
             Image(systemName: run.status.symbolName)
                 .appFont(.title3)
                 .foregroundStyle(run.status.tint)
+                .overlay(alignment: .bottomTrailing) {
+                    if !approvals.isEmpty { ApprovalBadge().offset(x: 5, y: 5) }
+                }
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(run.pipelineName).appFont(.title3, weight: .semibold).lineLimit(1)
                     Text(run.runNumber).appFont(.callout).monospacedDigit().foregroundStyle(.secondary)
-                    Text(run.status.displayName)
+                    let statusTint = approvals.isEmpty ? run.status.tint : .orange
+                    Text(approvals.isEmpty ? run.status.displayName : "Waiting for approval")
                         .appFont(fixed: 9, weight: .medium)
                         .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(run.status.tint.opacity(0.15))
-                        .foregroundStyle(run.status.tint)
+                        .background(statusTint.opacity(0.15))
+                        .foregroundStyle(statusTint)
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                 }
                 HStack(spacing: 6) {

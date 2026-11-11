@@ -124,3 +124,34 @@ public struct PipelineRunLog: Sendable {
         sections.map { "── \($0.name) ──\n\($0.text)" }.joined(separator: "\n\n")
     }
 }
+
+// MARK: - Approvals
+
+/// A pending approval that holds an Azure Pipelines run: a ManualValidation
+/// task or an environment approval check. Both use the same Approvals API.
+public struct PipelineApproval: Identifiable, Sendable, Hashable {
+    /// The approval id; also the `identifier` of the run's timeline record.
+    public let id: String
+    /// Azure DevOps project name.
+    public let project: String
+    /// The build the approval holds, when the API says so. ManualValidation
+    /// approvals leave it out, so it is matched through the build's timeline.
+    public let buildId: Int?
+    public let instructions: String
+    public let createdOn: Date?
+    /// Display names of the people or groups asked to approve.
+    public let approvers: [String]
+
+    public init(id: String, project: String, buildId: Int?, instructions: String, createdOn: Date?, approvers: [String]) {
+        self.id = id
+        self.project = project
+        self.buildId = buildId
+        self.instructions = instructions
+        self.createdOn = createdOn
+        self.approvers = approvers
+    }
+
+    public func assigned(to buildId: Int) -> PipelineApproval {
+        PipelineApproval(id: id, project: project, buildId: buildId, instructions: instructions, createdOn: createdOn, approvers: approvers)
+    }
+}

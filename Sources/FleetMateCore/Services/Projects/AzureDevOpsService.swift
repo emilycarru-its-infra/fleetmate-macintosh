@@ -1453,6 +1453,80 @@ public class AzureDevOpsService {
         let _: AzdoBuild = try await request("PATCH", path: "/_apis/build/builds/\(buildId)?api-version=7.0", body: data, forProject: encodedProject)
     }
 
+    // MARK: - Approvals
+
+    /// Pending approvals in a project — ManualValidation tasks and
+    /// environment checks alike.
+    public func getPendingApprovals(project: String) async throws -> [PipelineApproval] {
+        let encoded = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        let page: AzdoApprovals = try await request(
+            "GET",
+            path: "/_apis/pipelines/approvals?state=pending&$expand=steps&api-version=7.1",
+            forProject: encoded
+        )
+        return (page.value ?? []).map { approval in
+            PipelineApproval(
+                id: approval.id,
+                project: project,
+                buildId: approval.pipeline?.owner?.id,
+                instructions: approval.instructions ?? "",
+                createdOn: PullRequestDateParser.parse(approval.createdOn),
+                approvers: (approval.steps ?? []).compactMap { $0.assignedApprover?.displayName }
+            )
+        }
+    }
+
+    /// Identifiers of the build's timeline records that have not finished.
+    /// A waiting ManualValidation record carries its approval id here.
+    public func getOpenTimelineIdentifiers(project: String, buildId: Int) async throws -> Set<String> {
+        let encoded = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        let timeline: AzdoTimeline = try await request(
+            "GET",
+            path: "/_apis/build/builds/\(buildId)/timeline?api-version=7.0",
+            forProject: encoded
+        )
+        return Set((timeline.records ?? []).compactMap { record in
+            (record.state ?? "").lowercased() == "completed" ? nil : record.identifier?.lowercased()
+        })
+    }
+
+    /// Approves or rejects one approval as the signed-in user.
+    public func respondToApproval(project: String, approvalId: String, approve: Bool, comment: String) async throws {
+        let encoded = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        let body: [[String: String]] = [[
+            "approvalId": approvalId,
+            "status": approve ? "approved" : "rejected",
+            "comment": comment,
+        ]]
+        let data = try JSONSerialization.data(withJSONObject: body)
+        let page: AzdoApprovals = try await request(
+            "PATCH",
+            path: "/_apis/pipelines/approvals?api-version=7.1",
+            body: data,
+            forProject: encoded
+        )
+        // When you are not one of its approvers the approval comes back
+        // unchanged rather than as an error.
+        let expected = approve ? "approved" : "rejected"
+        if let status = page.value?.first(where: { $0.id.lowercased() == approvalId.lowercased() })?.status?.lowercased(),
+           status != expected {
+            throw AzDevOpsError.forbidden(message: "Azure DevOps kept this approval \(status); you may not be one of its approvers.")
+        }
+    }
+
+    private struct AzdoApprovals: Decodable { let value: [AzdoApproval]? }
+
+    private struct AzdoApproval: Decodable {
+        let id: String
+        let status: String?
+        let instructions: String?
+        let createdOn: String?
+        let pipeline: Pipeline?
+        let steps: [Step]?
+        struct Pipeline: Decodable { let owner: Owner?; struct Owner: Decodable { let id: Int? } }
+        struct Step: Decodable { let assignedApprover: Identity?; struct Identity: Decodable { let displayName: String? } }
+    }
+
     private static func mapBuildStatus(state: String?, result: String?) -> PipelineRunStatus {
         switch (state ?? "").lowercased() {
         case "notstarted", "postponed", "pending": return .queued
@@ -1527,6 +1601,7 @@ public class AzureDevOpsService {
             let state: String?
             let result: String?
             let order: Int?
+            let identifier: String?
             let log: LogRef?
             struct LogRef: Decodable { let id: Int? }
         }

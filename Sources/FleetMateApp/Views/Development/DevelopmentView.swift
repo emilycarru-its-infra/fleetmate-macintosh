@@ -174,7 +174,13 @@ final class DevelopmentModel: ObservableObject {
     @Published private(set) var pipelinesLoadedAt: Date?
     @Published private(set) var pipelinesError: String?
     @Published var selectedRun: PipelineRun?
-    @Published var pipelineStatusFilter: PipelineRunStatus?
+    @Published var pipelineStatusFilter: PipelineRunStatus? {
+        didSet { if pipelineStatusFilter != nil { approvalFilter = false } }
+    }
+    /// Shows only runs held on an approval. Exclusive with the status filter.
+    @Published var approvalFilter = false {
+        didSet { if approvalFilter { pipelineStatusFilter = nil } }
+    }
     /// How far back the Pipelines segment looks.
     static let pipelinesWindow: TimeInterval = 7 * 24 * 3600
 
@@ -293,6 +299,7 @@ final class DevelopmentModel: ObservableObject {
         if let pipelineStatusFilter {
             rows = rows.filter { matches($0, status: pipelineStatusFilter) }
         }
+        if approvalFilter { rows = rows.filter(isAwaitingApproval) }
         let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
         if !needle.isEmpty {
             rows = rows.filter {
@@ -362,6 +369,9 @@ final class DevelopmentModel: ObservableObject {
     func togglePipelineStatus(_ status: PipelineRunStatus) {
         pipelineStatusFilter = (pipelineStatusFilter == status) ? nil : status
     }
+
+    /// Runs held on an approval, across every source in scope.
+    var approvalRunCount: Int { pipelineRuns.filter(isAwaitingApproval).count }
 
     func loadPipelines(appState: AppState, force: Bool = false, discovery: Bool = true) {
         guard !isLoadingPipelines else { return }
@@ -677,6 +687,7 @@ final class DevelopmentModel: ObservableObject {
                 case .azureDevOpsRun(let project, let runId):
                     segment = .pipelines
                     pipelineStatusFilter = nil
+                    approvalFilter = false
                     if let run = pipelineRuns.first(where: { $0.source == .azureDevOps && $0.runId == runId }) {
                         selectedRun = run
                     } else {
@@ -686,6 +697,7 @@ final class DevelopmentModel: ObservableObject {
                 case .gitHubRun(let owner, let repo, let runId):
                     segment = .pipelines
                     pipelineStatusFilter = nil
+                    approvalFilter = false
                     if let run = pipelineRuns.first(where: { $0.source == .gitHub && $0.runId == runId }) {
                         selectedRun = run
                     } else {
@@ -698,6 +710,7 @@ final class DevelopmentModel: ObservableObject {
                     // loaded yet (a link from a cold launch), so ask for it.
                     segment = .pipelines
                     pipelineStatusFilter = nil
+                    approvalFilter = false
                     if let run = pipelineRuns
                         .filter({ $0.source == .azureDevOps && $0.container == project && $0.pipelineId == definitionId })
                         .first {

@@ -35,6 +35,11 @@ struct PipelinesListView: View {
                     }
                 }
                 HStack(spacing: 4) {
+                    if model.approvalRunCount > 0 || model.approvalFilter {
+                        chip(title: "Approval", count: model.approvalRunCount, tint: .orange,
+                             isSelected: model.approvalFilter) { model.approvalFilter.toggle() }
+                            .help("Runs waiting for an approval")
+                    }
                     ForEach([PipelineRunStatus.running, .failed, .succeeded], id: \.self) { status in
                         chip(title: status.displayName, count: model.pipelineCount(for: status), tint: status.tint,
                              isSelected: model.pipelineStatusFilter == status) { model.togglePipelineStatus(status) }

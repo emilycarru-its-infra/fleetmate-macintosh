@@ -33,6 +33,11 @@ on:
 permissions:
   contents: write
 
+# Version stamps are Pacific time, matching local builds and the Windows release.
+env:
+  TZ: America/Vancouver
+
+
 jobs:
   build:
     runs-on: macos-26

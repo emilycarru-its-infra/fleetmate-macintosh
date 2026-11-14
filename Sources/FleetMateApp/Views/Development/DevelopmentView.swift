@@ -169,7 +169,9 @@ final class DevelopmentModel: ObservableObject {
     }
 
     // Pipelines
-    @Published private(set) var pipelineRuns: [PipelineRun] = []
+    @Published private(set) var pipelineRuns: [PipelineRun] = [] {
+        didSet { clearApprovalFilterIfEmpty() }
+    }
     @Published private(set) var isLoadingPipelines = false
     @Published private(set) var pipelinesLoadedAt: Date?
     @Published private(set) var pipelinesError: String?
@@ -185,7 +187,9 @@ final class DevelopmentModel: ObservableObject {
     static let pipelinesWindow: TimeInterval = 7 * 24 * 3600
 
     /// Pending approvals holding Azure Pipelines runs, keyed by `approvalKey`.
-    @Published private(set) var pendingApprovals: [String: [PipelineApproval]] = [:]
+    @Published private(set) var pendingApprovals: [String: [PipelineApproval]] = [:] {
+        didSet { clearApprovalFilterIfEmpty() }
+    }
     /// The run whose approval sheet is open, set from the row's context menu too.
     @Published var reviewingApprovalRunID: String?
     /// Approval id → build id, once a timeline has resolved it; ids never move.
@@ -372,6 +376,12 @@ final class DevelopmentModel: ObservableObject {
 
     /// Runs held on an approval, across every source in scope.
     var approvalRunCount: Int { pipelineRuns.filter(isAwaitingApproval).count }
+
+    /// Approving the last waiting run would otherwise leave the list empty
+    /// behind a chip that no longer has anything to show.
+    private func clearApprovalFilterIfEmpty() {
+        if approvalFilter, approvalRunCount == 0 { approvalFilter = false }
+    }
 
     func loadPipelines(appState: AppState, force: Bool = false, discovery: Bool = true) {
         guard !isLoadingPipelines else { return }

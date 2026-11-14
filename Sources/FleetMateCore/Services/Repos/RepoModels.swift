@@ -243,6 +243,25 @@ public struct RepoStatus: Codable, Sendable {
     public let lastCommitAt: Date?
     public let error: String?
 
+    /// One line for a sidebar row. Git's own messages run to several lines
+    /// with paths and SIDs; the full text stays in `error`.
+    public var errorSummary: String? {
+        error.map(Self.summarize)
+    }
+
+    public static func summarize(_ error: String) -> String {
+        let lower = error.lowercased()
+        if lower.contains("dubious ownership") { return "Owned by another account. Git won't read it." }
+        if lower.contains("not a git repository") { return "Not a Git repository." }
+        if lower.contains("index.lock") { return "Another Git process holds the index lock." }
+        if lower.contains("permission denied") { return "Permission denied." }
+        let firstLine = error.split(whereSeparator: \.isNewline).first.map(String.init) ?? error
+        return firstLine
+            .replacingOccurrences(of: "git status failed: ", with: "")
+            .replacingOccurrences(of: "fatal: ", with: "")
+            .trimmingCharacters(in: .whitespaces)
+    }
+
     public init(id: String, displayName: String, path: String, snapshot: GitStatusSnapshot?, worktrees: [RepoWorktree], agentsFile: String?, lastCommitAt: Date? = nil, error: String?) {
         self.id = id
         self.displayName = displayName

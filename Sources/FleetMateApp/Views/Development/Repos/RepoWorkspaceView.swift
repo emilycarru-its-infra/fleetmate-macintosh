@@ -277,6 +277,12 @@ struct ReposListView: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(record.key.displayName, forType: .string)
         }
+        if let error = model.statuses[record.id]?.error {
+            Button("Copy Error") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(error, forType: .string)
+            }
+        }
         Divider()
         Button(record.isHidden ? "Show in Sidebar" : "Hide from Sidebar") { model.setHidden(record, !record.isHidden) }
         removalItems(record)
@@ -467,9 +473,11 @@ private struct RepoListRow: View {
 
     @ViewBuilder
     private var metadata: some View {
-        if let error = status?.error {
-            Label(error, systemImage: "exclamationmark.triangle")
+        if let error = status?.error, let summary = status?.errorSummary {
+            Label(summary, systemImage: "exclamationmark.triangle")
                 .foregroundStyle(.orange)
+                .help(error)
+                .accessibilityHint(error)
         } else if let status {
             HStack(spacing: 8) {
                 HStack(spacing: 2) {

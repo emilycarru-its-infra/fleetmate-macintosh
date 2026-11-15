@@ -112,12 +112,15 @@ jobs:
           if git diff --quiet -- Package.swift; then echo "Already at $REVISION"; exit 0; fi
           [ "$(git diff --numstat | wc -l)" -eq 1 ] || { echo "::error::Unexpected changes"; exit 1; }
           short=${REVISION:0:7}
+          old=$(git show HEAD:Package.swift | grep -oE 'agentsmate\.git", revision: "[0-9a-f]{40}"' | grep -oE '[0-9a-f]{40}')
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -C "$BRANCH"
           git commit -am "Follow AgentsMate main to $short"
           git push --force origin "$BRANCH"
           body="Moves the agent terminal's AgentsMate pin to focusedsystems/agentsmate@$REVISION.
+
+          What changed upstream: https://github.com/focusedsystems/agentsmate/compare/$old...$REVISION
 
           Before this pull request opened, the agentsmate-sync build job built every product and ran the test suite against that revision. It merges once ci.yml passes on it.
 

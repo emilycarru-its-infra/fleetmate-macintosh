@@ -1,4 +1,5 @@
 import SwiftUI
+import AgentsMate
 import AppKit
 import FleetMateCore
 
@@ -49,6 +50,7 @@ struct AgentSettingsView: View {
             }
 
             AgentCliUpdatesSection(model: appState.terminals.updater)
+            AgentLaneShortcutsSection(store: appState.terminals.lanes)
 
             Section {
                 if repos.isEmpty {

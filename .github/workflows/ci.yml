@@ -23,8 +23,9 @@ on:
   # Every pull request runs, docs-only ones included: main requires this
   # check, and a check that never starts would hold the pull request forever.
   pull_request:
-  # reportmate-sync starts this run on its branch, because a pull request it
-  # opens with GITHUB_TOKEN does not trigger pull_request workflows.
+  # reportmate-sync and agentsmate-sync start this run on their branches,
+  # because a pull request they open with GITHUB_TOKEN does not trigger
+  # pull_request workflows.
   workflow_dispatch:
 
 permissions:
@@ -85,7 +86,7 @@ jobs:
           swift run --skip-build fleetmate devops --help > /dev/null
           swift run --skip-build fleetmate tasks --help > /dev/null
 
-  # A run started by workflow_dispatch (reportmate-sync does this for its pull
+  # A run started by workflow_dispatch (the sync workflows do this for their pull
   # request) is not counted toward the pull request's required check, so this
   # job records the result as a commit status under the same name. It runs no
   # code from the repository, so the build above never holds this token.

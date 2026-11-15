@@ -200,12 +200,11 @@ struct FleetMateCommands: Commands {
                 Button("Terminal Full Window") {
                     let terminals = appState.terminals
                     if terminals.selected == nil { terminals.open(appState.agentDefaultLaunch) }
-                    terminals.isVisible = true
+                    terminals.lanes.showDock()
                     terminals.isMaximized.toggle()
                 }
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
                 AgentWorkspaceMenuItems(terminals: appState.terminals)
-                AgentSessionListMenuItem(terminals: appState.terminals)
 
                 Divider()
             }

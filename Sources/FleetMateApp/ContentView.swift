@@ -32,7 +32,7 @@ struct ContentView: View {
             if appState.tdxNeedsSignIn, selectedTab == .tickets || AppEdition.current.isTicketsOnly {
                 TdxSignInBanner()
             }
-            if !(terminals.isMaximized && terminals.isVisible && !terminals.sessions.isEmpty) {
+            if !(terminals.isMaximized && terminals.isVisible && !terminals.lanes.lanes.isEmpty) {
                 tabContent
                     .frame(maxHeight: .infinity)
             }

@@ -1,4 +1,5 @@
 import SwiftUI
+import AgentsMate
 import FleetMateCore
 
 /// Recently finished work that has no Handbook note yet. A gentle reminder,
@@ -127,7 +128,7 @@ struct HandbookReminderCard: View {
         let prompt = "Use the handbook skill. Work item #\(item.id) (\(title)) is finished. Read it and its linked changes, decide whether the Handbook needs a new or updated page, and if so open a Handbook pull request and link it on the work item; if not, comment on the item starting with \"Handbook: not needed —\" and the reason."
         let agent = appState.agentDefaultLaunch.command.isEmpty ? "claude" : appState.agentDefaultLaunch.command
         let base = agent.split(separator: " ").first.map(String.init) ?? "claude"
-        let command = (base == "claude" || base == "codex" ? base : "claude") + " " + AgentTerminalSession.quote(prompt)
+        let command = (base == "claude" || base == "codex" ? base : "claude") + " " + ShellQuote.quote(prompt)
         let handbookRepo = appState.agentRepos.first { $0.lowercased().hasSuffix("/handbook") }
         appState.terminals.open(AgentLaunch(command: command, directory: handbookRepo))
     }

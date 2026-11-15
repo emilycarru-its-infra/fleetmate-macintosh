@@ -1,35 +1,42 @@
 import SwiftUI
 import AppKit
+import AgentsMate
+import FleetMateCore
 
-/// The terminal under the tab, split at a divider: drag it to resize, drag
-/// it to the bottom or double-click it to hide the terminal, drag it to the
-/// top to fill the window. Nothing shows while the terminal is hidden; the
-/// toolbar's Agent button, ⌘J and ⌃` bring it back in its last mode. The
-/// layout and hide controls are in the session list's header.
+/// The terminal under the tab: AgentsMate's dock, with FleetMate's new
+/// session and workspaces menus in its list header. Drag the divider to
+/// resize, to the bottom or double-click it to hide, near the top to fill
+/// the window. The toolbar's Agent button, ⌘J and ⌃` bring it back in its
+/// last mode.
 struct AgentTerminalDock: View {
     @ObservedObject var store: AgentTerminalStore
     let repos: [String]
     let defaultLaunch: AgentLaunch
-
-    /// The open height, remembered across closes and launches.
-    @AppStorage(AgentSettingsKey.panelHeight) private var panelHeight: Double = 280
-    @State private var dragStart: Double?
-    /// The height while the divider is being dragged, allowed below the
-    /// minimum so the panel visibly shrinks toward the snap.
-    @State private var liveHeight: Double?
-
-    static let minimumHeight: Double = 120
-    /// Released below this, the panel closes.
-    static let snapHeight: Double = 80
+    @State private var savingWorkspace = false
+    @State private var workspaceName = ""
 
     var body: some View {
-        VStack(spacing: 0) {
-            if store.isShowing {
-                if !store.isMaximized { divider }
-                AgentTerminalPanel(store: store, repos: repos, defaultLaunch: defaultLaunch)
-                    .frame(height: store.isMaximized ? nil : CGFloat(liveHeight ?? panelHeight))
-                    .frame(maxHeight: store.isMaximized ? .infinity : nil)
+        AgentLaneDock(store: store.lanes, labels: AgentTerminalStore.labels) {
+            HStack(spacing: 2) {
+                newSessionMenu
+                workspacesMenu
             }
+        } empty: {
+            emptyState
+        }
+        .alert("Save Sessions as Workspace", isPresented: $savingWorkspace) {
+            TextField("Name", text: $workspaceName)
+            Button("Save") { store.saveWorkspace(named: workspaceName) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("A workspace with the same name is replaced.")
+        }
+        // View › Save Sessions as Workspace… asks here.
+        .onChange(of: store.savingWorkspaceRequested) { _, requested in
+            guard requested else { return }
+            store.savingWorkspaceRequested = false
+            workspaceName = ""
+            savingWorkspace = true
         }
     }
 
@@ -38,52 +45,127 @@ struct AgentTerminalDock: View {
         store.show(defaultLaunch: defaultLaunch)
         store.isMaximized = false
         let available = NSApp.keyWindow?.contentLayoutRect.height ?? 800
-        UserDefaults.standard.set(max(minimumHeight, (available - 36) / 2), forKey: AgentSettingsKey.panelHeight)
+        UserDefaults.standard.set(max(120, (available - 36) / 2), forKey: store.lanes.keys.dockHeight)
     }
 
-    private var divider: some View {
-        Rectangle()
-            .fill(Color(nsColor: .separatorColor))
-            .frame(height: 1)
-            .padding(.vertical, 2)
-            .contentShape(Rectangle().inset(by: -3))
-            .onHover { inside in
-                if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+    private var newSessionMenu: some View {
+        Menu {
+            Button("New \(defaultLaunch.label)") { store.open(defaultLaunch) }
+            Divider()
+            ForEach(AgentLaunch.installedPresets, id: \.command) { preset in
+                Button(preset.label) { store.open(AgentLaunch(command: preset.command)) }
             }
-            .gesture(
-                // Measured in window coordinates: the handle moves with the
-                // panel, so local coordinates made the drag jitter.
-                DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                    .onChanged { value in
-                        let start = dragStart ?? panelHeight
-                        dragStart = start
-                        if store.isMaximized { store.isMaximized = false }
-                        liveHeight = min(max(start - value.translation.height, 24), 1600)
-                    }
-                    .onEnded { value in
-                        let start = dragStart ?? panelHeight
-                        let height = start - value.translation.height
-                        let available = NSApp.keyWindow?.contentLayoutRect.height ?? 900
-                        if height < Self.snapHeight {
-                            // Folded away: keep the height it had for next time.
-                            store.hide()
-                        } else if height > available * 0.85 {
-                            // Nearly to the top: fill the window, and restore
-                            // to the height it had before.
-                            store.isMaximized = true
-                        } else {
-                            panelHeight = min(max(height, Self.minimumHeight), 1600)
+            if !repos.isEmpty {
+                Divider()
+                Section("Open in repository") {
+                    ForEach(repos, id: \.self) { repo in
+                        Button((repo as NSString).lastPathComponent) {
+                            store.open(AgentLaunch(command: defaultLaunch.command, directory: repo))
                         }
-                        liveHeight = nil
-                        dragStart = nil
                     }
-            )
-            .onTapGesture(count: 2) { store.hide() }
-            .help("Drag to resize; drag to the bottom or double-click to close (⌃`)")
-            .accessibilityElement()
-            .accessibilityLabel("Agent Terminal divider")
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction(named: "Hide Agent Terminal") { store.hide() }
+                }
+            }
+        } label: {
+            Label("New Session", systemImage: "plus").labelStyle(.iconOnly)
+        } primaryAction: {
+            store.open(defaultLaunch)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("New session (⌘T), or choose what it runs")
+    }
+
+    private var workspacesMenu: some View {
+        Menu {
+            AgentWorkspaceMenuContent(store: store) { workspaceName = ""; savingWorkspace = true }
+        } label: {
+            Label("Workspaces", systemImage: "square.stack").labelStyle(.iconOnly)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onAppear(perform: store.reloadWorkspaces)
+        .help("Open, save and manage terminal workspaces")
+    }
+
+    private var emptyState: some View {
+        ContentUnavailableView {
+            Label("No Sessions", systemImage: "terminal")
+        } description: {
+            Text("Start a session, or clone a repository to get a row for it.")
+        } actions: {
+            Button("New Session") { store.open(defaultLaunch) }
+            if !store.hasRepoCheckouts { Button("Clone a Repository in Repos…") { store.showRepos?() } }
+        }
+    }
+
+    static func openWorkspacesFile(reveal: Bool) {
+        let path = TerminalWorkspaceStore.defaultPath
+        if !FileManager.default.fileExists(atPath: path) {
+            try? TerminalWorkspaceStore.save(TerminalWorkspaceFile(), to: path)
+        }
+        let url = URL(fileURLWithPath: path)
+        if reveal {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            // JSON may have no default app; TextEdit always opens it.
+            let editor = NSWorkspace.shared.urlForApplication(toOpen: url)
+                ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.TextEdit")
+            if let editor {
+                NSWorkspace.shared.open([url], withApplicationAt: editor, configuration: NSWorkspace.OpenConfiguration())
+            }
+        }
+    }
+}
+
+/// The workspaces menu: the file's saved workspaces, the Repos workspace,
+/// and the file itself.
+struct AgentWorkspaceMenuContent: View {
+    @ObservedObject var store: AgentTerminalStore
+    let saveSessions: () -> Void
+
+    var body: some View {
+        let file = store.workspaceFile
+        if file.workspaces.isEmpty {
+            Text("No Saved Workspaces")
+            if store.hasRepoCheckouts {
+                Button("Create Workspace from Repos") { store.regenerateBaselineWorkspace() }
+            } else {
+                Button("Clone a Repository in Repos…") { store.showRepos?() }
+            }
+        } else {
+            Section("Open Workspace") {
+                ForEach(file.workspaces, id: \.name) { workspace in
+                    Button("\(workspace.name) — \(workspace.sessionCount == 1 ? "1 session" : "\(workspace.sessionCount) sessions")") {
+                        store.open(workspace: workspace, show: true)
+                    }
+                }
+            }
+        }
+        Divider()
+        Button("Save Sessions as Workspace…", action: saveSessions)
+            .disabled(store.lanes.lanes.isEmpty)
+        if !file.workspaces.isEmpty {
+            Picker("Open at Launch", selection: Binding(
+                get: { file.launchWorkspace?.name ?? "" },
+                set: { store.setOpenAtLaunch($0.isEmpty ? nil : $0) }
+            )) {
+                Text("None").tag("")
+                ForEach(file.workspaces, id: \.name) { Text($0.name).tag($0.name) }
+            }
+            Menu("Delete Workspace") {
+                ForEach(file.workspaces, id: \.name) { workspace in
+                    Button(workspace.name) { store.deleteWorkspace(named: workspace.name) }
+                }
+            }
+        }
+        Divider()
+        Button("Add Missing Repos") { store.addMissingReposToBaseline() }
+        Button("Regenerate Repos Workspace") { store.regenerateBaselineWorkspace() }
+        Divider()
+        Button("Edit Workspaces File") { AgentTerminalDock.openWorkspacesFile(reveal: false) }
+        Button("Show Workspaces File in Finder") { AgentTerminalDock.openWorkspacesFile(reveal: true) }
+        if let error = store.workspaceFileError { Text(error) }
     }
 }
 
@@ -116,25 +198,11 @@ struct AgentWorkspaceMenuItems: View {
     var body: some View {
         Menu("Terminal Workspaces") {
             AgentWorkspaceMenuContent(store: terminals) {
-                terminals.isVisible = true
+                terminals.lanes.showDock()
                 terminals.savingWorkspaceRequested = true
             }
         }
         .onAppear(perform: terminals.reloadWorkspaces)
-    }
-}
-
-/// View › Show/Hide Session List, ⌃⌘S as in any Mac sidebar.
-struct AgentSessionListMenuItem: View {
-    @ObservedObject var terminals: AgentTerminalStore
-
-    var body: some View {
-        let collapsed = terminals.listCollapsedOverride ?? (terminals.sessions.count < 2)
-        Button(collapsed ? "Show Terminal Session List" : "Hide Terminal Session List") {
-            terminals.listCollapsedOverride = !collapsed
-        }
-        .keyboardShortcut("s", modifiers: [.control, .command])
-        .disabled(!terminals.isShowing)
     }
 }
 

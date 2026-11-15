@@ -195,8 +195,19 @@ final class AgentTerminalStore: ObservableObject {
         let program = command.split(separator: " ").first.map { (String($0) as NSString).lastPathComponent } ?? ""
         let name = AgentLaunch.presets.first { $0.command == command }?.label ?? (program.isEmpty ? "Shell" : program)
         if program.hasSuffix("-remote") {
+            // A duplicate asks the wrapper for a second lane in the folder
+            // (`-n 2`); the wrappers name it "<folder>-2", Codex's with "cx-".
+            let prefix = program.hasPrefix("codex") ? "cx-" : ""
             return .tmuxLane(id: id, displayName: name, command: command,
-                             statusAgent: program.hasPrefix("codex") ? "codex" : "claude")
+                             statusAgent: program.hasPrefix("codex") ? "codex" : "claude",
+                             variantFlag: "-n",
+                             variantStatusName: { @Sendable lane in
+                                 lane.variant.map { variant in
+                                     let base = (lane.path as NSString).lastPathComponent.lowercased()
+                                         .replacingOccurrences(of: " ", with: "-").replacingOccurrences(of: ".", with: "-")
+                                     return prefix + base + "-" + variant
+                                 }
+                             })
         }
         var line = command
         // FleetMate keeps the CLIs current, so Codex must not update itself mid-session.

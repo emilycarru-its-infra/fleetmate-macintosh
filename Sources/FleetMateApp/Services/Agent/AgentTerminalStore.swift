@@ -1,8 +1,8 @@
 import AppKit
 import Combine
 import AgentsMate
-import AgentsMateStatus
 import FleetMateCore
+import AgentsMateStatus
 
 /// A command a terminal session can start with.
 struct AgentLaunch: Hashable {
@@ -89,6 +89,8 @@ final class AgentTerminalStore: ObservableObject {
     @Published var savingWorkspaceRequested = false
 
     static let labels = AgentsModeLabels(listTitle: "Sessions", laneNoun: "session")
+    /// The id of the Agent Inbox window scene.
+    static let inboxWindowID = "agent-inbox"
     /// The backend a Repos row with no command of its own starts on: the
     /// default agent from Settings, read when it starts.
     static let followsDefaultID = "fleetmate.default"
@@ -121,12 +123,22 @@ final class AgentTerminalStore: ObservableObject {
                                  defaultsPrefix: "agentTerminal.",
                                  highlightsOrphans: true,
                                  sessionFileDirectory: brief.sessionDirectory,
-                                 cycleSkipsUnstarted: true),
+                                 cycleSkipsUnstarted: true,
+                                 showsRowMetadata: true,
+                                 notifies: !AppEdition.current.isTicketsOnly,
+                                 summaryModel: "haiku",
+                                 usageSources: [KeyValueUsageFileSource(
+                                     url: FileManager.default.homeDirectoryForCurrentUser
+                                         .appendingPathComponent(".claude/.statusline-usage-cache"),
+                                     agent: "Claude"),
+                                                CodexSessionUsageSource()]),
             backends: [CommandLaneBackend(id: Self.followsDefaultID, displayName: "Default Agent", command: "")],
             statusFeed: LaneStatusFeed(sources: [ClaudeAgentsStatusSource()].compactMap { $0 },
                                        presenceSources: [TmuxPresenceSource()]))
         lanes.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &subscriptions)
         lanes.onNewLane = { [weak self] in self?.open(self?.defaultLaunch ?? .shell) }
+        // A notification, the inbox or Jump to Unread brings the terminal up.
+        lanes.onShowLane = { [weak self] _ in self?.lanes.showDock() }
         lanes.willStartLane = { [weak self] lane in self?.prepare(lane) ?? lane }
         lanes.willCloseLane = { [weak self] lane, attached in
             guard let self, let row = self.rows[lane.id] else { return .remove }

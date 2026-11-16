@@ -152,6 +152,12 @@ final class AgentTerminalStore: ObservableObject {
             .sink { [weak self] _ in self?.applyRepoIcons(adopting: false) }
             .store(in: &subscriptions)
         lanes.willStartLane = { [weak self] lane in self?.prepare(lane) ?? lane }
+        // Terminal › Reopen As and each row's menu, on ⌃⌥1–⌃⌥4: the
+        // persistent lanes first, then the agents run in the row's folder.
+        lanes.configuration.reopenChoices = ["claude-remote", "codex-remote", "claude", "codex"].map { command in
+            LaneReopenChoice(AgentLaunch.presets.first { $0.command == command }?.label ?? command,
+                             backendID: backendID(for: command))
+        }
         lanes.willCloseLane = { [weak self] lane, attached in
             guard let self, let row = self.rows[lane.id] else { return .remove }
             // A running repository row stops and stays; an idle one goes.

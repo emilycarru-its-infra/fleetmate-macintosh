@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import FleetMateCore
+import AgentsMate
 
 // MARK: - Left pane
 
@@ -17,6 +18,8 @@ struct ReposListView: View {
     /// than expanded is stored so a newly tracked project starts open.
     @AppStorage("repos.sidebar.collapsed") private var collapsedStorage = ""
     @State private var reviewingNewClones = false
+    @ObservedObject private var icons = RepoIcons.shared
+    @State private var choosingIconFor: RepoRecord?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -42,6 +45,14 @@ struct ReposListView: View {
             Button("Cancel", role: .cancel) { model.pendingRemoval = nil }
         } message: { pending in
             Text(removalMessage(pending.record, pending.check))
+        }
+        .sheet(item: $choosingIconFor) { record in
+            let current = icons.choice(for: record.id)
+            LaneIconPicker(icon: current.flatMap { LaneIcon($0.icon) } ?? .symbol("shippingbox"),
+                           tintHex: current?.tint, laneTitle: record.key.name, canReset: current != nil,
+                           onReset: { icons.set(nil, for: record.id) }) { icon, tint in
+                icons.set(RepoIconChoice(icon: icon.stringValue, tint: tint), for: record.id)
+            }
         }
         .task {
             model.reloadRecords()
@@ -216,7 +227,8 @@ struct ReposListView: View {
 
     private func row(_ record: RepoRecord, showScope: Bool) -> some View {
         HStack(spacing: 6) {
-            RepoListRow(record: record, status: model.statuses[record.id], isFetching: model.isFetching.contains(record.id), showScope: showScope)
+            RepoListRow(record: record, status: model.statuses[record.id], isFetching: model.isFetching.contains(record.id), showScope: showScope,
+                        iconChoice: icons.choice(for: record.id))
                 .opacity(model.isEditing && record.isHidden ? 0.5 : 1)
             if model.isEditing { editControls(record) }
         }
@@ -283,6 +295,9 @@ struct ReposListView: View {
                 NSPasteboard.general.setString(error, forType: .string)
             }
         }
+        Divider()
+        Button("Change Icon…") { choosingIconFor = record }
+            .help("Pick an icon and colour for \(record.key.name), here and in the agent terminal")
         Divider()
         Button(record.isHidden ? "Show in Sidebar" : "Hide from Sidebar") { model.setHidden(record, !record.isHidden) }
         removalItems(record)
@@ -451,10 +466,15 @@ private struct RepoListRow: View {
     let isFetching: Bool
     /// In the ungrouped list the project or owner is not implied by a folder.
     let showScope: Bool
+    /// The person's icon and colour for this repository; nil keeps the plain row.
+    var iconChoice: RepoIconChoice?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
+                if let iconChoice, let icon = LaneIcon(iconChoice.icon) {
+                    LaneIconView(icon: icon, tintHex: iconChoice.tint, size: 14)
+                }
                 Text(record.key.name).appFont(.body, weight: .medium).lineLimit(1)
                 if showScope {
                     Text(record.key.scope).appFont(.caption).foregroundStyle(.secondary).lineLimit(1)

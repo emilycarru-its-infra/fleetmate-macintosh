@@ -103,6 +103,8 @@ final class AgentTerminalStore: ObservableObject {
         var followsDefault: Bool
     }
     private var rows: [AgentLane.ID: Row] = [:]
+    /// The repository behind each Repos row, by lane id, as `RepoKey.id`.
+    private var repoIds: [AgentLane.ID: String] = [:]
     private var restored = false
 
     init() {
@@ -139,6 +141,16 @@ final class AgentTerminalStore: ObservableObject {
         lanes.onNewLane = { [weak self] in self?.open(self?.defaultLaunch ?? .shell) }
         // A notification, the inbox or Jump to Unread brings the terminal up.
         lanes.onShowLane = { [weak self] _ in self?.lanes.showDock() }
+        // Choosing an icon on a repository row saves it with the repository, so
+        // the Repos tab shows it too. A session the person opened keeps
+        // AgentsMate's own storage.
+        lanes.onIconChange = { [weak self] lane, icon, tint in
+            guard let repoId = self?.repoIds[lane.id] else { return }
+            RepoIcons.shared.set(icon.map { RepoIconChoice(icon: $0.stringValue, tint: tint) }, for: repoId)
+        }
+        RepoIcons.shared.$choices.dropFirst().receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.applyRepoIcons(adopting: false) }
+            .store(in: &subscriptions)
         lanes.willStartLane = { [weak self] lane in self?.prepare(lane) ?? lane }
         lanes.willCloseLane = { [weak self] lane, attached in
             guard let self, let row = self.rows[lane.id] else { return .remove }
@@ -528,6 +540,8 @@ final class AgentTerminalStore: ObservableObject {
             rows.removeValue(forKey: id)
             lanes.close(id)
         }
+        let repoIdByDirectory = repoIdsByDirectory()
+        defer { applyRepoIcons(adopting: true) }
         for section in workspaceFile.baseline?.sections ?? [] {
             let name = section.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty else { continue }
@@ -539,6 +553,7 @@ final class AgentTerminalStore: ObservableObject {
                 let id = Self.rowID(directory: key, entryId: saved.id)
                 guard rows[id] == nil else { continue }
                 let path = TerminalWorkspaceStore.expand(directory)
+                if saved.id == nil, let repoId = repoIdByDirectory[key] { repoIds[id] = repoId }
                 rows[id] = Row(directory: key, entryId: saved.id, label: saved.label, followsDefault: saved.command == nil)
                 let lane = AgentLane(id: id, title: saved.label ?? (path as NSString).lastPathComponent,
                                      directory: URL(fileURLWithPath: path, isDirectory: true),
@@ -549,6 +564,32 @@ final class AgentTerminalStore: ObservableObject {
                    lanes.layout.names[id] == nil { lanes.rename(id, to: title) }
                 if saved.pinned == true { lanes.setPinned(id, true) }
                 lanes.sessions[id]?.resumeOnStart = saved.resume == true
+            }
+        }
+    }
+
+    /// Registry id of each tracked checkout, by its folder as compared.
+    private func repoIdsByDirectory() -> [String: String] {
+        guard let document = try? RepoRegistryStore().load() else { return [:] }
+        var out: [String: String] = [:]
+        for entry in document.entries { out[TerminalWorkspaceBaseline.normalized(entry.path)] = entry.key.id }
+        return out
+    }
+
+    /// Give each repository row the icon and colour chosen for its repository.
+    /// A choice made on the row before the repository had one is adopted.
+    private func applyRepoIcons(adopting: Bool) {
+        let icons = RepoIcons.shared
+        for (laneId, repoId) in repoIds where rows[laneId] != nil {
+            if let choice = icons.choice(for: repoId) {
+                let icon = LaneIcon(choice.icon)
+                guard lanes.layout.icons[laneId] != icon?.stringValue
+                        || lanes.layout.tints[laneId]?.uppercased() != choice.tint?.uppercased() else { continue }
+                lanes.setIcon(icon, tint: choice.tint, for: laneId)
+            } else if adopting, let stored = lanes.layout.icons[laneId], LaneIcon(stored) != nil {
+                icons.set(RepoIconChoice(icon: stored, tint: lanes.layout.tints[laneId]), for: repoId)
+            } else if lanes.layout.icons[laneId] != nil || lanes.layout.tints[laneId] != nil {
+                lanes.setIcon(nil, tint: nil, for: laneId)
             }
         }
     }

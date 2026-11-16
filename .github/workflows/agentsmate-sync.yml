@@ -24,11 +24,14 @@
 
 name: agentsmate-sync
 
+# Runs whenever FleetMate's main moves, so each new build starts from the
+# latest AgentsMate, and by hand (workflow_dispatch) to pick one up sooner.
+# AgentsMate changes rarely once it settles, so no timer. The pin bump this
+# workflow merges is itself a push to main; that run finds the pin current
+# and stops after the check.
 on:
-  schedule:
-    # Once a day: AgentsMate changes rarely once it settles. Run it by hand
-    # (workflow_dispatch) to pick up a change sooner.
-    - cron: '47 13 * * *'
+  push:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:

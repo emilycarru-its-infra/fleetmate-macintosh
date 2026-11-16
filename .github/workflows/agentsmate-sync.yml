@@ -26,7 +26,9 @@ name: agentsmate-sync
 
 on:
   schedule:
-    - cron: '47 * * * *'
+    # Once a day: AgentsMate changes rarely once it settles. Run it by hand
+    # (workflow_dispatch) to pick up a change sooner.
+    - cron: '47 13 * * *'
   workflow_dispatch:
 
 concurrency:

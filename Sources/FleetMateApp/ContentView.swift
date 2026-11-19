@@ -57,7 +57,7 @@ struct ContentView: View {
                         ToolbarItem(placement: .navigation) {
                             AgentModeToolbarToggle(terminals: terminals, defaultLaunch: appState.agentDefaultLaunch)
                         }
-                        // Its own filled capsule, not one more glass chip.
+                        // Its own glass button, not one more chip in a shared group.
                         .sharedBackgroundVisibility(.hidden)
                     } else {
                         ToolbarItem(placement: .navigation) {

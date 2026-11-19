@@ -132,7 +132,8 @@ final class AgentTerminalStore: ObservableObject {
                                  usageSources: [KeyValueUsageFileSource(
                                      url: FileManager.default.homeDirectoryForCurrentUser
                                          .appendingPathComponent(".claude/.statusline-usage-cache"),
-                                     agent: "Claude"),
+                                     agent: "Claude",
+                                     signedIn: { AgentSignIn.claude() }),
                                                 CodexSessionUsageSource()]),
             backends: [CommandLaneBackend(id: Self.followsDefaultID, displayName: "Default Agent", command: "")],
             statusFeed: LaneStatusFeed(sources: [ClaudeAgentsStatusSource()].compactMap { $0 },
@@ -299,8 +300,12 @@ final class AgentTerminalStore: ObservableObject {
         if lanes.selected == nil { open(defaultLaunch) } else { lanes.showDock() }
     }
 
-    /// Show the panel in the mode it was last used in: split or full window.
-    func expand(defaultLaunch: AgentLaunch) { show(defaultLaunch: defaultLaunch) }
+    /// Open the panel filling the window. Its Restore Panel button, ⇧⌘↩
+    /// and View › Terminal Split View put it under the tab instead.
+    func expand(defaultLaunch: AgentLaunch) {
+        lanes.dockMaximized = true
+        show(defaultLaunch: defaultLaunch)
+    }
 
     func hide() { lanes.hideDock() }
 

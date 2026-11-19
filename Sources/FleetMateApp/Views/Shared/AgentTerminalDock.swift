@@ -206,53 +206,36 @@ struct AgentWorkspaceMenuItems: View {
     }
 }
 
-/// The toolbar's Agent control: the first item at the far left, filled with the
-/// accent colour so it reads as the app's main action rather than one more
-/// glyph. ⌘J (View › Show Agent) and ⌃` toggle it from anywhere; while the
-/// terminal is open the icon becomes a check so the state is still visible.
+/// The toolbar's Agent control, the first item at the far left, matching
+/// Focused's: blue invites you into the agent; once it is open the button goes
+/// plain like the toolbar's other controls, with the same icon. ⌘J (View ›
+/// Show Agent) and ⌃` toggle it from anywhere.
 struct AgentModeToolbarToggle: View {
     @ObservedObject var terminals: AgentTerminalStore
     let defaultLaunch: AgentLaunch
 
     var body: some View {
-        Button {
+        let isOn = terminals.isShowing
+        let button = Button {
             terminals.toggle(defaultLaunch: defaultLaunch)
         } label: {
-            // The window toolbar strips bordered-prominent tint, so the
-            // capsule is drawn here. Closed, it is accent-tinted glass that
-            // calls for attention; open, it goes neutral and shows a check.
-            Label("Agent", systemImage: terminals.isShowing ? "checkmark" : ContentView.agentSymbol)
+            Label("Agent", systemImage: ContentView.agentSymbol)
                 .labelStyle(.titleAndIcon)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(terminals.isShowing ? Color.primary : Color.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .modifier(AgentButtonSurface(active: terminals.isShowing))
-                .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .keyboardShortcut("`", modifiers: .control)
-        .help(terminals.isShowing ? "Hide the agent terminal (⌘J or ⌃`)" : "Work with the agent in the terminal (⌘J or ⌃`)")
-        .accessibilityLabel("Agent")
-        .accessibilityValue(terminals.isShowing ? "On" : "Off")
-        .accessibilityAddTraits(terminals.isShowing ? .isSelected : [])
+        styled(button, isOn: isOn)
+            .keyboardShortcut("`", modifiers: .control)
+            .help(isOn ? "Hide the agent terminal (⌘J or ⌃`)" : "Work with the agent in the terminal (⌘J or ⌃`)")
+            .accessibilityLabel("Agent")
+            .accessibilityValue(isOn ? "On" : "Off")
+            .accessibilityAddTraits(isOn ? .isSelected : [])
     }
-}
 
-/// Liquid Glass on macOS 26, a plain filled capsule before it.
-private struct AgentButtonSurface: ViewModifier {
-    let active: Bool
-
-    func body(content: Content) -> some View {
+    @ViewBuilder
+    private func styled(_ button: some View, isOn: Bool) -> some View {
         if #available(macOS 26.0, *) {
-            content.glassEffect(
-                active ? .regular.interactive() : .regular.tint(.accentColor).interactive(),
-                in: .capsule
-            )
+            if isOn { button.buttonStyle(.glass) } else { button.buttonStyle(.glassProminent).tint(.accentColor) }
         } else {
-            content.background(
-                Capsule().fill(active ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Color.accentColor))
-            )
+            if isOn { button.buttonStyle(.bordered) } else { button.buttonStyle(.borderedProminent).tint(.accentColor) }
         }
     }
 }

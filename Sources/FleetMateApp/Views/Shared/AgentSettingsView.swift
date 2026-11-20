@@ -17,6 +17,8 @@ struct AgentSettingsView: View {
     @State private var handbookRepo = ""
     @State private var handbookSite = ""
     @State private var skillsRepo = ""
+    @State private var syncing = false
+    @State private var syncSummary: String?
 
     private var presetCommands: [String] { AgentLaunch.installedPresets.map(\.command) }
 
@@ -77,15 +79,36 @@ struct AgentSettingsView: View {
                     Button("Add", action: addTyped).disabled(newRepo.trimmingCharacters(in: .whitespaces).isEmpty)
                     Button("Choose Folder…", action: chooseFolder)
                 }
-                Button("Reset to Organization Defaults") {
-                    UserDefaults.standard.removeObject(forKey: AgentSettingsKey.repos)
-                    repos = appState.config.repoDefaults
+                HStack {
+                    Button {
+                        syncing = true
+                        Task {
+                            let result = await AgentRepoSync.sync(repos)
+                            repos = result.repos
+                            syncSummary = result.summary
+                            syncing = false
+                            appState.objectWillChange.send()
+                        }
+                    } label: {
+                        Label("Sync with Repositories", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(syncing)
+                    .help("Add your tracked repositories here, and track the folders listed here in Settings › Repositories")
+                    if syncing { ProgressView().controlSize(.small) }
+                    Spacer()
+                    Button("Reset to Organization Defaults") {
+                        UserDefaults.standard.removeObject(forKey: AgentSettingsKey.repos)
+                        repos = appState.config.repoDefaults
+                    }
+                    .disabled(UserDefaults.standard.stringArray(forKey: AgentSettingsKey.repos) == nil)
                 }
-                .disabled(UserDefaults.standard.stringArray(forKey: AgentSettingsKey.repos) == nil)
+                if let syncSummary {
+                    Text(syncSummary).appFont(.caption).foregroundStyle(.secondary)
+                }
             } header: {
                 Text("Repositories")
             } footer: {
-                Text("Offered under New Session › Open in repository. Starts from your organization's list; your edits are yours alone.")
+                Text("Offered under New Session › Open in repository. Starts from your organization's list; your edits are yours alone. Sync with Repositories adds your tracked repositories here and tracks these folders in Settings › Repositories, removing nothing; it runs once by itself the first time the Agent opens.")
                     .settingsFooter()
             }
 

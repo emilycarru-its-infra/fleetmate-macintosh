@@ -19,6 +19,10 @@ extension AppState {
         terminals.startDirectory = { [weak self] in
             self?.agentStartDirectory() ?? AgentTerminalStore.workspaceDirectory()
         }
+        terminals.agentRepoPaths = { [weak self] in
+            AgentRepoList.localPaths(self?.agentRepos ?? [])
+        }
+        terminals.updateLaneFolders()
         terminals.showRepos = { [weak self] in
             guard let self else { return }
             self.terminals.hide()

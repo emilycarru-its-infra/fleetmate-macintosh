@@ -111,6 +111,13 @@ final class AgentTerminalStore: ObservableObject {
         var followsDefault: Bool
     }
     private var rows: [AgentLane.ID: Row] = [:]
+    /// The folders whose sessions are FleetMate's, for the Detached section:
+    /// the tracked checkouts, Settings › Agent repos and the agent workspace.
+    let laneFolders = LaneFolders()
+    /// The local paths in Settings › Agent repos. Set by AppState.
+    var agentRepoPaths: (() -> [String])?
+    /// The tracked checkouts' folders, as of the last registry sync.
+    private var checkoutFolders: [String] = []
     /// The repository behind each Repos row, by lane id, as `RepoKey.id`.
     private var repoIds: [AgentLane.ID: String] = [:]
     private var restored = false
@@ -156,6 +163,7 @@ final class AgentTerminalStore: ObservableObject {
             backends: [CommandLaneBackend(id: Self.followsDefaultID, displayName: "Default Agent", command: "")],
             statusFeed: LaneStatusFeed(sources: [ClaudeAgentsStatusSource()].compactMap { $0 },
                                        presenceSources: [TmuxPresenceSource()]))
+        lanes.register(Self.backgroundBackend(folders: laneFolders))
         lanes.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &subscriptions)
         lanes.onNewLane = { [weak self] in self?.open(self?.defaultLaunch ?? .shell) }
         // A notification, the inbox or Jump to Unread brings the terminal up.
@@ -202,6 +210,8 @@ final class AgentTerminalStore: ObservableObject {
             .sink { [weak self] _ in
                 let size = Self.scaledBaseFontSize()
                 if self?.lanes.configuration.baseFontSize != size { self?.lanes.configuration.baseFontSize = size }
+                // Settings › Agent repos may have changed.
+                self?.updateLaneFolders()
             }
             .store(in: &subscriptions)
     }
@@ -234,18 +244,16 @@ final class AgentTerminalStore: ObservableObject {
         if program.hasSuffix("-remote") {
             // A duplicate asks the wrapper for a second lane in the folder
             // (`-n 2`); the wrappers name it "<folder>-2", Codex's with "cx-".
-            let prefix = program.hasPrefix("codex") ? "cx-" : ""
+            let isCodex = program.hasPrefix("codex")
+            let prefix = isCodex ? "cx-" : ""
             return .tmuxLane(id: id, displayName: name, command: command,
-                             statusAgent: program.hasPrefix("codex") ? "codex" : "claude",
+                             statusAgent: isCodex ? "codex" : "claude",
+                             stopCommand: isCodex ? nil : { @Sendable lane in Self.claudeLaneStopCommand(lane) },
                              variantFlag: "-n",
                              variantStatusName: { @Sendable lane in
-                                 lane.variant.map { variant in
-                                     let base = (lane.path as NSString).lastPathComponent.lowercased()
-                                         .replacingOccurrences(of: " ", with: "-").replacingOccurrences(of: ".", with: "-")
-                                     return prefix + base + "-" + variant
-                                 }
+                                 lane.variant.map { _ in Self.laneSessionName(lane, prefix: prefix) }
                              },
-                             tmuxSessions: Self.tmuxSessions(program: program))
+                             tmuxSessions: Self.tmuxSessions(program: program, folders: laneFolders))
         }
         var line = command
         // FleetMate keeps the CLIs current, so Codex must not update itself mid-session.
@@ -258,11 +266,54 @@ final class AgentTerminalStore: ObservableObject {
     /// Which tmux sessions are this wrapper's lanes, so the ones with no row
     /// show under Detached. The Codex wrapper names every lane's session
     /// "cx-<folder>[-<variant>]", a prefix nothing else uses. The Claude
-    /// wrapper's sessions carry no prefix of their own (and newer ones are
-    /// Claude Code background sessions, not tmux), so no rule could tell
-    /// them from any other tmux session; it lists nothing.
-    static func tmuxSessions(program: String) -> TmuxLaneSessions? {
-        program.hasPrefix("codex") ? TmuxLaneSessions(prefixes: ["cx-"]) : nil
+    /// wrapper's sessions carry no prefix of their own, so they count when
+    /// they work in one of FleetMate's folders, named lanes ("-n boards")
+    /// included. Codex's "cx-" sessions there stay with Codex.
+    ///
+    /// A Claude row's session is named after its folder, as the wrapper
+    /// names it, so the row also claims the Claude Code background session
+    /// the wrapper starts now, which `backgroundBackend` lists.
+    nonisolated static func tmuxSessions(program: String, folders: LaneFolders) -> TmuxLaneSessions {
+        if program.hasPrefix("codex") { return TmuxLaneSessions(prefixes: ["cx-"]) }
+        return TmuxLaneSessions(isRelevant: { @Sendable session in
+                                    !session.name.hasPrefix("cx-") && session.isInside(anyOf: folders.current)
+                                },
+                                sessionName: { @Sendable lane in laneSessionName(lane, prefix: "") })
+    }
+
+    /// The session a lane wrapper names for a lane started from FleetMate:
+    /// the prefix, the folder's name in lower case with spaces and dots as
+    /// dashes, and "-<variant>" for a second lane in the folder.
+    nonisolated static func laneSessionName(_ lane: AgentLane, prefix: String) -> String {
+        let base = (lane.path as NSString).lastPathComponent.lowercased()
+            .replacingOccurrences(of: " ", with: "-").replacingOccurrences(of: ".", with: "-")
+        return prefix + base + (lane.variant.map { "-" + $0 } ?? "")
+    }
+
+    /// Stop ends a Claude lane whichever kind of session holds it: the tmux
+    /// session of older lanes, or the Claude Code background session the
+    /// wrapper starts now. Each conversation is kept.
+    nonisolated static func claudeLaneStopCommand(_ lane: AgentLane) -> [String] {
+        ["sh", "-c", #"tmux kill-session -t "=$1" 2>/dev/null; claude stop "$1" 2>/dev/null; exit 0"#,
+         "sh", laneSessionName(lane, prefix: "")]
+    }
+
+    /// Claude Code background sessions working in FleetMate's folders, so
+    /// the ones no row attaches show under Detached. It attaches one by name
+    /// with `claude attach` and stops it with `claude stop`.
+    nonisolated static func backgroundBackend(folders: LaneFolders) -> ClaudeBackgroundLaneBackend {
+        var backend = ClaudeBackgroundLaneBackend(id: "claude-bg", displayName: "Claude (background)")
+        backend.isRelevant = { @Sendable session in session.isInside(anyOf: folders.current) }
+        return backend
+    }
+
+    /// Set the folders whose sessions are FleetMate's, and look for Detached
+    /// sessions again when they change.
+    func updateLaneFolders() {
+        var folders = Set(checkoutFolders)
+        folders.formUnion(agentRepoPaths?() ?? [])
+        folders.insert(workspace.root.path)
+        if laneFolders.set(folders) { lanes.sweepForDetachedSessions() }
     }
 
     /// Get a lane ready to start: settle a row that follows the default,
@@ -587,6 +638,8 @@ final class AgentTerminalStore: ObservableObject {
                 workspaceFileError = "Could not save the workspaces: \(error.localizedDescription)"
             }
         }
+        checkoutFolders = repoCheckouts().map(\.path)
+        updateLaneFolders()
         applyBaselineToList()
         watchRegistry()
     }
@@ -774,4 +827,23 @@ enum AgentSettingsKey {
     static let keepClisCurrent = "agentKeepClisCurrent"
     /// Reopen the sessions open at quit, agents resuming. Default on.
     static let restoreSessions = "agentRestoreSessions"
+}
+
+/// Folders that the Detached rules read off the main actor, kept current by
+/// the store.
+final class LaneFolders: @unchecked Sendable {
+    private let lock = NSLock()
+    private var folders: Set<String> = []
+
+    var current: Set<String> { lock.withLock { folders } }
+
+    /// Returns whether the folders changed.
+    @discardableResult
+    func set(_ new: Set<String>) -> Bool {
+        lock.withLock {
+            guard folders != new else { return false }
+            folders = new
+            return true
+        }
+    }
 }

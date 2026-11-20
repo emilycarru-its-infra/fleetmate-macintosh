@@ -63,6 +63,9 @@ struct FleetMateApp: App {
         }
         .defaultSize(width: 560, height: 520)
 
+        // View ▸ Message Agent… (⌥⌘K): type to any session, attached or not.
+        AgentMessageWindow(store: appState.terminals.lanes)
+
         Window("Activity Log", id: ActivityLogView.windowId) {
             ActivityLogView()
                 .appFontScale(fontScale)

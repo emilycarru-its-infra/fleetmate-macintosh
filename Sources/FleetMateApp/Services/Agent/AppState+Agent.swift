@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import FleetMateCore
@@ -23,6 +24,11 @@ extension AppState {
             self.selectedTab = .development
             self.development.segment = .repos
         }
+        // A pull request chip in the Agent Inbox opens in the lightbox, as a
+        // pull request link anywhere else in FleetMate does.
+        terminals.lanes.onOpenPullRequest = { [weak self] url in
+            self?.openPullRequestFromAgent(url)
+        }
         let changes: [AnyPublisher<Void, Never>] = [
             development.$segment.map { _ in () }.eraseToAnyPublisher(),
             development.$selectedPullRequest.map { _ in () }.eraseToAnyPublisher(),
@@ -34,6 +40,17 @@ extension AppState {
             .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
             .sink { [weak self] in self?.writeAgentContext() }
             .store(in: &terminals.subscriptions)
+    }
+
+    /// Show a pull request an agent posted: in the lightbox over the main
+    /// window when FleetMate has a view for it, otherwise in the browser.
+    func openPullRequestFromAgent(_ url: URL) {
+        guard let link = try? FleetMateLink.parseWeb(url), link.opensInLightbox else {
+            NSWorkspace.shared.open(BrowserLink.forBrowser(url))
+            return
+        }
+        NSApplication.shared.windows.first { $0.identifier?.rawValue == "main" }?.makeKeyAndOrderFront(nil)
+        openLightbox(link)
     }
 
     func writeAgentContext() {

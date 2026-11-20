@@ -220,6 +220,13 @@ struct FleetMateCommands: Commands {
                 }
                 .agentShortcut(lanes, .jumpToUnread)
                 .disabled(appState.terminals.lanes.unreadLanes.isEmpty)
+                Button("Mark All Sessions Read") { lanes.markAllRead() }
+                    .disabled(lanes.unreadLanes.isEmpty)
+                Button("Message Agent…") {
+                    if !lanes.showMessageAgent(openWindow: openWindow) { lanes.showDock() }
+                }
+                .agentShortcut(lanes, .messageAgent)
+                .disabled(lanes.lanes.isEmpty)
                 Button("Go to Session…") {
                     appState.terminals.lanes.showDock()
                     appState.terminals.lanes.paletteVisible = true

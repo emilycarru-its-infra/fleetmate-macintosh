@@ -91,6 +91,10 @@ final class AgentTerminalStore: ObservableObject {
     static let labels = AgentsModeLabels(listTitle: "Sessions", laneNoun: "session")
     /// The id of the Agent Inbox window scene.
     static let inboxWindowID = "agent-inbox"
+    /// The id of the Message Agent window scene.
+    static let messageWindowID = AgentMessageWindow.defaultID
+    /// How each session row is laid out; `.summaryFirst` leads with the summary.
+    static let rowStyle: LaneRowStyle = .standard
     /// The backend a Repos row with no command of its own starts on: the
     /// default agent from Settings, read when it starts.
     static let followsDefaultID = "fleetmate.default"
@@ -134,7 +138,10 @@ final class AgentTerminalStore: ObservableObject {
                                          .appendingPathComponent(".claude/.statusline-usage-cache"),
                                      agent: "Claude",
                                      signedIn: { AgentSignIn.claude() }),
-                                                CodexSessionUsageSource()]),
+                                                CodexSessionUsageSource()],
+                                 rowStyle: Self.rowStyle,
+                                 inboxWindowID: Self.inboxWindowID,
+                                 messageWindowID: Self.messageWindowID),
             backends: [CommandLaneBackend(id: Self.followsDefaultID, displayName: "Default Agent", command: "")],
             statusFeed: LaneStatusFeed(sources: [ClaudeAgentsStatusSource()].compactMap { $0 },
                                        presenceSources: [TmuxPresenceSource()]))

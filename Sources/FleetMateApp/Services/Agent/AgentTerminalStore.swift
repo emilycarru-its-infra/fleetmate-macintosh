@@ -296,9 +296,22 @@ final class AgentTerminalStore: ObservableObject {
     var selected: AgentLaneSession? { lanes.selected }
     var hasOwnSessions: Bool { lanes.lanes.contains { rows[$0.id] == nil } }
 
+    /// Show the panel. With nothing chosen yet, the first repository row
+    /// opens; a session in FleetMate's own folder starts only when there are
+    /// no repositories to work in.
     func show(defaultLaunch: AgentLaunch) {
-        if lanes.selected == nil { open(defaultLaunch) } else { lanes.showDock() }
+        if lanes.selected != nil {
+            lanes.showDock()
+        } else if let first = lanes.displayOrder.first(where: { rows[$0.id] != nil }) {
+            lanes.showDock()
+            lanes.open(first.id)
+        } else {
+            open(defaultLaunch)
+        }
     }
+
+    /// Whether the tracked or synced repositories gave the list any rows.
+    var hasRepoRows: Bool { !rows.isEmpty }
 
     /// Open the panel filling the window. Its Restore Panel button, ⇧⌘↩
     /// and View › Terminal Split View put it under the tab instead.
@@ -472,6 +485,12 @@ final class AgentTerminalStore: ObservableObject {
                     lanes.sessions[id]?.resumeOnStart = saved.resume == true
                     continue
                 }
+                // A session left in FleetMate's own folder is not brought
+                // back while there are repositories to work in instead.
+                if hasRepoRows, directory == nil
+                    || TerminalWorkspaceBaseline.normalized(directory!) == TerminalWorkspaceBaseline.normalized(Self.workspaceDirectory()) {
+                    continue
+                }
                 let id = open(AgentLaunch(command: command, directory: directory), focus: false, show: false, start: false)
                 if let title = saved.name, !title.isEmpty { lanes.rename(id, to: title) }
                 lanes.move(id, to: name == "Sessions" ? nil : name)
@@ -552,7 +571,10 @@ final class AgentTerminalStore: ObservableObject {
             lanes.close(id)
         }
         let repoIdByDirectory = repoIdsByDirectory()
-        defer { applyRepoIcons(adopting: true) }
+        defer {
+            applyRepoIcons(adopting: true)
+            dropEmptyHostSections()
+        }
         for section in workspaceFile.baseline?.sections ?? [] {
             let name = section.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty else { continue }
@@ -571,11 +593,24 @@ final class AgentTerminalStore: ObservableObject {
                                      backendID: saved.command.map(backendID(for:)) ?? Self.followsDefaultID,
                                      isClosable: true, section: name)
                 lanes.add(lane, focus: false, open: false)
+                // The workspace says where a repository row goes; a section
+                // the list remembers from before it was regrouped gives way.
+                if let assigned = lanes.layout.assignments[id], assigned != name { lanes.move(id, to: name) }
                 if let title = saved.name?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty,
                    lanes.layout.names[id] == nil { lanes.rename(id, to: title) }
                 if saved.pinned == true { lanes.setPinned(id, true) }
                 lanes.sessions[id]?.resumeOnStart = saved.resume == true
             }
+        }
+    }
+
+    /// The one-section-per-host headings an older build made, once
+    /// regrouping by project and owner has left them empty.
+    private func dropEmptyHostSections() {
+        let hosts = [RepoProvider.azureDevOps, .gitHub].map(TerminalWorkspaceBaseline.sectionTitle)
+        for name in hosts where lanes.layout.sections.contains(name)
+            && !lanes.lanes.contains(where: { lanes.layout.section(of: $0) == name }) {
+            lanes.removeSection(name)
         }
     }
 

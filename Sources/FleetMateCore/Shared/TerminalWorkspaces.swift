@@ -91,6 +91,12 @@ public struct TerminalWorkspace: Codable, Equatable, Sendable {
     /// start. Nil on a file written before that, whose sessions carry the
     /// command baked in when they were generated; `sync` clears it once.
     public var sessionsFollowDefault: Bool?
+    /// For the Repos workspace: true once its sessions are grouped by folder
+    /// nesting, one section per Azure DevOps project or GitHub owner, each
+    /// titled with the repository's own name. Nil on a file written before,
+    /// whose sessions sit in one section per host as `Project/Repo`; `sync`
+    /// regroups those once, leaving any the person moved or renamed.
+    public var sectionsByFolder: Bool?
 
     public init(name: String, show: Bool? = nil, fullWindow: Bool? = nil, sections: [Section]) {
         self.name = name
@@ -108,6 +114,7 @@ public struct TerminalWorkspace: Codable, Equatable, Sendable {
         sections = try container.decodeIfPresent([Section].self, forKey: .sections) ?? []
         generated = try container.decodeIfPresent([String].self, forKey: .generated)
         sessionsFollowDefault = try container.decodeIfPresent(Bool.self, forKey: .sessionsFollowDefault)
+        sectionsByFolder = try container.decodeIfPresent(Bool.self, forKey: .sectionsByFolder)
     }
 
     public var sessionCount: Int { sections.reduce(0) { $0 + $1.sessions.count } }

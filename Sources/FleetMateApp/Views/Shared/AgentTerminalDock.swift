@@ -246,18 +246,15 @@ struct AgentModeToolbarToggle: View {
     @ViewBuilder
     private func styled(_ button: some View, isOn: Bool) -> some View {
         if #available(macOS 26.0, *) {
-            if isOn {
-                button.buttonStyle(.glass)
-            } else {
-                // The window toolbar greys out .glassProminent's tint, so the
-                // blue capsule is drawn here.
-                button.buttonStyle(.plain)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .glassEffect(.regular.tint(.accentColor).interactive(), in: .capsule)
-                    .contentShape(Capsule())
-            }
+            // Both states are drawn here at the same size, so the button does
+            // not shift when clicked. The window toolbar greys out
+            // .glassProminent's tint, so the blue is drawn as tinted glass.
+            button.buttonStyle(.plain)
+                .foregroundStyle(isOn ? Color.primary : Color.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .glassEffect(isOn ? .regular.interactive() : .regular.tint(.accentColor).interactive(), in: .capsule)
+                .contentShape(Capsule())
         } else {
             if isOn { button.buttonStyle(.bordered) } else { button.buttonStyle(.borderedProminent).tint(.accentColor) }
         }

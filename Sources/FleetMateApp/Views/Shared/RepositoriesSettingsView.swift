@@ -14,7 +14,7 @@ final class RepositoriesSettingsModel: ObservableObject {
     @Published private(set) var providerErrors: [String] = []
     @Published private(set) var isRefreshing = false
     @Published private(set) var isDiscovering = false
-    @Published private(set) var discoverySummary: String?
+    @Published var discoverySummary: String?
     /// Repository ids being cloned or located, and the inline error of each.
     @Published private(set) var busy: Set<String> = []
     @Published private(set) var rowErrors: [String: String] = [:]
@@ -208,6 +208,7 @@ struct RepositoriesSettingsView: View {
     @StateObject private var model = RepositoriesSettingsModel()
     @State private var query = ""
     @State private var newScanRoot = ""
+    @State private var syncingAgent = false
 
     var body: some View {
         Form {
@@ -284,7 +285,21 @@ struct RepositoriesSettingsView: View {
                 } label: {
                     Label("Link Folder…", systemImage: "link")
                 }
-                if model.isDiscovering { ProgressView().controlSize(.small) }
+                Button {
+                    syncingAgent = true
+                    Task {
+                        let result = await AgentRepoSync.sync(appState.agentRepos)
+                        model.load()
+                        model.discoverySummary = result.summary
+                        syncingAgent = false
+                        appState.objectWillChange.send()
+                    }
+                } label: {
+                    Label("Sync with Agent", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(syncingAgent)
+                .help("Track the folders in Settings › Agent › Repositories, and add your tracked repositories there")
+                if model.isDiscovering || syncingAgent { ProgressView().controlSize(.small) }
                 Spacer()
                 Button("Save") { Task { await model.saveSettings() } }
                     .disabled(model.settings == model.savedSettings && model.settings.rootsChosen)

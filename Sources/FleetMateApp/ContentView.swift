@@ -40,6 +40,12 @@ struct ContentView: View {
                 AgentTerminalDock(store: terminals,
                                   repos: appState.agentRepos,
                                   defaultLaunch: appState.agentDefaultLaunch)
+                    // The first time the Agent opens, its repositories and
+                    // the tracked ones in Settings › Repositories are synced.
+                    .onAppear { if terminals.isVisible { AgentRepoSync.syncOnFirstOpen(appState) } }
+                    .onChange(of: terminals.isVisible) { _, visible in
+                        if visible { AgentRepoSync.syncOnFirstOpen(appState) }
+                    }
             }
         }
             .frame(minWidth: 500, minHeight: 400)

@@ -48,31 +48,44 @@ struct AgentTerminalDock: View {
         UserDefaults.standard.set(max(120, (available - 36) / 2), forKey: store.lanes.keys.dockHeight)
     }
 
+    /// A plus that starts the default session, and beside it a chevron, always
+    /// shown, for choosing what the session runs. A Menu's own indicator only
+    /// appears on hover in the window's list header.
     private var newSessionMenu: some View {
-        Menu {
-            Button("New \(defaultLaunch.label)") { store.open(defaultLaunch) }
-            Divider()
-            ForEach(AgentLaunch.installedPresets, id: \.command) { preset in
-                Button(preset.label) { store.open(AgentLaunch(command: preset.command)) }
+        HStack(spacing: 0) {
+            Button {
+                store.open(defaultLaunch)
+            } label: {
+                Label("New Session", systemImage: "plus").labelStyle(.iconOnly)
             }
-            if !repos.isEmpty {
+            .buttonStyle(.borderless)
+            .help("New session (⌘T)")
+            Menu {
+                Button("New \(defaultLaunch.label)") { store.open(defaultLaunch) }
                 Divider()
-                Section("Open in repository") {
-                    ForEach(repos, id: \.self) { repo in
-                        Button((repo as NSString).lastPathComponent) {
-                            store.open(AgentLaunch(command: defaultLaunch.command, directory: repo))
+                ForEach(AgentLaunch.installedPresets, id: \.command) { preset in
+                    Button(preset.label) { store.open(AgentLaunch(command: preset.command)) }
+                }
+                if !repos.isEmpty {
+                    Divider()
+                    Section("Open in repository") {
+                        ForEach(repos, id: \.self) { repo in
+                            Button((repo as NSString).lastPathComponent) {
+                                store.open(AgentLaunch(command: defaultLaunch.command, directory: repo))
+                            }
                         }
                     }
                 }
+            } label: {
+                Label("Choose What the Session Runs", systemImage: "chevron.down")
+                    .labelStyle(.iconOnly)
+                    .imageScale(.small)
             }
-        } label: {
-            Label("New Session", systemImage: "plus").labelStyle(.iconOnly)
-        } primaryAction: {
-            store.open(defaultLaunch)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Choose what the new session runs")
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("New session (⌘T), or choose what it runs")
     }
 
     private var workspacesMenu: some View {
@@ -233,7 +246,18 @@ struct AgentModeToolbarToggle: View {
     @ViewBuilder
     private func styled(_ button: some View, isOn: Bool) -> some View {
         if #available(macOS 26.0, *) {
-            if isOn { button.buttonStyle(.glass) } else { button.buttonStyle(.glassProminent).tint(.accentColor) }
+            if isOn {
+                button.buttonStyle(.glass)
+            } else {
+                // The window toolbar greys out .glassProminent's tint, so the
+                // blue capsule is drawn here.
+                button.buttonStyle(.plain)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .glassEffect(.regular.tint(.accentColor).interactive(), in: .capsule)
+                    .contentShape(Capsule())
+            }
         } else {
             if isOn { button.buttonStyle(.bordered) } else { button.buttonStyle(.borderedProminent).tint(.accentColor) }
         }

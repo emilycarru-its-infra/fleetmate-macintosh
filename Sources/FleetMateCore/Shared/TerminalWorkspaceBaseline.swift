@@ -1,9 +1,9 @@
 import Foundation
 
-/// The workspace FleetMate keeps from the repositories the person tracks:
-/// one section per host (Azure DevOps, GitHub, other), a session per
-/// repository labelled `Project/Repo` or `owner/repo`, ordered by project or
-/// owner, kept in step as repositories are tracked, hidden or removed. Nothing about any organization is built in; it is all
+/// The workspace FleetMate keeps from the repositories the person tracks,
+/// grouped the way the Repos tab nests them: one section per Azure DevOps
+/// project or GitHub owner, a session per repository labelled with its own
+/// name, kept in step as repositories are tracked, hidden or removed. Nothing about any organization is built in; it is all
 /// read from the registry the Repos tab and `fleetmate repos` share.
 public enum TerminalWorkspaceBaseline {
     /// The generated workspace's name, and the mark that it came from Repos.
@@ -30,6 +30,18 @@ public enum TerminalWorkspaceBaseline {
         public var lastActivity: Date?
         /// Marked tracked in the registry.
         public var tracked: Bool
+
+        /// The repository's own name: the last part of `Project/Repo`.
+        public var repoName: String {
+            displayName.split(separator: "/").last.map(String.init) ?? displayName
+        }
+
+        /// The section it goes in: its project or owner, as the Repos tab
+        /// nests it, or the host's name when it has no scope.
+        public var sectionTitle: String {
+            let scope = scope.trimmingCharacters(in: .whitespacesAndNewlines)
+            return provider == .other || scope.isEmpty ? TerminalWorkspaceBaseline.sectionTitle(provider) : scope
+        }
 
         public init(provider: RepoProvider, scope: String, displayName: String, path: String,
                     lastActivity: Date?, tracked: Bool = false) {
@@ -70,6 +82,7 @@ public enum TerminalWorkspaceBaseline {
         var workspace = TerminalWorkspace(name: name, show: true, sections: [])
         workspace.source = source
         workspace.sessionsFollowDefault = true
+        workspace.sectionsByFolder = true
         add(chosen, to: &workspace)
         workspace.generated = chosen.map { normalized($0.path) }.sorted()
         return workspace
@@ -95,6 +108,7 @@ public enum TerminalWorkspaceBaseline {
                             defaultCommand: String? = nil, now: Date = Date()) -> Change {
         migrateNames(&workspace)
         migrateCommands(&workspace, defaultCommand: defaultCommand)
+        migrateSections(&workspace, checkouts: checkouts)
         let wanted = activeCheckouts(checkouts, now: now)
         let wantedPaths = Set(wanted.map { normalized($0.path) })
         // A workspace from before `generated` existed: what it holds was placed.
@@ -149,6 +163,53 @@ public enum TerminalWorkspaceBaseline {
         }
     }
 
+    /// Once per workspace, regroup what an older build placed in one section
+    /// per host: a session FleetMate placed that is still in its host's
+    /// section under its generated `Project/Repo` label moves to the section
+    /// for its project or owner, titled with the repository's name. Sessions
+    /// the person added, moved to a section of their own or that no checkout
+    /// matches stay where they are; a host section left empty goes.
+    static func migrateSections(_ workspace: inout TerminalWorkspace, checkouts: [Checkout]) {
+        guard workspace.sectionsByFolder != true else { return }
+        workspace.sectionsByFolder = true
+        let byPath = Dictionary(checkouts.map { (normalized($0.path), $0) }, uniquingKeysWith: { first, _ in first })
+        let hostTitles = Set([RepoProvider.azureDevOps, .gitHub].map(sectionTitle))
+        var rebuilt: [TerminalWorkspace.Section] = []
+        func append(_ session: TerminalWorkspace.Session, to name: String) {
+            if let index = rebuilt.firstIndex(where: { $0.name == name }) {
+                rebuilt[index].sessions.append(session)
+            } else {
+                rebuilt.append(.init(name: name, sessions: [session]))
+            }
+        }
+        for section in workspace.sections {
+            guard hostTitles.contains(section.name) else {
+                if let index = rebuilt.firstIndex(where: { $0.name == section.name }) {
+                    rebuilt[index].sessions += section.sessions
+                } else {
+                    rebuilt.append(section)
+                }
+                continue
+            }
+            var kept = TerminalWorkspace.Section(name: section.name, collapsed: section.collapsed, sessions: [])
+            var regrouped: [(String, TerminalWorkspace.Session)] = []
+            for session in section.sessions {
+                guard session.id == nil, let directory = session.directory,
+                      let checkout = byPath[normalized(directory)],
+                      session.label == nil || session.label == checkout.displayName else {
+                    kept.sessions.append(session)
+                    continue
+                }
+                var moved = session
+                moved.label = checkout.repoName
+                regrouped.append((checkout.sectionTitle, moved))
+            }
+            if !kept.sessions.isEmpty { rebuilt.append(kept) }
+            for (name, session) in regrouped { append(session, to: name) }
+        }
+        workspace.sections = rebuilt
+    }
+
     /// The commands an older build could have baked into a generated
     /// session: every agent Settings › Agent offers, and the shell.
     public static let bakedCommands: Set<String> = ["", "claude", "codex", "claude-remote", "codex-remote"]
@@ -196,8 +257,8 @@ public enum TerminalWorkspaceBaseline {
                 < ($1.provider.order, $1.scope.lowercased(), $1.displayName.lowercased())
         }
         for checkout in ordered {
-            let title = sectionTitle(checkout.provider)
-            let session = TerminalWorkspace.Session(label: checkout.displayName,
+            let title = checkout.sectionTitle
+            let session = TerminalWorkspace.Session(label: checkout.repoName,
                                                     directory: TerminalWorkspaceStore.abbreviate(checkout.path))
             if let index = workspace.sections.firstIndex(where: { $0.name == title }) {
                 workspace.sections[index].sessions.append(session)

@@ -164,7 +164,7 @@ struct ContentView: View {
                 if !AppEdition.current.isTicketsOnly, !terminals.hasOwnSessions,
                    let workspace = terminals.workspaceFile.launchWorkspace {
                     terminals.open(workspace: workspace)
-                } else if appState.agentAutoStart && !terminals.hasOwnSessions {
+                } else if appState.agentAutoStart && !terminals.hasOwnSessions && !terminals.hasRepoRows {
                     terminals.open(appState.agentDefaultLaunch, focus: false, show: false)
                 }
                 writeAgentContext()

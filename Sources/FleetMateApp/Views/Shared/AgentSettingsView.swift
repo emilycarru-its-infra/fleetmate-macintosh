@@ -40,6 +40,7 @@ struct AgentSettingsView: View {
                 Toggle("Open a session when FleetMate starts", isOn: $autoStart)
                 Toggle("Reopen the last sessions when FleetMate starts", isOn: $restoreSessions)
                     .help("Sessions open at quit come back in the list; Claude Code and Codex resume their last conversation when opened")
+                AgentSummaryToggle(store: appState.terminals.lanes)
                 if let managed = appState.config.agentCommand, !hasOwnCommand {
                     Text("Your organization's default is \(managed.isEmpty ? "a shell" : "`\(managed)`").")
                         .appFont(.caption).foregroundStyle(.secondary)
@@ -197,6 +198,21 @@ struct AgentSettingsView: View {
 /// Settings › Agent › Agent CLIs: each CLI's version and install method, when
 /// it was last checked, and the switch for keeping them current. Problems are
 /// reported as a plain status line; the detail is in the app log.
+/// Settings › Agent's "Summarize sessions" switch, shown while the store has
+/// a summary model. Observes the lane store itself, which the settings
+/// window's app state does not republish.
+private struct AgentSummaryToggle: View {
+    @ObservedObject var store: AgentLaneStore
+
+    var body: some View {
+        if store.summariesAvailable {
+            Toggle("Summarize sessions", isOn: Binding(get: { store.summariesEnabled },
+                                                      set: { store.summariesEnabled = $0 }))
+                .help("Each session's own agent writes a one-line summary for its row, a short call on your account when a new prompt arrives")
+        }
+    }
+}
+
 private struct AgentCliUpdatesSection: View {
     @ObservedObject var model: AgentCliUpdateModel
     @AppStorage(AgentSettingsKey.keepClisCurrent) private var keepCurrent: Bool = true

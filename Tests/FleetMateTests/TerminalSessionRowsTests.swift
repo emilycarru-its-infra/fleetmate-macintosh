@@ -47,7 +47,7 @@ final class TerminalSessionRowsTests: XCTestCase {
         XCTAssertEqual(sessions.map(\.command), ["claude", nil])
         // Its folder and label stay; only what it runs changed.
         XCTAssertEqual(sessions[0].directory, "/src/o/a")
-        XCTAssertEqual(sessions[0].label, "o/a")
+        XCTAssertEqual(sessions[0].label, "a")
     }
 
     func testASwitchedRowNoLongerFollowsTheDefaultAfterSync() throws {

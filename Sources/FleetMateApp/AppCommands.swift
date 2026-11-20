@@ -213,7 +213,6 @@ struct FleetMateCommands: Commands {
                 }
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
                 AgentWorkspaceMenuItems(terminals: appState.terminals)
-                AgentInboxMenuItem(store: appState.terminals.lanes, windowID: AgentTerminalStore.inboxWindowID)
                 Button("Jump to Unread Session") {
                     appState.terminals.lanes.showDock()
                     appState.terminals.lanes.jumpToUnread()

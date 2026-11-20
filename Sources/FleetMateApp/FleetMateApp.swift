@@ -55,14 +55,6 @@ struct FleetMateApp: App {
         }
 
         // What FleetMate asked each service to do: Window ▸ Activity Log (⌥⌘L).
-        // Every session whose agent is asking something or has finished,
-        // with an inline reply. TicketsMate has no agent terminal.
-        Window("Agent Inbox", id: AgentTerminalStore.inboxWindowID) {
-            AgentInboxView(store: appState.terminals.lanes) { _ in appState.terminals.lanes.showDock() }
-                .appFontScale(fontScale)
-        }
-        .defaultSize(width: 560, height: 520)
-
         // View ▸ Message Agent… (⌥⌘K): type to any session, attached or not.
         AgentMessageWindow(store: appState.terminals.lanes)
 

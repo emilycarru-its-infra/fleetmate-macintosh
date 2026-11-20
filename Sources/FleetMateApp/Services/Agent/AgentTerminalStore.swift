@@ -92,8 +92,6 @@ final class AgentTerminalStore: ObservableObject {
     @Published var savingWorkspaceRequested = false
 
     static let labels = AgentsModeLabels(listTitle: "Sessions", laneNoun: "session")
-    /// The id of the Agent Inbox window scene.
-    static let inboxWindowID = "agent-inbox"
     /// The id of the Message Agent window scene.
     static let messageWindowID = AgentMessageWindow.defaultID
     /// How each session row is laid out: each row leads with its summary,
@@ -157,7 +155,6 @@ final class AgentTerminalStore: ObservableObject {
                                      signedIn: { AgentSignIn.claude() }),
                                                 CodexSessionUsageSource()],
                                  rowStyle: Self.rowStyle,
-                                 inboxWindowID: Self.inboxWindowID,
                                  messageWindowID: Self.messageWindowID,
                                  pullRequestResolvers: [AzureDevOpsPullRequestResolver(source: pullRequestSource)]),
             backends: [CommandLaneBackend(id: Self.followsDefaultID, displayName: "Default Agent", command: "")],

@@ -70,6 +70,9 @@ final class AgentTerminalStore: ObservableObject {
     let updater = AgentCliUpdateModel()
     let workspace = AgentWorkspace()
     let contextPath: String
+    /// Lets the pull request ledger look up Azure DevOps links with the
+    /// app's own sign-in; AppState fills it in when it wires the terminal.
+    let pullRequestSource: AzureDevOpsPullRequestSource
     /// The FleetMate reference every agent gets, regenerated when the
     /// installed `fleetmate` CLI changes.
     let brief: AgentBriefStore
@@ -93,8 +96,9 @@ final class AgentTerminalStore: ObservableObject {
     static let inboxWindowID = "agent-inbox"
     /// The id of the Message Agent window scene.
     static let messageWindowID = AgentMessageWindow.defaultID
-    /// How each session row is laid out; `.summaryFirst` leads with the summary.
-    static let rowStyle: LaneRowStyle = .standard
+    /// How each session row is laid out: each row leads with its summary,
+    /// with the session's name in semibold beneath.
+    static let rowStyle: LaneRowStyle = .summaryFirst
     /// The backend a Repos row with no command of its own starts on: the
     /// default agent from Settings, read when it starts.
     static let followsDefaultID = "fleetmate.default"
@@ -120,6 +124,8 @@ final class AgentTerminalStore: ObservableObject {
         brief = AgentBriefStore(directory: dir)
         // Clear the previous run before a session can open.
         try? FileManager.default.removeItem(at: brief.sessionDirectory)
+        let pullRequestSource = AzureDevOpsPullRequestSource()
+        self.pullRequestSource = pullRequestSource
         lanes = AgentLaneStore(
             configuration: .init(termProgram: "FleetMate",
                                  environment: [AgentBrief.contextVariable: contextPath],
@@ -128,6 +134,10 @@ final class AgentTerminalStore: ObservableObject {
                                  shortcuts: .all,
                                  defaultsPrefix: "agentTerminal.",
                                  highlightsOrphans: true,
+                                 // Closing a session's row leaves its agent running, so the
+                                 // same conversation stays reachable from other terminals.
+                                 // Stop Session on the row's menu ends it.
+                                 closeStopsLane: false,
                                  sessionFileDirectory: brief.sessionDirectory,
                                  cycleSkipsUnstarted: true,
                                  showsRowMetadata: true,
@@ -141,7 +151,8 @@ final class AgentTerminalStore: ObservableObject {
                                                 CodexSessionUsageSource()],
                                  rowStyle: Self.rowStyle,
                                  inboxWindowID: Self.inboxWindowID,
-                                 messageWindowID: Self.messageWindowID),
+                                 messageWindowID: Self.messageWindowID,
+                                 pullRequestResolvers: [AzureDevOpsPullRequestResolver(source: pullRequestSource)]),
             backends: [CommandLaneBackend(id: Self.followsDefaultID, displayName: "Default Agent", command: "")],
             statusFeed: LaneStatusFeed(sources: [ClaudeAgentsStatusSource()].compactMap { $0 },
                                        presenceSources: [TmuxPresenceSource()]))
@@ -233,7 +244,8 @@ final class AgentTerminalStore: ObservableObject {
                                          .replacingOccurrences(of: " ", with: "-").replacingOccurrences(of: ".", with: "-")
                                      return prefix + base + "-" + variant
                                  }
-                             })
+                             },
+                             tmuxSessions: Self.tmuxSessions(program: program))
         }
         var line = command
         // FleetMate keeps the CLIs current, so Codex must not update itself mid-session.
@@ -241,6 +253,16 @@ final class AgentTerminalStore: ObservableObject {
         var backend = CommandLaneBackend(id: id, displayName: name, command: line, returnsToShell: !command.isEmpty)
         backend.extraDirectories = [workspace.root.path, brief.sessionDirectory.path]
         return backend
+    }
+
+    /// Which tmux sessions are this wrapper's lanes, so the ones with no row
+    /// show under Detached. The Codex wrapper names every lane's session
+    /// "cx-<folder>[-<variant>]", a prefix nothing else uses. The Claude
+    /// wrapper's sessions carry no prefix of their own (and newer ones are
+    /// Claude Code background sessions, not tmux), so no rule could tell
+    /// them from any other tmux session; it lists nothing.
+    static func tmuxSessions(program: String) -> TmuxLaneSessions? {
+        program.hasPrefix("codex") ? TmuxLaneSessions(prefixes: ["cx-"]) : nil
     }
 
     /// Get a lane ready to start: settle a row that follows the default,

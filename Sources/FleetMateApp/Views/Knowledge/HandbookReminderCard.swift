@@ -88,10 +88,7 @@ struct HandbookReminderCard: View {
             Text("#\(item.id)").appFont(.caption, design: .monospaced).foregroundStyle(.secondary)
             Text(item.fields?.title ?? "Work item \(item.id)").appFont(.callout).lineLimit(1)
             Spacer()
-            Button("Open") {
-                appState.navigateToWorkItemId = item.id
-                appState.navigateToTab = .projects
-            }
+            Button("Open") { appState.openLightbox(.workItem(id: item.id)) }
             Button("Write it up") { draft(item) }
                 .help("Open an agent session with the Handbook skill and this work item")
             Button("Not needed") { reason = ""; notNeededFor = item.id }

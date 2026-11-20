@@ -31,8 +31,11 @@ enum GlobalSearchRouter {
             if let ticketId = hit.ticketId { appState.navigateToTicketId = ticketId }
             appState.navigateToTab = .tickets
         case .workItems:
-            if let workItemId = hit.workItemId { appState.navigateToWorkItemId = workItemId }
-            appState.navigateToTab = .projects
+            if let workItemId = hit.workItemId {
+                appState.openLightbox(.workItem(id: workItemId))
+            } else {
+                appState.navigateToTab = .projects
+            }
         case .users, .groups:
             appState.navigateToTab = .identity
         case .handbook:

@@ -162,10 +162,13 @@ class AppState: ObservableObject {
     private var tabForwardStack: [AppTab] = []
     private var isNavigatingTabHistory = false
 
-    var canGoBack: Bool { !tabBackStack.isEmpty }
-    var canGoForward: Bool { !tabForwardStack.isEmpty }
+    /// While the lightbox is up, Back and Forward (⌘[ / ⌘]) move through
+    /// its breadcrumbs instead, and never change the tab behind it.
+    var canGoBack: Bool { lightboxHistory.map(\.canGoBack) ?? !tabBackStack.isEmpty }
+    var canGoForward: Bool { lightboxHistory.map(\.canGoForward) ?? !tabForwardStack.isEmpty }
 
     func goBack() {
+        if lightboxHistory != nil { lightboxHistory?.back(); return }
         guard let previous = tabBackStack.popLast() else { return }
         isNavigatingTabHistory = true
         tabForwardStack.append(selectedTab)
@@ -174,6 +177,7 @@ class AppState: ObservableObject {
     }
 
     func goForward() {
+        if lightboxHistory != nil { lightboxHistory?.forward(); return }
         guard let next = tabForwardStack.popLast() else { return }
         isNavigatingTabHistory = true
         tabBackStack.append(selectedTab)
@@ -187,8 +191,15 @@ class AppState: ObservableObject {
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .joined(separator: " | ")
             dbg.info("navigateToTab ← \(tab.rawValue) via: \(frames)", category: "tabs")
+            // Every jump to a tab is a link being followed, and shows the
+            // tab rather than anything over it.
+            collapseAgentDock(for: .inApp)
+            closeLightbox()
         }
     }
+    /// What the lightbox shows and how it got there; nil while it is closed.
+    /// See `AppState+Lightbox.swift`.
+    @Published var lightboxHistory: LightboxHistory<FleetMateLink>?
     /// The most recent menu command, for the visible tab to act on.
     /// See `AppCommand` for why this is a broadcast rather than a direct call.
     @Published var pendingCommand: AppCommandRequest?
@@ -220,7 +231,7 @@ class AppState: ObservableObject {
     /// Why the last `fleetmate://` link could not be opened.
     @Published var linkError: String?
 
-    /// Route a `fleetmate://` link to the tab that shows it.
+    /// Route a `fleetmate://` link to the lightbox or the tab that shows it.
     func open(_ url: URL) {
         do {
             guard url.scheme?.lowercased() == AppEdition.current.linkScheme else {
@@ -228,31 +239,7 @@ class AppState: ObservableObject {
             }
             let link = try FleetMateLink.parse(url)
             dbg.info("Opening link \(url.absoluteString)", category: "links")
-            switch link {
-            case .workItem(let id):
-                navigateToWorkItemId = id
-                navigateToTab = .projects
-            case .gitHubIssue(let owner, let repo, let number):
-                navigateToGitHubIssueUrl = "https://github.com/\(owner)/\(repo)/issues/\(number)"
-                navigateToTab = .projects
-            case .device(let id):
-                navigateToDeviceId = id
-                navigateToTab = .devices
-            case .asset(let id):
-                navigateToAssetId = id
-                navigateToTab = .inventory
-            case .ticket(let id):
-                navigateToTicketId = id
-                navigateToTab = .tickets
-            case .user, .group:
-                navigateToTab = .identity
-            case .reporting(let target):
-                reporting.open(target)
-                navigateToTab = .reporting
-            default:
-                pendingDevelopmentLink = link
-                navigateToTab = .development
-            }
+            follow(link)
         } catch {
             linkError = error.localizedDescription
         }

@@ -77,19 +77,24 @@ struct GitHubIssueSidebarView: View {
                 }
                 .padding()
             } else if layout == .wide {
+                wideSummary
+                Divider()
                 HStack(alignment: .top, spacing: 0) {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 0) {
                             issueTitleSection
                             Divider().padding(.vertical, 8)
                             issueBodySection
-                        attachmentsSection
+                            attachmentsSection
                             Divider().padding(.vertical, 8)
                             commentsSection
                             Divider().padding(.vertical, 8)
                             addCommentSection
                         }
-                        .padding()
+                        .frame(maxWidth: 860, alignment: .leading)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .frame(maxWidth: .infinity)
 
@@ -103,7 +108,7 @@ struct GitHubIssueSidebarView: View {
                         }
                         .padding()
                     }
-                    .frame(width: 360)
+                    .frame(width: 400)
                 }
             } else {
                 ScrollView {
@@ -143,12 +148,15 @@ struct GitHubIssueSidebarView: View {
 
     private var sidebarHeader: some View {
         HStack(spacing: 8) {
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .appFont(fixed: 13, weight: .medium)
+            // The lightbox draws its own close button.
+            if layout == .sidebar {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .appFont(fixed: 13, weight: .medium)
+                }
+                .buttonStyle(.plain)
+                .help("Close")
             }
-            .buttonStyle(.plain)
-            .help("Close")
 
             // Issue number + state
             if let number = detail?.number ?? issueNumber {
@@ -190,15 +198,58 @@ struct GitHubIssueSidebarView: View {
             }
 
             // Open in browser
+            // A button, not a Link: inside the lightbox a Link to the issue
+            // would open the issue again rather than the browser.
             if let url = task.externalUrl, let urlObj = URL(string: url) {
-                Link(destination: urlObj) {
+                Button { NSWorkspace.shared.openInBrowser(urlObj) } label: {
                     Image(systemName: "arrow.up.right.square")
                 }
+                .buttonStyle(.plain)
                 .help("Open in GitHub")
+                .accessibilityLabel("Open in GitHub")
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    // MARK: - Wide summary
+
+    /// Assignees, labels, milestone, author and dates on one line under the
+    /// header in the lightbox.
+    private var wideSummary: some View {
+        FlowLayout(spacing: 8) {
+            let assignees = detail?.assignees.map(\.login) ?? task.assignees
+            Label(assignees.isEmpty ? "Unassigned" : assignees.joined(separator: ", "), systemImage: "person.crop.circle")
+                .foregroundStyle(assignees.isEmpty ? .secondary : .primary)
+                .accessibilityLabel(assignees.isEmpty ? "Unassigned" : "Assigned to \(assignees.joined(separator: ", "))")
+            ForEach(detail?.labels.map(\.name) ?? task.labels, id: \.self) { label in
+                let hex = detail?.labels.first(where: { $0.name == label })?.color
+                Text(label)
+                    .padding(.horizontal, 8).padding(.vertical, 2)
+                    .background(hex.map { Color(hex: $0) }?.opacity(0.25) ?? Color.accentColor.opacity(0.15), in: Capsule())
+                    .accessibilityLabel("Label \(label)")
+            }
+            if let milestone = detail?.milestone {
+                Label(milestone.title, systemImage: "flag").foregroundStyle(.secondary)
+            }
+            if let detail {
+                if let author = detail.user?.login {
+                    Text("Opened by \(author)").foregroundStyle(.secondary)
+                }
+                HStack(spacing: 3) { Text("Created"); Text(detail.createdAt, style: .relative); Text("ago") }
+                    .foregroundStyle(.secondary)
+                    .help(detail.createdAt.formatted(date: .complete, time: .shortened))
+                HStack(spacing: 3) { Text("Updated"); Text(detail.updatedAt, style: .relative); Text("ago") }
+                    .foregroundStyle(.secondary)
+                    .help(detail.updatedAt.formatted(date: .complete, time: .shortened))
+            }
+        }
+        .appFont(.callout)
+        .labelStyle(.titleAndIcon)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Title Section

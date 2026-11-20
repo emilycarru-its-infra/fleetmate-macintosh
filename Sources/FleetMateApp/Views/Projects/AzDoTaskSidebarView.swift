@@ -75,6 +75,10 @@ struct AzDoTaskSidebarView: View {
 
     // Artifact display name cache (keyed by relation URL)
     @State private var artifactDisplayNames: [String: String] = [:]
+    /// Web URLs by repository and project name, from the same lookups: the
+    /// lightbox opens these in place, and a pull request's artifact URI
+    /// alone carries no repository.
+    @State private var artifactLinks: [String: String] = [:]
 
     // Action states
     @State private var isUpdating = false
@@ -195,69 +199,127 @@ struct AzDoTaskSidebarView: View {
         }
     }
 
-    /// The reading column (title, description, links, comments) with the
-    /// metadata in a fixed column beside it, so a wide window is not one
-    /// long scroll of short rows.
+    /// The lightbox's layout: a summary strip of the fields read most, the
+    /// reading column (title, description, comments) at a comfortable line
+    /// length, and every field, link and relation in a column beside it.
     private var wideBody: some View {
-        HStack(alignment: .top, spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    parentSection
-                    titleSection
-                    Divider().padding(.vertical, 10)
-                    descriptionSection
-                    Divider().padding(.vertical, 10)
-                    codeLinkSection
-                    if let relations = workItem?.relations, relations.contains(where: { $0.relationType != .artifact }) {
-                        Divider().padding(.vertical, 10)
-                        relationsSection(relations)
-                    }
-                    if fields?.workItemType?.lowercased() == "bug",
-                       let repro = fields?.reproSteps, !repro.isEmpty {
-                        Divider().padding(.vertical, 10)
-                        reproStepsSection
-                    }
-                    if let criteria = fields?.acceptanceCriteria, !criteria.isEmpty {
-                        Divider().padding(.vertical, 10)
-                        acceptanceCriteriaSection
-                    }
-                    Divider().padding(.vertical, 10)
-                    addCommentSection
-                    Divider().padding(.vertical, 10)
-                    commentsFeedSection
-                }
-                .padding()
-            }
-            .frame(maxWidth: .infinity)
-
+        VStack(spacing: 0) {
+            wideSummary
             Divider()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    metadataStacked
-                    if isEditing || hasEffortData {
+            HStack(alignment: .top, spacing: 0) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        parentSection
+                        titleSection
                         Divider().padding(.vertical, 10)
-                        effortSection
+                        descriptionSection
+                        if fields?.workItemType?.lowercased() == "bug",
+                           let repro = fields?.reproSteps, !repro.isEmpty {
+                            Divider().padding(.vertical, 10)
+                            reproStepsSection
+                        }
+                        if let criteria = fields?.acceptanceCriteria, !criteria.isEmpty {
+                            Divider().padding(.vertical, 10)
+                            acceptanceCriteriaSection
+                        }
+                        Divider().padding(.vertical, 10)
+                        commentsFeedSection
+                        Divider().padding(.vertical, 10)
+                        addCommentSection
                     }
-                    Divider().padding(.vertical, 10)
-                    datesSection
+                    .frame(maxWidth: 860, alignment: .leading)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding()
+                .frame(maxWidth: .infinity)
+
+                Divider()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        metadataStacked
+                        if isEditing || hasEffortData {
+                            Divider().padding(.vertical, 10)
+                            effortSection
+                        }
+                        Divider().padding(.vertical, 10)
+                        codeLinkSection
+                        if let relations = workItem?.relations, relations.contains(where: { $0.relationType != .artifact }) {
+                            Divider().padding(.vertical, 10)
+                            relationsSection(relations)
+                        }
+                        Divider().padding(.vertical, 10)
+                        datesSection
+                    }
+                    .padding()
+                }
+                .frame(width: 400)
             }
-            .frame(width: 360)
         }
+    }
+
+    /// State, assignee, priority, iteration, tags and dates on one line
+    /// under the header, so the lightbox answers "where is this at" before
+    /// any scrolling.
+    private var wideSummary: some View {
+        FlowLayout(spacing: 8) {
+            WorkItemStateBadge(state: fields?.state)
+            Label(fields?.assignedTo?.displayName ?? "Unassigned", systemImage: "person.crop.circle")
+                .foregroundStyle(fields?.assignedTo != nil ? .primary : .secondary)
+                .accessibilityLabel("Assigned to \(fields?.assignedTo?.displayName ?? "nobody")")
+            if let priority = fields?.priority {
+                Label(priorityLabel(priority), systemImage: "flag")
+                    .foregroundStyle(.secondary)
+            }
+            if let iteration = fields?.iterationPath?.split(separator: "\\").last {
+                Label(String(iteration), systemImage: "calendar.badge.clock")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(parseTags(fields?.tags), id: \.self) { tag in
+                Text(tag)
+                    .padding(.horizontal, 8).padding(.vertical, 2)
+                    .background(Color.blue.opacity(0.12), in: Capsule())
+                    .accessibilityLabel("Tag \(tag)")
+            }
+            if let created = fields?.createdDate.flatMap(parseISODate) {
+                summaryDate("Created", created, by: fields?.createdBy?.displayName)
+            }
+            if let changed = fields?.changedDate.flatMap(parseISODate) {
+                summaryDate("Updated", changed, by: fields?.changedBy?.displayName)
+            }
+        }
+        .appFont(.callout)
+        .labelStyle(.titleAndIcon)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func summaryDate(_ label: String, _ date: Date, by person: String?) -> some View {
+        HStack(spacing: 3) {
+            Text("\(label)")
+            Text(date, style: .relative)
+            Text("ago")
+            if let person { Text("by \(person)") }
+        }
+        .foregroundStyle(.secondary)
+        .help(date.formatted(date: .complete, time: .shortened))
     }
 
     // MARK: - Header
 
     private var sidebarHeader: some View {
         HStack(spacing: 8) {
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .appFont(fixed: 14, weight: .medium)
+            // The lightbox draws its own close button.
+            if layout == .sidebar {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .appFont(fixed: 14, weight: .medium)
+                }
+                .buttonStyle(.plain)
+                .help("Close")
             }
-            .buttonStyle(.plain)
-            .help("Close")
 
             if let id = workItemId {
                 Text("#\(id)")
@@ -953,7 +1015,7 @@ struct AzDoTaskSidebarView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .help("Open in sidebar")
+                .help(layout == .wide ? "Open #\(id)" : "Open in sidebar")
             } else if let name = relation.attributes?.name {
                 Text(name)
                     .appFont(.body)
@@ -1059,7 +1121,7 @@ struct AzDoTaskSidebarView: View {
         let linkTypeName = relation.attributes?.name
         let displayName = artifactDisplayNames[relation.url ?? ""]
             ?? artifactLabel(for: relation.url)
-        let webUrl = artifactWebUrl(relation.url)
+        let webUrl = artifactLinks[relation.url ?? ""] ?? artifactWebUrl(relation.url)
 
         HStack(spacing: 8) {
             Image(systemName: artifactIcon(for: relation.url))
@@ -1537,6 +1599,7 @@ struct AzDoTaskSidebarView: View {
         actionError = nil
         linkedWorkItemInfo = [:]
         artifactDisplayNames = [:]
+        artifactLinks = [:]
         areaPaths = []
         iterationPaths = []
         teamMembers = []
@@ -1699,6 +1762,7 @@ struct AzDoTaskSidebarView: View {
     /// Parse vstfs:// URIs and fetch real names for commits, PRs, and branches.
     private func loadArtifactNames(_ artifacts: [WorkItemRelation]) async {
         var names: [String: String] = [:]
+        var links: [String: String] = [:]
 
         for artifact in artifacts {
             guard let url = artifact.url else { continue }
@@ -1717,6 +1781,7 @@ struct AzDoTaskSidebarView: View {
                         let commit = try await service.getCommit(repositoryId: repoId, commitId: commitSha)
                         let msg = commit.comment?.components(separatedBy: "\n").first ?? commit.shortId
                         names[url] = "\(commit.shortId) \(msg)"
+                        if let web = commit.remoteUrl { links[url] = web }
                     } catch {
                         names[url] = String(commitSha.prefix(7))
                     }
@@ -1733,6 +1798,7 @@ struct AzDoTaskSidebarView: View {
                         do {
                             let pr = try await service.getPullRequestById(prId, project: projectId)
                             names[url] = "PR #\(prId) \(pr.title ?? "")"
+                            if let repoWeb = pr.repository?.webUrl { links[url] = "\(repoWeb)/pullrequest/\(prId)" }
                         } catch {
                             names[url] = "PR #\(prId)"
                         }
@@ -1758,6 +1824,7 @@ struct AzDoTaskSidebarView: View {
         }
 
         artifactDisplayNames = names
+        artifactLinks = links
     }
 
     // MARK: - Save All

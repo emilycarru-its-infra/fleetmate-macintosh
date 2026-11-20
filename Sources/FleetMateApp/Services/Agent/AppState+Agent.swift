@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import Foundation
 import FleetMateCore
+import AgentsMate
 
 /// What the agent terminal needs to know about the rest of the app: where a
 /// session should start and what to tell it about where it is.
@@ -29,6 +30,28 @@ extension AppState {
         terminals.lanes.onOpenPullRequest = { [weak self] url in
             self?.openPullRequestFromAgent(url)
         }
+        // A link clicked in a session's terminal that FleetMate has a view
+        // for opens in the lightbox; anything else goes to the system.
+        terminals.lanes.onOpenLink = { [weak self] url, _ in
+            self?.openTerminalLink(url) ?? false
+        }
+
+        // Azure DevOps pull requests the agents post are looked up with the
+        // app's own Azure DevOps sign-in, in the configured organization only.
+        terminals.pullRequestSource.matcher = AzureDevOpsPullRequestLink.Matcher(config: config)
+        terminals.pullRequestSource.fetch = { [weak self] link in
+            guard let self, await self.devOpsService.ensureValidToken() else {
+                throw PullRequestResolverError.noAnswer
+            }
+            return try await self.devOpsService.getUnifiedPullRequest(project: link.project,
+                                                                      repository: link.repository,
+                                                                      id: link.number)
+        }
+        $config
+            .map { AzureDevOpsPullRequestLink.Matcher(config: $0) }
+            .removeDuplicates()
+            .sink { [weak self] in self?.terminals.pullRequestSource.matcher = $0 }
+            .store(in: &terminals.subscriptions)
         let changes: [AnyPublisher<Void, Never>] = [
             development.$segment.map { _ in () }.eraseToAnyPublisher(),
             development.$selectedPullRequest.map { _ in () }.eraseToAnyPublisher(),
@@ -40,6 +63,17 @@ extension AppState {
             .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
             .sink { [weak self] in self?.writeAgentContext() }
             .store(in: &terminals.subscriptions)
+    }
+
+    /// Open a link from a session's terminal in the lightbox over the main
+    /// window, hiding the Agent dock so it is in view. Returns false for a
+    /// link FleetMate has no view for, which then opens in its default app.
+    func openTerminalLink(_ url: URL) -> Bool {
+        guard let link = try? FleetMateLink.parseWeb(url), link.opensInLightbox else { return false }
+        terminals.hide()
+        NSApplication.shared.windows.first { $0.identifier?.rawValue == "main" }?.makeKeyAndOrderFront(nil)
+        openLightbox(link)
+        return true
     }
 
     /// Show a pull request an agent posted: in the lightbox over the main

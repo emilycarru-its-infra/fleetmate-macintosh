@@ -115,12 +115,19 @@ struct FleetMateCommands: Commands {
         }
 
         CommandGroup(before: .toolbar) {
-            Button("Back") { appState.goBack() }
+            // While a terminal has the keyboard, Back and Forward move through
+            // the sessions visited, and the tab keys through the sessions,
+            // as zoom acts on the terminal's text below.
+            Button("Back") {
+                if terminalHasKeyboard, lanes.canGoBack { lanes.goBack() } else { appState.goBack() }
+            }
                 .keyboardShortcut("[", modifiers: .command)
-                .disabled(!appState.canGoBack)
-            Button("Forward") { appState.goForward() }
+                .disabled(!appState.canGoBack && !lanes.canGoBack)
+            Button("Forward") {
+                if terminalHasKeyboard, lanes.canGoForward { lanes.goForward() } else { appState.goForward() }
+            }
                 .keyboardShortcut("]", modifiers: .command)
-                .disabled(!appState.canGoForward)
+                .disabled(!appState.canGoForward && !lanes.canGoForward)
 
             Divider()
 
@@ -132,9 +139,9 @@ struct FleetMateCommands: Commands {
 
             Divider()
 
-            Button("Go to Next Tab") { cycleTab(by: 1) }
+            Button("Go to Next Tab") { terminalHasKeyboard ? lanes.cycle(by: 1) : cycleTab(by: 1) }
                 .keyboardShortcut("]", modifiers: [.command, .shift])
-            Button("Go to Previous Tab") { cycleTab(by: -1) }
+            Button("Go to Previous Tab") { terminalHasKeyboard ? lanes.cycle(by: -1) : cycleTab(by: -1) }
                 .keyboardShortcut("[", modifiers: [.command, .shift])
 
             Divider()
@@ -211,12 +218,36 @@ struct FleetMateCommands: Commands {
                     appState.terminals.lanes.showDock()
                     appState.terminals.lanes.jumpToUnread()
                 }
-                .keyboardShortcut("u", modifiers: [.command, .shift])
+                .agentShortcut(lanes, .jumpToUnread)
                 .disabled(appState.terminals.lanes.unreadLanes.isEmpty)
                 Button("Go to Session…") {
                     appState.terminals.lanes.showDock()
                     appState.terminals.lanes.paletteVisible = true
                 }
+                // Settings › Agent › Keyboard Shortcuts lists these keys, so
+                // the menu carries them.
+                Button("Reattach Session") {
+                    lanes.showDock()
+                    if let id = lanes.selectedID { lanes.reattach(id) }
+                }
+                .agentShortcut(lanes, .reattach)
+                .disabled(lanes.selectedID == nil)
+                if !lanes.configuration.reopenChoices.isEmpty {
+                    Menu("Reopen Session As") {
+                        ForEach(Array(lanes.configuration.reopenChoices.enumerated()), id: \.offset) { index, choice in
+                            Button(choice.title) {
+                                lanes.showDock()
+                                lanes.reopenSelected(choice: index)
+                            }
+                            .agentShortcut(lanes, LaneShortcutAction.reopenAs(choice: index))
+                        }
+                    }
+                    .disabled(lanes.selectedID == nil)
+                }
+                Button("Collapse All Session Sections") { lanes.setAllCollapsed(true) }
+                    .disabled(lanes.sectionNames.isEmpty && lanes.layout.pinned.isEmpty)
+                Button("Expand All Session Sections") { lanes.setAllCollapsed(false) }
+                    .disabled(lanes.layout.collapsed.isEmpty)
 
                 Divider()
             }
@@ -279,6 +310,12 @@ struct FleetMateCommands: Commands {
         KeyEquivalent(Character("\(index + 1)"))
     }
 
+    private var lanes: AgentLaneStore { appState.terminals.lanes }
+    /// TicketsMate has no agent terminal, so its keys always act on the app.
+    private var terminalHasKeyboard: Bool {
+        !AppEdition.current.isTicketsOnly && appState.terminals.hasKeyboardFocus
+    }
+
     private func cycleTab(by offset: Int) {
         let tabs = enabledTabs
         guard !tabs.isEmpty else { return }
@@ -289,5 +326,17 @@ struct FleetMateCommands: Commands {
 
     private func setScale(_ value: Double) {
         fontScale = AppFontScale.clamp((value / AppFontScale.step).rounded() * AppFontScale.step)
+    }
+}
+
+private extension View {
+    /// A menu item's key from the person's agent shortcut bindings, or none.
+    @ViewBuilder
+    func agentShortcut(_ store: AgentLaneStore, _ action: LaneShortcutAction?) -> some View {
+        if let action, let binding = store.shortcuts.binding(for: action) {
+            keyboardShortcut(binding.keyEquivalent, modifiers: binding.modifiers)
+        } else {
+            self
+        }
     }
 }

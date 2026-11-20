@@ -79,36 +79,23 @@ struct GitHubIssueSidebarView: View {
             } else if layout == .wide {
                 wideSummary
                 Divider()
-                HStack(alignment: .top, spacing: 0) {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
-                            issueTitleSection
-                            Divider().padding(.vertical, 8)
-                            issueBodySection
-                            attachmentsSection
-                            Divider().padding(.vertical, 8)
-                            commentsSection
-                            Divider().padding(.vertical, 8)
-                            addCommentSection
-                        }
-                        .frame(maxWidth: 860, alignment: .leading)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                LightboxColumnsView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        issueTitleSection
+                        Divider().padding(.vertical, 8)
+                        issueBodySection
+                        attachmentsSection
                     }
-                    .frame(maxWidth: .infinity)
-
-                    Divider()
-
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 0) {
-                            issueMetadataSection
-                            Divider().padding(.vertical, 8)
-                            dangerZoneSection
-                        }
-                        .padding()
+                } discussion: {
+                    commentsSection
+                } composer: {
+                    addCommentSection
+                } side: {
+                    VStack(alignment: .leading, spacing: 0) {
+                        issueMetadataSection
+                        Divider().padding(.vertical, 8)
+                        dangerZoneSection
                     }
-                    .frame(width: 400)
                 }
             } else {
                 ScrollView {

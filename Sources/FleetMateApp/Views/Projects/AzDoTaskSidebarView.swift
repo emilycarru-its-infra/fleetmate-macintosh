@@ -199,62 +199,49 @@ struct AzDoTaskSidebarView: View {
         }
     }
 
-    /// The lightbox's layout: a summary strip of the fields read most, the
-    /// reading column (title, description, comments) at a comfortable line
-    /// length, and every field, link and relation in a column beside it.
+    /// The lightbox's layout: a summary strip of the fields read most, then
+    /// `LightboxColumnsView` spreads the reading (title, description), the
+    /// comments and every field, link and relation across the width there is.
     private var wideBody: some View {
         VStack(spacing: 0) {
             wideSummary
             Divider()
-            HStack(alignment: .top, spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        parentSection
-                        titleSection
+            LightboxColumnsView {
+                VStack(alignment: .leading, spacing: 0) {
+                    parentSection
+                    titleSection
+                    Divider().padding(.vertical, 10)
+                    descriptionSection
+                    if fields?.workItemType?.lowercased() == "bug",
+                       let repro = fields?.reproSteps, !repro.isEmpty {
                         Divider().padding(.vertical, 10)
-                        descriptionSection
-                        if fields?.workItemType?.lowercased() == "bug",
-                           let repro = fields?.reproSteps, !repro.isEmpty {
-                            Divider().padding(.vertical, 10)
-                            reproStepsSection
-                        }
-                        if let criteria = fields?.acceptanceCriteria, !criteria.isEmpty {
-                            Divider().padding(.vertical, 10)
-                            acceptanceCriteriaSection
-                        }
-                        Divider().padding(.vertical, 10)
-                        commentsFeedSection
-                        Divider().padding(.vertical, 10)
-                        addCommentSection
+                        reproStepsSection
                     }
-                    .frame(maxWidth: 860, alignment: .leading)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxWidth: .infinity)
-
-                Divider()
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        metadataStacked
-                        if isEditing || hasEffortData {
-                            Divider().padding(.vertical, 10)
-                            effortSection
-                        }
+                    if let criteria = fields?.acceptanceCriteria, !criteria.isEmpty {
                         Divider().padding(.vertical, 10)
-                        codeLinkSection
-                        if let relations = workItem?.relations, relations.contains(where: { $0.relationType != .artifact }) {
-                            Divider().padding(.vertical, 10)
-                            relationsSection(relations)
-                        }
-                        Divider().padding(.vertical, 10)
-                        datesSection
+                        acceptanceCriteriaSection
                     }
-                    .padding()
                 }
-                .frame(width: 400)
+            } discussion: {
+                commentsFeedSection
+            } composer: {
+                addCommentSection
+            } side: {
+                VStack(alignment: .leading, spacing: 0) {
+                    metadataStacked
+                    if isEditing || hasEffortData {
+                        Divider().padding(.vertical, 10)
+                        effortSection
+                    }
+                    Divider().padding(.vertical, 10)
+                    codeLinkSection
+                    if let relations = workItem?.relations, relations.contains(where: { $0.relationType != .artifact }) {
+                        Divider().padding(.vertical, 10)
+                        relationsSection(relations)
+                    }
+                    Divider().padding(.vertical, 10)
+                    datesSection
+                }
             }
         }
     }

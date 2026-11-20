@@ -683,7 +683,9 @@ struct PullRequestDetailView: View {
             sectionHeader("Overview")
             if let body = detail.body, !body.isEmpty {
                 GroupBox {
+                    // Prose stops at a readable line length on a wide lightbox.
                     MarkdownTextView(content: body)
+                        .frame(maxWidth: CGFloat(LightboxColumns.readingMax), alignment: .leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(6)
                 }

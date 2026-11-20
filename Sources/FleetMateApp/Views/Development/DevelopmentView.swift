@@ -2154,6 +2154,7 @@ struct CommitDetailView: View {
                             Text(body)
                                 .appFont(.callout)
                                 .textSelection(.enabled)
+                                .frame(maxWidth: CGFloat(LightboxColumns.readingMax), alignment: .leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(6)
                         }

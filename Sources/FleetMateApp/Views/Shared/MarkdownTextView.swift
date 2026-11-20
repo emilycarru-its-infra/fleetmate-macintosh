@@ -218,38 +218,87 @@ extension MarkdownUI.Theme {
 
 // MARK: - Code Block with Copy Button
 
-/// A code block that overlays a copy button in the top-right corner.
+/// A code block that never clips: by default its lines scroll sideways, with a
+/// visible scroller, and Wrap Lines wraps them to the column instead. The
+/// choice is remembered for every code block. Copy and Wrap Lines are buttons
+/// in the top-right corner and in the block's contextual menu.
 private struct CodeBlockWithCopy: View {
     let configuration: CodeBlockConfiguration
+    @AppStorage("markdownCodeBlockWrapsLines") private var wrapsLines = false
     @State private var copied = false
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            ScrollView(.horizontal, showsIndicators: true) {
-                configuration.label
-                    .markdownTextStyle {
-                        FontFamilyVariant(.monospaced)
-                        FontSize(12)
-                        ForegroundColor(Color(NSColor.labelColor))
-                    }
-                    .padding(12)
-                    .padding(.trailing, 28) // make room for copy button
-            }
-            .background(Color(NSColor.quaternaryLabelColor))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-
-            Button(action: copyCode) {
-                Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .appFont(fixed: 11)
-                    .foregroundColor(copied ? .green : .secondary)
-                    .padding(6)
-                    .background(.ultraThinMaterial)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-            }
-            .buttonStyle(.plain)
-            .help("Copy code")
-            .padding(6)
+        VStack(alignment: .leading, spacing: 0) {
+            toolbar
+            code
         }
+        .background(Color(NSColor.quaternaryLabelColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .contextMenu {
+            Button("Copy Code", action: copyCode)
+            Toggle("Wrap Lines", isOn: $wrapsLines)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(configuration.language.map { "\($0) code block" } ?? "Code block")
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 6) {
+            if let language = configuration.language, !language.isEmpty {
+                Text(language)
+                    .appFont(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Toggle(isOn: $wrapsLines) {
+                Label("Wrap Lines", systemImage: "text.word.spacing")
+            }
+            .toggleStyle(.button)
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .help(wrapsLines ? "Scroll long lines instead of wrapping them" : "Wrap long lines")
+            Button(action: copyCode) {
+                Label(copied ? "Copied" : "Copy Code", systemImage: copied ? "checkmark" : "doc.on.doc")
+                    .foregroundStyle(copied ? AnyShapeStyle(.green) : AnyShapeStyle(.secondary))
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .help("Copy code")
+        }
+        .appFont(fixed: 11)
+        .controlSize(.small)
+        .padding(.horizontal, 8)
+        .padding(.top, 4)
+    }
+
+    @ViewBuilder
+    private var code: some View {
+        if wrapsLines {
+            styledLabel
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding([.horizontal, .bottom], 12)
+                .padding(.top, 2)
+        } else {
+            // The label keeps its own width so long lines run on into the
+            // scroller rather than being cut at the column edge.
+            ScrollView(.horizontal) {
+                styledLabel
+                    .fixedSize(horizontal: true, vertical: true)
+                    .padding([.horizontal, .bottom], 12)
+                    .padding(.top, 2)
+            }
+            .scrollIndicators(.visible, axes: .horizontal)
+        }
+    }
+
+    private var styledLabel: some View {
+        configuration.label
+            .markdownTextStyle {
+                FontFamilyVariant(.monospaced)
+                FontSize(12)
+                ForegroundColor(Color(NSColor.labelColor))
+            }
     }
 
     private func copyCode() {

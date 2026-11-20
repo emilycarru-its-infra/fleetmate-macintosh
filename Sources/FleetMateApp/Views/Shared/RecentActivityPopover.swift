@@ -154,6 +154,12 @@ struct RecentActivityPopover: View {
     // MARK: Navigation
 
     private func open(_ item: ActivityItem) {
+        // A work item is read in the lightbox, like any other direct link.
+        if let workItemId = item.workItemId, item.deviceId == nil, item.assetId == nil, item.ticketId == nil {
+            dismiss()
+            appState.openLightbox(.workItem(id: workItemId))
+            return
+        }
         if let deviceId = item.deviceId { appState.navigateToDeviceId = deviceId }
         if let assetId = item.assetId { appState.navigateToAssetId = assetId }
         if let ticketId = item.ticketId { appState.navigateToTicketId = ticketId }

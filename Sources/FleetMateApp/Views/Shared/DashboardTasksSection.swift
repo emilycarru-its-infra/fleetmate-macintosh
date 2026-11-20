@@ -69,8 +69,8 @@ struct DashboardTasksPane: View {
     /// (no inner scroll) — the Projects tab's widget strip uses it.
     var compactRows: Int? = nil
 
-    /// The row being read in place. Rows link out through the context menu.
-    @State private var lightboxTask: UnifiedTask?
+    /// Rows are read in place in the lightbox; the context menu links out.
+    @Environment(\.lightbox) private var lightbox
 
     /// Widest area path rendered so far, so the path column fits its longest
     /// entry instead of truncating, and the title column starts at one x.
@@ -111,10 +111,6 @@ struct DashboardTasksPane: View {
         .task { model.load(appState: appState) }
         .onAppCommand { command in
             if command == .refresh { model.load(appState: appState, force: true) }
-        }
-        .sheet(item: $lightboxTask) { task in
-            TaskLightboxView(task: task)
-                .environmentObject(appState)
         }
     }
 
@@ -214,7 +210,7 @@ struct DashboardTasksPane: View {
         Button {
             // Read it here, like a pull request; the Projects tab is one
             // click further in the lightbox header or the context menu.
-            lightboxTask = TaskLightboxView.workItemStub(item, config: appState.config)
+            lightbox.open(.workItem(id: item.id))
         } label: {
             // Invisible grid: fixed-width columns so pills line up down the
             // list. Area path leads (where the ids used to be) at its full
@@ -294,7 +290,9 @@ struct DashboardTasksPane: View {
 
     private func issueRow(_ issue: GitHubIssueSummary) -> some View {
         Button {
-            lightboxTask = TaskLightboxView.issueStub(issue)
+            if let link = URL(string: issue.webUrl).flatMap({ try? FleetMateLink.parseWeb($0) }) {
+                lightbox.open(link)
+            }
         } label: {
             HStack(spacing: 8) {
                 Text(issue.repository.split(separator: "/").last.map(String.init) ?? issue.repository)

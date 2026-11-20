@@ -651,89 +651,29 @@ final class DevelopmentModel: ObservableObject {
     func open(_ link: FleetMateLink, appState: AppState) {
         searchText = ""
         let startedSignedIn = appState.devOpsSsoAuthenticated
+        // Show the segment at once, so a slow lookup isn't spent on the
+        // wrong one, and clear filters that could hide the selection.
+        switch link {
+        case .pullRequest:
+            segment = .pullRequests
+            selectedSource = nil
+            selectedRepo = nil
+            onlyMine = false
+        case .commit:
+            segment = .commits
+        case .azureDevOpsRun, .gitHubRun, .azureDevOpsPipeline:
+            segment = .pipelines
+            pipelineStatusFilter = nil
+            approvalFilter = false
+        case .workItem, .gitHubIssue, .device, .asset, .ticket, .user, .group, .reporting:
+            return // Routed to their own tabs by AppState.
+        }
         Task {
             do {
-                switch link {
-                case .pullRequest(let host, let number):
-                    segment = .pullRequests
-                    selectedSource = nil
-                    selectedRepo = nil
-                    onlyMine = false
-                    if let pr = queue.pullRequests.first(where: { Self.matches($0, host: host, number: number) }) {
-                        selectedPullRequest = pr
-                        return
-                    }
-                    let fetched: UnifiedPullRequest?
-                    switch host {
-                    case .azureDevOps(let project, let repo):
-                        fetched = try await appState.devOpsService.getUnifiedPullRequest(project: project, repository: repo, id: number)
-                    case .gitHub(let owner, let repo):
-                        fetched = try await GitHubPullRequestService(config: gitHubConfig(appState))
-                            .getPullRequest(owner: owner, repo: repo, number: number)
-                    }
-                    guard let fetched else { throw LinkOpenError("Pull request \(number) was not found.") }
-                    selectedPullRequest = fetched
-
-                case .commit(let host, let sha):
-                    segment = .commits
-                    if let repo = repositoryCommits.first(where: { Self.matches($0, host: host) }),
-                       let commit = repo.commits.first(where: { $0.id.hasPrefix(sha) || sha.hasPrefix($0.id) }) {
-                        selectedCommit = .init(repository: repo, commit: commit)
-                        return
-                    }
-                    // Not in the recent list: the detail pane loads it by sha.
-                    let repository: RepositoryCommits
-                    switch host {
-                    case .azureDevOps(let project, let repo):
-                        repository = RepositoryCommits(source: .azureDevOps, container: project, repository: repo,
-                                                       repositoryId: repo, webUrl: "", defaultBranch: nil, commits: [])
-                    case .gitHub(let owner, let repo):
-                        repository = RepositoryCommits(source: .gitHub, container: owner, repository: repo,
-                                                       webUrl: "https://github.com/\(owner)/\(repo)", defaultBranch: nil, commits: [])
-                    }
-                    selectedCommit = .init(repository: repository,
-                                           commit: PullRequestCommit(id: sha, message: "", authorName: nil, date: nil))
-
-                case .azureDevOpsRun(let project, let runId):
-                    segment = .pipelines
-                    pipelineStatusFilter = nil
-                    approvalFilter = false
-                    if let run = pipelineRuns.first(where: { $0.source == .azureDevOps && $0.runId == runId }) {
-                        selectedRun = run
-                    } else {
-                        selectedRun = try await appState.devOpsService.getPipelineRun(project: project, buildId: runId)
-                    }
-
-                case .gitHubRun(let owner, let repo, let runId):
-                    segment = .pipelines
-                    pipelineStatusFilter = nil
-                    approvalFilter = false
-                    if let run = pipelineRuns.first(where: { $0.source == .gitHub && $0.runId == runId }) {
-                        selectedRun = run
-                    } else {
-                        selectedRun = try await GitHubActionsService(config: gitHubConfig(appState))
-                            .getRun(owner: owner, repo: repo, runId: runId)
-                    }
-
-                case .azureDevOpsPipeline(let project, let definitionId):
-                    // A pipeline opens on its latest run. The list may not have
-                    // loaded yet (a link from a cold launch), so ask for it.
-                    segment = .pipelines
-                    pipelineStatusFilter = nil
-                    approvalFilter = false
-                    if let run = pipelineRuns
-                        .filter({ $0.source == .azureDevOps && $0.container == project && $0.pipelineId == definitionId })
-                        .first {
-                        selectedRun = run
-                    } else if let run = try await appState.devOpsService
-                        .getLatestPipelineRun(project: project, definitionId: definitionId) {
-                        selectedRun = run
-                    } else {
-                        throw LinkOpenError("Pipeline \(definitionId) in \(project) has no runs.")
-                    }
-
-                case .workItem, .gitHubIssue, .device, .asset, .ticket, .user, .group, .reporting:
-                    break // Routed to Projects by AppState.
+                switch try await resolve(link, appState: appState) {
+                case .pullRequest(let pr): selectedPullRequest = pr
+                case .commit(let commit): selectedCommit = commit
+                case .run(let run): selectedRun = run
                 }
             } catch {
                 // Opened from a cold launch, the lookup races sign-in and
@@ -750,6 +690,83 @@ final class DevelopmentModel: ObservableObject {
                     appState.linkError = error.localizedDescription
                 }
             }
+        }
+    }
+
+    /// What a pull, commit or pipeline link resolves to, in the shape the
+    /// detail views take.
+    enum ResolvedLink {
+        case pullRequest(UnifiedPullRequest)
+        case commit(SelectedCommit)
+        case run(PipelineRun)
+    }
+
+    /// Find what a link names: from the lists already loaded when they hold
+    /// it, otherwise fetched by id. Shared by this tab and the lightbox, so
+    /// both read the same caches and make the same requests.
+    func resolve(_ link: FleetMateLink, appState: AppState) async throws -> ResolvedLink {
+        switch link {
+        case .pullRequest(let host, let number):
+            if let pr = queue.pullRequests.first(where: { Self.matches($0, host: host, number: number) }) {
+                return .pullRequest(pr)
+            }
+            let fetched: UnifiedPullRequest?
+            switch host {
+            case .azureDevOps(let project, let repo):
+                fetched = try await appState.devOpsService.getUnifiedPullRequest(project: project, repository: repo, id: number)
+            case .gitHub(let owner, let repo):
+                fetched = try await GitHubPullRequestService(config: gitHubConfig(appState))
+                    .getPullRequest(owner: owner, repo: repo, number: number)
+            }
+            guard let fetched else { throw LinkOpenError("Pull request \(number) was not found.") }
+            return .pullRequest(fetched)
+
+        case .commit(let host, let sha):
+            if let repo = repositoryCommits.first(where: { Self.matches($0, host: host) }),
+               let commit = repo.commits.first(where: { $0.id.hasPrefix(sha) || sha.hasPrefix($0.id) }) {
+                return .commit(.init(repository: repo, commit: commit))
+            }
+            // Not in the recent list: the detail pane loads it by sha.
+            let repository: RepositoryCommits
+            switch host {
+            case .azureDevOps(let project, let repo):
+                repository = RepositoryCommits(source: .azureDevOps, container: project, repository: repo,
+                                               repositoryId: repo, webUrl: "", defaultBranch: nil, commits: [])
+            case .gitHub(let owner, let repo):
+                repository = RepositoryCommits(source: .gitHub, container: owner, repository: repo,
+                                               webUrl: "https://github.com/\(owner)/\(repo)", defaultBranch: nil, commits: [])
+            }
+            return .commit(.init(repository: repository,
+                                 commit: PullRequestCommit(id: sha, message: "", authorName: nil, date: nil)))
+
+        case .azureDevOpsRun(let project, let runId):
+            if let run = pipelineRuns.first(where: { $0.source == .azureDevOps && $0.runId == runId }) {
+                return .run(run)
+            }
+            return .run(try await appState.devOpsService.getPipelineRun(project: project, buildId: runId))
+
+        case .gitHubRun(let owner, let repo, let runId):
+            if let run = pipelineRuns.first(where: { $0.source == .gitHub && $0.runId == runId }) {
+                return .run(run)
+            }
+            return .run(try await GitHubActionsService(config: gitHubConfig(appState))
+                .getRun(owner: owner, repo: repo, runId: runId))
+
+        case .azureDevOpsPipeline(let project, let definitionId):
+            // A pipeline opens on its latest run. The list may not have
+            // loaded yet (a link from a cold launch), so ask for it.
+            if let run = pipelineRuns
+                .first(where: { $0.source == .azureDevOps && $0.container == project && $0.pipelineId == definitionId }) {
+                return .run(run)
+            }
+            guard let run = try await appState.devOpsService
+                .getLatestPipelineRun(project: project, definitionId: definitionId) else {
+                throw LinkOpenError("Pipeline \(definitionId) in \(project) has no runs.")
+            }
+            return .run(run)
+
+        case .workItem, .gitHubIssue, .device, .asset, .ticket, .user, .group, .reporting:
+            throw LinkOpenError("The Development tab does not show \(link.url.absoluteString).")
         }
     }
 

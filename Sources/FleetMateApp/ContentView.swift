@@ -48,6 +48,9 @@ struct ContentView: View {
                     }
             }
         }
+            // Work items, issues, pull requests, commits and runs open over
+            // the tab, the Agent dock included.
+            .modifier(LightboxHost(appState: appState))
             .frame(minWidth: 500, minHeight: 400)
             // A preference read through a background GeometryReader stopped
             // updating once the window had been narrowed, so widening it
@@ -171,6 +174,7 @@ struct ContentView: View {
             }
             .onChange(of: appState.selectedTab) { _, _ in
                 terminals.hide()
+                appState.closeLightbox()
                 appState.agentSelection = nil
                 writeAgentContext()
             }

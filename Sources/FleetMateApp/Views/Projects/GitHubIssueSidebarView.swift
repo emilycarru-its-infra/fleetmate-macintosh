@@ -224,10 +224,10 @@ struct GitHubIssueSidebarView: View {
                 if let author = detail.user?.login {
                     Text("Opened by \(author)").foregroundStyle(.secondary)
                 }
-                HStack(spacing: 3) { Text("Created"); Text(detail.createdAt, style: .relative); Text("ago") }
+                HStack(spacing: 3) { Text("Created"); AgoText(detail.createdAt) }
                     .foregroundStyle(.secondary)
                     .help(detail.createdAt.formatted(date: .complete, time: .shortened))
-                HStack(spacing: 3) { Text("Updated"); Text(detail.updatedAt, style: .relative); Text("ago") }
+                HStack(spacing: 3) { Text("Updated"); AgoText(detail.updatedAt) }
                     .foregroundStyle(.secondary)
                     .help(detail.updatedAt.formatted(date: .complete, time: .shortened))
             }
@@ -437,10 +437,10 @@ struct GitHubIssueSidebarView: View {
             metadataRow(icon: "calendar", title: "Dates") {
                 VStack(alignment: .leading, spacing: 2) {
                     if let d = detail {
-                        Text("Created \(d.createdAt, style: .relative)").appFont(.caption).foregroundColor(.secondary)
-                        Text("Updated \(d.updatedAt, style: .relative)").appFont(.caption).foregroundColor(.secondary)
+                        AgoText(d.createdAt, prefix: "Created ").appFont(.caption).foregroundColor(.secondary)
+                        AgoText(d.updatedAt, prefix: "Updated ").appFont(.caption).foregroundColor(.secondary)
                         if let closed = d.closedAt {
-                            Text("Closed \(closed, style: .relative)").appFont(.caption).foregroundColor(.secondary)
+                            AgoText(closed, prefix: "Closed ").appFont(.caption).foregroundColor(.secondary)
                         }
                     }
                 }
@@ -826,7 +826,7 @@ private struct CommentBubble: View {
                     Text(comment.user?.login ?? "Unknown")
                         .appFont(.subheadline)
                         .fontWeight(.medium)
-                    Text(comment.createdAt, style: .relative)
+                    AgoText(comment.createdAt)
                         .appFont(.caption)
                         .foregroundColor(.secondary)
                 }

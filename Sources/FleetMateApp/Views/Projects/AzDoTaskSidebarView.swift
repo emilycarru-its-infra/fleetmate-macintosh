@@ -286,8 +286,7 @@ struct AzDoTaskSidebarView: View {
     private func summaryDate(_ label: String, _ date: Date, by person: String?) -> some View {
         HStack(spacing: 3) {
             Text("\(label)")
-            Text(date, style: .relative)
-            Text("ago")
+            AgoText(date)
             if let person { Text("by \(person)") }
         }
         .foregroundStyle(.secondary)
@@ -1039,9 +1038,9 @@ struct AzDoTaskSidebarView: View {
             // Try without fractional seconds
             formatter.formatOptions = [.withInternetDateTime]
             guard let date = formatter.date(from: dateString) else { return "" }
-            return RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
+            return CoarseAgo.string(date)
         }
-        return RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date())
+        return CoarseAgo.string(date)
     }
 
     private func relationTypeLabel(_ type: WorkItemRelation.RelationType) -> String {
@@ -1557,7 +1556,7 @@ struct AzDoTaskSidebarView: View {
                 .foregroundColor(.secondary)
                 .frame(width: 100, alignment: .leading)
             if let date = date, let parsed = parseISODate(date) {
-                Text(parsed, style: .relative)
+                AgoText(parsed)
                     .appFont(.subheadline)
                     .foregroundColor(.secondary)
             } else {
@@ -2043,7 +2042,7 @@ private struct DevOpsCommentBubble: View {
                 }
 
                 if let dateStr = comment.createdDate, let date = parseDate(dateStr) {
-                    Text(date, style: .relative)
+                    AgoText(date)
                         .appFont(.caption)
                         .foregroundColor(.secondary)
                 }

@@ -110,12 +110,9 @@ final class AgentTerminalStore: ObservableObject {
     }
     private var rows: [AgentLane.ID: Row] = [:]
     /// The folders whose sessions are FleetMate's, for the Detached section:
-    /// the tracked checkouts, Settings › Agent repos and the agent workspace.
+    /// the repositories the Repos workspace lists, their worktrees, and the
+    /// agent workspace (see `AgentLaneScope`).
     let laneFolders = LaneFolders()
-    /// The local paths in Settings › Agent repos. Set by AppState.
-    var agentRepoPaths: (() -> [String])?
-    /// The tracked checkouts' folders, as of the last registry sync.
-    private var checkoutFolders: [String] = []
     /// The repository behind each Repos row, by lane id, as `RepoKey.id`.
     private var repoIds: [AgentLane.ID: String] = [:]
     private var restored = false
@@ -207,8 +204,6 @@ final class AgentTerminalStore: ObservableObject {
             .sink { [weak self] _ in
                 let size = Self.scaledBaseFontSize()
                 if self?.lanes.configuration.baseFontSize != size { self?.lanes.configuration.baseFontSize = size }
-                // Settings › Agent repos may have changed.
-                self?.updateLaneFolders()
             }
             .store(in: &subscriptions)
     }
@@ -273,6 +268,7 @@ final class AgentTerminalStore: ObservableObject {
             let prefix = isCodex ? "cx-" : ""
             return .tmuxLane(id: id, displayName: name, command: command,
                              statusAgent: isCodex ? "codex" : "claude",
+                             sessionIDFile: isCodex ? nil : { @Sendable lane in Self.claudeLaneIDFile(lane) },
                              stopCommand: isCodex ? nil : { @Sendable lane in Self.claudeLaneStopCommand(lane) },
                              variantFlag: "-n",
                              variantStatusName: { @Sendable lane in
@@ -289,19 +285,24 @@ final class AgentTerminalStore: ObservableObject {
     }
 
     /// Which tmux sessions are this wrapper's lanes, so the ones with no row
-    /// show under Detached. The Codex wrapper names every lane's session
-    /// "cx-<folder>[-<variant>]", a prefix nothing else uses. The Claude
-    /// wrapper's sessions carry no prefix of their own, so they count when
-    /// they work in one of FleetMate's folders, named lanes ("-n boards")
-    /// included. Codex's "cx-" sessions there stay with Codex.
+    /// show under Detached. Either wrapper's session counts only when it
+    /// works in one of FleetMate's folders (`AgentLaneScope`): the same
+    /// wrappers run lanes for other apps and terminals too. The Codex
+    /// wrapper names every lane's session "cx-<folder>[-<variant>]"; the
+    /// Claude wrapper's carry no prefix of their own, named lanes
+    /// ("-n boards") included. Codex's "cx-" sessions stay with Codex.
     ///
     /// A Claude row's session is named after its folder, as the wrapper
     /// names it, so the row also claims the Claude Code background session
     /// the wrapper starts now, which `backgroundBackend` lists.
     nonisolated static func tmuxSessions(program: String, folders: LaneFolders) -> TmuxLaneSessions {
-        if program.hasPrefix("codex") { return TmuxLaneSessions(prefixes: ["cx-"]) }
+        if program.hasPrefix("codex") {
+            return TmuxLaneSessions(prefixes: ["cx-"], isRelevant: { @Sendable session in
+                session.name.hasPrefix("cx-") && folders.contains(session)
+            })
+        }
         return TmuxLaneSessions(isRelevant: { @Sendable session in
-                                    !session.name.hasPrefix("cx-") && session.isInside(anyOf: folders.current)
+                                    !session.name.hasPrefix("cx-") && folders.contains(session)
                                 },
                                 sessionName: { @Sendable lane in laneSessionName(lane, prefix: "") })
     }
@@ -313,6 +314,14 @@ final class AgentTerminalStore: ObservableObject {
         let base = (lane.path as NSString).lastPathComponent.lowercased()
             .replacingOccurrences(of: " ", with: "-").replacingOccurrences(of: ".", with: "-")
         return prefix + base + (lane.variant.map { "-" + $0 } ?? "")
+    }
+
+    /// The file the Claude wrapper keeps the id of a lane's background
+    /// session in, so the row holds that session (and Detached leaves it
+    /// out) whatever the session is called. Read on this Mac only: a lane
+    /// on another Mac keeps its file there.
+    nonisolated static func claudeLaneIDFile(_ lane: AgentLane) -> URL? {
+        ClaudeLaneIDFile.url(lane: laneSessionName(lane, prefix: ""), in: ClaudeLaneIDFile.directory())
     }
 
     /// Stop ends a Claude lane whichever kind of session holds it: the tmux
@@ -328,17 +337,15 @@ final class AgentTerminalStore: ObservableObject {
     /// with `claude attach` and stops it with `claude stop`.
     nonisolated static func backgroundBackend(folders: LaneFolders) -> ClaudeBackgroundLaneBackend {
         var backend = ClaudeBackgroundLaneBackend(id: "claude-bg", displayName: "Claude (background)")
-        backend.isRelevant = { @Sendable session in session.isInside(anyOf: folders.current) }
+        backend.isRelevant = { @Sendable session in folders.contains(session) }
         return backend
     }
 
     /// Set the folders whose sessions are FleetMate's, and look for Detached
     /// sessions again when they change.
     func updateLaneFolders() {
-        var folders = Set(checkoutFolders)
-        folders.formUnion(agentRepoPaths?() ?? [])
-        folders.insert(workspace.root.path)
-        if laneFolders.set(folders) { lanes.sweepForDetachedSessions() }
+        let scope = AgentLaneScope(baseline: workspaceFile.baseline, workspaceRoot: workspace.root.path)
+        if laneFolders.set(scope) { lanes.sweepForDetachedSessions() }
     }
 
     /// Get a lane ready to start: settle a row that follows the default,
@@ -456,7 +463,10 @@ final class AgentTerminalStore: ObservableObject {
 
     // MARK: Workspaces file
 
-    @Published private(set) var workspaceFile = TerminalWorkspaceFile()
+    @Published private(set) var workspaceFile = TerminalWorkspaceFile() {
+        // Detached follows the repositories the Repos workspace lists.
+        didSet { if workspaceFile.baseline != oldValue.baseline { updateLaneFolders() } }
+    }
     @Published private(set) var workspaceFileError: String?
 
     func reloadWorkspaces() {
@@ -663,7 +673,6 @@ final class AgentTerminalStore: ObservableObject {
                 workspaceFileError = "Could not save the workspaces: \(error.localizedDescription)"
             }
         }
-        checkoutFolders = repoCheckouts().map(\.path)
         updateLaneFolders()
         applyBaselineToList()
         watchRegistry()
@@ -861,13 +870,18 @@ enum AgentSettingsKey {
 /// the store.
 final class LaneFolders: @unchecked Sendable {
     private let lock = NSLock()
-    private var folders: Set<String> = []
+    private var folders = AgentLaneScope()
 
-    var current: Set<String> { lock.withLock { folders } }
+    var current: AgentLaneScope { lock.withLock { folders } }
+
+    /// Whether a session works in one of the folders.
+    func contains(_ session: DiscoveredSession) -> Bool {
+        current.contains(directory: session.directory)
+    }
 
     /// Returns whether the folders changed.
     @discardableResult
-    func set(_ new: Set<String>) -> Bool {
+    func set(_ new: AgentLaneScope) -> Bool {
         lock.withLock {
             guard folders != new else { return false }
             folders = new

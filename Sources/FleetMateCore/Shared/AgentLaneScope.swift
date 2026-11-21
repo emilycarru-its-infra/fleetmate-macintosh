@@ -1,0 +1,87 @@
+import Foundation
+
+/// The folders whose agent sessions are FleetMate's, for the Detached
+/// section: the repositories the Repos workspace shows, each with its
+/// worktrees, and FleetMate's own agent workspace.
+///
+/// A session counts when it works in a repository's own folder or in one of
+/// its worktrees (`.worktrees/<name>`, or Claude Code's
+/// `.claude/worktrees/<name>`), not anywhere beneath it: a repository that
+/// holds other projects in subfolders would otherwise claim every session
+/// started in them. The agent workspace counts only exactly, as FleetMate's
+/// own sessions start there and nothing else belongs to it.
+public struct AgentLaneScope: Equatable, Sendable {
+    /// Normalized repository folders.
+    public private(set) var repositories: Set<String>
+    /// Normalized folders that count only exactly.
+    public private(set) var exact: Set<String>
+
+    /// The folders under a repository whose children are its worktrees.
+    public static let worktreeFolders = [".worktrees", ".claude/worktrees"]
+
+    public init(repositories: some Sequence<String> = [String](), exact: some Sequence<String> = [String]()) {
+        self.repositories = Set(repositories.map(Self.normalized).filter { !$0.isEmpty })
+        self.exact = Set(exact.map(Self.normalized).filter { !$0.isEmpty })
+    }
+
+    /// The repositories the Repos workspace lists, from its sessions'
+    /// folders, plus the agent workspace.
+    public init(baseline: TerminalWorkspace?, workspaceRoot: String?) {
+        let folders = (baseline?.sections ?? []).flatMap(\.sessions).compactMap(\.directory)
+        self.init(repositories: folders, exact: workspaceRoot.map { [$0] } ?? [])
+    }
+
+    public var isEmpty: Bool { repositories.isEmpty && exact.isEmpty }
+
+    /// Whether a session working in `directory` is FleetMate's.
+    public func contains(directory: String?) -> Bool {
+        guard let directory, !directory.isEmpty else { return false }
+        let path = Self.normalized(directory)
+        if exact.contains(path) || repositories.contains(path) { return true }
+        return repositories.contains { Self.isWorktree(path, of: $0) }
+    }
+
+    /// Whether `path` is a worktree of `repository`, or inside one.
+    static func isWorktree(_ path: String, of repository: String) -> Bool {
+        worktreeFolders.contains { folder in
+            let parent = repository == "/" ? "/" + folder + "/" : repository + "/" + folder + "/"
+            return path.hasPrefix(parent) && path.count > parent.count
+        }
+    }
+
+    /// A folder as compared: `~` expanded, symlinks resolved, no trailing
+    /// slash, in lower case as the default Mac volume compares names.
+    public static func normalized(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let url = URL(fileURLWithPath: TerminalWorkspaceStore.expand(trimmed)).standardizedFileURL.resolvingSymlinksInPath()
+        var out = url.path
+        while out.count > 1, out.hasSuffix("/") { out.removeLast() }
+        return out.lowercased()
+    }
+}
+
+/// Where the Claude lane wrapper records the background session behind each
+/// lane: one file per lane, named after the lane's session name, holding the
+/// session's id (often only its first eight characters). FleetMate reads it
+/// so a row holds the session it attaches whatever that session is named.
+public enum ClaudeLaneIDFile {
+    /// The wrapper's state folder; `CLAUDE_LANE_STATE_DIR` overrides it.
+    public static func directory(environment: [String: String] = ProcessInfo.processInfo.environment,
+                                 home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        if let dir = environment["CLAUDE_LANE_STATE_DIR"], !dir.isEmpty {
+            return URL(fileURLWithPath: TerminalWorkspaceStore.expand(dir), isDirectory: true)
+        }
+        return home.appendingPathComponent(".local/state/claude-lanes", isDirectory: true)
+    }
+
+    /// The file for a lane's session name, with every character outside
+    /// `A-Za-z0-9._-` replaced by `_`, as the wrapper names it.
+    public static func url(lane: String, in directory: URL) -> URL? {
+        guard !lane.isEmpty else { return nil }
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        let key = String(String.UnicodeScalarView(lane.unicodeScalars.map { allowed.contains($0) ? $0 : "_" }))
+        guard key != ".", key != ".." else { return nil }
+        return directory.appendingPathComponent(key)
+    }
+}

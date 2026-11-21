@@ -11,6 +11,7 @@ struct AgentSettingsView: View {
     @AppStorage(AgentSettingsKey.command) private var command: String = ""
     @AppStorage(AgentSettingsKey.autoStart) private var autoStart: Bool = true
     @AppStorage(AgentSettingsKey.restoreSessions) private var restoreSessions: Bool = true
+    @AppStorage(AgentSettingsKey.usageHost) private var usageHost: String = ""
     @State private var repos: [String] = []
     @State private var newRepo = ""
     @State private var hasOwnCommand = false
@@ -41,6 +42,9 @@ struct AgentSettingsView: View {
                 Toggle("Reopen the last sessions when FleetMate starts", isOn: $restoreSessions)
                     .help("Sessions open at quit come back in the list; Claude Code and Codex resume their last conversation when opened")
                 AgentSummaryToggle(store: appState.terminals.lanes)
+                TextField("Read usage from", text: $usageHost, prompt: Text("This Mac"))
+                    .font(.system(.body, design: .monospaced))
+                    .help("An ssh destination, such as user@other-mac, whose Claude status line writes the usage the sidebar meter shows. Leave it empty to read this Mac's. Applies at the next launch.")
                 if let managed = appState.config.agentCommand, !hasOwnCommand {
                     Text("Your organization's default is \(managed.isEmpty ? "a shell" : "`\(managed)`").")
                         .appFont(.caption).foregroundStyle(.secondary)
@@ -48,7 +52,7 @@ struct AgentSettingsView: View {
             } header: {
                 Text("Terminal")
             } footer: {
-                Text("Sessions start in a login shell, so your PATH and tools are there. Each gets FLEETMATE_CONTEXT, a JSON file naming the tab and selection you're on, and FLEETMATE_AGENT_BRIEF, a guide to every fleetmate command; claude and codex sessions are given the guide at start. Toggle the panel with ⌘J or ⌃`.")
+                Text("Sessions start in a login shell, so your PATH and tools are there. Each gets FLEETMATE_CONTEXT, a JSON file naming the tab and selection you're on, and FLEETMATE_AGENT_BRIEF, a guide to every fleetmate command; claude and codex sessions are given the guide at start. Toggle the panel with ⌘J or ⌃`. When your sessions run their agents on another Mac, set Read usage from to that Mac's ssh destination so the usage meter shows its figures; it reads them with ssh in batch mode, so a key must already let this Mac in.")
                     .settingsFooter()
             }
 

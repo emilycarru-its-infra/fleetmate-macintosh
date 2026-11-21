@@ -148,12 +148,7 @@ final class AgentTerminalStore: ObservableObject {
                                  showsRowMetadata: true,
                                  notifies: !AppEdition.current.isTicketsOnly,
                                  summaryModel: "haiku",
-                                 usageSources: [KeyValueUsageFileSource(
-                                     url: FileManager.default.homeDirectoryForCurrentUser
-                                         .appendingPathComponent(".claude/.statusline-usage-cache"),
-                                     agent: "Claude",
-                                     signedIn: { AgentSignIn.claude() }),
-                                                CodexSessionUsageSource()],
+                                 usageSources: Self.usageSources,
                                  rowStyle: Self.rowStyle,
                                  messageWindowID: Self.messageWindowID,
                                  pullRequestResolvers: [AzureDevOpsPullRequestResolver(source: pullRequestSource)]),
@@ -211,6 +206,34 @@ final class AgentTerminalStore: ObservableObject {
                 self?.updateLaneFolders()
             }
             .store(in: &subscriptions)
+    }
+
+    /// Where the Claude status line keeps its usage cache, under home.
+    static let usageCachePath = ".claude/.statusline-usage-cache"
+
+    /// Claude's limits from the status-line usage cache, and Codex's from its
+    /// own session files. With a usage host set (Settings › Agent), Claude's
+    /// come from that Mac's cache over ssh instead, since a Mac whose agents
+    /// run elsewhere never runs the status line itself. Read at launch.
+    static var usageSources: [any AgentUsageSource] {
+        let claude: any AgentUsageSource
+        if let host = usageHost {
+            claude = KeyValueUsageCommandSource(agent: "Claude", command: [
+                "/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "--", host, "cat " + usageCachePath,
+            ])
+        } else {
+            claude = KeyValueUsageFileSource(url: FileManager.default.homeDirectoryForCurrentUser
+                                                 .appendingPathComponent(usageCachePath),
+                                             agent: "Claude", signedIn: { AgentSignIn.claude() })
+        }
+        return [claude, CodexSessionUsageSource()]
+    }
+
+    /// The usage host from Settings, when it is one ssh can be handed safely.
+    static var usageHost: String? {
+        let host = UserDefaults.standard.string(forKey: AgentSettingsKey.usageHost)?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        return TmuxLaneSessions.isValidHost(host) ? host : nil
     }
 
     /// The fallback workspace is independent of any repository checkout.
@@ -824,6 +847,9 @@ enum AgentSettingsKey {
     static let keepClisCurrent = "agentKeepClisCurrent"
     /// Reopen the sessions open at quit, agents resuming. Default on.
     static let restoreSessions = "agentRestoreSessions"
+    /// An ssh destination whose status line writes Claude's usage cache, for
+    /// a Mac whose sessions all run their agents there. Empty reads this Mac's.
+    static let usageHost = "agentUsageHost"
 }
 
 /// Folders that the Detached rules read off the main actor, kept current by

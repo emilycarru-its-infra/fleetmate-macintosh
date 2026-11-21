@@ -132,8 +132,8 @@ struct TeamsConversationView: View {
                     if let thread { copy(TeamsThreadCopy.thread(thread, allowedHosts: linkHosts)) }
                 }
                 .disabled(thread == nil)
-                .keyboardShortcut("c", modifiers: [.command, .shift])
-                .help("Copy the full conversation with source (⇧⌘C)")
+                .keyboardShortcut("c", modifiers: [.command, .shift, .control])
+                .help("Copy the full conversation with source (⌃⇧⌘C)")
                 Button("Copy Markdown", systemImage: "text.document") {
                     if let thread { copy(TeamsThreadCopy.thread(thread, allowedHosts: linkHosts, markdown: true)) }
                 }.disabled(thread == nil)

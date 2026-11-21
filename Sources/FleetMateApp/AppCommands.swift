@@ -238,18 +238,7 @@ struct FleetMateCommands: Commands {
                 }
                 .agentShortcut(lanes, .reattach)
                 .disabled(lanes.selectedID == nil)
-                if !lanes.configuration.reopenChoices.isEmpty {
-                    Menu("Reopen Session As") {
-                        ForEach(Array(lanes.configuration.reopenChoices.enumerated()), id: \.offset) { index, choice in
-                            Button(choice.title) {
-                                lanes.showDock()
-                                lanes.reopenSelected(choice: index)
-                            }
-                            .agentShortcut(lanes, LaneShortcutAction.reopenAs(choice: index))
-                        }
-                    }
-                    .disabled(lanes.selectedID == nil)
-                }
+                LaneReopenMenu(store: lanes, title: "Reopen Session As") { lanes.showDock() }
                 Button("Collapse All Session Sections") { lanes.setAllCollapsed(true) }
                     .disabled(lanes.sectionNames.isEmpty && lanes.layout.pinned.isEmpty)
                 Button("Expand All Session Sections") { lanes.setAllCollapsed(false) }

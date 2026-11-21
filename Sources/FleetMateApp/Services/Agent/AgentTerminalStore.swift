@@ -171,11 +171,16 @@ final class AgentTerminalStore: ObservableObject {
             .sink { [weak self] _ in self?.applyRepoIcons(adopting: false) }
             .store(in: &subscriptions)
         lanes.willStartLane = { [weak self] lane in self?.prepare(lane) ?? lane }
-        // Terminal › Reopen As and each row's menu, on ⌃⌥1–⌃⌥4: the
-        // persistent lanes first, then the agents run in the row's folder.
-        lanes.configuration.reopenChoices = ["claude-remote", "codex-remote", "claude", "codex"].map { command in
-            LaneReopenChoice(AgentLaunch.presets.first { $0.command == command }?.label ?? command,
-                             backendID: backendID(for: command))
+        // View › Reopen Session As and each row's menu: the same agent again,
+        // the persistent lanes, then the agents run in the row's folder. Each
+        // kind has AgentsMate's shortcut (⌥⌘R, ⇧⌘C, ⇧⌘X, ⌥⇧⌘C, ⌥⇧⌘X), which
+        // the sessions take only while a terminal or the list has the keyboard.
+        let choices: [(title: String, command: String, kind: LaneReopenChoice.Kind)] = [
+            ("Claude (remote)", "claude-remote", .claudeRemote), ("Codex (remote)", "codex-remote", .codexRemote),
+            ("Claude (direct)", "claude", .claudeDirect), ("Codex (direct)", "codex", .codexDirect),
+        ]
+        lanes.configuration.reopenChoices = [.sameAgent()] + choices.map { choice in
+            LaneReopenChoice(choice.title, backendID: backendID(for: choice.command), kind: choice.kind)
         }
         lanes.willCloseLane = { [weak self] lane, attached in
             guard let self, let row = self.rows[lane.id] else { return .remove }

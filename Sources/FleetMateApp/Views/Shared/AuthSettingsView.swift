@@ -635,7 +635,7 @@ private struct AuthSettingsContent: View {
                         .appFont(.caption)
                         .foregroundColor(Color(NSColor.secondaryLabelColor))
                         .frame(width: 130, alignment: .leading)
-                    Text("\(d, style: .relative) ago  (\(d, formatter: timeFormatter))")
+                    AgoText(d, suffix: "  (\(timeFormatter.string(from: d)))")
                         .appFont(.caption)
                         .foregroundColor(Color(NSColor.secondaryLabelColor))
                 }

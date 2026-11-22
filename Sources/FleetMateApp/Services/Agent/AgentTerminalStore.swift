@@ -148,7 +148,12 @@ final class AgentTerminalStore: ObservableObject {
                                  usageSources: Self.usageSources,
                                  rowStyle: Self.rowStyle,
                                  messageWindowID: Self.messageWindowID,
-                                 pullRequestResolvers: [AzureDevOpsPullRequestResolver(source: pullRequestSource)]),
+                                 pullRequestResolvers: [AzureDevOpsPullRequestResolver(source: pullRequestSource)],
+                                 // At launch, ask the hub and every lane Mac what is
+                                 // running, so the session the window opens on is
+                                 // reattached wherever it runs: by the id
+                                 // agent-lane-bindings ties to the lane, never by name.
+                                 hostSessions: HostSessionsConfiguration(bindingsCommand: "agent-lane-bindings")),
             backends: [CommandLaneBackend(id: Self.followsDefaultID, displayName: "Default Agent", command: "")],
             statusFeed: LaneStatusFeed(sources: [ClaudeAgentsStatusSource()].compactMap { $0 },
                                        presenceSources: [TmuxPresenceSource()]))

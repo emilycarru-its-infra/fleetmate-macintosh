@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 struct ContentView: View {
     @EnvironmentObject var appState: AppState
@@ -171,6 +172,13 @@ struct ContentView: View {
                     terminals.open(appState.agentDefaultLaunch, focus: false, show: false)
                 }
                 writeAgentContext()
+            }
+            // Agents mode, the sessions filling the window over Development,
+            // in full screen: at launch only, and starting no session of its
+            // own. TicketsMate has no sessions.
+            .agentsLaunch(terminals.lanes) {
+                guard !AppEdition.current.isTicketsOnly else { return }
+                terminals.lanes.enterAgentsMode()
             }
             .onChange(of: appState.selectedTab) { _, _ in
                 terminals.hide()

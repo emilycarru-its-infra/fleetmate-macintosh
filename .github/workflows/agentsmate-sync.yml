@@ -14,8 +14,8 @@
 #             run here too, and nothing produced here is trusted later.
 #   publish - holds the write token and never builds or runs AgentsMate code.
 #             It writes the head the check job saw into Package.swift itself,
-#             opens or updates the PR, starts ci.yml on it and sets it to
-#             merge once that passes.
+#             opens or updates the PR, runs ci.yml on it and merges only if
+#             that run succeeds.
 #
 # A pull request opened with GITHUB_TOKEN does not start pull_request
 # workflows, but a workflow_dispatch does run. main requires ci.yml's check,
@@ -111,10 +111,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Move the pin, open or update the pull request, and merge it
+      - name: Move the pin and open or update the pull request
+        id: pin
         run: |
           sed -i -E "s/(agentsmate\.git\", revision: \")[0-9a-f]{40}/\1$REVISION/" Package.swift
-          if git diff --quiet -- Package.swift; then echo "Already at $REVISION"; exit 0; fi
+          if git diff --quiet -- Package.swift; then echo "Already at $REVISION"; echo "moved=false" >> "$GITHUB_OUTPUT"; exit 0; fi
           [ "$(git diff --numstat | wc -l)" -eq 1 ] || { echo "::error::Unexpected changes"; exit 1; }
           short=${REVISION:0:7}
           old=$(git show HEAD:Package.swift | grep -oE 'agentsmate\.git", revision: "[0-9a-f]{40}"' | grep -oE '[0-9a-f]{40}')
@@ -135,5 +136,21 @@ jobs:
           else
             gh pr create --base main --head "$BRANCH" --title "Follow AgentsMate main to $short" --body "$body"
           fi
+          echo "moved=true" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Run ci.yml on that commit and merge it only if it passes
+        if: steps.pin.outputs.moved == 'true'
+        env:
+          SHA: ${{ steps.pin.outputs.sha }}
+        run: |
           gh workflow run ci.yml --ref "$BRANCH"
-          gh pr merge "$BRANCH" --auto --squash --delete-branch
+          run=""
+          for _ in $(seq 1 30); do
+            run=$(gh run list --workflow ci.yml --branch "$BRANCH" --event workflow_dispatch --commit "$SHA" --limit 1 --json databaseId -q '.[0].databaseId')
+            [ -n "$run" ] && break
+            sleep 10
+          done
+          [ -n "$run" ] || { echo "::error::ci.yml did not start on $SHA"; exit 1; }
+          gh run watch "$run" --exit-status --interval 30
+          gh pr merge "$BRANCH" --squash --delete-branch --match-head-commit "$SHA"

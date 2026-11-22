@@ -230,7 +230,7 @@ struct FleetMateCommands: Commands {
                     appState.terminals.lanes.showDock()
                     appState.terminals.lanes.paletteVisible = true
                 }
-                // Settings › Agent › Keyboard Shortcuts lists these keys, so
+                // Settings › Shortcuts lists these keys, so
                 // the menu carries them.
                 Button("Reattach Session") {
                     lanes.showDock()

@@ -26,58 +26,6 @@ struct AgentSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Picker("Runs", selection: presetBinding) {
-                    ForEach(AgentLaunch.installedPresets, id: \.command) { preset in
-                        Text(preset.label).tag(preset.command)
-                    }
-                    Text("Custom").tag("__custom__")
-                }
-                if !presetCommands.contains(command) {
-                    TextField("Command", text: $command, prompt: Text("e.g. claude --model opus"))
-                        .font(.system(.body, design: .monospaced))
-                }
-                Text("Codex follows your own permissions by default. Choose Codex (workspace) to allow work in the checkout and FleetMate's guide/context folders, with approvals on request.")
-                    .appFont(.caption).foregroundStyle(.secondary)
-                Toggle("Open a session when FleetMate starts", isOn: $autoStart)
-                Toggle("Reopen the last sessions when FleetMate starts", isOn: $restoreSessions)
-                    .help("Sessions open at quit come back in the list; Claude Code and Codex resume their last conversation when opened")
-                AgentSummaryToggle(store: appState.terminals.lanes)
-                TextField("Read usage from", text: $usageHost, prompt: Text("This Mac"))
-                    .font(.system(.body, design: .monospaced))
-                    .help("An ssh destination, such as user@other-mac, whose Claude status line writes the usage the sidebar meter shows. Leave it empty to read this Mac's. Applies at the next launch.")
-                if let managed = appState.config.agentCommand, !hasOwnCommand {
-                    Text("Your organization's default is \(managed.isEmpty ? "a shell" : "`\(managed)`").")
-                        .appFont(.caption).foregroundStyle(.secondary)
-                }
-            } header: {
-                Text("Terminal")
-            } footer: {
-                Text("Sessions start in a login shell, so your PATH and tools are there. Each gets FLEETMATE_CONTEXT, a JSON file naming the tab and selection you're on, and FLEETMATE_AGENT_BRIEF, a guide to every fleetmate command; claude and codex sessions are given the guide at start. Toggle the panel with ⌘J or ⌃`. When your sessions run their agents on another Mac, set Read usage from to that Mac's ssh destination so the usage meter shows its figures; it reads them with ssh in batch mode, so a key must already let this Mac in.")
-                    .settingsFooter()
-            }
-
-            AgentCliUpdatesSection(model: appState.terminals.updater)
-            AgentLaneShortcutsSection(store: appState.terminals.lanes)
-
-            Section {
-                if repos.isEmpty {
-                    Text("No repositories yet.").foregroundStyle(.secondary)
-                }
-                ForEach(repos, id: \.self) { repo in
-                    HStack {
-                        Image(systemName: repo.contains("://") ? "link" : "folder")
-                            .foregroundStyle(.secondary)
-                        Text(repo).lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        Button {
-                            repos.removeAll { $0 == repo }
-                            save()
-                        } label: {
-                            Label("Remove", systemImage: "minus.circle").labelStyle(.iconOnly)
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                }
                 HStack {
                     TextField("Path or clone URL", text: $newRepo)
                         .onSubmit(addTyped)
@@ -110,12 +58,63 @@ struct AgentSettingsView: View {
                 if let syncSummary {
                     Text(syncSummary).appFont(.caption).foregroundStyle(.secondary)
                 }
+                if repos.isEmpty {
+                    Text("No repositories yet.").foregroundStyle(.secondary)
+                }
+                ForEach(repos, id: \.self) { repo in
+                    HStack {
+                        Image(systemName: repo.contains("://") ? "link" : "folder")
+                            .foregroundStyle(.secondary)
+                        Text(repo).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Button {
+                            repos.removeAll { $0 == repo }
+                            save()
+                        } label: {
+                            Label("Remove", systemImage: "minus.circle").labelStyle(.iconOnly)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
             } header: {
                 Text("Repositories")
             } footer: {
                 Text("Offered under New Session › Open in repository. Starts from your organization's list; your edits are yours alone. Sync with Repositories adds your tracked repositories here and tracks these folders in Settings › Repositories, removing nothing; it runs once by itself the first time the Agent opens.")
                     .settingsFooter()
             }
+
+            Section {
+                Picker("Runs", selection: presetBinding) {
+                    ForEach(AgentLaunch.installedPresets, id: \.command) { preset in
+                        Text(preset.label).tag(preset.command)
+                    }
+                    Text("Custom").tag("__custom__")
+                }
+                if !presetCommands.contains(command) {
+                    TextField("Command", text: $command, prompt: Text("e.g. claude --model opus"))
+                        .font(.system(.body, design: .monospaced))
+                }
+                Text("Codex follows your own permissions by default. Choose Codex (workspace) to allow work in the checkout and FleetMate's guide/context folders, with approvals on request.")
+                    .appFont(.caption).foregroundStyle(.secondary)
+                Toggle("Open a session when FleetMate starts", isOn: $autoStart)
+                Toggle("Reopen the last sessions when FleetMate starts", isOn: $restoreSessions)
+                    .help("Sessions open at quit come back in the list; Claude Code and Codex resume their last conversation when opened")
+                AgentSummaryToggle(store: appState.terminals.lanes)
+                TextField("Read usage from", text: $usageHost, prompt: Text("This Mac"))
+                    .font(.system(.body, design: .monospaced))
+                    .help("An ssh destination, such as user@other-mac, whose Claude status line writes the usage the sidebar meter shows. Leave it empty to read this Mac's. Applies at the next launch.")
+                if let managed = appState.config.agentCommand, !hasOwnCommand {
+                    Text("Your organization's default is \(managed.isEmpty ? "a shell" : "`\(managed)`").")
+                        .appFont(.caption).foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Terminal")
+            } footer: {
+                Text("Sessions start in a login shell, so your PATH and tools are there. Each gets FLEETMATE_CONTEXT, a JSON file naming the tab and selection you're on, and FLEETMATE_AGENT_BRIEF, a guide to every fleetmate command; claude and codex sessions are given the guide at start. Toggle the panel with ⌘J or ⌃`. When your sessions run their agents on another Mac, set Read usage from to that Mac's ssh destination so the usage meter shows its figures; it reads them with ssh in batch mode, so a key must already let this Mac in.")
+                    .settingsFooter()
+            }
+
+            AgentCliUpdatesSection(model: appState.terminals.updater)
 
             Section {
                 TextField("Handbook repository", text: $handbookRepo, prompt: Text("Git clone URL"))
@@ -199,9 +198,19 @@ struct AgentSettingsView: View {
     }
 }
 
-/// Settings › Agent › Agent CLIs: each CLI's version and install method, when
-/// it was last checked, and the switch for keeping them current. Problems are
-/// reported as a plain status line; the detail is in the app log.
+/// Settings › Shortcuts: every Agent command with its key, each one
+/// changeable. A tab of its own, since the list is long.
+struct ShortcutsSettingsView: View {
+    @ObservedObject var store: AgentLaneStore
+
+    var body: some View {
+        Form {
+            AgentLaneShortcutsSection(store: store)
+        }
+        .formStyle(.grouped)
+    }
+}
+
 /// Settings › Agent's "Summarize sessions" switch, shown while the store has
 /// a summary model. Observes the lane store itself, which the settings
 /// window's app state does not republish.
@@ -217,6 +226,9 @@ private struct AgentSummaryToggle: View {
     }
 }
 
+/// Settings › Agent › Agent CLIs: each CLI's version and install method, when
+/// it was last checked, and the switch for keeping them current. Problems are
+/// reported as a plain status line; the detail is in the app log.
 private struct AgentCliUpdatesSection: View {
     @ObservedObject var model: AgentCliUpdateModel
     @AppStorage(AgentSettingsKey.keepClisCurrent) private var keepCurrent: Bool = true

@@ -12,6 +12,7 @@ enum SettingsTab {
     static let repositories = RepositoriesSettingsView.tabTag
     static let enrollment = 6
     static let agent = 7
+    static let shortcuts = 8
 }
 
 struct SettingsView: View {
@@ -53,6 +54,9 @@ struct SettingsView: View {
                     .environmentObject(appState)
                     .tabItem { Label("Agent", systemImage: ContentView.agentSymbol) }
                     .tag(SettingsTab.agent)
+                ShortcutsSettingsView(store: appState.terminals.lanes)
+                    .tabItem { Label("Shortcuts", systemImage: "keyboard") }
+                    .tag(SettingsTab.shortcuts)
                 RepositoriesSettingsView()
                     .environmentObject(appState)
                     .tabItem { Label("Repositories", systemImage: "folder.badge.gearshape") }

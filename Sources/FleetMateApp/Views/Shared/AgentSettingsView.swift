@@ -25,6 +25,8 @@ struct AgentSettingsView: View {
 
     var body: some View {
         Form {
+            AgentsLaunchSettingsSection(store: appState.terminals.lanes)
+
             Section {
                 HStack {
                     TextField("Path or clone URL", text: $newRepo)

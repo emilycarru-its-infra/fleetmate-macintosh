@@ -109,7 +109,7 @@ struct FleetMateCommands: Commands {
                     .keyboardShortcut("s", modifiers: [.command, .shift])
                     .disabled(selectedTab != .manage)
                 Button("Select All Online") { appState.perform(.selectOnline) }
-                    .keyboardShortcut("a", modifiers: [.command, .shift])
+                    .keyboardShortcut("a", modifiers: [.command, .option])
                     .disabled(selectedTab != .manage)
             }
         }

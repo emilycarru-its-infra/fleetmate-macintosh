@@ -1,7 +1,7 @@
 import Foundation
 import FleetMateCore
 
-/// Keeps the Agent's repositories (Settings › Agent) and the tracked
+/// Keeps the Agent folders (Settings › Repositories › Agent Folders) and the tracked
 /// repositories (Settings › Repositories) in step, both ways: each folder the
 /// Agent lists is linked and tracked, and each tracked checkout joins the
 /// Agent's list. Nothing is removed from either side.

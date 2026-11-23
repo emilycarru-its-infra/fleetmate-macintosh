@@ -11,7 +11,7 @@ import AgentsMate
 /// demand. Sort, grouping, filter and which groups are collapsed persist.
 struct ReposListView: View {
     @ObservedObject var model: RepoWorkspaceModel
-    @AppStorage("repos.sidebar.sort") private var sort: RepoSidebarSort = .name
+    @AppStorage("repos.sidebar.sort") private var sort: RepoSidebarSort = .repositoryOrder
     @AppStorage("repos.sidebar.grouped") private var grouped = true
     @AppStorage("repos.sidebar.filter") private var filter = ""
     /// Collapsed section and group ids, newline-separated. Collapsed rather
@@ -19,6 +19,7 @@ struct ReposListView: View {
     @AppStorage("repos.sidebar.collapsed") private var collapsedStorage = ""
     @State private var reviewingNewClones = false
     @ObservedObject private var icons = RepoIcons.shared
+    @ObservedObject private var repoOrdering = RepositoryOrdering.shared
     @State private var choosingIconFor: RepoRecord?
 
     var body: some View {
@@ -188,7 +189,7 @@ struct ReposListView: View {
         let filtering = !filter.trimmingCharacters(in: .whitespaces).isEmpty
         return List(selection: $model.selectedId) {
             if grouped {
-                let sections = RepoSidebarOrganizer.sections(model.listed, statuses: model.statuses, sort: sort, matching: filter)
+                let sections = RepoSidebarOrganizer.sections(model.listed, statuses: model.statuses, sort: sort, order: repoOrdering.rank, matching: filter)
                 ForEach(sections) { section in
                     Section(isExpanded: expansion(section.id, forcedOpen: filtering)) {
                         ForEach(section.groups) { group in
@@ -206,7 +207,7 @@ struct ReposListView: View {
                     }
                 }
             } else {
-                ForEach(RepoSidebarOrganizer.flat(model.listed, statuses: model.statuses, sort: sort, matching: filter)) { record in
+                ForEach(RepoSidebarOrganizer.flat(model.listed, statuses: model.statuses, sort: sort, order: repoOrdering.rank, matching: filter)) { record in
                     row(record, showScope: true)
                 }
             }

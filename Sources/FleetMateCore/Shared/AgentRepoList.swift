@@ -1,6 +1,6 @@
 import Foundation
 
-/// Merges the Agent's repository list (Settings › Agent › Repositories) with
+/// Merges the Agent's repository list (Settings › Repositories › Agent Folders) with
 /// the checkouts tracked in Settings › Repositories. Nothing is removed: the
 /// Agent's own entries keep their order, clone URLs included, and each tracked
 /// checkout not yet listed is added after them, written with `~`.

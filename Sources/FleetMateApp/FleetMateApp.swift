@@ -110,10 +110,19 @@ class AppState: ObservableObject {
                     ?? config.agentCommand ?? AgentLaunch.defaultCommand)
     }
 
-    /// The person's repositories, seeded from the managed default list until
-    /// they edit their own.
+    /// The person's repositories, seeded from the default list until they
+    /// edit their own.
     var agentRepos: [String] {
-        UserDefaults.standard.stringArray(forKey: AgentSettingsKey.repos) ?? config.repoDefaults
+        UserDefaults.standard.stringArray(forKey: AgentSettingsKey.repos) ?? agentRepoDefaults
+    }
+
+    /// The default repositories: the rendered agent-apps registry's, in its
+    /// order, when there is one, else the managed list.
+    var agentRepoDefaults: [String] {
+        if let paths = RepositoryOrdering.shared.registry?.agentPaths, !paths.isEmpty {
+            return paths.map(repoAbbreviatedPath)
+        }
+        return config.repoDefaults
     }
 
     var agentAutoStart: Bool {

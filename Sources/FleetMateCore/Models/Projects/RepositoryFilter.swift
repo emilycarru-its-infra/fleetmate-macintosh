@@ -81,15 +81,20 @@ public struct RepositoryFilterProvider: Identifiable, Sendable {
     public var id: PullRequestSource { source }
     public var count: Int { containers.reduce(0) { $0 + $1.count } }
 
-    public static func groups(_ entries: [RepositoryFilterEntry]) -> [Self] {
-        PullRequestSource.allCases.compactMap { source in
+    /// Providers in their fixed order, each with its projects or owners and
+    /// their repositories alphabetically, or in the repository order
+    /// (matched by `Project/Repo`) where `order` knows them: a project or
+    /// owner goes where its first repository is.
+    public static func groups(_ entries: [RepositoryFilterEntry], order: RepositoryOrderRank = .empty) -> [Self] {
+        func rank(_ entry: RepositoryFilterEntry) -> Int? { order.rank(name: entry.scope.displayPath) }
+        return PullRequestSource.allCases.compactMap { source in
             let rows = entries.filter { $0.scope.source == source }
             guard !rows.isEmpty else { return nil }
             let containers = Dictionary(grouping: rows, by: { $0.scope.container.lowercased() }).values.map { rows in
                 RepositoryFilterContainer(name: rows[0].scope.container,
-                    entries: rows.sorted { $0.scope.repositoryTitle.localizedStandardCompare($1.scope.repositoryTitle) == .orderedAscending })
+                    entries: order.sorted(rows.sorted { $0.scope.repositoryTitle.localizedStandardCompare($1.scope.repositoryTitle) == .orderedAscending }, by: rank))
             }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-            return Self(source: source, containers: containers)
+            return Self(source: source, containers: order.sorted(containers) { $0.entries.compactMap(rank).min() })
         }
     }
 }

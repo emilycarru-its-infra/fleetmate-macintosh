@@ -47,7 +47,7 @@ final class KnowledgeStore: ObservableObject {
         siteURL = config.handbookSiteUrl
     }
 
-    /// Pick up changed repositories (Settings › Agent): stop the current
+    /// Pick up changed repositories (Settings › Repositories): stop the current
     /// loop, point at the new ones and start again.
     func restart(_ config: FleetMateConfig, token: @escaping () async -> String?) {
         loop?.cancel()

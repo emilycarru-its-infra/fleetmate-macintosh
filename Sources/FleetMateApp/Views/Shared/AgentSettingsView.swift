@@ -3,87 +3,27 @@ import AgentsMate
 import AppKit
 import FleetMateCore
 
-/// The person's own terminal settings: what a session runs, whether one opens
-/// at launch, and which repositories the new-session menu offers. Each falls
-/// back to the managed default until changed here.
+/// The person's own agent settings: how FleetMate opens, what a session runs,
+/// whether one opens at launch, the agent CLIs, and usage and summaries. Each
+/// falls back to the managed default until changed here. The repositories,
+/// their order and the extra folders the new-session menu offers are in
+/// Settings › Repositories.
 struct AgentSettingsView: View {
     @EnvironmentObject var appState: AppState
     @AppStorage(AgentSettingsKey.command) private var command: String = ""
     @AppStorage(AgentSettingsKey.autoStart) private var autoStart: Bool = true
     @AppStorage(AgentSettingsKey.restoreSessions) private var restoreSessions: Bool = true
     @AppStorage(AgentSettingsKey.usageHost) private var usageHost: String = ""
-    @State private var repos: [String] = []
-    @State private var newRepo = ""
     @State private var hasOwnCommand = false
     @State private var handbookRepo = ""
     @State private var handbookSite = ""
     @State private var skillsRepo = ""
-    @State private var syncing = false
-    @State private var syncSummary: String?
 
     private var presetCommands: [String] { AgentLaunch.installedPresets.map(\.command) }
 
     var body: some View {
         Form {
             AgentsLaunchSettingsSection(store: appState.terminals.lanes)
-
-            Section {
-                HStack {
-                    TextField("Path or clone URL", text: $newRepo)
-                        .onSubmit(addTyped)
-                    Button("Add", action: addTyped).disabled(newRepo.trimmingCharacters(in: .whitespaces).isEmpty)
-                    Button("Choose Folder…", action: chooseFolder)
-                }
-                HStack {
-                    Button {
-                        syncing = true
-                        Task {
-                            let result = await AgentRepoSync.sync(repos)
-                            repos = result.repos
-                            syncSummary = result.summary
-                            syncing = false
-                            appState.objectWillChange.send()
-                        }
-                    } label: {
-                        Label("Sync with Repositories", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .disabled(syncing)
-                    .help("Add your tracked repositories here, and track the folders listed here in Settings › Repositories")
-                    if syncing { ProgressView().controlSize(.small) }
-                    Spacer()
-                    Button("Reset to Organization Defaults") {
-                        UserDefaults.standard.removeObject(forKey: AgentSettingsKey.repos)
-                        repos = appState.config.repoDefaults
-                    }
-                    .disabled(UserDefaults.standard.stringArray(forKey: AgentSettingsKey.repos) == nil)
-                }
-                if let syncSummary {
-                    Text(syncSummary).appFont(.caption).foregroundStyle(.secondary)
-                }
-                if repos.isEmpty {
-                    Text("No repositories yet.").foregroundStyle(.secondary)
-                }
-                ForEach(repos, id: \.self) { repo in
-                    HStack {
-                        Image(systemName: repo.contains("://") ? "link" : "folder")
-                            .foregroundStyle(.secondary)
-                        Text(repo).lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        Button {
-                            repos.removeAll { $0 == repo }
-                            save()
-                        } label: {
-                            Label("Remove", systemImage: "minus.circle").labelStyle(.iconOnly)
-                        }
-                        .buttonStyle(.borderless)
-                    }
-                }
-            } header: {
-                Text("Repositories")
-            } footer: {
-                Text("Offered under New Session › Open in repository. Starts from your organization's list; your edits are yours alone. Sync with Repositories adds your tracked repositories here and tracks these folders in Settings › Repositories, removing nothing; it runs once by itself the first time the Agent opens.")
-                    .settingsFooter()
-            }
 
             Section {
                 Picker("Runs", selection: presetBinding) {
@@ -138,7 +78,6 @@ struct AgentSettingsView: View {
             handbookRepo = appState.config.handbookRepoUrl ?? ""
             handbookSite = appState.config.handbookSiteUrl ?? ""
             skillsRepo = appState.config.agentsHubRepoUrl ?? ""
-            repos = appState.agentRepos
             hasOwnCommand = UserDefaults.standard.string(forKey: AgentSettingsKey.command) != nil
             if !hasOwnCommand { command = appState.config.agentCommand ?? AgentLaunch.defaultCommand }
         }
@@ -152,32 +91,6 @@ struct AgentSettingsView: View {
                 hasOwnCommand = true
             }
         )
-    }
-
-    private func addTyped() {
-        let value = newRepo.trimmingCharacters(in: .whitespaces)
-        guard !value.isEmpty, !repos.contains(value) else { return }
-        repos.append(value)
-        newRepo = ""
-        save()
-    }
-
-    private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = true
-        guard panel.runModal() == .OK else { return }
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        for url in panel.urls {
-            let path = url.path.hasPrefix(home) ? "~" + url.path.dropFirst(home.count) : url.path
-            if !repos.contains(path) { repos.append(path) }
-        }
-        save()
-    }
-
-    private func save() {
-        UserDefaults.standard.set(repos, forKey: AgentSettingsKey.repos)
     }
 
     private func trimmed(_ value: String) -> String? {

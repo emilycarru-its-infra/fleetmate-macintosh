@@ -5,6 +5,7 @@ import FleetMateCore
 struct RepoFilterMenu: View {
     @Binding var selection: String?
     let entries: [RepositoryFilterEntry]
+    @ObservedObject private var repoOrdering = RepositoryOrdering.shared
 
     private var selectedTitle: String {
         guard let selection else { return "All repositories" }
@@ -25,7 +26,7 @@ struct RepoFilterMenu: View {
                 else { Text("All repositories") }
             }
             Divider()
-            ForEach(RepositoryFilterProvider.groups(entries)) { provider in
+            ForEach(RepositoryFilterProvider.groups(entries, order: repoOrdering.rank)) { provider in
                 Section {
                     ForEach(provider.containers) { container in
                         Menu {

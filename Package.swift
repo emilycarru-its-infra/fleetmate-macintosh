@@ -30,7 +30,7 @@ let package = Package(
         // Pinned to a commit on AgentsMate's main; agentsmate-sync.yml moves
         // this revision whenever AgentsMate's main moves and FleetMate still
         // builds and tests.
-        .package(url: "https://github.com/focusedsystems/agentsmate.git", revision: "169c0599ce430f807aa27782e3e4c59c0e21d0de"),
+        .package(url: "https://github.com/focusedsystems/agentsmate.git", revision: "8a9e38da37c093b981e21562996a451377b84308"),
         // The Reporting tab is the ReportMate app's own dashboard. Pinned to a
         // commit on ReportMate's main; reportmate-sync.yml moves this revision
         // whenever ReportMate's main moves and FleetMate still builds and tests.

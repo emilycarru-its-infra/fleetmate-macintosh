@@ -156,7 +156,6 @@ final class AgentTerminalStore: ObservableObject {
                                  hostSessions: HostSessionsConfiguration(bindingsCommand: "agent-lane-bindings"),
                                  // One heading per repository, in the rendered
                                  // registry's order until the person sets their own.
-                                 groupsByRepository: true,
                                  defaultRepositoryOrder: AgentAppsRepoRegistry.loadCurrent()?.orderedPaths ?? []),
             backends: [CommandLaneBackend(id: Self.followsDefaultID, displayName: "Default Agent", command: "")],
             statusFeed: LaneStatusFeed(sources: [ClaudeAgentsStatusSource()].compactMap { $0 },

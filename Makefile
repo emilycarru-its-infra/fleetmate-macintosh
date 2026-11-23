@@ -262,6 +262,9 @@ release-app:
 	mkdir -p "$(APP_BUNDLE)/Contents/Resources"; \
 	cp "$$REAL_BIN_PATH" "$(APP_BUNDLE)/Contents/MacOS/$(APP_BUNDLE_EXECUTABLE)"; \
 	cp "$(APP_INFO_PLIST)" "$(APP_BUNDLE)/Contents/Info.plist"; \
+	for RES in "$$(dirname "$$REAL_BIN_PATH")"/*.bundle; do \
+		[ -d "$$RES" ] && ditto "$$RES" "$(APP_BUNDLE)/Contents/Resources/$$(basename "$$RES")"; \
+	done; \
 	if echo "$(VERSION)" | grep -Eq '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}\.[0-9]{4}$$'; then \
 		MARKETING_VERSION=$$(echo "$(VERSION)" | sed 's/\.[0-9]*$$//'); \
 		BUILD_NUMBER=$$(echo "$(VERSION)" | sed 's/.*\.//'); \

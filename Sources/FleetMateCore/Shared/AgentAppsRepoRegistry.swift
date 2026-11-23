@@ -34,8 +34,13 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
     public static let schemaVersion = 1
 
     public var sections: [Section]
+    /// The file's `app.zone`: whose work the listed repositories are.
+    public var zone: String?
 
-    public init(sections: [Section]) { self.sections = sections }
+    public init(sections: [Section], zone: String? = nil) {
+        self.sections = sections
+        self.zone = zone
+    }
 
     /// Every folder in order, each once: sections in order, then the
     /// repositories within each.
@@ -81,8 +86,10 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
         struct Surfaces: Decodable { var agents: Bool? }
         struct RawRepo: Decodable { var path: String?; var name: String?; var surfaces: Surfaces? }
         struct RawSection: Decodable { var name: String?; var repos: [RawRepo]? }
+        struct RawApp: Decodable { var zone: String? }
         struct RawFile: Decodable {
             var schema_version: Int?
+            var app: RawApp?
             var sections: [RawSection]?
         }
         guard let raw = try? JSONDecoder().decode(RawFile.self, from: data),
@@ -93,7 +100,7 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
                 return Repo(path: path, name: repo.name, agents: repo.surfaces?.agents ?? true)
             })
         }
-        let registry = AgentAppsRepoRegistry(sections: sections)
+        let registry = AgentAppsRepoRegistry(sections: sections, zone: raw.app?.zone)
         return registry.orderedPaths.isEmpty ? nil : registry
     }
 

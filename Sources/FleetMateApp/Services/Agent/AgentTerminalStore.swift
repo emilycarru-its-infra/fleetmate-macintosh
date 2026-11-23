@@ -190,7 +190,7 @@ final class AgentTerminalStore: ObservableObject {
         // Settings › Agent › New Sessions and the near-limit switch may pick
         // either agent, but only for a work folder (AgentFolderPolicy).
         lanes.configuration.allowedAgents = [.claude, .codex]
-        lanes.configuration.agentAllowedForFolder = { @Sendable _, folder in AgentFolderPolicy.allows(folder) }
+        lanes.configuration.agentAllowedForFolder = { @Sendable _, folder in AgentFolderPolicy.allowsCurrent(folder) }
         // The menus' Default Agent is the one a new session runs here.
         lanes.defaultNewSessionBackendID = { [weak self] in
             guard let self else { return nil }
@@ -912,32 +912,5 @@ final class LaneFolders: @unchecked Sendable {
             folders = new
             return true
         }
-    }
-}
-
-/// Where FleetMate lets the New Sessions choice or the usage switch start an
-/// agent other than its default: work repositories only, because each
-/// agent's account may see only work. A folder is allowed under
-/// ~/Developer/AzDevOps or one of the agent-apps registry's repositories,
-/// compared by whole path components after resolving symlinks and `..`, and
-/// never under the personal or side-business trees, whatever the registry
-/// lists. Anything else keeps the default agent.
-enum AgentFolderPolicy {
-    private static var home: String { FileManager.default.homeDirectoryForCurrentUser.path }
-    static var workRoot: String { home + "/Developer/AzDevOps" }
-    /// Defaults key: more folders, per Mac, where no agent other than the
-    /// default may start, whatever the registry lists.
-    static let deniedFoldersKey = "agentDeniedFolders"
-    static var deniedRoots: [String] {
-        [home + "/Developer/Personal"] + (UserDefaults.standard.stringArray(forKey: deniedFoldersKey) ?? [])
-            .map { ($0 as NSString).expandingTildeInPath }
-    }
-
-    static func allows(_ folder: URL, registryPaths: [String]? = nil) -> Bool {
-        let path = folder.path
-        if deniedRoots.contains(where: { laneFolder(path, isInside: $0) }) { return false }
-        if laneFolder(path, isInside: workRoot) { return true }
-        let repos = registryPaths ?? AgentAppsRepoRegistry.loadCurrent()?.orderedPaths ?? []
-        return repos.contains { laneFolder(path, isInside: ($0 as NSString).expandingTildeInPath) }
     }
 }

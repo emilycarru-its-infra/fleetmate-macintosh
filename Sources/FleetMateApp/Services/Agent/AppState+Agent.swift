@@ -20,6 +20,9 @@ extension AppState {
             self?.agentStartDirectory() ?? AgentTerminalStore.workspaceDirectory()
         }
         terminals.updateLaneFolders()
+        // One repository order for the sidebar headings and every repository
+        // list, defaulting to the registry's order, else the Agent's list.
+        RepositoryOrdering.shared.attach(to: terminals.lanes) { [weak self] in self?.agentRepos ?? [] }
         terminals.showRepos = { [weak self] in
             guard let self else { return }
             self.terminals.hide()

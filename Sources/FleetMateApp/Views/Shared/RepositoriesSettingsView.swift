@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import FleetMateCore
+import AgentsMate
 
 /// Backs Settings › Repositories: the provider catalog joined with local
 /// checkouts, and the clone and scan locations. Everything goes through the
@@ -198,20 +199,30 @@ final class RepositoriesSettingsModel: ObservableObject {
     }
 }
 
-/// Settings › Repositories: every Azure DevOps and GitHub repository the
-/// person can see, where each lives on this Mac, and which are tracked.
+/// Settings › Repositories: the one repository list. Its order (the Agents
+/// sidebar's headings and every repository list in the app), the extra
+/// folders the Agent's new-session menu offers, the watched folders, and
+/// every Azure DevOps and GitHub repository the person can see, where each
+/// lives on this Mac, and which are tracked.
 struct RepositoriesSettingsView: View {
     /// The Settings tab tag, so other views can open Settings here.
     static let tabTag = 5
 
     @EnvironmentObject var appState: AppState
     @StateObject private var model = RepositoriesSettingsModel()
+    @ObservedObject private var repoOrdering = RepositoryOrdering.shared
     @State private var query = ""
     @State private var newScanRoot = ""
     @State private var syncingAgent = false
+    @State private var agentRepos: [String] = []
+    @State private var newAgentRepo = ""
+    @State private var hasOwnAgentRepos = false
+    @State private var syncSummary: String?
 
     var body: some View {
         Form {
+            orderSection
+            agentFoldersSection
             locationsSection
             catalogHeaderSection
             let groups = RepoRecordGroup.groups(model.records, matching: query)
@@ -232,8 +243,150 @@ struct RepositoriesSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { model.load() }
+        .onAppear {
+            model.load()
+            loadAgentRepos()
+            repoOrdering.refresh()
+        }
         .actionErrorBanner($model.error)
+    }
+
+    // MARK: Order
+
+    private var orderSection: some View {
+        AgentRepositoriesSection(
+            store: appState.terminals.lanes,
+            items: repoOrdering.items,
+            title: "Repositories",
+            footer: "Drag a repository, or use Move Up and Move Down on its menu, to reorder. This order heads the Agents sidebar, one heading per repository, and orders the Repos sidebar (Sort By › Repository Order), the new-session menu and every repository filter. Reset to Default Order goes back to \(repoOrdering.registry == nil ? "the order of the folders below" : "the order of the rendered repository registry"). Sync tracks the folders below and adds your tracked repositories to them, removing nothing; it runs once by itself the first time the Agent opens."
+        ) {
+            Button {
+                Task {
+                    await model.linkFolder()
+                    repoOrdering.refresh()
+                }
+            } label: {
+                Label("Link Folder…", systemImage: "plus")
+            }
+            .help("Link one or more git checkouts and track them")
+            Button(action: syncAgentRepos) {
+                Label("Sync", systemImage: "arrow.triangle.2.circlepath")
+            }
+            .disabled(syncingAgent)
+            .help("Track the folders the Agent offers, and add your tracked repositories to them")
+            if syncingAgent { ProgressView().controlSize(.small) }
+        } accessory: { item in
+            Button {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)])
+            } label: {
+                Label("Reveal in Finder", systemImage: "folder").labelStyle(.iconOnly)
+            }
+            .buttonStyle(.borderless)
+            .disabled(!FileManager.default.fileExists(atPath: item.path))
+            .help("Reveal in Finder")
+        }
+    }
+
+    // MARK: Agent folders
+
+    private var agentFoldersSection: some View {
+        Section {
+            HStack {
+                TextField("Path or clone URL", text: $newAgentRepo)
+                    .onSubmit(addTypedAgentRepo)
+                Button("Add", action: addTypedAgentRepo)
+                    .disabled(newAgentRepo.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button("Choose Folder…", action: chooseAgentFolders)
+            }
+            if agentRepos.isEmpty {
+                Text("No folders yet.").foregroundStyle(.secondary)
+            }
+            ForEach(repoOrdering.sorted(agentEntries: agentRepos), id: \.self) { repo in
+                HStack {
+                    Image(systemName: repo.contains("://") ? "link" : "folder")
+                        .foregroundStyle(.secondary)
+                    Text(repo).lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    Button {
+                        agentRepos.removeAll { $0 == repo }
+                        saveAgentRepos()
+                    } label: {
+                        Label("Remove", systemImage: "minus.circle").labelStyle(.iconOnly)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Remove from the new-session menu")
+                }
+                .contextMenu {
+                    Button("Remove") {
+                        agentRepos.removeAll { $0 == repo }
+                        saveAgentRepos()
+                    }
+                }
+            }
+            HStack {
+                if let summary = syncSummary {
+                    Text(summary).appFont(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Reset to Defaults") {
+                    UserDefaults.standard.removeObject(forKey: AgentSettingsKey.repos)
+                    loadAgentRepos()
+                    appState.objectWillChange.send()
+                }
+                .disabled(!hasOwnAgentRepos)
+                .help("Go back to the default folders")
+            }
+        } header: {
+            Text("Agent Folders")
+        } footer: {
+            Text("Offered under New Session › Open in repository, in the order above; clone URLs come last. Starts from \(repoOrdering.registry == nil ? "your organization's list" : "the rendered repository registry"); your edits are yours alone.")
+                .settingsFooter()
+        }
+    }
+
+    private func loadAgentRepos() {
+        agentRepos = appState.agentRepos
+        hasOwnAgentRepos = UserDefaults.standard.stringArray(forKey: AgentSettingsKey.repos) != nil
+    }
+
+    private func saveAgentRepos() {
+        UserDefaults.standard.set(agentRepos, forKey: AgentSettingsKey.repos)
+        hasOwnAgentRepos = true
+        appState.objectWillChange.send()
+    }
+
+    private func addTypedAgentRepo() {
+        let value = newAgentRepo.trimmingCharacters(in: .whitespaces)
+        guard !value.isEmpty, !agentRepos.contains(value) else { return }
+        agentRepos.append(value)
+        newAgentRepo = ""
+        saveAgentRepos()
+    }
+
+    private func chooseAgentFolders() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls {
+            let path = repoAbbreviatedPath(url.path)
+            if !agentRepos.contains(path) { agentRepos.append(path) }
+        }
+        saveAgentRepos()
+    }
+
+    private func syncAgentRepos() {
+        syncingAgent = true
+        Task {
+            let result = await AgentRepoSync.sync(appState.agentRepos)
+            model.load()
+            loadAgentRepos()
+            syncSummary = result.summary
+            syncingAgent = false
+            appState.objectWillChange.send()
+            repoOrdering.refresh()
+        }
     }
 
     private var locationsSection: some View {
@@ -280,26 +433,7 @@ struct RepositoriesSettingsView: View {
                     Label("Find Existing Clones", systemImage: "magnifyingglass")
                 }
                 .disabled(model.isDiscovering || model.settings.scanRoots.isEmpty)
-                Button {
-                    Task { await model.linkFolder() }
-                } label: {
-                    Label("Link Folder…", systemImage: "link")
-                }
-                Button {
-                    syncingAgent = true
-                    Task {
-                        let result = await AgentRepoSync.sync(appState.agentRepos)
-                        model.load()
-                        model.discoverySummary = result.summary
-                        syncingAgent = false
-                        appState.objectWillChange.send()
-                    }
-                } label: {
-                    Label("Sync with Agent", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .disabled(syncingAgent)
-                .help("Track the folders in Settings › Agent › Repositories, and add your tracked repositories there")
-                if model.isDiscovering || syncingAgent { ProgressView().controlSize(.small) }
+                if model.isDiscovering { ProgressView().controlSize(.small) }
                 Spacer()
                 Button("Save") { Task { await model.saveSettings() } }
                     .disabled(model.settings == model.savedSettings && model.settings.rootsChosen)

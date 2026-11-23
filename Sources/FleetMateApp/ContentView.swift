@@ -17,6 +17,7 @@ struct ContentView: View {
     static let compactModuleToolbarBelow: CGFloat = 1900
     @State private var showAuthPopover = false
     @ObservedObject private var terminals: AgentTerminalStore
+    @ObservedObject private var repoOrdering = RepositoryOrdering.shared
 
     init(terminals: AgentTerminalStore) {
         self.terminals = terminals
@@ -39,7 +40,7 @@ struct ContentView: View {
             }
             if !AppEdition.current.isTicketsOnly {
                 AgentTerminalDock(store: terminals,
-                                  repos: appState.agentRepos,
+                                  repos: repoOrdering.sorted(agentEntries: appState.agentRepos),
                                   defaultLaunch: appState.agentDefaultLaunch)
                     // The first time the Agent opens, its repositories and
                     // the tracked ones in Settings › Repositories are synced.

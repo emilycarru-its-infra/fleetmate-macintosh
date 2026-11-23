@@ -153,7 +153,11 @@ final class AgentTerminalStore: ObservableObject {
                                  // running, so the session the window opens on is
                                  // reattached wherever it runs: by the id
                                  // agent-lane-bindings ties to the lane, never by name.
-                                 hostSessions: HostSessionsConfiguration(bindingsCommand: "agent-lane-bindings")),
+                                 hostSessions: HostSessionsConfiguration(bindingsCommand: "agent-lane-bindings"),
+                                 // One heading per repository, in the rendered
+                                 // registry's order until the person sets their own.
+                                 groupsByRepository: true,
+                                 defaultRepositoryOrder: AgentAppsRepoRegistry.loadCurrent()?.orderedPaths ?? []),
             backends: [CommandLaneBackend(id: Self.followsDefaultID, displayName: "Default Agent", command: "")],
             statusFeed: LaneStatusFeed(sources: [ClaudeAgentsStatusSource()].compactMap { $0 },
                                        presenceSources: [TmuxPresenceSource()]))

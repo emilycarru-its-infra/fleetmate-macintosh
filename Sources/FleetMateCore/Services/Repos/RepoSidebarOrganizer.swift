@@ -3,6 +3,9 @@ import Foundation
 /// How the Repos sidebar orders repositories within a group (or the whole
 /// list when it is not grouped).
 public enum RepoSidebarSort: String, Codable, Sendable, CaseIterable {
+    /// The one repository order set in Settings › Repositories, which the
+    /// Agents sidebar's headings follow too.
+    case repositoryOrder
     case name
     /// Most recent commit on HEAD first.
     case recentlyChanged
@@ -13,6 +16,7 @@ public enum RepoSidebarSort: String, Codable, Sendable, CaseIterable {
 
     public var title: String {
         switch self {
+        case .repositoryOrder: "Repository Order"
         case .name: "Name"
         case .recentlyChanged: "Recently Changed"
         case .mostChanges: "Most Changes"
@@ -46,14 +50,27 @@ public enum RepoSidebarOrganizer {
 
     /// Host sections, each with its projects or owners alphabetically, and
     /// repositories inside each ordered by `sort`. Empty groups are dropped.
+    /// Sorted by repository order, the hosts and groups follow it too: each
+    /// goes where its first repository is.
     public static func sections(
         _ records: [RepoRecord],
         statuses: [String: RepoStatus],
         sort: RepoSidebarSort,
+        order: RepositoryOrderRank = .empty,
         matching query: String = ""
     ) -> [RepoSidebarSection] {
-        let groups = RepoRecordGroup.groups(records, matching: query).map { group in
-            RepoRecordGroup(provider: group.provider, scope: group.scope, records: sorted(group.records, statuses: statuses, by: sort))
+        var groups = RepoRecordGroup.groups(records, matching: query).map { group in
+            RepoRecordGroup(provider: group.provider, scope: group.scope,
+                            records: sorted(group.records, statuses: statuses, by: sort, order: order))
+        }
+        if sort == .repositoryOrder, !order.isEmpty {
+            func first(_ group: RepoRecordGroup) -> Int? { group.records.compactMap { rank($0, order) }.min() }
+            groups = order.sorted(groups, by: first)
+            var providerRank: [RepoProvider: Int] = [:]
+            for (index, group) in groups.enumerated() where providerRank[group.provider] == nil {
+                providerRank[group.provider] = first(group) ?? (Int.max / 2 + index)
+            }
+            groups = order.sorted(groups) { providerRank[$0.provider] }
         }
         var sections: [RepoSidebarSection] = []
         for group in groups {
@@ -71,19 +88,29 @@ public enum RepoSidebarOrganizer {
         _ records: [RepoRecord],
         statuses: [String: RepoStatus],
         sort: RepoSidebarSort,
+        order: RepositoryOrderRank = .empty,
         matching query: String = ""
     ) -> [RepoRecord] {
-        sorted(RepoRecordGroup.groups(records, matching: query).flatMap(\.records), statuses: statuses, by: sort)
+        sorted(RepoRecordGroup.groups(records, matching: query).flatMap(\.records), statuses: statuses, by: sort, order: order)
+    }
+
+    /// Where a repository is in the repository order: by its checkout, else
+    /// by its `Project/Repo`.
+    static func rank(_ record: RepoRecord, _ order: RepositoryOrderRank) -> Int? {
+        record.local.flatMap { order.rank(path: $0.path) } ?? order.rank(name: record.key.displayName)
     }
 
     /// Orders by the chosen key, falling back to the display name so the order
     /// is stable while statuses load.
-    public static func sorted(_ records: [RepoRecord], statuses: [String: RepoStatus], by sort: RepoSidebarSort) -> [RepoRecord] {
+    public static func sorted(_ records: [RepoRecord], statuses: [String: RepoStatus], by sort: RepoSidebarSort,
+                              order: RepositoryOrderRank = .empty) -> [RepoRecord] {
         let byName: (RepoRecord, RepoRecord) -> Bool = {
             let order = $0.key.name.localizedStandardCompare($1.key.name)
             return order != .orderedSame ? order == .orderedAscending : $0.key.displayName < $1.key.displayName
         }
         switch sort {
+        case .repositoryOrder:
+            return order.sorted(records.sorted(by: byName)) { rank($0, order) }
         case .name:
             return records.sorted(by: byName)
         case .recentlyChanged:

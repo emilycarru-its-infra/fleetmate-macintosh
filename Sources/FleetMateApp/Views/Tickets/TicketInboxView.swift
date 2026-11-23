@@ -2,10 +2,13 @@ import SwiftUI
 import FleetMateCore
 
 /// Every comment that notified the signed-in person, across all tickets,
-/// newest first. Its host opens the selected ticket and dismisses the popover.
+/// newest first, as the Tickets sidebar. Its host opens the selected ticket.
 struct TicketInboxView: View {
     @ObservedObject var inbox: TicketInboxModel
     var requiresSignIn = false
+    /// The ticket open in the workspace. When it moves elsewhere the row
+    /// deselects, so clicking that row opens its ticket again.
+    var openTicketId: Int?
     let onRefresh: () -> Void
     let onSelect: (TicketInboxItem) -> Void
 
@@ -49,17 +52,26 @@ struct TicketInboxView: View {
                         .tag(item.id)
                         .contextMenu {
                             if inbox.isRead(item) {
-                                Button("Mark as Unread") { inbox.markUnread(item) }
+                                Button("Mark as Unread") {
+                                    if selectedItemId == item.id { selectedItemId = nil }
+                                    inbox.markUnread(item)
+                                }
                             } else {
                                 Button("Mark as Read") { inbox.markRead(item) }
                             }
                         }
                 }
-                .listStyle(.inset)
+                .listStyle(.sidebar)
                 .onChange(of: selectedItemId) { _, id in
                     guard let id, let item = items.first(where: { $0.id == id }) else { return }
-                    inbox.markRead(item)
+                    inbox.markTicketOpened(from: item)
                     onSelect(item)
+                }
+                .onChange(of: openTicketId) { _, ticketId in
+                    guard let id = selectedItemId,
+                          let item = inbox.inbox?.items.first(where: { $0.id == id }),
+                          item.ticketId != ticketId else { return }
+                    selectedItemId = nil
                 }
             }
         }
@@ -83,45 +95,64 @@ struct TicketInboxView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            if let progress = inbox.progress, progress.total > 0 {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text("Inbox").appFont(.headline)
+                Spacer()
+                Toggle(isOn: $showUnreadOnly) {
+                    Label("Unread Only", systemImage: showUnreadOnly
+                        ? "line.3.horizontal.decrease.circle.fill"
+                        : "line.3.horizontal.decrease.circle")
+                }
+                .toggleStyle(.button)
+                .labelStyle(.iconOnly)
+                .help("Show only unread comments")
+                Button { inbox.markAllRead() } label: {
+                    Label("Mark All as Read", systemImage: "envelope.open")
+                }
+                .labelStyle(.iconOnly)
+                .disabled(inbox.unreadCount == 0)
+                .help("Mark all as read")
+                Button(action: onRefresh) {
+                    Label("Refresh Inbox", systemImage: "arrow.clockwise")
+                }
+                .labelStyle(.iconOnly)
+                .disabled(inbox.isScanning)
+                .help("Check for new comments")
+            }
+            .buttonStyle(.borderless)
+            status
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        if let progress = inbox.progress, progress.total > 0 {
+            VStack(alignment: .leading, spacing: 3) {
                 ProgressView(value: Double(progress.done), total: Double(progress.total))
-                    .frame(width: 120)
                 Text("Scanning \(progress.done) of \(progress.total) tickets")
                     .appFont(.caption)
                     .foregroundColor(.secondary)
                     .monospacedDigit()
-            } else if inbox.isScanning {
+            }
+        } else if inbox.isScanning {
+            HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
                 Text("Checking for new comments")
                     .appFont(.caption)
                     .foregroundColor(.secondary)
-            } else if let error = inbox.errorMessage {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .appFont(.caption)
-                    .foregroundColor(.orange)
-            } else {
-                Text("\(inbox.unreadCount) unread")
-                    .appFont(.caption)
-                    .foregroundColor(.secondary)
             }
-            Spacer()
-            Toggle("Unread only", isOn: $showUnreadOnly)
-                .toggleStyle(.checkbox)
+        } else if let error = inbox.errorMessage {
+            Label(error, systemImage: "exclamationmark.triangle.fill")
                 .appFont(.caption)
-            Button("Mark All as Read") { inbox.markAllRead() }
-                .controlSize(.small)
-                .disabled(inbox.unreadCount == 0)
-            Button(action: onRefresh) {
-                Image(systemName: "arrow.clockwise")
-            }
-            .controlSize(.small)
-            .disabled(inbox.isScanning)
-            .help("Check for new comments")
-            .accessibilityLabel("Refresh inbox")
+                .foregroundColor(.orange)
+        } else {
+            Text("\(inbox.unreadCount) unread")
+                .appFont(.caption)
+                .foregroundColor(.secondary)
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
     }
 
     private func row(_ item: TicketInboxItem) -> some View {

@@ -237,7 +237,8 @@ struct TicketsView: View {
 
     // View mode
     @State private var viewMode: TicketViewMode = .table
-    @State private var showInboxPopover = false
+    /// The Inbox sidebar opens expanded until it is collapsed, then stays as left.
+    @AppStorage("tickets.inboxSidebarVisible") private var showInboxSidebar = true
     @State private var boardGroupBy: BoardGroupBy = .responsible
 
     // Detail editing state
@@ -695,6 +696,27 @@ struct TicketsView: View {
     // MARK: - Body
 
     var body: some View {
+        NavigationSplitView(columnVisibility: Binding(
+            get: { showInboxSidebar ? .all : .detailOnly },
+            set: { showInboxSidebar = $0 != .detailOnly }
+        )) {
+            TicketInboxView(
+                inbox: appState.ticketInbox,
+                requiresSignIn: appState.requiresTdxSsoLogin,
+                openTicketId: selectedId,
+                onRefresh: { startInbox(scanNow: true) },
+                onSelect: { item in selectedTicketIds = [item.ticketId] }
+            )
+            .navigationSplitViewColumnWidth(min: 300, ideal: 380, max: 600)
+            // The envelope is the toggle: it carries the unread badge.
+            .toolbar(removing: .sidebarToggle)
+            .onAppear { startInbox(scanNow: false) }
+        } detail: {
+            ticketsWorkspace
+        }
+    }
+
+    private var ticketsWorkspace: some View {
         VStack(alignment: .leading, spacing: 0) {
             // No header — everything in toolbar
             if appState.config.isTdxConfigured {
@@ -832,7 +854,7 @@ struct TicketsView: View {
                 resetToCurrentTerm()
             case .showListView:  viewMode = .table
             case .showBoardView: viewMode = .board
-            case .showInbox:     showInboxPopover = true
+            case .showInbox:     showInboxSidebar.toggle()
             case .find:          break  // the toolbar search field takes it
             case .scan, .selectOnline: break
             }
@@ -841,14 +863,7 @@ struct TicketsView: View {
         .task(id: searchText) { await resolveRequestorHits() }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
-                TicketInboxPopoverButton(
-                    inbox: appState.ticketInbox,
-                    isPresented: $showInboxPopover,
-                    requiresSignIn: appState.requiresTdxSsoLogin,
-                    onOpen: { startInbox(scanNow: false) },
-                    onRefresh: { startInbox(scanNow: true) },
-                    onSelect: { item in selectedTicketIds = [item.ticketId] }
-                )
+                TicketInboxToolbarButton(inbox: appState.ticketInbox, isVisible: $showInboxSidebar)
                 ViewModePill(selection: $viewMode)
 
                 if viewMode == .board {
@@ -3877,85 +3892,14 @@ struct TicketStatusBadge: View {
 // MARK: - View Mode Pill Toggle
 
 /// Observing the inbox here keeps badge/scanner updates out of the List and Board.
-struct TicketInboxPopoverButton: View {
+struct TicketInboxToolbarButton: View {
     @AppStorage(InboxBadge.settingKey) private var showInboxBadges: Bool = InboxBadge.defaultValue()
     @ObservedObject var inbox: TicketInboxModel
-    @Binding var isPresented: Bool
-    let requiresSignIn: Bool
-    @State private var hostWindow = TicketInboxWindowReference()
-    @State private var popoverHeight: CGFloat = 620
-    let onOpen: () -> Void
-    let onRefresh: () -> Void
-    let onSelect: (TicketInboxItem) -> Void
+    @Binding var isVisible: Bool
 
     var body: some View {
-        InboxBadgeButton(isSelected: isPresented, unreadCount: inbox.unreadCount, showBadge: showInboxBadges) {
-            fitToWindow(hostWindow.window)
-            isPresented.toggle()
-        }
-        .background(TicketInboxWindowAnchor { window in fitToWindow(window) })
-        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            VStack(spacing: 0) {
-                HStack {
-                    Label("Ticket Inbox", systemImage: "tray").appFont(.headline)
-                    Spacer()
-                    Button { isPresented = false } label: { Image(systemName: "xmark") }
-                        .buttonStyle(.plain)
-                        .keyboardShortcut(.cancelAction)
-                        .accessibilityLabel("Close Inbox")
-                }
-                .padding(14)
-                Divider()
-                TicketInboxView(inbox: inbox, requiresSignIn: requiresSignIn, onRefresh: onRefresh) { item in
-                    isPresented = false
-                    onSelect(item)
-                }
-            }
-            .frame(width: 580, height: popoverHeight, alignment: .top)
-            .onAppear {
-                fitToWindow(hostWindow.window)
-                onOpen()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { note in
-                guard let window = note.object as? NSWindow, window === hostWindow.window else { return }
-                fitToWindow(window)
-            }
-        }
-    }
-
-    private func fitToWindow(_ window: NSWindow?) {
-        guard let window else { return }
-        hostWindow.window = window
-        popoverHeight = max(240, window.contentLayoutRect.height - 12)
-    }
-}
-
-@MainActor
-private final class TicketInboxWindowReference {
-    weak var window: NSWindow?
-}
-
-/// Read the actual toolbar host even when the app has no active main window.
-private struct TicketInboxWindowAnchor: NSViewRepresentable {
-    let onWindow: (NSWindow) -> Void
-
-    func makeNSView(context: Context) -> AnchorView {
-        let view = AnchorView()
-        view.onWindow = onWindow
-        return view
-    }
-
-    func updateNSView(_ view: AnchorView, context: Context) { view.onWindow = onWindow }
-
-    final class AnchorView: NSView {
-        var onWindow: ((NSWindow) -> Void)?
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            guard let window else { return }
-            Task { @MainActor [weak self, weak window] in
-                guard let self, let window else { return }
-                self.onWindow?(window)
-            }
+        InboxBadgeButton(isSelected: isVisible, unreadCount: inbox.unreadCount, showBadge: showInboxBadges) {
+            isVisible.toggle()
         }
     }
 }

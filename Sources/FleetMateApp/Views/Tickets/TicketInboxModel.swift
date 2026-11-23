@@ -16,7 +16,7 @@ import FleetMateCore
 @MainActor
 final class TicketInboxModel: ObservableObject {
     @Published private(set) var inbox: TicketInbox?
-    @Published private(set) var readIds: Set<Int> = []
+    @Published private(set) var readState = TicketInboxReadState()
     @Published private(set) var isScanning = false
     @Published private(set) var progress: (done: Int, total: Int)?
     @Published private var scanErrorMessage: String?
@@ -58,13 +58,13 @@ final class TicketInboxModel: ObservableObject {
         readReloadTask?.cancel()
     }
 
-    var unreadCount: Int { readStateReady ? (inbox?.unreadCount(readIds: readIds) ?? 0) : 0 }
+    var unreadCount: Int { readStateReady ? (inbox?.unreadCount(readState: readState) ?? 0) : 0 }
 
     /// True once a full pass has finished on this computer. Until then the
     /// inbox is incomplete, so it stays out of sight.
     var isReady: Bool { inbox?.scannedThrough != nil && readStateReady }
 
-    func isRead(_ item: TicketInboxItem) -> Bool { readIds.contains(item.id) }
+    func isRead(_ item: TicketInboxItem) -> Bool { readState.isRead(item) }
 
     /// Load the stored inbox for this person and keep it fresh: a pass every
     /// five minutes, and a reload of the helper's results every minute.
@@ -105,7 +105,7 @@ final class TicketInboxModel: ObservableObject {
         readReloadRequested = false
         scope = nil
         inbox = nil
-        readIds = []
+        readState = TicketInboxReadState()
         readStateReady = false
         isScanning = false
         progress = nil
@@ -122,6 +122,13 @@ final class TicketInboxModel: ObservableObject {
 
     func markRead(_ item: TicketInboxItem) { updateReadState(.read([item.id])) }
 
+    /// The opened ticket shows its latest activity, whichever comment led to it.
+    func markTicketOpened(from item: TicketInboxItem) {
+        var ids = Set(inbox?.items.filter { $0.ticketId == item.ticketId }.map(\.id) ?? [])
+        ids.insert(item.id)
+        updateReadState(.ticketOpened(ticketId: item.ticketId, itemIds: ids, at: Date()))
+    }
+
     func markUnread(_ item: TicketInboxItem) { updateReadState(.unread([item.id])) }
 
     func markAllRead() {
@@ -132,7 +139,7 @@ final class TicketInboxModel: ObservableObject {
     private func load(scope: TicketInboxScope) {
         self.scope = scope
         inbox = TicketInbox.load(scope: scope, legacyServiceKey: legacyServiceKey)
-        readIds = []
+        readState = TicketInboxReadState()
         readStateReady = false
         readStateErrorMessage = nil
         isScanning = false
@@ -176,7 +183,7 @@ final class TicketInboxModel: ObservableObject {
     private func adoptReadState(_ result: Result<TicketInboxReadState, Error>) {
         switch result {
         case .success(let state):
-            if readIds != state.readIds { readIds = state.readIds }
+            if readState != state { readState = state }
             readStateReady = true
             readStateErrorMessage = nil
         case .failure:

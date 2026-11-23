@@ -24,6 +24,7 @@ struct AgentSettingsView: View {
     var body: some View {
         Form {
             AgentsLaunchSettingsSection(store: appState.terminals.lanes)
+            AgentSidebarSettingsSection(store: appState.terminals.lanes)
 
             Section {
                 Picker("Runs", selection: presetBinding) {

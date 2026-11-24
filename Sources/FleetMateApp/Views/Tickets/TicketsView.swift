@@ -707,7 +707,7 @@ struct TicketsView: View {
                 onRefresh: { startInbox(scanNow: true) },
                 onSelect: { item in selectedTicketIds = [item.ticketId] }
             )
-            .navigationSplitViewColumnWidth(min: 300, ideal: 380, max: 600)
+            .navigationSplitViewColumnWidth(min: 340, ideal: 400, max: 640)
             // The envelope is the toggle: it carries the unread badge.
             .toolbar(removing: .sidebarToggle)
             .onAppear { startInbox(scanNow: false) }

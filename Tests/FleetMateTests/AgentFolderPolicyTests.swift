@@ -105,16 +105,16 @@ final class AgentFolderPolicyRegistryFileTests: XCTestCase {
         try Data(json.utf8).write(to: written)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: written.path)
         let env = ["XDG_CONFIG_HOME": config.path]
-        let file = AgentAppsRepoRegistry.defaultPath(bundleIdentifier: "example.app", environment: env, home: home.path)
+        let file = try XCTUnwrap(AgentAppsRepoRegistry.defaultPath(bundleIdentifier: "example.app", environment: env, home: home.path))
         XCTAssertEqual(URL(fileURLWithPath: file).resolvingSymlinksInPath(), written.resolvingSymlinksInPath(),
                        "a private XDG_CONFIG_HOME wins over ~/.config")
         try FileManager.default.setAttributes([.posixPermissions: 0o666], ofItemAtPath: written.path)
-        XCTAssertTrue(AgentAppsRepoRegistry.defaultPath(bundleIdentifier: "example.app", environment: env, home: home.path)
-                        .hasPrefix(home.path), "a file others can write does not count")
+        XCTAssertNil(AgentAppsRepoRegistry.defaultPath(bundleIdentifier: "example.app", environment: env, home: home.path),
+                     "a file others can write: no registry")
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: written.path)
         try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: config.path)
-        XCTAssertTrue(AgentAppsRepoRegistry.defaultPath(bundleIdentifier: "example.app", environment: env, home: home.path)
-                        .hasPrefix(home.path), "a folder others can write does not count")
+        XCTAssertNil(AgentAppsRepoRegistry.defaultPath(bundleIdentifier: "example.app", environment: env, home: home.path),
+                     "a folder others can write: no registry")
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: config.path)
         XCTAssertEqual(AgentAppsRepoRegistry.decode(Data(json.utf8))?.agentPaths, [repo.path], "the app reads the same repos")
         XCTAssertTrue(AgentFolderPolicy.allows(repo, home: home.path, registryFile: URL(fileURLWithPath: file), denied: []))

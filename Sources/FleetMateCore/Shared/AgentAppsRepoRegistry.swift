@@ -64,19 +64,21 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
     /// The registry decides which folders agents may work in, so
     /// `$XDG_CONFIG_HOME` counts only when it is an absolute path that
     /// canonicalizes cleanly and both it and the registry file are owned by
-    /// this user and not writable by group or others; otherwise `~/.config`.
+    /// this user and not writable by group or others. Set but failing any of
+    /// that, there is no registry (nil), never a fall back to `~/.config`.
     public static func defaultPath(bundleIdentifier: String,
                                    environment: [String: String] = ProcessInfo.processInfo.environment,
-                                   home: String = NSHomeDirectory()) -> String {
+                                   home: String = NSHomeDirectory()) -> String? {
         let relative = "agent-apps/repos/" + bundleIdentifier + ".json"
         let fallback = ((home as NSString).appendingPathComponent(".config") as NSString).appendingPathComponent(relative)
         let configured = environment["XDG_CONFIG_HOME"]?.trimmingCharacters(in: .whitespaces) ?? ""
+        if configured.isEmpty { return fallback }
         guard configured.hasPrefix("/"),
               let canonical = try? URL(fileURLWithPath: configured, isDirectory: true)
                   .resourceValues(forKeys: [.canonicalPathKey]).canonicalPath,
-              isPrivate(canonical) else { return fallback }
+              isPrivate(canonical) else { return nil }
         let file = (canonical as NSString).appendingPathComponent(relative)
-        return isPrivate(file) ? file : fallback
+        return isPrivate(file) ? file : nil
     }
 
     /// Owned by this user, and neither group- nor world-writable.
@@ -89,7 +91,7 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
 
     /// The running app's file, or nil when the bundle has no identifier.
     public static var currentPath: String? {
-        Bundle.main.bundleIdentifier.map { defaultPath(bundleIdentifier: $0) }
+        Bundle.main.bundleIdentifier.flatMap { defaultPath(bundleIdentifier: $0) }
     }
 
     /// The running app's registry, or nil when there is none to read.

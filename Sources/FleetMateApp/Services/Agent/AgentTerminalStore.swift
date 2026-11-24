@@ -322,7 +322,7 @@ final class AgentTerminalStore: ObservableObject {
         if program.hasPrefix("codex") {
             return TmuxLaneSessions(prefixes: ["cx-"], isRelevant: { @Sendable session in
                 session.name.hasPrefix("cx-") && folders.contains(session)
-            })
+            }, sessionName: TmuxLaneSessions.folderSessionName(prefix: "cx-"))
         }
         return TmuxLaneSessions(isRelevant: { @Sendable session in
                                     !session.name.hasPrefix("cx-") && folders.contains(session)

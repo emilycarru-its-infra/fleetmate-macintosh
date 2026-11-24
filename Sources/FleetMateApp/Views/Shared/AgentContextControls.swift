@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 /// Puts `AgentContext` blocks on the pasteboard and into drags: the Markdown
 /// as plain text, plus the item's link as a URL where it has one.
@@ -37,6 +38,56 @@ extension AppState {
             AgentContextPasteboard.write(contexts, anchor: anchor)
             terminals.show(defaultLaunch: agentDefaultLaunch)
         }
+    }
+}
+
+extension AppState {
+    /// The checkout of a pipeline run's repository, from the repository
+    /// registry, when this Mac has one.
+    func checkoutFolder(for run: PipelineRun) -> String? {
+        guard let repository = run.repository, let document = try? RepoRegistryStore().load() else { return nil }
+        let wanted = "\(run.container)/\(repository)".lowercased()
+        let provider: RepoProvider = run.source == .gitHub ? .gitHub : .azureDevOps
+        return document.entries.first { $0.key.provider == provider && $0.key.displayName.lowercased() == wanted }
+            .map { ($0.path as NSString).expandingTildeInPath }
+    }
+
+    /// Send a pipeline report to the agent working in the run's repository:
+    /// its lane, opened if need be. The text is pasted and never sent with
+    /// Return, so the person reads it first. When no lane is ready within a
+    /// while, or the repository has no checkout here, it goes on the
+    /// clipboard and the agent terminal opens.
+    func sendPipelineReport(_ text: String, for run: PipelineRun, anchor: NSView? = nil) {
+        guard !AppEdition.current.isTicketsOnly else { return }
+        guard let folder = checkoutFolder(for: run) else {
+            if !terminals.insert(text) { copyAndShowAgent(text, anchor: anchor) }
+            return
+        }
+        let store = terminals.lanes
+        let key = AgentLaneStore.canonicalFolder(URL(fileURLWithPath: folder, isDirectory: true)).path
+        let id = store.displayOrder.first { lane in
+            !store.isDetached(lane.id) && lane.directory.map {
+                AgentLaneStore.canonicalFolder($0).path == key
+            } == true
+        }?.id ?? terminals.open(AgentLaunch(command: agentDefaultLaunch.command, directory: folder), focus: true, show: true)
+        store.showDock()
+        store.open(id, focus: true)
+        Task { @MainActor [weak self] in
+            for _ in 0..<60 {
+                if let session = store.sessions[id], session.programIsForeground, session.view.acceptsBracketedPaste {
+                    if store.send(text, to: id) == .sent { return }
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+            self?.copyAndShowAgent(text, anchor: anchor)
+        }
+    }
+
+    private func copyAndShowAgent(_ text: String, anchor: NSView?) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        ClipboardPreview.show(text, heading: "No agent was ready, so this is on the clipboard", anchor: anchor)
+        terminals.show(defaultLaunch: agentDefaultLaunch)
     }
 }
 

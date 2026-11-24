@@ -361,6 +361,9 @@ struct PipelineRunDetailView: View {
     @State private var actionError: String?
     @State private var pendingCancel = false
     @State private var expanded: Set<String> = []
+    @State private var hoveredStage: String?
+    @FocusState private var focusedStage: String?
+    @StateObject private var anchor = ClipboardAnchor()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -472,6 +475,29 @@ struct PipelineRunDetailView: View {
             }
             .disabled(isLoading)
             .help("Reload the log")
+            if let log, !log.sections.isEmpty {
+                Menu {
+                    Button("Copy Failed Stages") { copyStages(PipelineStageReport.failed(log.sections)) }
+                        .disabled(PipelineStageReport.failed(log.sections).isEmpty)
+                    Button("Copy All Stages") { copyStages(log.sections) }
+                    if !AppEdition.current.isTicketsOnly {
+                        Divider()
+                        Button("Send Failed Stages to Agent") { send(PipelineStageReport.failed(log.sections)) }
+                            .disabled(PipelineStageReport.failed(log.sections).isEmpty)
+                    }
+                } label: {
+                    Label("Copy Stages", systemImage: "doc.on.doc")
+                } primaryAction: {
+                    let failed = PipelineStageReport.failed(log.sections)
+                    copyStages(failed.isEmpty ? log.sections : failed)
+                }
+                .labelStyle(.iconOnly)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Copy the failed stages' logs, with the run's details; the menu has more")
+                .accessibilityLabel("Copy failed stages")
+            }
             AgentContextButton(.pipelineRun(run))
             Button {
                 if let url = URL(string: run.webUrl) { NSWorkspace.shared.openInBrowser(url) }
@@ -481,6 +507,37 @@ struct PipelineRunDetailView: View {
             .help("Open in browser")
         }
         .padding(14)
+        .background(ClipboardAnchorView(anchor: anchor).accessibilityHidden(true))
+    }
+
+    private func copyStages(_ stages: [PipelineRunLog.Section]) {
+        guard !stages.isEmpty else { return }
+        let text = PipelineStageReport.copy(run, stages: stages)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        ClipboardPreview.show(text, heading: stages.count == 1 ? "Copied \(stages[0].name)" : "Copied \(stages.count) stages",
+                              anchor: anchor.view)
+    }
+
+    /// Hand the stages to the agent in the run's repository: a short prompt,
+    /// with the whole text in a private temporary file it can read.
+    private func send(_ stages: [PipelineRunLog.Section]) {
+        let file = Self.writeFullLog(PipelineStageReport.copy(run, stages: stages.isEmpty ? (log?.sections ?? []) : stages),
+                                     run: run)
+        appState.sendPipelineReport(PipelineStageReport.prompt(run, stages: stages, fullLog: file),
+                                    for: run, anchor: anchor.view)
+    }
+
+    /// The full text in a file only this user can read, under the temporary
+    /// folder, or nil when it could not be written.
+    static func writeFullLog(_ text: String, run: PipelineRun) -> String? {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fleetmate-pipeline-logs", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        let file = dir.appendingPathComponent("run-\(run.runId)-\(UUID().uuidString.prefix(8)).log")
+        guard FileManager.default.createFile(atPath: file.path, contents: Data(text.utf8),
+                                             attributes: [.posixPermissions: 0o600]) else { return nil }
+        return file.path
     }
 
     private func verbButton(_ title: String, icon: String, tint: Color, action: @escaping () -> Void) -> some View {
@@ -537,28 +594,75 @@ struct PipelineRunDetailView: View {
 
     private func logSection(_ section: PipelineRunLog.Section) -> some View {
         let isOpen = expanded.contains(section.id)
+        let showsActions = section.status == .failed || hoveredStage == section.id || focusedStage == section.id
         return VStack(alignment: .leading, spacing: 0) {
-            Button {
-                if isOpen { expanded.remove(section.id) } else { expanded.insert(section.id) }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
-                        .appFont(fixed: 9, weight: .bold)
-                        .rotationEffect(.degrees(isOpen ? 90 : 0))
-                        .foregroundStyle(.secondary)
-                    Image(systemName: section.status.symbolName)
-                        .appFont(fixed: 11)
-                        .foregroundStyle(section.status.tint)
-                    Text(section.name).appFont(.callout, weight: .medium).lineLimit(1)
-                    Spacer()
-                    Text("\(section.text.split(separator: "\n").count) lines")
-                        .appFont(.caption2).monospacedDigit().foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Button {
+                    if isOpen { expanded.remove(section.id) } else { expanded.insert(section.id) }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.right")
+                            .appFont(fixed: 9, weight: .bold)
+                            .rotationEffect(.degrees(isOpen ? 90 : 0))
+                            .foregroundStyle(.secondary)
+                        Image(systemName: section.status.symbolName)
+                            .appFont(fixed: 11)
+                            .foregroundStyle(section.status.tint)
+                        Text(section.name).appFont(.callout, weight: .medium).lineLimit(1)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .focused($focusedStage, equals: section.id)
+                .accessibilityLabel("\(section.name), \(section.status.displayName)")
+                .accessibilityHint(isOpen ? "Hides the stage's log" : "Shows the stage's log")
+                if showsActions {
+                    Button { copyStages([section]) } label: {
+                        Label("Copy Stage Log", systemImage: "doc.on.doc")
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .help("Copy this stage's log with the run's details (⌘C)")
+                    .accessibilityLabel("Copy \(section.name) log")
+                    if !AppEdition.current.isTicketsOnly {
+                        Button { send([section]) } label: {
+                            Label("Send Stage to Agent", systemImage: ContentView.agentSymbol)
+                        }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .help("Send this stage to the agent in the run's repository")
+                        .accessibilityLabel("Send \(section.name) to agent")
+                    }
+                }
+                Text("\(section.text.split(separator: "\n").count) lines")
+                    .appFont(.caption2).monospacedDigit().foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { hoveredStage = section.id } else if hoveredStage == section.id { hoveredStage = nil }
+            }
+            .onCopyCommand {
+                guard focusedStage == section.id else { return [] }
+                return [NSItemProvider(object: PipelineStageReport.copy(run, stage: section) as NSString)]
+            }
+            .contextMenu {
+                Button("Copy Stage Log") { copyStages([section]) }
+                if let log {
+                    Button("Copy Failed Stages") { copyStages(PipelineStageReport.failed(log.sections)) }
+                        .disabled(PipelineStageReport.failed(log.sections).isEmpty)
+                }
+                if !AppEdition.current.isTicketsOnly {
+                    Divider()
+                    Button("Send Stage to Agent") { send([section]) }
+                }
+                Divider()
+                Button(isOpen ? "Collapse" : "Expand") {
+                    if isOpen { expanded.remove(section.id) } else { expanded.insert(section.id) }
+                }
+            }
             if isOpen {
                 Divider()
                 ScrollView(.horizontal) {

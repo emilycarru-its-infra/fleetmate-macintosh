@@ -767,6 +767,8 @@ struct TicketsView: View {
             detailedTicket = nil
             ticketFeed = []
             if let ticketId = newIds.first, let unwrappedId = ticketId {
+                // List, Board, links and the Inbox all show the latest activity.
+                appState.ticketInbox.markTicketOpened(unwrappedId)
                 loadTicketDetail(ticketId: unwrappedId)
                 loadTicketFeed(ticketId: unwrappedId)
             } else {

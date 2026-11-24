@@ -64,7 +64,7 @@ struct TicketInboxView: View {
                 .listStyle(.sidebar)
                 .onChange(of: selectedItemId) { _, id in
                     guard let id, let item = items.first(where: { $0.id == id }) else { return }
-                    inbox.markTicketOpened(from: item)
+                    inbox.markTicketOpened(item.ticketId)
                     onSelect(item)
                 }
                 .onChange(of: openTicketId) { _, ticketId in

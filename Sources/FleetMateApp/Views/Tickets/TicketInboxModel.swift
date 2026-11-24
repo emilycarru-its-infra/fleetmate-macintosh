@@ -123,10 +123,9 @@ final class TicketInboxModel: ObservableObject {
     func markRead(_ item: TicketInboxItem) { updateReadState(.read([item.id])) }
 
     /// The opened ticket shows its latest activity, whichever comment led to it.
-    func markTicketOpened(from item: TicketInboxItem) {
-        var ids = Set(inbox?.items.filter { $0.ticketId == item.ticketId }.map(\.id) ?? [])
-        ids.insert(item.id)
-        updateReadState(.ticketOpened(ticketId: item.ticketId, itemIds: ids, at: Date()))
+    func markTicketOpened(_ ticketId: Int) {
+        let ids = Set(inbox?.items.filter { $0.ticketId == ticketId }.map(\.id) ?? [])
+        updateReadState(.ticketOpened(ticketId: ticketId, itemIds: ids, at: Date()))
     }
 
     func markUnread(_ item: TicketInboxItem) { updateReadState(.unread([item.id])) }

@@ -190,7 +190,7 @@ final class AgentTerminalStore: ObservableObject {
         // Settings › Agent › New Sessions and the near-limit switch may pick
         // either agent, but only for a work folder (AgentFolderPolicy).
         lanes.configuration.allowedAgents = [.claude, .codex]
-        lanes.configuration.agentAllowedForFolder = { @Sendable _, folder in AgentFolderPolicy.allowsCurrent(folder) }
+        lanes.configuration.agentAllowedForFolder = { @Sendable _, folder in AgentFolderPolicy.allowsCurrent(folder, registryFile: AgentAppsRepoRegistry.currentPath.map { URL(fileURLWithPath: $0) }) }
         // The menus' Default Agent is the one a new session runs here.
         lanes.defaultNewSessionBackendID = { [weak self] in
             guard let self else { return nil }

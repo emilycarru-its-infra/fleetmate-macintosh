@@ -88,3 +88,26 @@ final class AgentFolderPolicyTests: XCTestCase {
         XCTAssertFalse(allows("Developer/AzDevOps/link-to-personal"))
     }
 }
+
+final class AgentFolderPolicyRegistryFileTests: XCTestCase {
+    func testThePolicyReadsTheRegistryWhereTheAppDoesUnderXDGConfigHome() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("folder-policy-xdg-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let home = base.appendingPathComponent("home")
+        let repo = home.appendingPathComponent("Developer/GitHub/work-org/listed")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        let config = base.appendingPathComponent("xdg")
+        let file = AgentAppsRepoRegistry.defaultPath(bundleIdentifier: "example.app",
+                                                     environment: ["XDG_CONFIG_HOME": config.path], home: home.path)
+        XCTAssertTrue(file.hasPrefix(config.path), "XDG_CONFIG_HOME wins over ~/.config")
+        try FileManager.default.createDirectory(atPath: (file as NSString).deletingLastPathComponent,
+                                                withIntermediateDirectories: true)
+        let json = #"{"schema_version":1,"app":{"zone":"ecu"},"sections":[{"name":"W","repos":[{"path":"\#(repo.path)"}]}]}"#
+        try Data(json.utf8).write(to: URL(fileURLWithPath: file))
+        XCTAssertEqual(AgentAppsRepoRegistry.decode(Data(json.utf8))?.agentPaths, [repo.path], "the app reads the same repos")
+        XCTAssertTrue(AgentFolderPolicy.allows(repo, home: home.path, registryFile: URL(fileURLWithPath: file), denied: []))
+        let unused = home.appendingPathComponent(".config/agent-apps/repos/example.app.json")
+        XCTAssertFalse(AgentFolderPolicy.allows(repo, home: home.path, registryFile: unused, denied: []),
+                       "no file where XDG_CONFIG_HOME does not point")
+    }
+}

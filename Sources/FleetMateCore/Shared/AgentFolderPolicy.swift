@@ -33,14 +33,18 @@ public enum AgentFolderPolicy {
         }
     }
 
-    /// The running app's answer, with its registry and this Mac's denied folders.
-    public static func allowsCurrent(_ folder: URL) -> Bool {
-        let home = NSHomeDirectory()
-        let registry = Bundle.main.bundleIdentifier.flatMap { id in
-            FileManager.default.contents(atPath: home + "/.config/agent-apps/repos/\(id).json")
-        }.flatMap(workRegistry(from:))
-        return allows(folder, home: home, registry: registry,
-                      denied: UserDefaults.standard.stringArray(forKey: deniedFoldersKey) ?? [])
+    /// The running app's answer, with this Mac's denied folders and the
+    /// registry at `registryFile`: the same file the app reads its
+    /// repositories from, so both always agree. Nil reads no registry.
+    public static func allowsCurrent(_ folder: URL, registryFile: URL?) -> Bool {
+        allows(folder, home: NSHomeDirectory(), registryFile: registryFile,
+               denied: UserDefaults.standard.stringArray(forKey: deniedFoldersKey) ?? [])
+    }
+
+    /// The answer with the registry read from `registryFile`.
+    public static func allows(_ folder: URL, home: String, registryFile: URL?, denied: [String]) -> Bool {
+        let registry = registryFile.flatMap { FileManager.default.contents(atPath: $0.path) }.flatMap(workRegistry(from:))
+        return allows(folder, home: home, registry: registry, denied: denied)
     }
 
     /// The registry's repositories, or nil unless it is schema 1 and in the

@@ -45,6 +45,9 @@ public struct TicketInboxReadStore: Sendable {
     public enum Change: Sendable {
         case read(Set<Int>)
         case unread(Set<Int>)
+        /// A ticket was opened: covers its comments up to `at`, plus the ones
+        /// already listed, whose server time may run ahead of this Mac's clock.
+        case ticketOpened(ticketId: Int, itemIds: Set<Int>, at: Date)
     }
 
     public enum StoreError: Error {
@@ -111,11 +114,17 @@ public struct TicketInboxReadStore: Sendable {
             for id in ids { document.marks[id] = Mark(isRead: true, changedAt: now) }
         case .unread(let ids):
             for id in ids { document.marks[id] = Mark(isRead: false, changedAt: now) }
+        case .ticketOpened(let ticketId, let itemIds, let openedAt):
+            for id in itemIds { document.marks[id] = Mark(isRead: true, changedAt: openedAt) }
+            var opened = document.ticketOpenedAt ?? [:]
+            opened[ticketId] = max(opened[ticketId] ?? openedAt, openedAt)
+            document.ticketOpenedAt = opened
         case nil: break
         }
         // Read/unread tombstones outlive the message window, including late legacy imports.
         let cutoff = now.addingTimeInterval(-Double(TicketInbox.windowDays + 7) * 86_400)
         document.marks = document.marks.filter { $0.value.changedAt >= cutoff }
+        document.ticketOpenedAt = document.ticketOpenedAt?.filter { $0.value >= cutoff }
         if document != original {
             let data = try JSONEncoder().encode(document)
             guard data.count <= Self.maximumBytes else { throw StoreError.oversizedState }
@@ -124,7 +133,11 @@ public struct TicketInboxReadStore: Sendable {
             DistributedNotificationCenter.default().postNotificationName(
                 Self.changedNotification, object: scope.identifier, userInfo: nil, deliverImmediately: true)
         }
-        return TicketInboxReadState(readIds: Set(document.marks.compactMap { $0.value.isRead ? $0.key : nil }))
+        return TicketInboxReadState(
+            readIds: Set(document.marks.compactMap { $0.value.isRead ? $0.key : nil }),
+            unreadMarkedAt: document.marks.compactMapValues { $0.isRead ? nil : $0.changedAt },
+            ticketOpenedAt: document.ticketOpenedAt ?? [:]
+        )
     }
 
     private static let maximumBytes = 16 * 1024 * 1024
@@ -155,5 +168,7 @@ public struct TicketInboxReadStore: Sendable {
         var version = 1
         var marks: [Int: Mark] = [:]
         var importedEditions: Set<String> = []
+        /// Optional so files written by earlier builds still decode at version 1.
+        var ticketOpenedAt: [Int: Date]?
     }
 }

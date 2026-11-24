@@ -35,6 +35,53 @@ final class TicketInboxReadStoreTests: XCTestCase {
         XCTAssertTrue(try TicketInboxReadStore(scope: scope(person: "other"), root: root).update().readIds.isEmpty)
     }
 
+    private func item(_ id: Int, ticket: Int = 42, date: String) -> TicketInboxItem {
+        TicketInboxItem(id: id, ticketId: ticket, ticketTitle: "Ticket", author: "Someone", authorEmail: nil,
+                        body: "", createdDate: date, isPrivate: false)
+    }
+
+    func testOpeningTicketReadsItsCommentsUpToThatTimeOnly() throws {
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = TicketInboxReadStore(scope: scope(), root: root)
+        let openedAt = TdxTicket.parseDate("2026-10-30T12:00:00Z")!
+        let clicked = item(1, date: "2026-10-30T10:00:00Z")
+        let sibling = item(2, date: "2026-10-30T11:00:00Z")
+        let scannedLater = item(3, date: "2026-10-30T11:59:00Z")
+        let newer = item(4, date: "2026-10-30T12:01:00Z")
+        let otherTicket = item(5, ticket: 43, date: "2026-10-30T11:00:00Z")
+
+        let state = try store.update(.ticketOpened(ticketId: 42, itemIds: [1, 2], at: openedAt), now: openedAt)
+
+        XCTAssertTrue(state.isRead(clicked))
+        XCTAssertTrue(state.isRead(sibling))
+        XCTAssertTrue(state.isRead(scannedLater))
+        XCTAssertFalse(state.isRead(newer))
+        XCTAssertFalse(state.isRead(otherTicket))
+    }
+
+    func testMarkUnreadAfterOpenHoldsUntilTicketIsOpenedAgain() throws {
+        let root = temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = TicketInboxReadStore(scope: scope(), root: root)
+        let openedAt = TdxTicket.parseDate("2026-10-30T12:00:00Z")!
+        let comment = item(1, date: "2026-10-30T10:00:00Z")
+
+        _ = try store.update(.ticketOpened(ticketId: 42, itemIds: [1], at: openedAt), now: openedAt)
+        let unread = try store.update(.unread([1]), now: openedAt.addingTimeInterval(60))
+        XCTAssertFalse(unread.isRead(comment))
+
+        let reopenedAt = openedAt.addingTimeInterval(120)
+        let reopened = try store.update(.ticketOpened(ticketId: 42, itemIds: [], at: reopenedAt), now: reopenedAt)
+        XCTAssertTrue(reopened.isRead(comment))
+    }
+
+    func testReadStateWithoutOpenTimesStillDecodes() throws {
+        let state = try JSONDecoder().decode(TicketInboxReadState.self, from: Data(#"{"readIds":[7]}"#.utf8))
+        XCTAssertEqual(state.readIds, [7])
+        XCTAssertTrue(state.ticketOpenedAt.isEmpty)
+    }
+
     func testConcurrentIndependentWritersKeepEveryReadMark() throws {
         let root = temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }

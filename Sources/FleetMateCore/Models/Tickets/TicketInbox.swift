@@ -58,6 +58,10 @@ public struct TicketInbox: Codable, Sendable {
         items.reduce(0) { $0 + (readIds.contains($1.id) ? 0 : 1) }
     }
 
+    public func unreadCount(readState: TicketInboxReadState) -> Int {
+        items.reduce(0) { $0 + (readState.isRead($1) ? 0 : 1) }
+    }
+
     /// True when a feed entry's notified list names this person.
     ///
     /// TDX writes the list as display names separated by commas, sometimes
@@ -174,11 +178,38 @@ public struct TicketInbox: Codable, Sendable {
 
 /// The comments a person has marked read, kept per computer: TDX does not
 /// record it. Written only by the app window, never by the scanner.
-public struct TicketInboxReadState: Codable, Sendable {
+public struct TicketInboxReadState: Codable, Equatable, Sendable {
     public var readIds: Set<Int> = []
+    /// When each comment was explicitly marked unread.
+    public var unreadMarkedAt: [Int: Date] = [:]
+    /// When each ticket was last opened from the Inbox. Opening a ticket shows
+    /// its latest activity, so it covers every comment up to that moment.
+    public var ticketOpenedAt: [Int: Date] = [:]
 
-    public init(readIds: Set<Int> = []) {
+    public init(readIds: Set<Int> = [], unreadMarkedAt: [Int: Date] = [:],
+                ticketOpenedAt: [Int: Date] = [:]) {
         self.readIds = readIds
+        self.unreadMarkedAt = unreadMarkedAt
+        self.ticketOpenedAt = ticketOpenedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        readIds = try container.decode(Set<Int>.self, forKey: .readIds)
+        unreadMarkedAt = try container.decodeIfPresent([Int: Date].self, forKey: .unreadMarkedAt) ?? [:]
+        ticketOpenedAt = try container.decodeIfPresent([Int: Date].self, forKey: .ticketOpenedAt) ?? [:]
+    }
+
+    /// A later "Mark as Unread" beats an earlier open; a later open clears it.
+    /// A comment newer than the last open stays unread.
+    public func isRead(_ item: TicketInboxItem) -> Bool {
+        let openedAt = ticketOpenedAt[item.ticketId]
+        if let unreadAt = unreadMarkedAt[item.id], openedAt.map({ unreadAt >= $0 }) ?? true {
+            return false
+        }
+        if readIds.contains(item.id) { return true }
+        guard let openedAt, let date = item.date else { return false }
+        return date <= openedAt
     }
 
     public static func fileURL(personUid: String, root: URL? = nil) -> URL {

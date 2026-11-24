@@ -38,7 +38,10 @@ final class RepositoryOrderTests: XCTestCase {
                        "/Users/a/.config/agent-apps/repos/example.app.json")
         XCTAssertEqual(AgentAppsRepoRegistry.defaultPath(bundleIdentifier: "example.app",
                                                          environment: ["XDG_CONFIG_HOME": "/cfg"], home: "/Users/a"),
-                       "/cfg/agent-apps/repos/example.app.json")
+                       nil, "a folder that does not exist means no registry")
+        XCTAssertEqual(AgentAppsRepoRegistry.defaultPath(bundleIdentifier: "example.app",
+                                                         environment: ["XDG_CONFIG_HOME": "relative"], home: "/Users/a"),
+                       nil)
     }
 
     func testRankSortsKnownFirstAndKeepsTheRestInPlace() {

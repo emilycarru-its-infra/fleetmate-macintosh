@@ -34,8 +34,13 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
     public static let schemaVersion = 1
 
     public var sections: [Section]
+    /// The file's `app.zone`: whose work the listed repositories are.
+    public var zone: String?
 
-    public init(sections: [Section]) { self.sections = sections }
+    public init(sections: [Section], zone: String? = nil) {
+        self.sections = sections
+        self.zone = zone
+    }
 
     /// Every folder in order, each once: sections in order, then the
     /// repositories within each.
@@ -56,18 +61,37 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
     // MARK: Reading
 
     /// The file for `bundleIdentifier`, under `$XDG_CONFIG_HOME` or `~/.config`.
+    /// The registry decides which folders agents may work in, so
+    /// `$XDG_CONFIG_HOME` counts only when it is an absolute path that
+    /// canonicalizes cleanly and both it and the registry file are owned by
+    /// this user and not writable by group or others. Set but failing any of
+    /// that, there is no registry (nil), never a fall back to `~/.config`.
     public static func defaultPath(bundleIdentifier: String,
                                    environment: [String: String] = ProcessInfo.processInfo.environment,
-                                   home: String = NSHomeDirectory()) -> String {
+                                   home: String = NSHomeDirectory()) -> String? {
+        let relative = "agent-apps/repos/" + bundleIdentifier + ".json"
+        let fallback = ((home as NSString).appendingPathComponent(".config") as NSString).appendingPathComponent(relative)
         let configured = environment["XDG_CONFIG_HOME"]?.trimmingCharacters(in: .whitespaces) ?? ""
-        let config = configured.isEmpty ? (home as NSString).appendingPathComponent(".config") : configured
-        return ((config as NSString).appendingPathComponent("agent-apps/repos") as NSString)
-            .appendingPathComponent(bundleIdentifier + ".json")
+        if configured.isEmpty { return fallback }
+        guard configured.hasPrefix("/"),
+              let canonical = try? URL(fileURLWithPath: configured, isDirectory: true)
+                  .resourceValues(forKeys: [.canonicalPathKey]).canonicalPath,
+              isPrivate(canonical) else { return nil }
+        let file = (canonical as NSString).appendingPathComponent(relative)
+        return isPrivate(file) ? file : nil
+    }
+
+    /// Owned by this user, and neither group- nor world-writable.
+    static func isPrivate(_ path: String) -> Bool {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let owner = (attributes[.ownerAccountID] as? NSNumber)?.uint32Value,
+              let mode = (attributes[.posixPermissions] as? NSNumber)?.uint16Value else { return false }
+        return owner == getuid() && mode & 0o022 == 0
     }
 
     /// The running app's file, or nil when the bundle has no identifier.
     public static var currentPath: String? {
-        Bundle.main.bundleIdentifier.map { defaultPath(bundleIdentifier: $0) }
+        Bundle.main.bundleIdentifier.flatMap { defaultPath(bundleIdentifier: $0) }
     }
 
     /// The running app's registry, or nil when there is none to read.
@@ -81,8 +105,10 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
         struct Surfaces: Decodable { var agents: Bool? }
         struct RawRepo: Decodable { var path: String?; var name: String?; var surfaces: Surfaces? }
         struct RawSection: Decodable { var name: String?; var repos: [RawRepo]? }
+        struct RawApp: Decodable { var zone: String? }
         struct RawFile: Decodable {
             var schema_version: Int?
+            var app: RawApp?
             var sections: [RawSection]?
         }
         guard let raw = try? JSONDecoder().decode(RawFile.self, from: data),
@@ -93,7 +119,7 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
                 return Repo(path: path, name: repo.name, agents: repo.surfaces?.agents ?? true)
             })
         }
-        let registry = AgentAppsRepoRegistry(sections: sections)
+        let registry = AgentAppsRepoRegistry(sections: sections, zone: raw.app?.zone)
         return registry.orderedPaths.isEmpty ? nil : registry
     }
 

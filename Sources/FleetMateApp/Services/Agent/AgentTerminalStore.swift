@@ -187,6 +187,15 @@ final class AgentTerminalStore: ObservableObject {
         lanes.configuration.reopenChoices = [.sameAgent()] + choices.map { choice in
             LaneReopenChoice(choice.title, backendID: backendID(for: choice.command), kind: choice.kind)
         }
+        // Settings › Agent › New Sessions and the near-limit switch may pick
+        // either agent, but only for a work folder (AgentFolderPolicy).
+        lanes.configuration.allowedAgents = [.claude, .codex]
+        lanes.configuration.agentAllowedForFolder = { @Sendable _, folder in AgentFolderPolicy.allowsCurrent(folder, registryFile: AgentAppsRepoRegistry.currentPath.map { URL(fileURLWithPath: $0) }) }
+        // The menus' Default Agent is the one a new session runs here.
+        lanes.defaultNewSessionBackendID = { [weak self] in
+            guard let self else { return nil }
+            return self.backendID(for: self.defaultLaunch.command)
+        }
         lanes.willCloseLane = { [weak self] lane, attached in
             guard let self, let row = self.rows[lane.id] else { return .remove }
             // A running repository row stops and stays; an idle one goes.
@@ -399,9 +408,17 @@ final class AgentTerminalStore: ObservableObject {
         let directory = launch.directory.map { ($0 as NSString).expandingTildeInPath }
             ?? startDirectory?() ?? Self.workspaceDirectory()
         let section = lanes.selected.flatMap { rows[$0.id] == nil ? lanes.layout.section(of: $0.lane) : nil }
-        let lane = AgentLane(id: UUID().uuidString, title: launch.label,
-                             directory: URL(fileURLWithPath: directory, isDirectory: true),
-                             backendID: backendID(for: launch.command), isClosable: true, section: section)
+        // One resolved folder for the agent check and the session itself.
+        let folder = AgentLaneStore.canonicalFolder(URL(fileURLWithPath: directory, isDirectory: true))
+        var backend = backendID(for: launch.command)
+        // A new session on the default agent follows Settings › Agent ›
+        // New Sessions and moves off an agent near its usage limit; an
+        // agent picked by name does not.
+        if launch.command == defaultLaunch.command {
+            backend = lanes.newSessionPlan(preferring: backend, in: folder).backendID
+        }
+        let lane = AgentLane(id: UUID().uuidString, title: launch.label, directory: folder,
+                             backendID: backend, isClosable: true, section: section)
         lanes.add(lane, focus: focus, open: start)
         if show { lanes.showDock() }
         return lane.id

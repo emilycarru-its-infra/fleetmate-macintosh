@@ -712,7 +712,10 @@ struct TicketsView: View {
             .toolbar(removing: .sidebarToggle)
             .onAppear { startInbox(scanNow: false) }
         } detail: {
+            // The glass sidebar floats; the list runs on beneath it instead of
+            // leaving a strip of window background beside it.
             ticketsWorkspace
+                .backgroundExtensionEffect()
         }
     }
 

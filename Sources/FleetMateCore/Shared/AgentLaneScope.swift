@@ -18,6 +18,8 @@ public struct AgentLaneScope: Equatable, Sendable {
     /// Normalized folders whose lanes run on another machine, by its name:
     /// a session there counts, and one on this side in the same folder does not.
     public private(set) var remote: [String: Set<String>] = [:]
+    /// The same for folders that are not repositories: only the folder itself.
+    public private(set) var remoteExact: [String: Set<String>] = [:]
     /// The machine lanes run on by default, so a session it reports counts
     /// the same as one with no host.
     public private(set) var hub: String?
@@ -40,27 +42,39 @@ public struct AgentLaneScope: Equatable, Sendable {
     /// The folders the rendered registry gives the app, plus the agent
     /// workspace. Entries on another host count only for sessions there.
     public init(registry: AgentAppsRepoRegistry, hub: String?, workspaceRoot: String?) {
-        let repos = registry.sections.flatMap(\.repos).filter(\.agents)
+        let entries = registry.sections.flatMap(\.repos).filter(\.agents)
         func isLocal(_ repo: AgentAppsRepoRegistry.Repo) -> Bool {
             guard let host = repo.host else { return true }
             return hub.map { $0 == host } ?? (repo.kind != "folder")
         }
-        self.init(repositories: repos.filter(isLocal).map(\.path), exact: workspaceRoot.map { [$0] } ?? [])
+        // A repository counts with its worktrees; a plain folder (such as the
+        // root that holds many repositories) counts only as itself, or it
+        // would claim every session beneath it.
+        func isFolder(_ repo: AgentAppsRepoRegistry.Repo) -> Bool { repo.kind == "folder" }
+        let local = entries.filter(isLocal)
+        self.init(repositories: local.filter { !isFolder($0) }.map(\.path),
+                  exact: local.filter(isFolder).map(\.path) + (workspaceRoot.map { [$0] } ?? []))
         self.hub = hub
-        for repo in repos where !isLocal(repo) {
+        for repo in entries where !isLocal(repo) {
             guard let host = repo.host else { continue }
-            remote[host, default: []].insert(Self.normalized(repo.path))
+            if isFolder(repo) {
+                remoteExact[host, default: []].insert(Self.normalized(repo.path))
+            } else {
+                remote[host, default: []].insert(Self.normalized(repo.path))
+            }
         }
     }
 
-    public var isEmpty: Bool { repositories.isEmpty && exact.isEmpty && remote.isEmpty }
+    public var isEmpty: Bool { repositories.isEmpty && exact.isEmpty && remote.isEmpty && remoteExact.isEmpty }
 
     /// Whether a session working in `directory` on `host` (nil for this
     /// side) is FleetMate's.
     public func contains(directory: String?, host: String?) -> Bool {
         if let host, host != hub {
-            guard let directory, !directory.isEmpty, let folders = remote[host] else { return false }
+            guard let directory, !directory.isEmpty else { return false }
             let path = Self.normalized(directory)
+            if remoteExact[host]?.contains(path) == true { return true }
+            guard let folders = remote[host] else { return false }
             return folders.contains(path) || folders.contains { Self.isWorktree(path, of: $0) }
         }
         return contains(directory: directory)

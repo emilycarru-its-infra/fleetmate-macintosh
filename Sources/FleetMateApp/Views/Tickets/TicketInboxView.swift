@@ -2,18 +2,18 @@ import SwiftUI
 import FleetMateCore
 
 /// Every comment that notified the signed-in person, across all tickets,
-/// newest first, as the Tickets sidebar. Laid out like Mail's message list:
-/// the filter in the column's toolbar and three-line rows.
+/// newest first, in the list's place in Inbox mode, laid out like Mail's
+/// message list. The Unread Only filter lives in the Tickets toolbar.
 struct TicketInboxView: View {
     @ObservedObject var inbox: TicketInboxModel
     var requiresSignIn = false
     /// The ticket open in the workspace. When it moves elsewhere the row
     /// deselects, so clicking that row opens its ticket again.
     var openTicketId: Int?
-    let onRefresh: () -> Void
     let onSelect: (TicketInboxItem) -> Void
 
-    @AppStorage("tickets.inboxUnreadOnly") private var showUnreadOnly = false
+    static let unreadOnlyKey = "tickets.inboxUnreadOnly"
+    @AppStorage(TicketInboxView.unreadOnlyKey) private var showUnreadOnly = false
     @State private var selectedItemId: Int?
 
     private var items: [TicketInboxItem] {
@@ -24,16 +24,8 @@ struct TicketInboxView: View {
 
     var body: some View {
         content
-            .frame(minWidth: 340, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .safeAreaInset(edge: .bottom, spacing: 0) { footer }
-            .toolbar {
-                ToolbarItem {
-                    Toggle(isOn: $showUnreadOnly) {
-                        Label("Unread Only", systemImage: "line.3.horizontal.decrease")
-                    }
-                    .help(showUnreadOnly ? "Show all comments" : "Show only unread comments")
-                }
-            }
     }
 
     @ViewBuilder
@@ -79,7 +71,7 @@ struct TicketInboxView: View {
                         }
                     }
             }
-            .listStyle(.sidebar)
+            .listStyle(.inset)
             .onChange(of: selectedItemId) { _, id in
                 guard let id, let item = items.first(where: { $0.id == id }) else { return }
                 inbox.markTicketOpened(item.ticketId)

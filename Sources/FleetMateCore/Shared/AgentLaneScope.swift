@@ -15,6 +15,12 @@ public struct AgentLaneScope: Equatable, Sendable {
     public private(set) var repositories: Set<String>
     /// Normalized folders that count only exactly.
     public private(set) var exact: Set<String>
+    /// Normalized folders whose lanes run on another machine, by its name:
+    /// a session there counts, and one on this side in the same folder does not.
+    public private(set) var remote: [String: Set<String>] = [:]
+    /// The machine lanes run on by default, so a session it reports counts
+    /// the same as one with no host.
+    public private(set) var hub: String?
 
     /// The folders under a repository whose children are its worktrees.
     public static let worktreeFolders = [".worktrees", ".claude/worktrees"]
@@ -31,7 +37,34 @@ public struct AgentLaneScope: Equatable, Sendable {
         self.init(repositories: folders, exact: workspaceRoot.map { [$0] } ?? [])
     }
 
-    public var isEmpty: Bool { repositories.isEmpty && exact.isEmpty }
+    /// The folders the rendered registry gives the app, plus the agent
+    /// workspace. Entries on another host count only for sessions there.
+    public init(registry: AgentAppsRepoRegistry, hub: String?, workspaceRoot: String?) {
+        let repos = registry.sections.flatMap(\.repos).filter(\.agents)
+        func isLocal(_ repo: AgentAppsRepoRegistry.Repo) -> Bool {
+            guard let host = repo.host else { return true }
+            return hub.map { $0 == host } ?? (repo.kind != "folder")
+        }
+        self.init(repositories: repos.filter(isLocal).map(\.path), exact: workspaceRoot.map { [$0] } ?? [])
+        self.hub = hub
+        for repo in repos where !isLocal(repo) {
+            guard let host = repo.host else { continue }
+            remote[host, default: []].insert(Self.normalized(repo.path))
+        }
+    }
+
+    public var isEmpty: Bool { repositories.isEmpty && exact.isEmpty && remote.isEmpty }
+
+    /// Whether a session working in `directory` on `host` (nil for this
+    /// side) is FleetMate's.
+    public func contains(directory: String?, host: String?) -> Bool {
+        if let host, host != hub {
+            guard let directory, !directory.isEmpty, let folders = remote[host] else { return false }
+            let path = Self.normalized(directory)
+            return folders.contains(path) || folders.contains { Self.isWorktree(path, of: $0) }
+        }
+        return contains(directory: directory)
+    }
 
     /// Whether a session working in `directory` is FleetMate's.
     public func contains(directory: String?) -> Bool {

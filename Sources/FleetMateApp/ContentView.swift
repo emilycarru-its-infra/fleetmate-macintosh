@@ -29,6 +29,11 @@ struct ContentView: View {
 
     private var selectedTab: AppTab { appState.selectedTab }
 
+    /// The sessions fill the window.
+    private var inAgentsMode: Bool {
+        terminals.isMaximized && terminals.isVisible && !terminals.lanes.lanes.isEmpty
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if appState.tdxNeedsSignIn, selectedTab == .tickets || AppEdition.current.isTicketsOnly {
@@ -108,11 +113,14 @@ struct ContentView: View {
                 if #available(macOS 26.0, *) {
                     ToolbarSpacer(.flexible, placement: .primaryAction)
                 }
-                if selectedTab.hasWidgets {
+                // Graphs, recents and sign-in belong to the tabs, so Agents mode
+                // leaves them out and they return when it ends.
+                if selectedTab.hasWidgets, !inAgentsMode {
                     ToolbarItem(placement: .primaryAction) {
                         GraphsToolbarButton(tab: selectedTab).id(selectedTab)
                     }
                 }
+                if !inAgentsMode {
                 ToolbarItem(placement: .primaryAction) {
                     RecentActivityToolbarButton()
                 }
@@ -132,6 +140,7 @@ struct ContentView: View {
                             .frame(width: 480)
                             .frame(minHeight: 300, idealHeight: 560, maxHeight: 640)
                     }
+                }
                 }
                 if appState.authManager.hasServicePrincipalWarning {
                     ToolbarItem(placement: .automatic) {

@@ -27,6 +27,10 @@ enum GroupByOption: String, CaseIterable {
     case type = "Type"
     case priority = "Priority"
     case assignee = "Assigned To"
+
+    /// The name in the toolbar. The raw value `Board` sat beside the view
+    /// switch's own Board and read as the same control twice.
+    var groupTitle: String { self == .column ? "Columns" : rawValue }
 }
 
 // MARK: - Main View
@@ -389,7 +393,7 @@ struct BoardsView: View {
                 PillMenu(
                     selection: $groupBy,
                     options: GroupByOption.allCases,
-                    label: { $0.rawValue }
+                    label: { "By \($0.groupTitle)" }
                 )
                 .help("Group by")
                 .onChange(of: groupBy) { _, newValue in

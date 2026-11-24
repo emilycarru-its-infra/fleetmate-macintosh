@@ -60,4 +60,18 @@ final class AgentLaneScopeTests: XCTestCase {
                        "\(home)/.local/state/claude-lanes")
         XCTAssertEqual(ClaudeLaneIDFile.directory(environment: ["CLAUDE_LANE_STATE_DIR": "/elsewhere"]).path, "/elsewhere")
     }
+
+    func testTheRegistryDecidesAndAnotherHostsFolderDoesNotCountHere() {
+        let registry = AgentAppsRepoRegistry(sections: [
+            .init(name: "Devices", repos: [.init(path: "\(home)/Code/Devices/Agent", host: "hub")]),
+            .init(name: "Remote", repos: [.init(path: "\(home)/Code", host: "other", kind: "folder")]),
+        ])
+        let scope = AgentLaneScope(registry: registry, hub: "hub", workspaceRoot: nil)
+        XCTAssertTrue(scope.contains(directory: "\(home)/Code/Devices/Agent", host: nil))
+        XCTAssertTrue(scope.contains(directory: "\(home)/Code/Devices/Agent/.worktrees/a", host: "hub"))
+        XCTAssertFalse(scope.contains(directory: "\(home)/Code/Cloud/Portal", host: nil), "not in this app's registry")
+        XCTAssertFalse(scope.contains(directory: "\(home)/Code", host: nil), "that folder is listed for the other host")
+        XCTAssertTrue(scope.contains(directory: "\(home)/Code", host: "other"))
+        XCTAssertFalse(scope.contains(directory: "\(home)/Code/Devices/Agent", host: "other"))
+    }
 }

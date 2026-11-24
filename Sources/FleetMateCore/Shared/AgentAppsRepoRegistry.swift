@@ -13,11 +13,17 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
         /// Whether the repository is offered to agent sessions; true unless
         /// the file says otherwise.
         public var agents: Bool
+        /// The machine its lanes run on, when the file names one.
+        public var host: String?
+        /// `repo`, or `folder` for a lane on a directory that is not a repository.
+        public var kind: String?
 
-        public init(path: String, name: String? = nil, agents: Bool = true) {
+        public init(path: String, name: String? = nil, agents: Bool = true, host: String? = nil, kind: String? = nil) {
             self.path = path
             self.name = name
             self.agents = agents
+            self.host = host
+            self.kind = kind
         }
     }
 
@@ -103,7 +109,7 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
     /// Nil for a file of another schema, or one that lists no repositories.
     public static func decode(_ data: Data) -> AgentAppsRepoRegistry? {
         struct Surfaces: Decodable { var agents: Bool? }
-        struct RawRepo: Decodable { var path: String?; var name: String?; var surfaces: Surfaces? }
+        struct RawRepo: Decodable { var path: String?; var name: String?; var surfaces: Surfaces?; var host: String?; var kind: String? }
         struct RawSection: Decodable { var name: String?; var repos: [RawRepo]? }
         struct RawApp: Decodable { var zone: String? }
         struct RawFile: Decodable {
@@ -116,7 +122,7 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
         let sections: [Section] = (raw.sections ?? []).map { section in
             Section(name: section.name ?? "", repos: (section.repos ?? []).compactMap { repo in
                 guard let path = repo.path?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty else { return nil }
-                return Repo(path: path, name: repo.name, agents: repo.surfaces?.agents ?? true)
+                return Repo(path: path, name: repo.name, agents: repo.surfaces?.agents ?? true, host: repo.host, kind: repo.kind)
             })
         }
         let registry = AgentAppsRepoRegistry(sections: sections, zone: raw.app?.zone)

@@ -1136,25 +1136,8 @@ private struct DevelopmentContent: View {
 
     @ToolbarContentBuilder
     private var developmentToolbar: some ToolbarContent {
+        // Refresh, Inbox, then the views, always shown rather than in a menu.
         ToolbarItemGroup(placement: .navigation) {
-            SegmentedPill(
-                selection: $model.segment,
-                options: DevelopmentModel.Segment.allCases,
-                label: { $0.rawValue },
-                segmentWidth: nil
-            )
-
-            Button {
-                model.showInbox.toggle()
-                if model.showInbox { model.loadInbox(appState: appState, force: true) }
-            } label: {
-                Label("Inbox", systemImage: model.unreadCount > 0 ? "tray.full" : "tray")
-            }
-            .help(model.inboxError == nil ? "GitHub notification inbox" : "GitHub inbox needs attention")
-            .popover(isPresented: $model.showInbox, arrowEdge: .bottom) {
-                inboxList.frame(width: 440, height: 520)
-            }
-
             Button(action: {
                 if model.segment == .repos {
                     model.repos.reloadRecords()
@@ -1174,6 +1157,25 @@ private struct DevelopmentContent: View {
             }
             .disabled(model.isLoadingPullRequests && model.isLoadingInbox)
             .help("Refresh pull requests and inbox")
+
+            Button {
+                model.showInbox.toggle()
+                if model.showInbox { model.loadInbox(appState: appState, force: true) }
+            } label: {
+                Label("Inbox", systemImage: model.unreadCount > 0 ? "tray.full" : "tray")
+            }
+            .help(model.inboxError == nil ? "GitHub notification inbox" : "GitHub inbox needs attention")
+            .popover(isPresented: $model.showInbox, arrowEdge: .bottom) {
+                inboxList.frame(width: 440, height: 520)
+            }
+
+            SegmentedPill(
+                selection: $model.segment,
+                options: DevelopmentModel.Segment.allCases,
+                label: { $0.rawValue },
+                segmentWidth: nil,
+                foldsWhenCompact: false
+            )
         }
     }
 

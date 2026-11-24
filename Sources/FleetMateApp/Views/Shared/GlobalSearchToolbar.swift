@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 /// Where a search hit takes you. Shared by every place the search appears.
 @MainActor
@@ -75,7 +76,9 @@ struct GlobalSearchToolbarField: View {
     @State private var searchGeneration = UUID()
     /// Searching everything rather than filtering the tab's list.
     @State private var everything = false
-    @FocusState private var focused: Bool
+    /// Counts the requests to put the cursor in the field.
+    @State private var focusTick = 0
+    @Environment(\.appFontScale) private var fontScale
 
     private var isTicketsOnly: Bool { AppEdition.current.isTicketsOnly }
     private var searchPrompt: String {
@@ -90,104 +93,43 @@ struct GlobalSearchToolbarField: View {
     }
 
     var body: some View {
-        HStack(spacing: 6) {
-            if isSearching {
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(width: 16, height: 16)
-                    .accessibilityLabel("Searching")
-            } else {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(focused ? Color.accentColor : .secondary)
-                    .onTapGesture { focused = true }
+        AgentsToolbarSearchField(
+            text: text,
+            prompt: searchPrompt,
+            hint: searchingEverything ? "⌘K" : "⌘F",
+            help: isTicketsOnly ? "Filter tickets (⌘F) · search tickets (⌘K)" : searchingEverything ? "Search everything (⌘K)" : "Filter this tab (⌘F) · search everything (⌘K)",
+            width: width,
+            isSearching: isSearching,
+            scope: tabSearch.flatMap { isTicketsOnly ? nil : scope($0) },
+            focusRequest: focusTick,
+            showResults: $showResults,
+            fontScale: fontScale,
+            identifier: "FleetMateSearchField",
+            onSubmit: submit,
+            onClear: clear,
+            onFocusChange: { isFocused in
+                // ReportMate's device list loads with the Reporting tab; start it when
+                // a search begins so its devices are findable before that tab is opened.
+                if isFocused { Task { await appState.reporting.loadDevicesForSearch() } }
             }
-            if let tabSearch, !isTicketsOnly {
-                scopeChip(tabSearch)
-            }
-            TextField("", text: text, prompt: Text(searchPrompt).foregroundStyle(.secondary))
-                .textFieldStyle(.plain)
-                .focused($focused)
-                .onSubmit(submit)
-                .onExitCommand { clear() }
-            if text.wrappedValue.isEmpty {
-                Text(searchingEverything ? "⌘K" : "⌘F")
-                    .appFont(fixed: 10, weight: .medium)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
-            } else {
-                Button(action: clear) {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
+        ) {
+            resultsPopover
         }
-        .appFont(.body)
-        .padding(.horizontal, 10)
-        .frame(width: width, height: 28)
-        .fixedSize(horizontal: true, vertical: false)
-        .accessibilityIdentifier("FleetMateSearchField")
-        .contentShape(Rectangle())
-        .onTapGesture { focused = true }
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(focused ? Color.accentColor : Color.secondary.opacity(0.35), lineWidth: focused ? 1.5 : 1)
-        )
-        .help(isTicketsOnly ? "Filter tickets (⌘F) · search tickets (⌘K)" : searchingEverything ? "Search everything (⌘K)" : "Filter this tab (⌘F) · search everything (⌘K)")
         // ⌘K (Edit › Search Everything) puts the cursor here from any tab.
         .onChange(of: appState.globalSearchFocusRequest) { _, _ in
             everything = true
-            focused = true
+            focusTick += 1
         }
         // ⌘F (Edit › Find) filters the tab, where it has a list to filter.
         .onChange(of: appState.tabSearchFocusRequest) { _, _ in
             everything = false
-            focused = true
+            focusTick += 1
         }
         // A new tab starts out filtering its own list.
         .onChange(of: appState.selectedTab) { _, _ in
             everything = false
             query = ""
             showResults = false
-        }
-        // ReportMate's device list loads with the Reporting tab; start it when
-        // a search begins so its devices are findable before that tab is opened.
-        .onChange(of: focused) { _, isFocused in
-            if isFocused { Task { await appState.reporting.loadDevicesForSearch() } }
-        }
-        .popover(isPresented: $showResults, arrowEdge: .bottom) {
-            ScrollView {
-                if results.isEmpty {
-                    HStack(spacing: 8) {
-                        if isSearching { ProgressView().controlSize(.small) }
-                        Text(isSearching ? "Searching…" : "No matches.")
-                            .appFont(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
-                } else {
-                    // The popover is the container: no second material box,
-                    // border and shadow inside it (grey on grey).
-                    GlobalSearchResultsPanel(results: results, width: 560, chrome: false) { hit in open(hit) }
-                        .padding(.vertical, 4)
-                }
-                if let loadingSource, !results.isEmpty {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("Still loading \(loadingSource)…")
-                            .appFont(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 10)
-                }
-            }
-            .frame(width: 576)
-            .frame(maxHeight: 620)
         }
         .task(id: searchingEverything ? query : "") {
             let trimmed = query.trimmingCharacters(in: .whitespaces)
@@ -224,10 +166,44 @@ struct GlobalSearchToolbarField: View {
         }
     }
 
+    private var resultsPopover: some View {
+        ScrollView {
+            if results.isEmpty {
+                HStack(spacing: 8) {
+                    if isSearching { ProgressView().controlSize(.small) }
+                    Text(isSearching ? "Searching…" : "No matches.")
+                        .appFont(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+            } else {
+                // The popover is the container: no second material box,
+                // border and shadow inside it (grey on grey).
+                GlobalSearchResultsPanel(results: results, width: 560, chrome: false) { hit in open(hit) }
+                    .padding(.vertical, 4)
+            }
+            if let loadingSource, !results.isEmpty {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Still loading \(loadingSource)…")
+                        .appFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+            }
+        }
+        .frame(width: 576)
+        .frame(maxHeight: 620)
+    }
+
     /// Names what the field is searching; clicking it switches between the
     /// tab's list and everything, carrying the typed text across.
-    private func scopeChip(_ tabSearch: TabSearchRegistration) -> some View {
-        Button {
+    private func scope(_ tabSearch: TabSearchRegistration) -> AgentsToolbarSearchScope {
+        .init(title: everything ? "All" : tabSearch.tab.rawValue,
+              help: everything ? "Searching everything — click to filter \(tabSearch.tab.rawValue)" : "Filtering \(tabSearch.tab.rawValue) — click to search everything") {
             if everything {
                 appState.tabSearchText = query
                 query = ""
@@ -236,17 +212,8 @@ struct GlobalSearchToolbarField: View {
                 appState.tabSearchText = ""
             }
             everything.toggle()
-            focused = true
-        } label: {
-            Text(everything ? "All" : tabSearch.tab.rawValue)
-                .appFont(fixed: 11, weight: .medium)
-                .foregroundStyle(Color.accentColor)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+            focusTick += 1
         }
-        .buttonStyle(.plain)
-        .help(everything ? "Searching everything — click to filter \(tabSearch.tab.rawValue)" : "Filtering \(tabSearch.tab.rawValue) — click to search everything")
     }
 
     private func submit() {
@@ -270,6 +237,5 @@ struct GlobalSearchToolbarField: View {
         } else {
             appState.tabSearchText = ""
         }
-        focused = false
     }
 }

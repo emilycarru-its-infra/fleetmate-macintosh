@@ -6,8 +6,10 @@ final class AgentFolderPolicyTests: XCTestCase {
 
     override func setUpWithError() throws {
         home = FileManager.default.temporaryDirectory.appendingPathComponent("folder-policy-\(UUID().uuidString)")
-        for dir in ["Developer/AzDevOps/Devices/Tool", "Developer/GitHub/work-org/listed", "Developer/GitHub/work-org/hidden",
-                    "Developer/GitHub/other/repo", "Developer/Personal/notes", "Developer/AzDevOpsShadow"] {
+        for dir in ["Developer/AzDevOps/Devices/Tool", "Developer/AzDevOps/Private/Keys",
+                    "Developer/GitHub/work-org/listed", "Developer/GitHub/work-org/hidden",
+                    "Developer/GitHub/other/repo", "Developer/Personal/notes", "Developer/AzDevOpsShadow",
+                    "Developer/GitHub/mixed/denied-child"] {
             try FileManager.default.createDirectory(at: home.appendingPathComponent(dir), withIntermediateDirectories: true)
         }
     }
@@ -16,16 +18,17 @@ final class AgentFolderPolicyTests: XCTestCase {
 
     private func path(_ relative: String) -> URL { home.appendingPathComponent(relative) }
 
-    private func registry(zone: String? = AgentFolderPolicy.workZone) -> AgentAppsRepoRegistry {
-        AgentAppsRepoRegistry(sections: [.init(name: "Work", repos: [
-            .init(path: path("Developer/GitHub/work-org/listed").path),
-            .init(path: path("Developer/GitHub/work-org/hidden").path, agents: false),
-            .init(path: path("Developer/Personal/notes").path),
-        ])], zone: zone)
+    private var registry: AgentFolderPolicy.WorkRegistry {
+        AgentFolderPolicy.WorkRegistry(agentRepos: [path("Developer/GitHub/work-org/listed").path,
+                                                    path("Developer/GitHub/mixed").path,
+                                                    path("Developer/Personal/notes").path],
+                                       hiddenRepos: [path("Developer/GitHub/work-org/hidden").path])
     }
 
-    private func allows(_ relative: String, registry: AgentAppsRepoRegistry? = nil, denied: [String] = []) -> Bool {
-        AgentFolderPolicy.allows(path(relative), home: home.path, registry: registry ?? self.registry(), denied: denied)
+    private func allows(_ relative: String, registry: AgentFolderPolicy.WorkRegistry?? = .none,
+                        denied: [String] = []) -> Bool {
+        let chosen: AgentFolderPolicy.WorkRegistry? = registry ?? self.registry
+        return AgentFolderPolicy.allows(path(relative), home: home.path, registry: chosen, denied: denied)
     }
 
     func testTheWorkRootAndListedAgentReposAreAllowed() {
@@ -34,40 +37,54 @@ final class AgentFolderPolicyTests: XCTestCase {
         XCTAssertFalse(allows("Developer/GitHub/other/repo"))
     }
 
-    func testARepoNotOfferedToAgentsIsDenied() {
+    func testARepoHiddenFromAgentsIsDeniedAndSoIsItsParent() {
         XCTAssertFalse(allows("Developer/GitHub/work-org/hidden"))
+        let parent = AgentFolderPolicy.WorkRegistry(agentRepos: [path("Developer/GitHub/work-org").path],
+                                                    hiddenRepos: [path("Developer/GitHub/work-org/hidden").path])
+        XCTAssertFalse(allows("Developer/GitHub/work-org", registry: parent), "a parent would expose the hidden repo")
+        XCTAssertTrue(allows("Developer/GitHub/work-org/listed", registry: parent))
     }
 
     func testOnlyAWorkZoneRegistryCounts() {
-        XCTAssertFalse(allows("Developer/GitHub/work-org/listed", registry: registry(zone: "personal")))
-        XCTAssertFalse(allows("Developer/GitHub/work-org/listed", registry: registry(zone: nil)))
-        XCTAssertTrue(allows("Developer/AzDevOps/Devices/Tool", registry: registry(zone: nil)), "the work root still counts")
+        let file = { (zone: String) in
+            Data(#"{"schema_version":1,"app":{"zone":"\#(zone)"},"sections":[{"repos":[{"path":"/x"},{"path":"/y","surfaces":{"agents":false}}]}]}"#.utf8)
+        }
+        XCTAssertEqual(AgentFolderPolicy.workRegistry(from: file(AgentFolderPolicy.workZone)),
+                       AgentFolderPolicy.WorkRegistry(agentRepos: ["/x"], hiddenRepos: ["/y"]))
+        XCTAssertNil(AgentFolderPolicy.workRegistry(from: file("personal")))
+        XCTAssertNil(AgentFolderPolicy.workRegistry(from: Data(#"{"schema_version":2,"app":{"zone":"ecu"}}"#.utf8)))
+        XCTAssertFalse(allows("Developer/GitHub/work-org/listed", registry: .some(nil)))
+        XCTAssertTrue(allows("Developer/AzDevOps/Devices/Tool", registry: .some(nil)), "the work root still counts")
     }
 
-    func testDeniedFoldersWinOverTheRegistry() {
-        XCTAssertFalse(allows("Developer/Personal/notes"))
-        XCTAssertFalse(allows("Developer/GitHub/work-org/listed", denied: [path("Developer/GitHub/work-org").path]))
+    func testDeniedFoldersBlockBothWays() {
+        XCTAssertFalse(allows("Developer/Personal/notes"), "the registry cannot allow a denied folder")
         XCTAssertFalse(allows("Developer/GitHub/work-org/listed", denied: ["~/Developer/GitHub/work-org"]))
+        XCTAssertFalse(allows("Developer/AzDevOps", denied: [path("Developer/AzDevOps/Private").path]),
+                       "a work root with a denied folder inside")
+        XCTAssertTrue(allows("Developer/AzDevOps/Devices/Tool", denied: [path("Developer/AzDevOps/Private").path]))
+        XCTAssertFalse(allows("Developer/GitHub/mixed", denied: [path("Developer/GitHub/mixed/denied-child").path]),
+                       "a registry entry above a denied folder")
+        XCTAssertFalse(allows("Developer"), "above the personal tree")
     }
 
-    func testWholeComponentsCaseInsensitiveAndCanonical() throws {
+    func testWholeComponentsAndCanonicalPaths() {
         XCTAssertFalse(allows("Developer/AzDevOpsShadow"), "not a string prefix")
-        XCTAssertTrue(allows("developer/azdevops/devices/tool"), "case does not matter on APFS")
         XCTAssertFalse(allows("Developer/AzDevOps/../GitHub/other/repo"))
         XCTAssertFalse(allows("Developer/AzDevOps/Missing"), "a folder that cannot be canonicalized is denied")
+        // canonicalPath gives the on-disk spelling, so another case of an
+        // existing folder matches on a volume that folds case, and not on one
+        // that tells case apart.
+        let folds = !AgentFolderPolicy.volumeIsCaseSensitive(path("Developer").pathComponents)
+        XCTAssertEqual(allows("developer/azdevops/devices/tool"), folds)
     }
 
     func testSymlinksAreJudgedByWhereTheyLead() throws {
-        let intoWork = path("Developer/GitHub/other/link-to-work")
-        try FileManager.default.createSymbolicLink(at: intoWork, withDestinationURL: path("Developer/AzDevOps/Devices/Tool"))
-        let outOfWork = path("Developer/AzDevOps/link-to-personal")
-        try FileManager.default.createSymbolicLink(at: outOfWork, withDestinationURL: path("Developer/Personal/notes"))
+        try FileManager.default.createSymbolicLink(at: path("Developer/GitHub/other/link-to-work"),
+                                                   withDestinationURL: path("Developer/AzDevOps/Devices/Tool"))
+        try FileManager.default.createSymbolicLink(at: path("Developer/AzDevOps/link-to-personal"),
+                                                   withDestinationURL: path("Developer/Personal/notes"))
         XCTAssertTrue(allows("Developer/GitHub/other/link-to-work"))
         XCTAssertFalse(allows("Developer/AzDevOps/link-to-personal"))
-    }
-
-    func testTheZoneIsReadFromTheFile() {
-        let json = #"{"schema_version":1,"app":{"zone":"ecu"},"sections":[{"name":"A","repos":[{"path":"/x"}]}]}"#
-        XCTAssertEqual(AgentAppsRepoRegistry.decode(Data(json.utf8))?.zone, "ecu")
     }
 }

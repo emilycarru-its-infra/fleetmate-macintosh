@@ -161,6 +161,12 @@ final class AgentTerminalStore: ObservableObject {
             statusFeed: LaneStatusFeed(sources: [ClaudeAgentsStatusSource()].compactMap { $0 },
                                        presenceSources: [TmuxPresenceSource()]))
         lanes.register(Self.backgroundBackend(folders: laneFolders))
+        // A saved or shared list from before the registry cannot bring back a
+        // session from another app's folders.
+        let scopeFolders = laneFolders
+        lanes.configuration.sessionScope = { @Sendable directory, host in
+            scopeFolders.current.contains(directory: directory, host: host)
+        }
         lanes.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &subscriptions)
         lanes.onNewLane = { [weak self] in self?.open(self?.defaultLaunch ?? .shell) }
         // A notification, the inbox or Jump to Unread brings the terminal up.
@@ -361,7 +367,11 @@ final class AgentTerminalStore: ObservableObject {
     /// Set the folders whose sessions are FleetMate's, and look for Detached
     /// sessions again when they change.
     func updateLaneFolders() {
-        let scope = AgentLaneScope(baseline: workspaceFile.baseline, workspaceRoot: workspace.root.path)
+        // The rendered registry says which folders are this app's. The Repos
+        // workspace is every tracked checkout, so it is only the fallback.
+        let scope = AgentAppsRepoRegistry.loadCurrent().map {
+            AgentLaneScope(registry: $0, hub: AgentHosts.load()?.hub?.name, workspaceRoot: workspace.root.path)
+        } ?? AgentLaneScope(baseline: workspaceFile.baseline, workspaceRoot: workspace.root.path)
         if laneFolders.set(scope) { lanes.sweepForDetachedSessions() }
     }
 
@@ -618,6 +628,7 @@ final class AgentTerminalStore: ObservableObject {
             for saved in section.sessions {
                 let command = saved.command ?? ""
                 let directory = saved.directory.map { TerminalWorkspaceStore.expand($0) }
+                if let directory, !laneFolders.current.contains(directory: directory) { continue }
                 // A repository row resumes when next chosen.
                 if let directory, let (id, _) = rows.first(where: {
                     $0.value.directory == TerminalWorkspaceBaseline.normalized(directory) && $0.value.entryId == saved.id
@@ -706,7 +717,9 @@ final class AgentTerminalStore: ObservableObject {
     /// Add a lane for every Repos workspace session not in the list yet and
     /// take out rows, not yet started, whose session left the workspace.
     private func applyBaselineToList() {
-        let wanted = baselineKeys
+        let scope = laneFolders.current
+        let wanted = Set((workspaceFile.baseline?.sections ?? []).flatMap(\.sessions)
+            .filter { scope.contains(directory: $0.directory) }.compactMap(\.rowKey))
         for (id, row) in rows where !wanted.contains(row.entryId ?? row.directory) && lanes.sessions[id]?.isStarted != true {
             rows.removeValue(forKey: id)
             lanes.close(id)
@@ -722,7 +735,7 @@ final class AgentTerminalStore: ObservableObject {
             if section.collapsed == true, !lanes.layout.sections.contains(name) { lanes.layout.collapsed.insert(name) }
             lanes.addSection(name)
             for saved in section.sessions {
-                guard let directory = saved.directory else { continue }
+                guard let directory = saved.directory, scope.contains(directory: directory) else { continue }
                 let key = TerminalWorkspaceBaseline.normalized(directory)
                 let id = Self.rowID(directory: key, entryId: saved.id)
                 guard rows[id] == nil else { continue }
@@ -794,11 +807,23 @@ final class AgentTerminalStore: ObservableObject {
                 pinned: lanes.layout.pinned.contains(lane.id),
                 command: row.followsDefault ? nil : command(of: lane))
         }
-        let order = lanes.sectionNames
+        // Rows outside this app's registry are not listed, and stay in the
+        // file, so changing the registry back brings them back as they were.
+        let scope = laneFolders.current
+        let kept = (workspaceFile.baseline?.sections ?? []).flatMap { section in
+            section.sessions.compactMap { saved -> TerminalWorkspaceBaseline.Row? in
+                guard let directory = saved.directory, !scope.contains(directory: directory) else { return nil }
+                return TerminalWorkspaceBaseline.Row(id: saved.id, directory: directory, label: saved.label,
+                                                     section: section.name, name: saved.name ?? "",
+                                                     pinned: saved.pinned == true, command: saved.command)
+            }
+        }
+        var order = lanes.sectionNames
+        for row in kept where !order.contains(row.section) { order.append(row.section) }
         let collapsed = lanes.layout.collapsed
         writeWorkspaces { file in
             guard let index = file.baselineIndex else { return }
-            TerminalWorkspaceBaseline.write(out, sections: order, collapsed: collapsed, to: &file.workspaces[index])
+            TerminalWorkspaceBaseline.write(out + kept, sections: order, collapsed: collapsed, to: &file.workspaces[index])
         }
     }
 
@@ -901,7 +926,7 @@ final class LaneFolders: @unchecked Sendable {
 
     /// Whether a session works in one of the folders.
     func contains(_ session: DiscoveredSession) -> Bool {
-        current.contains(directory: session.directory)
+        current.contains(directory: session.directory, host: session.host)
     }
 
     /// Returns whether the folders changed.

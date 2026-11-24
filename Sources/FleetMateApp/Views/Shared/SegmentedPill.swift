@@ -12,6 +12,8 @@ struct SegmentedPill<Value: Hashable>: View {
     /// Fixed segment width for equal-width switches (List / Board). Nil sizes
     /// each segment to its label, for controls whose labels differ in length.
     var segmentWidth: CGFloat? = 56
+    /// Off, every option stays on show however narrow the window.
+    var foldsWhenCompact = true
 
     @Namespace private var pillNS
     @Environment(\.compactModuleToolbar) private var compactToolbar
@@ -19,7 +21,7 @@ struct SegmentedPill<Value: Hashable>: View {
     var body: some View {
         // A narrow window folds a long switch into one pill naming the open
         // segment ("Repos ⌄"), so the window's module tab bar keeps its room.
-        if compactToolbar && options.count > 2 {
+        if foldsWhenCompact && compactToolbar && options.count > 2 {
             PillMenu(selection: $selection, options: options, label: label)
         } else {
             segments

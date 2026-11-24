@@ -43,7 +43,9 @@ public enum AgentFolderPolicy {
 
     /// The answer with the registry read from `registryFile`.
     public static func allows(_ folder: URL, home: String, registryFile: URL?, denied: [String]) -> Bool {
-        let registry = registryFile.flatMap { FileManager.default.contents(atPath: $0.path) }.flatMap(workRegistry(from:))
+        // No valid work registry: no other agent anywhere, the default only.
+        guard let registry = registryFile.flatMap({ FileManager.default.contents(atPath: $0.path) })
+            .flatMap(workRegistry(from:)) else { return false }
         return allows(folder, home: home, registry: registry, denied: denied)
     }
 

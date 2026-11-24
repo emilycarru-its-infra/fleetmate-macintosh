@@ -3920,8 +3920,8 @@ struct ViewModePill: View {
     }
 }
 
-/// A mail icon with Mail's red count badge: a red capsule, white bold digits,
-/// pinned to the icon's top-trailing corner, hidden at zero.
+/// The Inbox toggle: a standard toolbar button, so it takes the system's
+/// glass, with Mail's red count badge on its top-trailing corner.
 struct InboxBadgeButton: View {
     let isSelected: Bool
     let unreadCount: Int
@@ -3930,22 +3930,14 @@ struct InboxBadgeButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: isSelected ? "envelope.fill" : "envelope")
-                .appFont(fixed: 14, weight: isSelected ? .semibold : .regular)
-                .foregroundStyle(isSelected ? .primary : .secondary)
-                .frame(width: 30, height: 24)
-                .background {
-                    if isSelected { Capsule().fill(.primary.opacity(0.15)) }
-                }
+            Label("Inbox", systemImage: isSelected ? "envelope.fill" : "envelope")
                 .overlay(alignment: .topTrailing) {
                     if showBadge && unreadCount > 0 {
                         UnreadBadge(count: unreadCount)
-                            .offset(x: 6, y: -5)
+                            .offset(x: 8, y: -7)
                     }
                 }
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
         .help(unreadCount > 0 ? "Inbox — \(unreadCount) unread" : "Inbox")
         .accessibilityLabel("Inbox")
         .accessibilityValue(unreadCount > 0 ? "\(unreadCount) unread" : "No unread")

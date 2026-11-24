@@ -517,7 +517,7 @@ export SNIPE_API_KEY="your-key"
 
 ### Prerequisites
 
-- macOS 14.0+
+- macOS 26.0+
 - Xcode 15.0+ or Swift 5.9+ toolchain
 - Command Line Tools
 
@@ -569,7 +569,7 @@ FleetMate for macOS maintains feature parity with the Windows C# version:
 | Credential Storage | Keychain | Registry |
 | Config Format | YAML/Env | YAML/Env/.env |
 | GUI | SwiftUI (planned) | WPF (available) |
-| Platform | macOS 14+ | Windows 10+ |
+| Platform | macOS 26+ | Windows 10+ |
 
 ## License
 

@@ -3,7 +3,7 @@ import FleetMateCore
 
 /// Every comment that notified the signed-in person, across all tickets,
 /// newest first, as the Tickets sidebar. Laid out like Mail's message list:
-/// controls in the column's toolbar, status in a footer, three-line rows.
+/// the filter in the column's toolbar and three-line rows.
 struct TicketInboxView: View {
     @ObservedObject var inbox: TicketInboxModel
     var requiresSignIn = false
@@ -27,21 +27,11 @@ struct TicketInboxView: View {
             .frame(minWidth: 340, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .safeAreaInset(edge: .bottom, spacing: 0) { footer }
             .toolbar {
-                ToolbarItemGroup {
+                ToolbarItem {
                     Toggle(isOn: $showUnreadOnly) {
-                        Label("Unread Only", systemImage: "line.3.horizontal.decrease.circle")
+                        Label("Unread Only", systemImage: "line.3.horizontal.decrease")
                     }
                     .help(showUnreadOnly ? "Show all comments" : "Show only unread comments")
-                    Button { inbox.markAllRead() } label: {
-                        Label("Mark All as Read", systemImage: "envelope.open")
-                    }
-                    .disabled(inbox.unreadCount == 0)
-                    .help("Mark all as read")
-                    Button(action: onRefresh) {
-                        Label("Check for New Comments", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(inbox.isScanning)
-                    .help("Check for new comments")
                 }
             }
     }
@@ -80,6 +70,8 @@ struct TicketInboxView: View {
                         } else {
                             Button("Mark as Read") { inbox.markRead(item) }
                         }
+                        Button("Mark All as Read") { inbox.markAllRead() }
+                            .disabled(inbox.unreadCount == 0)
                         Divider()
                         Button("Copy Ticket Number") {
                             NSPasteboard.general.clearContents()
@@ -87,7 +79,7 @@ struct TicketInboxView: View {
                         }
                     }
             }
-            .listStyle(.inset)
+            .listStyle(.sidebar)
             .onChange(of: selectedItemId) { _, id in
                 guard let id, let item = items.first(where: { $0.id == id }) else { return }
                 inbox.markTicketOpened(item.ticketId)
@@ -102,24 +94,21 @@ struct TicketInboxView: View {
         }
     }
 
-    /// Mail's footer: one quiet line of status under the list.
+    /// Shown only while checking or after a failure; a quiet inbox needs no status.
+    @ViewBuilder
     private var footer: some View {
-        VStack(spacing: 0) {
-            Divider()
+        if inbox.isScanning || inbox.errorMessage != nil {
             HStack(spacing: 6) {
-                if let progress = inbox.progress, progress.total > 0 {
+                if inbox.isScanning {
                     ProgressView().controlSize(.mini)
-                    Text("Checking \(progress.done) of \(progress.total) tickets").monospacedDigit()
-                } else if inbox.isScanning {
-                    ProgressView().controlSize(.mini)
-                    Text("Checking for new comments")
+                    if let progress = inbox.progress, progress.total > 0 {
+                        Text("Checking \(progress.done) of \(progress.total) tickets").monospacedDigit()
+                    } else {
+                        Text("Checking for new comments")
+                    }
                 } else if let error = inbox.errorMessage {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     Text(error).lineLimit(1).truncationMode(.tail).help(error)
-                } else if showUnreadOnly {
-                    Text("Filtered by Unread · \(inbox.unreadCount) unread")
-                } else {
-                    Text(inbox.unreadCount == 0 ? "No unread comments" : "\(inbox.unreadCount) unread")
                 }
             }
             .appFont(.caption)
@@ -128,7 +117,6 @@ struct TicketInboxView: View {
             .padding(.vertical, 6)
             .padding(.horizontal, 10)
         }
-        .background(.bar)
     }
 }
 

@@ -135,6 +135,19 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
     }
 }
 
+/// When the files that decide the app's repositories last changed, so a
+/// running app notices that an outside tool rewrote one of them.
+public struct RegistryStamp: Equatable, Sendable {
+    private var dates: [Date?]
+
+    /// The modification date of each file, in order; nil for one that is missing.
+    public init(files: [String?]) {
+        dates = files.map { path in
+            path.flatMap { try? FileManager.default.attributesOfItem(atPath: $0)[.modificationDate] as? Date }
+        }
+    }
+}
+
 /// A rank for each repository in the one repository order, so lists keyed by
 /// folder or by `Project/Repo` can follow it.
 public struct RepositoryOrderRank: Equatable, Sendable {

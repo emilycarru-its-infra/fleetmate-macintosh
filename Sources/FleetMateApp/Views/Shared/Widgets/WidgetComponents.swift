@@ -156,8 +156,17 @@ struct WidgetRowLayout: Layout {
 
     private struct Placement { var index: Int; var x: CGFloat; var y: CGFloat; var width: CGFloat; var rowHeight: CGFloat = 0 }
 
-    private func arrange(width: CGFloat, subviews: Subviews) -> (placements: [Placement], height: CGFloat) {
+    /// A usable width: a scroll view can propose nil, infinity or a huge
+    /// value, and converting that to Int traps. Fall back to one unit per card.
+    private func usableWidth(_ proposed: CGFloat?, count: Int) -> CGFloat {
+        let natural = CGFloat(max(count, 1)) * (minUnitWidth + spacing)
+        guard let proposed, proposed.isFinite, proposed >= 0, proposed < 1_000_000 else { return natural }
+        return proposed
+    }
+
+    private func arrange(width proposed: CGFloat, subviews: Subviews) -> (placements: [Placement], height: CGFloat) {
         guard !subviews.isEmpty else { return ([], 0) }
+        let width = usableWidth(proposed, count: subviews.count)
         let rawSpans = subviews.map { max(1, $0[WidgetSpan.self]) }
         let unitsPerRow = wraps
             ? max(1, Int((width + spacing) / (minUnitWidth + spacing)))
@@ -187,7 +196,7 @@ struct WidgetRowLayout: Layout {
     }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? CGFloat(subviews.count) * (minUnitWidth + spacing)
+        let width = usableWidth(proposal.width, count: subviews.count)
         return CGSize(width: width, height: arrange(width: width, subviews: subviews).height)
     }
 

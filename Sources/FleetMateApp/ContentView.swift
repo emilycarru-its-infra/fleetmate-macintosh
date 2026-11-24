@@ -74,7 +74,7 @@ struct ContentView: View {
                 // is this app's.
                 AgentsMainToolbar(
                     agent: AppEdition.current.isTicketsOnly ? nil
-                        : AgentsToolbarAgent(isOn: terminals.isShowing) {
+                        : AgentsToolbarAgent(isOn: terminals.isShowing, store: terminals.lanes) {
                             terminals.toggle(defaultLaunch: appState.agentDefaultLaunch)
                         },
                     history: AgentsToolbarHistory(canGoBack: appState.canGoBack, canGoForward: appState.canGoForward,

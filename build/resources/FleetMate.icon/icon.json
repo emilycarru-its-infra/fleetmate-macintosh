@@ -1,71 +1,223 @@
 {
-  "fill" : {
-    "linear-gradient" : [
-      "extended-srgb:0.00000,0.53333,1.00000,1.00000",
-      "display-p3:0.15508,0.35831,0.64504,1.00000"
-    ],
-    "orientation" : {
-      "start" : {
-        "x" : 0.5,
-        "y" : 0
-      },
-      "stop" : {
-        "x" : 0.5,
-        "y" : 0.7
+  "color-space-for-untagged-svg-colors" : "display-p3",
+  "fill-specializations" : [
+    {
+      "value" : {
+        "linear-gradient" : [
+          "extended-srgb:0.00000,0.53333,1.00000,1.00000",
+          "display-p3:0.15508,0.35831,0.64504,1.00000"
+        ],
+        "orientation" : {
+          "start" : {
+            "x" : 0.5,
+            "y" : 0
+          },
+          "stop" : {
+            "x" : 0.5,
+            "y" : 0.7
+          }
+        }
       }
+    },
+    {
+      "appearance" : "dark",
+      "value" : "automatic"
     }
-  },
+  ],
   "groups" : [
     {
       "layers" : [
         {
-          "hidden" : false,
-          "image-name" : "frame.png",
-          "name" : "frame",
-          "position-specializations" : [
+          "fill-specializations" : [
             {
-              "idiom" : "square",
               "value" : {
-                "scale" : 0.5,
-                "translation-in-points" : [
-                  14.796875,
-                  0
+                "linear-gradient" : [
+                  "display-p3:0.79437,0.90126,1.00000,1.00000",
+                  "display-p3:0.66258,0.75174,0.83411,1.00000"
                 ]
               }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.00000,0.00000,0.00000,1.00000",
+                  "display-p3:0.06216,0.25287,0.42670,1.00000"
+                ]
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "display-p3:1.00000,1.00000,1.00000,1.00000"
+              }
             }
-          ]
+          ],
+          "image-name" : "phone-screen.svg",
+          "name" : "phone-screen",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              8,
+              -7
+            ]
+          }
         },
         {
-          "image-name" : "fleetmate 2.png",
-          "name" : "fleetmate 2",
-          "position-specializations" : [
+          "fill-specializations" : [
             {
-              "idiom" : "square",
               "value" : {
-                "scale" : 0.51,
-                "translation-in-points" : [
-                  281.71859429518315,
-                  99.875
+                "linear-gradient" : [
+                  "display-p3:1.00000,1.00000,1.00000,1.00000",
+                  "display-p3:0.86000,0.90000,0.95000,1.00000"
                 ]
               }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.36000,0.71000,0.92000,1.00000",
+                  "display-p3:0.08000,0.43000,0.78000,1.00000"
+                ]
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "display-p3:1.00000,1.00000,1.00000,1.00000"
+              }
             }
-          ]
+          ],
+          "image-name" : "phone.svg",
+          "name" : "phone",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              8,
+              -7
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "none",
+        "opacity" : 0
+      },
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    },
+    {
+      "layers" : [
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.79437,0.90126,1.00000,1.00000",
+                  "display-p3:0.66258,0.75174,0.83411,1.00000"
+                ]
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.00000,0.00000,0.00000,1.00000",
+                  "display-p3:0.06216,0.25287,0.42670,1.00000"
+                ]
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "display-p3:1.00000,1.00000,1.00000,1.00000"
+              }
+            }
+          ],
+          "image-name" : "screen.svg",
+          "name" : "screen",
+          "position" : {
+            "scale" : 1.1,
+            "translation-in-points" : [
+              47.795000000000016,
+              19.524999999999864
+            ]
+          }
         },
         {
-          "image-name" : "fleetmate.png",
-          "name" : "fleetmate",
-          "position-specializations" : [
+          "fill-specializations" : [
             {
-              "idiom" : "square",
               "value" : {
-                "scale" : 0.5,
-                "translation-in-points" : [
-                  -43.44897927331533,
-                  -97.875
+                "linear-gradient" : [
+                  "display-p3:1.00000,1.00000,1.00000,1.00000",
+                  "display-p3:0.86000,0.90000,0.95000,1.00000"
                 ]
               }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.36000,0.71000,0.92000,1.00000",
+                  "display-p3:0.08000,0.43000,0.78000,1.00000"
+                ]
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "display-p3:1.00000,1.00000,1.00000,1.00000"
+              }
             }
-          ]
+          ],
+          "image-name" : "display.svg",
+          "name" : "display",
+          "position" : {
+            "scale" : 1.1,
+            "translation-in-points" : [
+              47.795000000000016,
+              19.524999999999864
+            ]
+          }
+        },
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.93000,0.95000,0.98000,1.00000",
+                  "display-p3:0.80000,0.85000,0.92000,1.00000"
+                ]
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.09556,0.19296,0.26308,1.00000",
+                  "display-p3:0.19577,0.51718,0.79449,1.00000"
+                ]
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "display-p3:1.00000,1.00000,1.00000,1.00000"
+              }
+            }
+          ],
+          "image-name" : "stand.svg",
+          "name" : "stand",
+          "position" : {
+            "scale" : 1.1,
+            "translation-in-points" : [
+              47.795000000000016,
+              -0.8249999999999318
+            ]
+          }
         }
       ],
       "shadow" : {
@@ -73,15 +225,14 @@
         "opacity" : 0.5
       },
       "translucency" : {
-        "enabled" : true,
+        "enabled" : false,
         "value" : 0.5
       }
     }
   ],
   "supported-platforms" : {
-    "circles" : [
-      "watchOS"
-    ],
-    "squares" : "shared"
+    "squares" : [
+      "macOS"
+    ]
   }
 }

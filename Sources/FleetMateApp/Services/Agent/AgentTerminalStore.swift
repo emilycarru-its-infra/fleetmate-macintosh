@@ -322,7 +322,7 @@ final class AgentTerminalStore: ObservableObject {
         if program.hasPrefix("codex") {
             return TmuxLaneSessions(prefixes: ["cx-"], isRelevant: { @Sendable session in
                 session.name.hasPrefix("cx-") && folders.contains(session)
-            })
+            }, sessionName: TmuxLaneSessions.folderSessionName(prefix: "cx-"))
         }
         return TmuxLaneSessions(isRelevant: { @Sendable session in
                                     !session.name.hasPrefix("cx-") && folders.contains(session)
@@ -828,7 +828,7 @@ final class AgentTerminalStore: ObservableObject {
     }
 
     private var registryWatch: Timer?
-    private var registryModified: Date?
+    private var registryModified: RegistryStamp?
 
     /// Sync again whenever the repository registry changes.
     private func watchRegistry() {
@@ -843,8 +843,11 @@ final class AgentTerminalStore: ObservableObject {
         }
     }
 
-    private func registryModificationDate() -> Date? {
-        (try? FileManager.default.attributesOfItem(atPath: RepoRegistryStore.defaultRegistryPath))?[.modificationDate] as? Date
+    /// The tracked repositories' registry and the rendered agent-apps
+    /// registry, which decides the folders whose sessions are FleetMate's. The
+    /// second is written by another tool, so a running app must follow it.
+    private func registryModificationDate() -> RegistryStamp {
+        RegistryStamp(files: [RepoRegistryStore.defaultRegistryPath, AgentAppsRepoRegistry.currentPath])
     }
 
     /// Rebuild the Repos workspace from the checkouts now, keeping its name

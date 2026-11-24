@@ -94,6 +94,13 @@ if [ ! -f "${CONTENTS_DIR}/Info.plist" ]; then
 PLIST
 fi
 
+# The AgentsMate revision this build uses, so the app can report it.
+AGENTSMATE_COMMIT="$(sed -n 's/.*agentsmate\.git", revision: "\([0-9a-f]*\)".*/\1/p' Package.swift | head -1)"
+if [ -n "$AGENTSMATE_COMMIT" ]; then
+    /usr/libexec/PlistBuddy -c "Delete :AgentsMateCommit" "${CONTENTS_DIR}/Info.plist" 2>/dev/null || true
+    /usr/libexec/PlistBuddy -c "Add :AgentsMateCommit string $AGENTSMATE_COMMIT" "${CONTENTS_DIR}/Info.plist"
+fi
+
 # Create a simple app icon if none exists
 if [ ! -f "${RESOURCES_DIR}/AppIcon.icns" ]; then
     echo "📎 Note: No AppIcon.icns found. Add one to ${RESOURCES_DIR}/ for a custom icon."

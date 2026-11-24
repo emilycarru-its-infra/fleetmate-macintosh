@@ -18,6 +18,7 @@ struct ContentView: View {
     @State private var showAuthPopover = false
     @ObservedObject private var terminals: AgentTerminalStore
     @ObservedObject private var repoOrdering = RepositoryOrdering.shared
+    @Environment(\.appFontScale) private var fontScale
 
     init(terminals: AgentTerminalStore) {
         self.terminals = terminals
@@ -59,60 +60,37 @@ struct ContentView: View {
             // the tab, the Agent dock included.
             .modifier(LightboxHost(appState: appState))
             .frame(minWidth: 500, minHeight: 400)
-            // A preference read through a background GeometryReader stopped
-            // updating once the window had been narrowed, so widening it
-            // again left the toolbar compact. Observe the geometry directly.
-            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { windowWidth = $0 }
-            .background(ToolbarPriorityBridge())
-            .background(PinnedSearchTitlebar(appState: appState, width: windowWidth < 1200 ? 240 : 320))
+            // The window's width for the tab bar, the toolbar items' ranking,
+            // and the search field pinned to the title bar: AgentsMate's.
+            .agentsMainWindowChrome(windowWidth: $windowWidth,
+                                    extraItemLabels: ["Graphs", "Recent Activity", "Authentication", "Service Principal"]) { width in
+                GlobalSearchToolbarField(width: width)
+                    .environmentObject(appState)
+                    .appFontScale(fontScale)
+            }
             .toolbar {
-                // Agent is the app's core action, so it sits at the far left,
-                // ahead of history, on every tab.
-                if !AppEdition.current.isTicketsOnly {
-                    if #available(macOS 26.0, *) {
-                        ToolbarItem(placement: .navigation) {
-                            AgentModeToolbarToggle(terminals: terminals, defaultLaunch: appState.agentDefaultLaunch)
-                        }
-                        // Its own glass button, not one more chip in a shared group.
-                        .sharedBackgroundVisibility(.hidden)
-                    } else {
-                        ToolbarItem(placement: .navigation) {
-                            AgentModeToolbarToggle(terminals: terminals, defaultLaunch: appState.agentDefaultLaunch)
-                        }
-                    }
-                }
-                // Browser-style history, mirrored on ⌘[ / ⌘].
-                ToolbarItemGroup(placement: .navigation) {
-                    Button {
-                        appState.goBack()
-                    } label: {
-                        Label("Back", systemImage: "chevron.left")
-                    }
-                    .help("Back (⌘[)")
-                    .disabled(!appState.canGoBack)
-                    Button {
-                        appState.goForward()
-                    } label: {
-                        Label("Forward", systemImage: "chevron.right")
-                    }
-                    .help("Forward (⌘])")
-                    .disabled(!appState.canGoForward)
-                }
-                // A single tab needs no tab bar.
-                if availableTabs.count > 1 {
-                    ToolbarItem(placement: .principal) {
-                        GlassTabBar(selectedTab: $appState.selectedTab, tabs: availableTabs, onSelect: { terminals.hide() }, availableWidth: windowWidth)
-                    }
-                }
+                // Agent, history, the tabs and the right-hand spacer are
+                // AgentsMate's, the same in every app; what follows the spacer
+                // is this app's.
+                AgentsMainToolbar(
+                    agent: AppEdition.current.isTicketsOnly ? nil
+                        : AgentsToolbarAgent(isOn: terminals.isShowing, store: terminals.lanes) {
+                            terminals.toggle(defaultLaunch: appState.agentDefaultLaunch)
+                        },
+                    history: AgentsToolbarHistory(canGoBack: appState.canGoBack, canGoForward: appState.canGoForward,
+                                              backShortcut: "⌘[", forwardShortcut: "⌘]",
+                                                  goBack: { appState.goBack() }, goForward: { appState.goForward() }),
+                    tabs: availableTabs.enumerated().map { index, tab in
+                        CollapsingTab(id: tab, title: tab.rawValue, systemImage: tab.icon,
+                                      shortcut: index < 9 ? "⌘\(index + 1)" : nil)
+                    },
+                    selection: $appState.selectedTab,
+                    windowWidth: windowWidth,
+                    onSelect: { terminals.hide() }
+                ) {
                 // The authentication shield belongs to the window, not to the
                 // Dashboard: auth is what breaks any tab, so it has to be
                 // checkable from whichever tab is showing the breakage.
-                // Push every trailing control to the window's right edge.
-                // Without it they sat right after the centred tab bar, leaving
-                // the right of the toolbar empty and search short of the edge.
-                if #available(macOS 26.0, *) {
-                    ToolbarSpacer(.flexible, placement: .primaryAction)
-                }
                 // Graphs, recents and sign-in belong to the tabs, so Agents mode
                 // leaves them out and they return when it ends.
                 if selectedTab.hasWidgets, !inAgentsMode {
@@ -162,6 +140,7 @@ struct ContentView: View {
                         .labelStyle(.iconOnly)
                         .help("One or more systems are logged in as a Service Principal")
                     }
+                }
                 }
             }
             .environment(\.compactModuleToolbar, windowWidth < Self.compactModuleToolbarBelow)
@@ -287,8 +266,7 @@ struct ContentView: View {
 
     /// The agent symbol where the system has it (macOS 15.1 and later),
     /// sparkles before that.
-    static let agentSymbol = NSImage(systemSymbolName: "apple.intelligence", accessibilityDescription: nil) != nil
-        ? "apple.intelligence" : "sparkles"
+    static let agentSymbol = AgentsToolbar.agentSymbol
 
     @ViewBuilder
     private var tabContent: some View {

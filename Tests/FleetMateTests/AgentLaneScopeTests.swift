@@ -74,4 +74,27 @@ final class AgentLaneScopeTests: XCTestCase {
         XCTAssertTrue(scope.contains(directory: "\(home)/Code", host: "other"))
         XCTAssertFalse(scope.contains(directory: "\(home)/Code/Devices/Agent", host: "other"))
     }
+
+    func testAFolderEntryCountsOnlyAsItselfAndARepositoryEntryWithItsWorktrees() {
+        let registry = AgentAppsRepoRegistry(sections: [
+            .init(name: "Boards", repos: [
+                .init(path: "\(home)/Work/Projects", host: "hub", kind: "repo"),
+                .init(path: "\(home)/Work", host: "hub", kind: "folder"),
+                .init(path: "\(home)/Work/Hidden", agents: false, host: "hub", kind: "folder"),
+                .init(path: "C:/Lanes", host: "win", kind: "folder"),
+                .init(path: "C:/Repos/App", host: "win", kind: "repo"),
+            ]),
+        ])
+        let scope = AgentLaneScope(registry: registry, hub: "hub", workspaceRoot: nil)
+        XCTAssertTrue(scope.contains(directory: "\(home)/Work", host: nil), "the folder itself")
+        XCTAssertTrue(scope.contains(directory: "\(home)/Work/Projects", host: "hub"))
+        XCTAssertTrue(scope.contains(directory: "\(home)/Work/Projects/.worktrees/x", host: nil))
+        XCTAssertFalse(scope.contains(directory: "\(home)/Work/Other", host: nil), "a folder entry does not pull in its children")
+        XCTAssertFalse(scope.contains(directory: "\(home)/Work/Other/.worktrees/x", host: nil))
+        XCTAssertFalse(scope.contains(directory: "\(home)/Work/Hidden", host: nil), "agents off")
+        XCTAssertTrue(scope.contains(directory: "C:/Lanes", host: "win"))
+        XCTAssertFalse(scope.contains(directory: "C:/Lanes/sub", host: "win"))
+        XCTAssertFalse(scope.contains(directory: "C:/Lanes", host: nil), "that folder is on the other host")
+        XCTAssertTrue(scope.contains(directory: "C:/Repos/App/.worktrees/a", host: "win"))
+    }
 }

@@ -22,6 +22,14 @@ endif
 endif
 endif
 
+# Record the SDK the app is built with, not the deployment target. SwiftPM
+# writes the minimum OS as the SDK version in LC_BUILD_VERSION, and AppKit
+# decides the window chrome from it: a binary that claims an older SDK gets
+# that release's look (Tahoe's refracting toolbar) instead of the current one.
+MIN_MACOS := 26.0
+SDK_VERSION := $(shell xcrun --sdk macosx --show-sdk-version 2>/dev/null)
+SDK_LINK_FLAGS := $(if $(SDK_VERSION),-Xlinker -platform_version -Xlinker macos -Xlinker $(MIN_MACOS) -Xlinker $(SDK_VERSION))
+
 # Configuration
 BINARY_NAME := fleetmate
 BUILD_DIR := .build
@@ -164,7 +172,7 @@ build:
 # Build release binary (optimized)
 release:
 	@echo "$(BLUE)Building release binary...$(NC)"
-	swift build -c release --product fleetmate
+	swift build -c release --product fleetmate $(SDK_LINK_FLAGS)
 	@REAL_BIN_PATH=$$(swift build -c release --show-bin-path)/$(BINARY_NAME); \
 	echo "$(GREEN)✓ Release build complete: $$REAL_BIN_PATH$(NC)"; \
 	file "$$REAL_BIN_PATH"
@@ -253,7 +261,7 @@ build-app:
 # Build release app and assemble .app bundle
 release-app:
 	@echo "$(BLUE)Building release app binary...$(NC)"
-	swift build -c release --product $(APP_PRODUCT_NAME)
+	swift build -c release --product $(APP_PRODUCT_NAME) $(SDK_LINK_FLAGS)
 	@REAL_BIN_PATH=$$(swift build -c release --show-bin-path)/$(APP_PRODUCT_NAME); \
 	echo "$(GREEN)✓ App binary built: $$REAL_BIN_PATH$(NC)"; \
 	echo "$(BLUE)Assembling .app bundle...$(NC)"; \

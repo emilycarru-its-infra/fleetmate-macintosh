@@ -16,6 +16,8 @@ enum TicketSortField: String, CaseIterable {
 enum TicketViewMode: String, CaseIterable {
     case table = "Table"
     case board = "Board"
+    /// The comments that notified you, in place of the list, beside the ticket.
+    case inbox = "Inbox"
 }
 
 // MARK: - Date Range Preset
@@ -237,8 +239,7 @@ struct TicketsView: View {
 
     // View mode
     @State private var viewMode: TicketViewMode = .table
-    /// The Inbox sidebar opens expanded until it is collapsed, then stays as left.
-    @AppStorage("tickets.inboxSidebarVisible") private var showInboxSidebar = true
+    @AppStorage(TicketInboxView.unreadOnlyKey) private var inboxUnreadOnly = false
     @State private var boardGroupBy: BoardGroupBy = .responsible
 
     // Detail editing state
@@ -696,27 +697,6 @@ struct TicketsView: View {
     // MARK: - Body
 
     var body: some View {
-        NavigationSplitView(columnVisibility: Binding(
-            get: { showInboxSidebar ? .all : .detailOnly },
-            set: { showInboxSidebar = $0 != .detailOnly }
-        )) {
-            TicketInboxView(
-                inbox: appState.ticketInbox,
-                requiresSignIn: appState.requiresTdxSsoLogin,
-                openTicketId: selectedId,
-                onRefresh: { startInbox(scanNow: true) },
-                onSelect: { item in selectedTicketIds = [item.ticketId] }
-            )
-            .navigationSplitViewColumnWidth(min: 300, ideal: 380, max: 600)
-            // The envelope is the toggle: it carries the unread badge.
-            .toolbar(removing: .sidebarToggle)
-            .onAppear { startInbox(scanNow: false) }
-        } detail: {
-            ticketsWorkspace
-        }
-    }
-
-    private var ticketsWorkspace: some View {
         VStack(alignment: .leading, spacing: 0) {
             // No header — everything in toolbar
             if appState.config.isTdxConfigured {
@@ -847,7 +827,7 @@ struct TicketsView: View {
         }
         .onAppCommand { command in
             switch command {
-            case .refresh:       refreshTickets()
+            case .refresh:       refreshCurrentView()
             case .newItem:       showCreateTicket = true
             case .toggleFilters: showFilters.toggle()
             case .clearFilters:
@@ -856,7 +836,7 @@ struct TicketsView: View {
                 resetToCurrentTerm()
             case .showListView:  viewMode = .table
             case .showBoardView: viewMode = .board
-            case .showInbox:     showInboxSidebar.toggle()
+            case .showInbox:     viewMode = .inbox
             case .find:          break  // the toolbar search field takes it
             case .scan, .selectOnline: break
             }
@@ -865,8 +845,17 @@ struct TicketsView: View {
         .task(id: searchText) { await resolveRequestorHits() }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
-                TicketInboxToolbarButton(inbox: appState.ticketInbox, isVisible: $showInboxSidebar)
+                TicketInboxToolbarButton(inbox: appState.ticketInbox, isSelected: viewMode == .inbox) {
+                    viewMode = viewMode == .inbox ? .table : .inbox
+                }
                 ViewModePill(selection: $viewMode)
+
+                if viewMode == .inbox {
+                    Toggle(isOn: $inboxUnreadOnly) {
+                        Label("Unread Only", systemImage: "line.3.horizontal.decrease")
+                    }
+                    .help(inboxUnreadOnly ? "Show all comments" : "Show only unread comments")
+                }
 
                 if viewMode == .board {
                     // A menu-style Picker in the toolbar draws an empty
@@ -951,7 +940,7 @@ struct TicketsView: View {
                     .environmentObject(appState)
                 }
 
-                Button(action: refreshTickets) {
+                Button(action: refreshCurrentView) {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .disabled(isLoading)
@@ -995,6 +984,8 @@ struct TicketsView: View {
                 )
                 Spacer()
             }
+        } else if viewMode == .inbox {
+            ticketsInboxView
         } else if let stage = appState.tdxSignInStage, appState.cachedTickets.isEmpty {
             VStack(spacing: 8) {
                 ProgressView(value: stage.fraction)
@@ -1025,6 +1016,8 @@ struct TicketsView: View {
                 ticketsTableView
             case .board:
                 ticketsBoardView
+            case .inbox:
+                ticketsInboxView
             }
         }
     }
@@ -1091,6 +1084,28 @@ struct TicketsView: View {
     }
 
     // MARK: - Inbox
+
+    /// Refresh reloads the tickets, and in Inbox mode checks for new comments too.
+    private func refreshCurrentView() {
+        refreshTickets()
+        if viewMode == .inbox { startInbox(scanNow: true) }
+    }
+
+    /// Inbox mode: the comments in the list's place, the ticket beside them.
+    private var ticketsInboxView: some View {
+        DetailSplitView(fraction: $detailFraction, showsDetail: selectedTicket != nil) {
+            TicketInboxView(
+                inbox: appState.ticketInbox,
+                requiresSignIn: appState.requiresTdxSsoLogin,
+                openTicketId: selectedId,
+                onSelect: { item in selectedTicketIds = [item.ticketId] }
+            )
+            .onAppear { startInbox(scanNow: false) }
+        } trailing: {
+            detailSidebarView
+                .background(Color(nsColor: .windowBackgroundColor))
+        }
+    }
 
     /// Start the inbox once the signed-in person is known. It keeps
     /// refreshing on its own after that.
@@ -3897,12 +3912,11 @@ struct TicketStatusBadge: View {
 struct TicketInboxToolbarButton: View {
     @AppStorage(InboxBadge.settingKey) private var showInboxBadges: Bool = InboxBadge.defaultValue()
     @ObservedObject var inbox: TicketInboxModel
-    @Binding var isVisible: Bool
+    let isSelected: Bool
+    let action: () -> Void
 
     var body: some View {
-        InboxBadgeButton(isSelected: isVisible, unreadCount: inbox.unreadCount, showBadge: showInboxBadges) {
-            isVisible.toggle()
-        }
+        InboxBadgeButton(isSelected: isSelected, unreadCount: inbox.unreadCount, showBadge: showInboxBadges, action: action)
     }
 }
 
@@ -3920,8 +3934,8 @@ struct ViewModePill: View {
     }
 }
 
-/// A mail icon with Mail's red count badge: a red capsule, white bold digits,
-/// pinned to the icon's top-trailing corner, hidden at zero.
+/// The Inbox toggle: a standard toolbar button, so it takes the system's
+/// glass, with Mail's red count badge on its top-trailing corner.
 struct InboxBadgeButton: View {
     let isSelected: Bool
     let unreadCount: Int
@@ -3929,23 +3943,17 @@ struct InboxBadgeButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Image(systemName: isSelected ? "envelope.fill" : "envelope")
-                .appFont(fixed: 14, weight: isSelected ? .semibold : .regular)
-                .foregroundStyle(isSelected ? .primary : .secondary)
-                .frame(width: 30, height: 24)
-                .background {
-                    if isSelected { Capsule().fill(.primary.opacity(0.15)) }
-                }
+        // A toggle, like Assigned to Me, so the toolbar shows when the Inbox is on.
+        Toggle(isOn: Binding(get: { isSelected }, set: { _ in action() })) {
+            Label("Inbox", systemImage: isSelected ? "envelope.fill" : "envelope")
                 .overlay(alignment: .topTrailing) {
                     if showBadge && unreadCount > 0 {
                         UnreadBadge(count: unreadCount)
-                            .offset(x: 6, y: -5)
+                            .offset(x: 8, y: -7)
                     }
                 }
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .toggleStyle(.button)
         .help(unreadCount > 0 ? "Inbox — \(unreadCount) unread" : "Inbox")
         .accessibilityLabel("Inbox")
         .accessibilityValue(unreadCount > 0 ? "\(unreadCount) unread" : "No unread")

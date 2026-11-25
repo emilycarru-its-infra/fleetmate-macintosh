@@ -17,8 +17,13 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
         public var host: String?
         /// `repo`, or `folder` for a lane on a directory that is not a repository.
         public var kind: String?
+        /// Whether another app lists the same repository, so a session in it
+        /// can be seen in more than one app; false unless the file says so.
+        public var shared: Bool
 
-        public init(path: String, name: String? = nil, agents: Bool = true, host: String? = nil, kind: String? = nil) {
+        public init(path: String, name: String? = nil, agents: Bool = true, host: String? = nil, kind: String? = nil,
+                    shared: Bool = false) {
+            self.shared = shared
             self.path = path
             self.name = name
             self.agents = agents
@@ -109,7 +114,7 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
     /// Nil for a file of another schema, or one that lists no repositories.
     public static func decode(_ data: Data) -> AgentAppsRepoRegistry? {
         struct Surfaces: Decodable { var agents: Bool? }
-        struct RawRepo: Decodable { var path: String?; var name: String?; var surfaces: Surfaces?; var host: String?; var kind: String? }
+        struct RawRepo: Decodable { var path: String?; var name: String?; var surfaces: Surfaces?; var host: String?; var kind: String?; var shared: Bool? }
         struct RawSection: Decodable { var name: String?; var repos: [RawRepo]? }
         struct RawApp: Decodable { var zone: String? }
         struct RawFile: Decodable {
@@ -122,11 +127,25 @@ public struct AgentAppsRepoRegistry: Equatable, Sendable {
         let sections: [Section] = (raw.sections ?? []).map { section in
             Section(name: section.name ?? "", repos: (section.repos ?? []).compactMap { repo in
                 guard let path = repo.path?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty else { return nil }
-                return Repo(path: path, name: repo.name, agents: repo.surfaces?.agents ?? true, host: repo.host, kind: repo.kind)
+                return Repo(path: path, name: repo.name, agents: repo.surfaces?.agents ?? true, host: repo.host, kind: repo.kind,
+                            shared: repo.shared ?? false)
             })
         }
         let registry = AgentAppsRepoRegistry(sections: sections, zone: raw.app?.zone)
         return registry.orderedPaths.isEmpty ? nil : registry
+    }
+
+    /// Whether `directory` is in a repository the file marks `shared`: the
+    /// repository's folder, or a worktree under its `.worktrees` or
+    /// `.claude/worktrees` folder. False for a folder the file does not list.
+    public func isShared(directory: String?) -> Bool {
+        guard let directory, !directory.isEmpty else { return false }
+        let folder = AgentRepoList.normalized(directory)
+        return sections.flatMap(\.repos).contains { repo in
+            guard repo.shared else { return false }
+            let root = AgentRepoList.normalized(repo.path)
+            return folder == root || folder.hasPrefix(root + "/.worktrees/") || folder.hasPrefix(root + "/.claude/worktrees/")
+        }
     }
 
     private static func unique(_ paths: [String]) -> [String] {

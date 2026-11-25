@@ -156,7 +156,13 @@ final class AgentTerminalStore: ObservableObject {
                                  hostSessions: HostSessionsConfiguration(bindingsCommand: "agent-lane-bindings"),
                                  // One heading per repository, in the rendered
                                  // registry's order until the person sets their own.
-                                 defaultRepositoryOrder: AgentAppsRepoRegistry.loadCurrent()?.orderedPaths ?? []),
+                                 defaultRepositoryOrder: AgentAppsRepoRegistry.loadCurrent()?.orderedPaths ?? [],
+                                 // A lane in a repository the registry marks shared can be
+                                 // listed by another app too; only the app the person last
+                                 // worked in notifies about it.
+                                 isLaneShared: { lane in
+                                     AgentAppsRepoRegistry.loadCurrent()?.isShared(directory: lane.directory?.path) ?? false
+                                 }),
             backends: [CommandLaneBackend(id: Self.followsDefaultID, displayName: "Default Agent", command: "")],
             statusFeed: LaneStatusFeed(sources: [ClaudeAgentsStatusSource()].compactMap { $0 },
                                        presenceSources: [TmuxPresenceSource()]))

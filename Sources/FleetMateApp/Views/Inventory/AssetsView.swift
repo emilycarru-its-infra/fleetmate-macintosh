@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 enum AssetSortField: String, CaseIterable {
     // Declaration order is column order, matching FleetMate for Windows.
@@ -1609,17 +1610,11 @@ struct ReAllocateSheet: View {
                 .fontWeight(.semibold)
 
             HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("Search users by name or username...", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .onSubmit { searchUsers() }
+                AgentsSearchField(text: $searchText, prompt: "Search users by name or username...", controlSize: .small, onSubmit: { searchUsers() })
                 Button("Search") { searchUsers() }
                     .disabled(searchText.isEmpty || isSearching)
             }
             .padding(8)
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(8)
 
             if isSearching {
                 ProgressView("Searching...")

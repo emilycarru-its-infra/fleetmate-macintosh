@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 /// Everything that ever happened to one asset, newest first — the same log
 /// Snipe-IT's History tab shows: who, what, to whom, and each field's old and
@@ -30,9 +31,7 @@ struct AssetHistoryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Filter history", text: $filter)
-                    .textFieldStyle(.plain)
+                AgentsSearchField(text: $filter, prompt: "Filter history", controlSize: .small)
                 if isLoading { ProgressView().controlSize(.small) }
                 Text("\(filtered.count) events")
                     .appFont(.caption)

@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 struct TicketTasksView: View {
     @EnvironmentObject private var appState: AppState
@@ -342,9 +343,8 @@ private struct TicketTaskEditor: View {
                             Button("Clear") { values.responsibleUid = nil; personName = "Unassigned" }
                         }
                         HStack {
-                            TextField("Find a person", text: $personSearch)
-                                .textFieldStyle(.roundedBorder).multilineTextAlignment(.leading)
-                                .onSubmit { Task { await searchPeople() } }
+                            AgentsSearchField(text: $personSearch, prompt: "Find a person", controlSize: .small,
+                                              onSubmit: { Task { await searchPeople() } })
                             Button("Search") { Task { await searchPeople() } }
                                 .disabled(personSearch.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 || isSearching)
                         }

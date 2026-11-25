@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 /// One list for every device: each Intune record, enriched with its Apple
 /// organization record by serial, plus the organization's devices Intune
@@ -1454,8 +1455,8 @@ struct DeviceActionsPanel: View {
                     .foregroundColor(.secondary)
                 
                 HStack {
-                    TextField("Search apps...", text: $appSearchText)
-                        .textFieldStyle(.roundedBorder)
+                    AgentsSearchField(text: $appSearchText, prompt: "Search apps...", controlSize: .small,
+                                      onSubmit: { onLoadApps() })
                     Button(action: onLoadApps) {
                         Image(systemName: "magnifyingglass")
                     }

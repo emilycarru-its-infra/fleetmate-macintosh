@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 struct WorkItemsView: View {
     @EnvironmentObject var appState: AppState
@@ -58,14 +59,9 @@ struct WorkItemsView: View {
 
             // Search
             HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("Search work items...", text: $searchText)
-                    .textFieldStyle(.plain)
+                AgentsSearchField(text: $searchText, prompt: "Search work items...", controlSize: .small)
             }
             .padding(8)
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(8)
             .padding(.horizontal)
 
             // Content

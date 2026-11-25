@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import FleetMateCore
+import AgentsMate
 
 /// Add machines to a custom group (new or existing) from the roster, from
 /// a pasted or imported list, or by typing an address.
@@ -161,19 +162,10 @@ struct AddDeviceSheet: View {
     private var rosterTab: some View {
         VStack(spacing: 0) {
             HStack {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).appFont(fixed: 12)
-                TextField("Search hostnames, people, rooms, fleets…", text: $search)
-                    .textFieldStyle(.plain)
-                if !search.isEmpty {
-                    Button { search = "" } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
+                AgentsSearchField(text: $search, prompt: "Search hostnames, people, rooms, fleets…", controlSize: .small)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color(NSColor.controlBackgroundColor))
 
             Divider()
 

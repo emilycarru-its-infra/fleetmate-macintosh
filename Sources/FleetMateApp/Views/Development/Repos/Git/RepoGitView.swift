@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import FleetMateCore
+import AgentsMate
 
 // Ported from MunkiStudio (Apache-2.0),
 // Sources/App/Features/Git/GitView.swift: the same header, Files/History
@@ -246,9 +247,7 @@ struct RepoGitView: View {
                     }
                     if state.filterVisible, state.focusedPanel != .browse {
                         HStack {
-                            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                            TextField("Filter", text: Bindable(state).filter)
-                                .textFieldStyle(.plain)
+                            AgentsSearchField(text: Bindable(state).filter, prompt: "Filter", controlSize: .small, onClear: { state.filterVisible = false })
                             Button {
                                 state.filter = ""
                                 state.filterVisible = false
@@ -258,7 +257,6 @@ struct RepoGitView: View {
                         }
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(.regularMaterial)
                     }
                     focusedPanelContents
                 }

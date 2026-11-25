@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 /// Choose a ticket's new responsible person or group, anchored to the
 /// Reassign button.
@@ -21,7 +22,7 @@ struct TicketReassignPopover: View {
     @State private var highlighted: Int = 0
     @State private var isSearching = false
     @State private var errorMessage: String?
-    @FocusState private var searchFocused: Bool
+    @State private var searchFocused = false
 
     private static let minimumQueryLength = 2
 
@@ -31,23 +32,15 @@ struct TicketReassignPopover: View {
                 .appFont(.headline)
 
             HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
-                TextField("Search people and groups", text: $query)
-                    .textFieldStyle(.plain)
-                    .focused($searchFocused)
-                    .onSubmit(pickHighlighted)
-                    .onKeyPress(.downArrow) { moveHighlight(by: 1) }
-                    .onKeyPress(.upArrow) { moveHighlight(by: -1) }
+                AgentsSearchField(text: $query, prompt: "Search people and groups", isFocused: $searchFocused,
+                                  controlSize: .small, onSubmit: { pickHighlighted() },
+                                  onMoveDown: { _ = moveHighlight(by: 1) }, onMoveUp: { _ = moveHighlight(by: -1) })
                     .accessibilityLabel("Search people and groups who can own this ticket")
                 if isSearching {
                     ProgressView().controlSize(.small)
                 }
             }
             .padding(6)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
 
             resultsList
 

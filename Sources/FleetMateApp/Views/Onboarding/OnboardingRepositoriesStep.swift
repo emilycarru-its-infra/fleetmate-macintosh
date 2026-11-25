@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import FleetMateCore
+import AgentsMate
 
 /// "Where do you keep your code?" Pick one or more folders; every clone in
 /// them is listed, grouped the way the Repos sidebar groups them, and all of
@@ -158,8 +159,7 @@ struct OnboardingRepositoriesStep: View {
         Section {
             let missing = wizardState.missingCatalogRepos(matching: catalogFilter)
             HStack {
-                TextField("Filter", text: $catalogFilter)
-                    .textFieldStyle(.roundedBorder)
+                AgentsSearchField(text: $catalogFilter, prompt: "Filter")
                 Button(wizardState.catalogRepos.isEmpty ? "Load Catalog" : "Refresh") {
                     Task { await loadCatalog() }
                 }

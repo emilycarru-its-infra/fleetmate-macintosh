@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 struct UsersView: View {
     @EnvironmentObject var appState: AppState
@@ -26,21 +27,13 @@ struct UsersView: View {
 
             // Search
             HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("Search by email or name...", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .onSubmit {
-                        searchUser()
-                    }
+                AgentsSearchField(text: $searchText, prompt: "Search by email or name...", controlSize: .small, onSubmit: { searchUser() })
                 Button("Search") {
                     searchUser()
                 }
                 .disabled(searchText.isEmpty || isLoading)
             }
             .padding(8)
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(8)
             .padding(.horizontal)
 
             // Content

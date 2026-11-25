@@ -1,5 +1,6 @@
 import FleetMateCore
 import SwiftUI
+import AgentsMate
 
 struct TeamsChannelSidebar: View {
     @ObservedObject var model: TeamsWorkspaceModel
@@ -7,18 +8,9 @@ struct TeamsChannelSidebar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Filter teams and channels", text: $model.channelQuery)
-                    .textFieldStyle(.plain)
-                    .accessibilityLabel("Filter teams and channels")
-                if !model.channelQuery.isEmpty {
-                    Button { model.channelQuery = "" } label: {
-                        Label("Clear Channel Filter", systemImage: "xmark.circle.fill").labelStyle(.iconOnly)
-                    }.buttonStyle(.plain)
-                }
+                AgentsSearchField(text: $model.channelQuery, prompt: "Filter teams and channels", controlSize: .small)
             }
             .padding(8)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
             .padding(10)
             HStack {
                 Text(model.filteredChannels.count == 1 ? "1 channel" : "\(model.filteredChannels.count) channels").font(.caption).foregroundStyle(.secondary)

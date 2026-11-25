@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 // MARK: - Result model
 
@@ -391,50 +392,10 @@ struct GlobalSearchField: View {
     var large: Bool = false
 
     var body: some View {
-        HStack(spacing: large ? 8 : 6) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-                .appFont(large ? .title3 : .callout)
-            TextField("Search everything — serial, hostname, user, ticket…", text: $query)
-                .textFieldStyle(.plain)
-                .appFont(large ? .title3 : .body)
-                .focused(focused)
-                .onExitCommand { query = "" }
-            if !query.isEmpty {
-                Button {
-                    query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                        .appFont(large ? .title3 : .body)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, large ? 14 : 10)
-        .padding(.vertical, large ? 10 : 6)
-        .modifier(SearchFieldChrome(large: large))
-        .frame(maxWidth: large ? .infinity : 280)
-    }
-}
-
-/// Glass on the hero variant (real Liquid Glass on macOS 26, material below),
-/// the quiet tinted fill on the compact one.
-private struct SearchFieldChrome: ViewModifier {
-    let large: Bool
-
-    func body(content: Content) -> some View {
-        if large {
-            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12))
-        } else {
-            content
-                .background(Color.secondary.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
-                )
-        }
+        AgentsSearchField(text: $query, prompt: "Search everything — serial, hostname, user, ticket…",
+                          isFocused: Binding(get: { focused.wrappedValue }, set: { focused.wrappedValue = $0 }),
+                          controlSize: large ? .large : .regular)
+            .frame(maxWidth: large ? .infinity : 280)
     }
 }
 

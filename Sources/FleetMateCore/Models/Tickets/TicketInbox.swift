@@ -11,11 +11,13 @@ public struct TicketInboxItem: Codable, Identifiable, Hashable, Sendable {
     public let body: String
     public let createdDate: String
     public let isPrivate: Bool
+    /// Who TDX notified, as it lists them. Missing from items saved before it was kept.
+    public let notifiedList: String?
 
     public var date: Date? { TdxTicket.parseDate(createdDate) }
 
     public init(id: Int, ticketId: Int, ticketTitle: String, author: String, authorEmail: String?,
-                body: String, createdDate: String, isPrivate: Bool) {
+                body: String, createdDate: String, isPrivate: Bool, notifiedList: String? = nil) {
         self.id = id
         self.ticketId = ticketId
         self.ticketTitle = ticketTitle
@@ -24,6 +26,7 @@ public struct TicketInboxItem: Codable, Identifiable, Hashable, Sendable {
         self.body = body
         self.createdDate = createdDate
         self.isPrivate = isPrivate
+        self.notifiedList = notifiedList
     }
 }
 
@@ -99,7 +102,8 @@ public struct TicketInbox: Codable, Sendable {
                 authorEmail: entry.createdEmail,
                 body: entry.body ?? "",
                 createdDate: created,
-                isPrivate: entry.isPrivate ?? false
+                isPrivate: entry.isPrivate ?? false,
+                notifiedList: entry.notifiedList
             )
         }
         let foundIds = Set(found.map(\.id))

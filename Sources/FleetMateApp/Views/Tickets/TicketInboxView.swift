@@ -11,10 +11,13 @@ struct TicketInboxView: View {
     /// deselects, so clicking that row opens its ticket again.
     var openTicketId: Int?
     let onSelect: (TicketInboxItem) -> Void
+    /// The selected comment as its notification email, opened under its row.
+    var emailPage: ((TicketInboxItem) -> (html: String, baseURL: URL?))?
 
     static let unreadOnlyKey = "tickets.inboxUnreadOnly"
     @AppStorage(TicketInboxView.unreadOnlyKey) private var showUnreadOnly = false
     @State private var selectedItemId: Int?
+    @State private var emailHeights: [Int: CGFloat] = [:]
 
     private var items: [TicketInboxItem] {
         let all = inbox.inbox?.sortedItems ?? []
@@ -51,8 +54,25 @@ struct TicketInboxView: View {
             }
         } else {
             List(items, selection: $selectedItemId) { item in
-                TicketInboxRow(item: item, isRead: inbox.isRead(item))
-                    .tag(item.id)
+                VStack(alignment: .leading, spacing: 6) {
+                    TicketInboxRow(item: item, isRead: inbox.isRead(item))
+                    if item.id == selectedItemId, let page = emailPage?(item) {
+                        TicketEmailView(
+                            html: page.html,
+                            baseURL: page.baseURL,
+                            height: Binding(
+                                get: { emailHeights[item.id] ?? 120 },
+                                set: { emailHeights[item.id] = $0 }
+                            )
+                        )
+                        .frame(height: emailHeights[item.id] ?? 120)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .padding(.leading, 15)
+                        .padding(.bottom, 6)
+                        .transition(.opacity)
+                    }
+                }
+                .tag(item.id)
                     .contextMenu {
                         if inbox.isRead(item) {
                             Button("Mark as Unread") {
@@ -72,6 +92,7 @@ struct TicketInboxView: View {
                     }
             }
             .listStyle(.inset)
+            .animation(.easeInOut(duration: 0.15), value: selectedItemId)
             .onChange(of: selectedItemId) { _, id in
                 guard let id, let item = items.first(where: { $0.id == id }) else { return }
                 inbox.markTicketOpened(item.ticketId)

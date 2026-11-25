@@ -29,12 +29,16 @@ struct TicketEmailView: NSViewRepresentable {
         context.coordinator.height = $height
         guard context.coordinator.loadedHTML != html else { return }
         context.coordinator.loadedHTML = html
-        view.loadHTMLString(html, baseURL: baseURL)
+        context.coordinator.initialLoadPending = true
+        view.loadHTMLString(Self.restricted(html), baseURL: baseURL)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         var height: Binding<CGFloat>
         var loadedHTML: String?
+        /// Only the page's own load is let through; anything else it tries
+        /// to navigate to (refresh, form, frame) is refused.
+        var initialLoadPending = false
 
         init(height: Binding<CGFloat>) { self.height = height }
 
@@ -48,13 +52,34 @@ struct TicketEmailView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            if action.navigationType == .linkActivated, let url = action.request.url {
-                NSWorkspace.shared.open(url)
+            if action.navigationType == .linkActivated {
+                if let url = action.request.url, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") {
+                    NSWorkspace.shared.open(url)
+                }
                 decisionHandler(.cancel)
                 return
             }
-            decisionHandler(.allow)
+            if initialLoadPending, action.targetFrame?.isMainFrame == true, action.navigationType == .other {
+                initialLoadPending = false
+                decisionHandler(.allow)
+                return
+            }
+            decisionHandler(.cancel)
         }
+    }
+}
+
+extension TicketEmailView {
+    /// The page with a policy that allows no scripts, frames, forms or
+    /// fetches: only its own inline styles and images over HTTPS or inline.
+    static func restricted(_ html: String) -> String {
+        let policy = #"<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; font-src data:; form-action 'none'; frame-src 'none'">"#
+        if let head = html.range(of: "<head>", options: .caseInsensitive) {
+            var page = html
+            page.insert(contentsOf: policy, at: head.upperBound)
+            return page
+        }
+        return policy + html
     }
 }
 

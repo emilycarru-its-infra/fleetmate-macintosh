@@ -3943,7 +3943,8 @@ struct InboxBadgeButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        // A toggle, like Assigned to Me, so the toolbar shows when the Inbox is on.
+        Toggle(isOn: Binding(get: { isSelected }, set: { _ in action() })) {
             Label("Inbox", systemImage: isSelected ? "envelope.fill" : "envelope")
                 .overlay(alignment: .topTrailing) {
                     if showBadge && unreadCount > 0 {
@@ -3952,6 +3953,7 @@ struct InboxBadgeButton: View {
                     }
                 }
         }
+        .toggleStyle(.button)
         .help(unreadCount > 0 ? "Inbox — \(unreadCount) unread" : "Inbox")
         .accessibilityLabel("Inbox")
         .accessibilityValue(unreadCount > 0 ? "\(unreadCount) unread" : "No unread")

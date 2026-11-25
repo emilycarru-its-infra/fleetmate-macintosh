@@ -1,6 +1,10 @@
 import SwiftUI
 import AppKit
 import FleetMateCore
+import DevMateAzure
+import DevMateCore
+import DevMateGitHub
+import DevMateUI
 
 // MARK: - Pipelines list
 
@@ -243,7 +247,7 @@ struct ApprovalReviewSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Review \(run.pipelineName) \(run.runNumber)").appFont(.title3, weight: .semibold).lineLimit(1)
             if let approval = model.approvals(for: run).first {
-                ApprovalCard(approval: approval, run: run) { approve, comment in
+                RunApprovalCard(approval: RunApproval(approval), runName: "\(run.pipelineName) \(run.runNumber)") { approve, comment in
                     try await model.respond(to: approval, approve: approve, comment: comment, appState: appState)
                     if model.approvals(for: run).isEmpty { dismiss() }
                 }
@@ -265,8 +269,10 @@ struct ApprovalReviewSheet: View {
 
 // MARK: - Run detail
 
-/// One run: header with the verbs, then the log split into the provider's
-/// sections, each collapsible, failed ones open by default.
+/// One run: the header with the verbs, then the run's stages, jobs and steps
+/// in a sidebar with the selected one's log beside it. The outline, the log
+/// and the approval card are DevMate's; this view supplies the header, the
+/// sign-in and the approvals FleetMate already tracks.
 struct PipelineRunDetailView: View {
     let run: PipelineRun
     @ObservedObject var model: DevelopmentModel
@@ -274,42 +280,61 @@ struct PipelineRunDetailView: View {
     var onChanged: (() -> Void)?
 
     @EnvironmentObject private var appState: AppState
-    @State private var log: PipelineRunLog?
-    @State private var loadError: String?
-    @State private var isLoading = false
+
+    var body: some View {
+        PipelineRunOutline(run: run, model: model, appState: appState, onChanged: onChanged)
+            .id(run.id)
+    }
+
+    static func format(_ duration: TimeInterval) -> String {
+        let seconds = Int(duration)
+        if seconds < 60 { return "\(seconds)s" }
+        if seconds < 3600 { return "\(seconds / 60)m \(seconds % 60)s" }
+        return "\(seconds / 3600)h \((seconds % 3600) / 60)m"
+    }
+}
+
+private struct PipelineRunOutline: View {
+    let run: PipelineRun
+    @ObservedObject var model: DevelopmentModel
+    let appState: AppState
+    var onChanged: (() -> Void)?
+
+    @StateObject private var detail: RunDetailModel
+    @State private var legacyLog: PipelineRunLog?
     @State private var runningVerb: String?
     @State private var actionError: String?
     @State private var pendingCancel = false
-    @State private var expanded: Set<String> = []
-    @State private var hoveredStage: String?
-    @FocusState private var focusedStage: String?
     @StateObject private var anchor = ClipboardAnchor()
 
+    init(run: PipelineRun, model: DevelopmentModel, appState: AppState, onChanged: (() -> Void)?) {
+        self.run = run
+        self.model = model
+        self.appState = appState
+        self.onChanged = onChanged
+        _detail = StateObject(wrappedValue: RunDetailModel(
+            provider: FleetRunDetail.make(run: run, model: model, appState: appState),
+            runName: "\(run.pipelineName) \(run.runNumber)",
+            pollInterval: .seconds(10)
+        ))
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider()
-            content
-        }
-        .task(id: run.id) { await load() }
-        .task(id: run.id) {
-            if run.source == .azureDevOps, run.status.isActive {
-                await model.refreshApprovals(appState: appState, projects: [run.container])
+        RunDetailView(model: detail) { header }
+            .task(id: run.id) {
+                if run.source == .azureDevOps, run.status.isActive {
+                    await model.refreshApprovals(appState: appState, projects: [run.container])
+                }
             }
-        }
-        .onChange(of: approvals.map(\.id)) {
-            // An approval that turns up after the log loaded opens its step.
-            for section in log?.sections ?? [] where approval(for: section) != nil { expanded.insert(section.id) }
-        }
-        .sheet(isPresented: reviewBinding) {
-            ApprovalReviewSheet(run: run, model: model)
-                .environmentObject(appState)
-        }
-        .actionErrorBanner($actionError)
-        .confirmationDialog("Cancel \(run.pipelineName) \(run.runNumber)?", isPresented: $pendingCancel) {
-            Button("Cancel run", role: .destructive) { perform("Cancel") }
-            Button("Keep running", role: .cancel) {}
-        }
+            .sheet(isPresented: reviewBinding) {
+                ApprovalReviewSheet(run: run, model: model)
+                    .environmentObject(appState)
+            }
+            .actionErrorBanner($actionError)
+            .confirmationDialog("Cancel \(run.pipelineName) \(run.runNumber)?", isPresented: $pendingCancel) {
+                Button("Cancel run", role: .destructive) { perform("Cancel") }
+                Button("Keep running", role: .cancel) {}
+            }
     }
 
     private var approvals: [PipelineApproval] { model.approvals(for: run) }
@@ -319,25 +344,6 @@ struct PipelineRunDetailView: View {
             get: { model.reviewingApprovalRunID == run.id && !approvals.isEmpty },
             set: { if !$0 { model.reviewingApprovalRunID = nil } }
         )
-    }
-
-    /// The approval holding this stage's step, if any.
-    private func approval(for section: PipelineRunLog.Section) -> PipelineApproval? {
-        guard let identifier = section.identifier?.lowercased() else { return nil }
-        return approvals.first { $0.id.lowercased() == identifier }
-    }
-
-    /// Approvals that no log section shows, such as an environment check.
-    private var detachedApprovals: [PipelineApproval] {
-        guard let log else { return approvals }
-        return approvals.filter { approval in !log.sections.contains { self.approval(for: $0)?.id == approval.id } }
-    }
-
-    private func card(_ approval: PipelineApproval) -> some View {
-        ApprovalCard(approval: approval, run: run) { approve, comment in
-            try await model.respond(to: approval, approve: approve, comment: comment, appState: appState)
-            await load()
-        }
     }
 
     private var header: some View {
@@ -380,7 +386,7 @@ struct PipelineRunDetailView: View {
                         Text(started.formatted(date: .abbreviated, time: .shortened)).appFont(.caption).foregroundStyle(.secondary)
                     }
                     if let duration = run.duration {
-                        Text(Self.format(duration)).appFont(.caption).monospacedDigit().foregroundStyle(.secondary)
+                        Text(PipelineRunDetailView.format(duration)).appFont(.caption).monospacedDigit().foregroundStyle(.secondary)
                     }
                 }
             }
@@ -391,35 +397,30 @@ struct PipelineRunDetailView: View {
                 verbButton("Rerun", icon: "arrow.clockwise", tint: .green) { perform("Rerun") }
             }
             Button {
-                Task { await load() }
+                legacyLog = nil
+                Task { await detail.reload() }
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .disabled(isLoading)
-            .help("Reload the log")
-            if let log, !log.sections.isEmpty {
-                Menu {
-                    Button("Copy Failed Stages") { copyStages(PipelineStageReport.failed(log.sections)) }
-                        .disabled(PipelineStageReport.failed(log.sections).isEmpty)
-                    Button("Copy All Stages") { copyStages(log.sections) }
-                    if !AppEdition.current.isTicketsOnly {
-                        Divider()
-                        Button("Send Failed Stages to Agent") { send(PipelineStageReport.failed(log.sections)) }
-                            .disabled(PipelineStageReport.failed(log.sections).isEmpty)
-                    }
-                } label: {
-                    Label("Copy Stages", systemImage: "doc.on.doc")
-                } primaryAction: {
-                    let failed = PipelineStageReport.failed(log.sections)
-                    copyStages(failed.isEmpty ? log.sections : failed)
+            .help("Reload the run")
+            Menu {
+                Button("Copy Failed Stages") { copyStages(failedOnly: true) }
+                Button("Copy All Stages") { copyStages(failedOnly: false) }
+                if !AppEdition.current.isTicketsOnly {
+                    Divider()
+                    Button("Send Failed Stages to Agent") { send(failedOnly: true) }
                 }
-                .labelStyle(.iconOnly)
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Copy the failed stages' logs, with the run's details; the menu has more")
-                .accessibilityLabel("Copy failed stages")
+            } label: {
+                Label("Copy Stages", systemImage: "doc.on.doc")
+            } primaryAction: {
+                copyStages(failedOnly: nil)
             }
+            .labelStyle(.iconOnly)
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Copy the failed stages' logs, with the run's details; the menu has more")
+            .accessibilityLabel("Copy failed stages")
             AgentContextButton(.pipelineRun(run))
             Button {
                 if let url = URL(string: run.webUrl) { NSWorkspace.shared.openInBrowser(url) }
@@ -432,22 +433,53 @@ struct PipelineRunDetailView: View {
         .background(ClipboardAnchorView(anchor: anchor).accessibilityHidden(true))
     }
 
-    private func copyStages(_ stages: [PipelineRunLog.Section]) {
-        guard !stages.isEmpty else { return }
-        let text = PipelineStageReport.copy(run, stages: stages)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        ClipboardPreview.show(text, heading: stages.count == 1 ? "Copied \(stages[0].name)" : "Copied \(stages.count) stages",
-                              anchor: anchor.view)
+    /// The run's whole log in the provider's sections, read once for Copy and
+    /// Send, which work on stages; the outline itself reads one step at a time.
+    private func sections() async -> PipelineRunLog? {
+        if let legacyLog { return legacyLog }
+        let loaded: PipelineRunLog?
+        switch run.source {
+        case .gitHub:
+            let actions = GitHubActionsService(config: appState.config.tasks?.providers.github ?? GitHubProviderConfig())
+            loaded = try? await actions.getRunLog(owner: run.container, repo: run.repository ?? "", runId: run.runId)
+        case .azureDevOps:
+            loaded = try? await appState.devOpsService.getPipelineRunLog(project: run.container, buildId: run.runId)
+        }
+        legacyLog = loaded
+        return loaded
+    }
+
+    /// `failedOnly` nil copies the failed stages, or all of them when none failed.
+    private func copyStages(failedOnly: Bool?) {
+        Task {
+            guard let log = await sections() else {
+                actionError = "Could not read the log of \(run.pipelineName) \(run.runNumber)."
+                return
+            }
+            let failed = PipelineStageReport.failed(log.sections)
+            let stages = failedOnly == true ? failed : failedOnly == false ? log.sections : (failed.isEmpty ? log.sections : failed)
+            guard !stages.isEmpty else { return }
+            let text = PipelineStageReport.copy(run, stages: stages)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            ClipboardPreview.show(text, heading: stages.count == 1 ? "Copied \(stages[0].name)" : "Copied \(stages.count) stages",
+                                  anchor: anchor.view)
+        }
     }
 
     /// Hand the stages to the agent in the run's repository: a short prompt,
     /// with the whole text in a private temporary file it can read.
-    private func send(_ stages: [PipelineRunLog.Section]) {
-        let file = Self.writeFullLog(PipelineStageReport.copy(run, stages: stages.isEmpty ? (log?.sections ?? []) : stages),
-                                     run: run)
-        appState.sendPipelineReport(PipelineStageReport.prompt(run, stages: stages, fullLog: file),
-                                    for: run, anchor: anchor.view)
+    private func send(failedOnly: Bool) {
+        Task {
+            guard let log = await sections() else {
+                actionError = "Could not read the log of \(run.pipelineName) \(run.runNumber)."
+                return
+            }
+            let failed = PipelineStageReport.failed(log.sections)
+            let stages = failedOnly ? failed : log.sections
+            let file = Self.writeFullLog(PipelineStageReport.copy(run, stages: stages.isEmpty ? log.sections : stages), run: run)
+            appState.sendPipelineReport(PipelineStageReport.prompt(run, stages: stages, fullLog: file), for: run, anchor: anchor.view)
+        }
     }
 
     /// The full text in a file only this user can read, under the temporary
@@ -483,134 +515,6 @@ struct PipelineRunDetailView: View {
         .disabled(runningVerb != nil)
     }
 
-    @ViewBuilder
-    private var content: some View {
-        if let loadError {
-            ContentUnavailableView("Couldn't load the log", systemImage: "exclamationmark.triangle", description: Text(loadError))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let log {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(detachedApprovals) { card($0) }
-                    if log.truncated {
-                        Text("Long log — each section shows its tail.")
-                            .appFont(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-                    if log.sections.isEmpty {
-                        Text("No log output yet.").appFont(.callout).foregroundStyle(.secondary)
-                    }
-                    ForEach(log.sections) { section in
-                        logSection(section)
-                    }
-                }
-                .padding(14)
-            }
-        } else {
-            VStack(spacing: 10) {
-                ProgressView()
-                Text("Loading log…").appFont(.caption).foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-    }
-
-    private func logSection(_ section: PipelineRunLog.Section) -> some View {
-        let isOpen = expanded.contains(section.id)
-        let showsActions = section.status == .failed || hoveredStage == section.id || focusedStage == section.id
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Button {
-                    if isOpen { expanded.remove(section.id) } else { expanded.insert(section.id) }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chevron.right")
-                            .appFont(fixed: 9, weight: .bold)
-                            .rotationEffect(.degrees(isOpen ? 90 : 0))
-                            .foregroundStyle(.secondary)
-                        Image(systemName: section.status.symbolName)
-                            .appFont(fixed: 11)
-                            .foregroundStyle(section.status.tint)
-                        Text(section.name).appFont(.callout, weight: .medium).lineLimit(1)
-                        Spacer()
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .focused($focusedStage, equals: section.id)
-                .accessibilityLabel("\(section.name), \(section.status.displayName)")
-                .accessibilityHint(isOpen ? "Hides the stage's log" : "Shows the stage's log")
-                if showsActions {
-                    Button { copyStages([section]) } label: {
-                        Label("Copy Stage Log", systemImage: "doc.on.doc")
-                    }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
-                    .help("Copy this stage's log with the run's details (⌘C)")
-                    .accessibilityLabel("Copy \(section.name) log")
-                    if !AppEdition.current.isTicketsOnly {
-                        Button { send([section]) } label: {
-                            Label("Send Stage to Agent", systemImage: ContentView.agentSymbol)
-                        }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .help("Send this stage to the agent in the run's repository")
-                        .accessibilityLabel("Send \(section.name) to agent")
-                    }
-                }
-                Text("\(section.text.split(separator: "\n").count) lines")
-                    .appFont(.caption2).monospacedDigit().foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
-            .onHover { inside in
-                if inside { hoveredStage = section.id } else if hoveredStage == section.id { hoveredStage = nil }
-            }
-            .onCopyCommand {
-                guard focusedStage == section.id else { return [] }
-                return [NSItemProvider(object: PipelineStageReport.copy(run, stage: section) as NSString)]
-            }
-            .contextMenu {
-                Button("Copy Stage Log") { copyStages([section]) }
-                if let log {
-                    Button("Copy Failed Stages") { copyStages(PipelineStageReport.failed(log.sections)) }
-                        .disabled(PipelineStageReport.failed(log.sections).isEmpty)
-                }
-                if !AppEdition.current.isTicketsOnly {
-                    Divider()
-                    Button("Send Stage to Agent") { send([section]) }
-                }
-                if approval(for: section) != nil {
-                    Divider()
-                    Button("Review Approval…") { model.reviewingApprovalRunID = run.id }
-                }
-                Divider()
-                Button(isOpen ? "Collapse" : "Expand") {
-                    if isOpen { expanded.remove(section.id) } else { expanded.insert(section.id) }
-                }
-            }
-            if isOpen, let waiting = approval(for: section) {
-                Divider()
-                card(waiting).padding(10)
-            } else if isOpen {
-                Divider()
-                ScrollView(.horizontal) {
-                    Text(section.text)
-                        .appFont(fixed: 11, design: .monospaced)
-                        .textSelection(.enabled)
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 520)
-                .background(Color(nsColor: .textBackgroundColor))
-            }
-        }
-        .background(Color.secondary.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.15)))
-    }
-
     private func perform(_ verb: String) {
         runningVerb = verb
         Task {
@@ -639,35 +543,80 @@ struct PipelineRunDetailView: View {
     private func actions() -> GitHubActionsService {
         GitHubActionsService(config: appState.config.tasks?.providers.github ?? GitHubProviderConfig())
     }
+}
 
-    private func load() async {
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            let loaded: PipelineRunLog
-            switch run.source {
-            case .gitHub:
-                loaded = try await actions().getRunLog(owner: run.container, repo: run.repository ?? "", runId: run.runId)
-            case .azureDevOps:
-                loaded = try await appState.devOpsService.getPipelineRunLog(project: run.container, buildId: run.runId)
+// MARK: - DevMate adapter
+
+extension RunApproval {
+    /// FleetMate's pending approval in DevMate's shape.
+    init(_ approval: PipelineApproval) {
+        self.init(
+            id: approval.id,
+            kind: approval.kind == .manualValidation ? .manualValidation : .environment,
+            instructions: approval.instructions,
+            createdAt: approval.createdOn,
+            approvers: approval.approvers,
+            minRequiredApprovers: approval.minRequiredApprovers,
+            stageName: approval.stageName,
+            stepName: approval.stepName,
+            startedAt: approval.startedAt,
+            timeoutMinutes: approval.settings?.timeoutMinutes,
+            resumesOnTimeout: approval.settings?.onTimeout == .resume
+        )
+    }
+}
+
+/// Reads a run's stages, jobs, steps and logs through DevMate, signed in with
+/// FleetMate's own token, and answers approvals through the tracking and the
+/// verbs FleetMate already has.
+struct FleetRunDetail: RunDetailProvider {
+    let inner: any RunDetailProvider
+    let pending: @Sendable () async -> [RunApproval]
+    let answer: @Sendable (_ approval: RunApproval, _ approve: Bool, _ comment: String) async throws -> Void
+
+    @MainActor
+    static func make(run: PipelineRun, model: DevelopmentModel, appState: AppState) -> FleetRunDetail {
+        let inner: any RunDetailProvider
+        switch run.source {
+        case .azureDevOps:
+            let service = appState.devOpsService
+            inner = AzureRunDetail(organization: service.baseUrl, project: run.container, buildID: run.runId) {
+                guard let token = await service.currentToken(), !token.isEmpty else {
+                    throw RunDetailError("Sign in to Azure DevOps to read this run.")
+                }
+                return token
             }
-            log = loaded
-            loadError = nil
-            // Failed steps open; on a green run open the last one, which is
-            // where the interesting output usually is.
-            let failed = loaded.sections.filter { $0.status == .failed }.map(\.id)
-            let waiting = loaded.sections.filter { approval(for: $0) != nil }.map(\.id)
-            expanded = !waiting.isEmpty ? Set(waiting) : failed.isEmpty ? Set(loaded.sections.suffix(1).map(\.id)) : Set(failed)
-        } catch {
-            loadError = error.localizedDescription
+        case .gitHub:
+            let actions = GitHubActionsService(config: appState.config.tasks?.providers.github ?? GitHubProviderConfig())
+            inner = GitHubRunDetail(repository: "\(run.container)/\(run.repository ?? "")", runID: run.runId) { path in
+                try await actions.readText(path: "/" + path)
+            }
         }
+        return FleetRunDetail(
+            inner: inner,
+            pending: { @MainActor in
+                if run.source == .azureDevOps, run.status.isActive {
+                    await model.refreshApprovals(appState: appState, projects: [run.container])
+                }
+                return model.approvals(for: run).map(RunApproval.init)
+            },
+            answer: { @MainActor approval, approve, comment in
+                guard let match = model.approvals(for: run).first(where: { $0.id == approval.id }) else {
+                    throw RunDetailError("This approval is no longer waiting.")
+                }
+                try await model.respond(to: match, approve: approve, comment: comment, appState: appState)
+            }
+        )
     }
 
-    static func format(_ duration: TimeInterval) -> String {
-        let seconds = Int(duration)
-        if seconds < 60 { return "\(seconds)s" }
-        if seconds < 3600 { return "\(seconds / 60)m \(seconds % 60)s" }
-        return "\(seconds / 3600)h \((seconds % 3600) / 60)m"
+    func timeline() async throws -> RunTimeline { try await inner.timeline() }
+    func log(job: RunJob, step: RunStep?) async throws -> String { try await inner.log(job: job, step: step) }
+    func taskDetails(job: RunJob, step: RunStep) async throws -> [(name: String, value: String)] {
+        try await inner.taskDetails(job: job, step: step)
+    }
+    func approvals() async throws -> [RunApproval] { await pending() }
+    func respond(to approval: RunApproval, approve: Bool, comment: String) async throws {
+        try await answer(approval, approve, comment)
     }
 }
 

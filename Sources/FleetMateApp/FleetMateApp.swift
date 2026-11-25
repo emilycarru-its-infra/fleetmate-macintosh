@@ -691,6 +691,17 @@ class AppState: ObservableObject {
         if tdxSignInStage == .tickets { tdxSignInStage = nil }
     }
     
+    /// Swap in a freshly read ticket so its List and Board row match the
+    /// open ticket, without counting as a full reload of the list.
+    func replaceCachedTicket(_ ticket: TdxTicket) {
+        guard let id = ticket.id, let index = cachedTickets.firstIndex(where: { $0.id == id }),
+              cachedTickets[index] != ticket else { return }
+        cachedTickets[index] = ticket
+        if let scope = ticketSnapshotScope {
+            TicketSnapshot.save(cachedTickets, scope: scope)
+        }
+    }
+
     /// Update work items cache
     func updateWorkItemsCache(_ workItems: [WorkItem]) {
         cachedWorkItems = workItems

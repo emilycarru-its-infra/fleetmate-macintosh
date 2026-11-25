@@ -62,7 +62,7 @@ struct AgentLaunch: Hashable {
 ///
 /// Every session is an AgentsMate lane. The person's own sessions are lanes
 /// they can close; each Repos workspace entry is a lane too, which closing
-/// stops but keeps while it is still in that workspace.
+/// detaches but keeps while it is still in that workspace.
 @MainActor
 final class AgentTerminalStore: ObservableObject {
     /// The lanes, their terminals, the sidebar's sections and the dock.
@@ -138,8 +138,7 @@ final class AgentTerminalStore: ObservableObject {
                                  highlightsOrphans: true,
                                  // Closing a session's row leaves its agent running, so the
                                  // same conversation stays reachable from other terminals.
-                                 // Stop Session on the row's menu ends it.
-                                 closeStopsLane: false,
+                                 // Stop Agent on the row's menu ends it.
                                  sessionFileDirectory: brief.sessionDirectory,
                                  cycleSkipsUnstarted: true,
                                  showsRowMetadata: true,
@@ -188,7 +187,7 @@ final class AgentTerminalStore: ObservableObject {
             .sink { [weak self] _ in self?.applyRepoIcons(adopting: false) }
             .store(in: &subscriptions)
         lanes.willStartLane = { [weak self] lane in self?.prepare(lane) ?? lane }
-        // View › Reopen Session As and each row's menu: the same agent again,
+        // Agent › Reopen As and each row's menu: the same agent again,
         // the persistent lanes, then the agents run in the row's folder. Each
         // kind has AgentsMate's shortcut (⌥⌘R, ⇧⌘C, ⇧⌘X, ⌥⇧⌘C, ⌥⇧⌘X), which
         // the sessions take only while a terminal or the list has the keyboard.
@@ -210,7 +209,7 @@ final class AgentTerminalStore: ObservableObject {
         }
         lanes.willCloseLane = { [weak self] lane, attached in
             guard let self, let row = self.rows[lane.id] else { return .remove }
-            // A running repository row stops and stays; an idle one goes.
+            // A running repository row detaches and stays; an idle one goes.
             return attached && self.baselineKeys.contains(row.entryId ?? row.directory) ? .keepRow : .remove
         }
         lanes.didCloseLane = { [weak self] lane, decision in

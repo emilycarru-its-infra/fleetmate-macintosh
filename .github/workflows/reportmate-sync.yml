@@ -78,7 +78,7 @@ jobs:
           persist-credentials: false
 
       - name: Select newest Xcode 27
-        run: sudo xcode-select -s "$(ls -d | sort -V | tail -1)"
+        run: sudo xcode-select -s "$(ls -d /Applications/Xcode_27*.app | sort -V | tail -1)"
 
       - name: Move the pin to ReportMate main
         run: |

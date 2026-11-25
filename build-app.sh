@@ -78,7 +78,7 @@ if [ ! -f "${CONTENTS_DIR}/Info.plist" ]; then
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.developer-tools</string>
     <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
+    <string>27.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSHumanReadableCopyright</key>

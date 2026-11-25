@@ -6,15 +6,9 @@ struct GlassButtonModifier: ViewModifier {
     var cornerRadius: CGFloat = 8
 
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
-            content
-                .padding(8)
-                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
-        } else {
-            content
-                .padding(8)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius))
-        }
+        content
+            .padding(8)
+            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
     }
 }
 

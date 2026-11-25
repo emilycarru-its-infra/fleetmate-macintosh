@@ -7,26 +7,11 @@ ifneq (,$(wildcard ./.env))
 	export
 endif
 
-# SDK selection. Xcode 26 (which CI uses) builds against the macOS 26 SDK. The
-# Command Line Tools 27 beta default to the macOS 27 SDK and ship none of the
-# SwiftUI macro plugins, so a SwiftUI build against it fails inside the first
-# dependency that expands @State as a macro. On a Mac with only the Command
-# Line Tools, build against the macOS 26 SDK they still carry. An SDKROOT set
-# in the environment or .env wins.
-CLT_SDK_26 := /Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk
-ifeq ($(SDKROOT),)
-ifneq (,$(findstring CommandLineTools,$(shell xcode-select -p 2>/dev/null)))
-ifneq (,$(wildcard $(CLT_SDK_26)))
-export SDKROOT := $(CLT_SDK_26)
-endif
-endif
-endif
-
 # Record the SDK the app is built with, not the deployment target. SwiftPM
 # writes the minimum OS as the SDK version in LC_BUILD_VERSION, and AppKit
 # decides the window chrome from it: a binary that claims an older SDK gets
 # that release's look (Tahoe's refracting toolbar) instead of the current one.
-MIN_MACOS := 26.0
+MIN_MACOS := 27.0
 SDK_VERSION := $(shell xcrun --sdk macosx --show-sdk-version 2>/dev/null)
 SDK_LINK_FLAGS := $(if $(SDK_VERSION),-Xlinker -platform_version -Xlinker macos -Xlinker $(MIN_MACOS) -Xlinker $(SDK_VERSION))
 
@@ -356,7 +341,7 @@ release-app:
 		xcrun actool \
 			--compile "$$ACTOOL_OUT" \
 			--platform macosx \
-			--minimum-deployment-target 14.0 \
+			--minimum-deployment-target 27.0 \
 			--app-icon "$(APP_DISPLAY_NAME)" \
 			--output-partial-info-plist "$$ACTOOL_OUT/partial-info.plist" \
 			--warnings --errors \

@@ -265,9 +265,7 @@ public class TdxSsoService: NSObject {
             session.prefersEphemeralWebBrowserSession = false // Use system SSO
             
             // Present modally
-            if #available(macOS 10.15, *) {
-                session.presentationContextProvider = self
-            }
+            session.presentationContextProvider = self
             
             self.authSession = session
             session.start()
@@ -571,7 +569,6 @@ extension TdxSsoService: WKNavigationDelegate {
 
 // MARK: - ASWebAuthenticationPresentationContextProviding
 
-@available(macOS 10.15, *)
 extension TdxSsoService: ASWebAuthenticationPresentationContextProviding {
     public func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         // Return the main window

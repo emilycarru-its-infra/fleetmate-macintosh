@@ -433,31 +433,16 @@ private struct DevicesContentView: View {
     /// reorders the rest. The arrangement is kept across launches.
     @ViewBuilder
     private var deviceTable: some View {
-        if #available(macOS 14.4, *) {
-            Table(of: DeviceListRow.self, selection: $selectedDeviceIds, sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
-                identityColumns
-                if hasIntune { intuneColumns }
-                if hasProvisioning { provisioningColumns }
-                hardwareColumns
-                if hasIntune { ownershipColumn }
-                if hasProvisioning { purchaseColumn }
-                if hasAppleOrgSource { appleOrgColumns }
-            } rows: {
-                deviceRows
-            }
-        } else {
-            // Conditional columns need macOS 14.4; earlier releases get them all.
-            Table(of: DeviceListRow.self, selection: $selectedDeviceIds, sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
-                identityColumns
-                intuneColumns
-                provisioningColumns
-                hardwareColumns
-                ownershipColumn
-                purchaseColumn
-                appleOrgColumns
-            } rows: {
-                deviceRows
-            }
+        Table(of: DeviceListRow.self, selection: $selectedDeviceIds, sortOrder: $sortOrder, columnCustomization: $columnCustomization) {
+            identityColumns
+            if hasIntune { intuneColumns }
+            if hasProvisioning { provisioningColumns }
+            hardwareColumns
+            if hasIntune { ownershipColumn }
+            if hasProvisioning { purchaseColumn }
+            if hasAppleOrgSource { appleOrgColumns }
+        } rows: {
+            deviceRows
         }
     }
 

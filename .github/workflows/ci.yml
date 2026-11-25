@@ -38,21 +38,14 @@ concurrency:
 jobs:
   build:
     name: Build and test
-    runs-on: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && 'ubuntu-latest' || fromJSON('["self-hosted","ecu-local"]') }}
+    runs-on: xcode-27
     steps:
-      - name: Refuse fork pull requests
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
-        run: |
-          echo "::error::Fork pull requests do not run on this repository's runners."
-          exit 1
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
       - name: Select the newest Xcode (macOS 27 SDK; the app takes its look from the SDK it records)
-        if: runner.environment == 'github-hosted'
         run: |
           sudo xcode-select -s "$(ls -d /Applications/Xcode_27*.app 2>/dev/null | sort -V | tail -1)"
           xcrun --sdk macosx --show-sdk-version

@@ -237,32 +237,11 @@ final class AgentTerminalStore: ObservableObject {
             .store(in: &subscriptions)
     }
 
-    /// Where the Claude status line keeps its usage cache, under home.
-    static let usageCachePath = ".claude/.statusline-usage-cache"
-
-    /// Claude's limits from the status-line usage cache, and Codex's from its
-    /// own session files. With a usage host set (Settings › Agent), Claude's
-    /// come from that Mac's cache over ssh instead, since a Mac whose agents
-    /// run elsewhere never runs the status line itself. Read at launch.
+    /// The usage meters at the sidebar's foot are AgentsMate's. Settings ›
+    /// Agent only says which Mac to read Claude's limits from; blank is this
+    /// one. Read at launch.
     static var usageSources: [any AgentUsageSource] {
-        let claude: any AgentUsageSource
-        if let host = usageHost {
-            claude = KeyValueUsageCommandSource(agent: "Claude", command: [
-                "/usr/bin/ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "--", host, "cat " + usageCachePath,
-            ])
-        } else {
-            claude = KeyValueUsageFileSource(url: FileManager.default.homeDirectoryForCurrentUser
-                                                 .appendingPathComponent(usageCachePath),
-                                             agent: "Claude", signedIn: { AgentSignIn.claude() })
-        }
-        return [claude, CodexSessionUsageSource()]
-    }
-
-    /// The usage host from Settings, when it is one ssh can be handed safely.
-    static var usageHost: String? {
-        let host = UserDefaults.standard.string(forKey: AgentSettingsKey.usageHost)?
-            .trimmingCharacters(in: .whitespaces) ?? ""
-        return TmuxLaneSessions.isValidHost(host) ? host : nil
+        AgentUsageSources.standard(claudeHost: UserDefaults.standard.string(forKey: AgentSettingsKey.usageHost))
     }
 
     /// The fallback workspace is independent of any repository checkout.

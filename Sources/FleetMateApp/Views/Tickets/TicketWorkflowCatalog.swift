@@ -26,6 +26,9 @@ final class TicketWorkflowCatalog: NSObject, WKNavigationDelegate {
             try await withCheckedThrowingContinuation { continuation in
                 self.continuation = continuation
                 let configuration = WKWebViewConfiguration()
+                // No AirPlay: looking for AirPlay receivers makes macOS ask for
+                // local network access, which nothing here needs.
+                configuration.allowsAirPlayForMediaPlayback = false
                 configuration.websiteDataStore = .default()
                 let view = WKWebView(frame: .zero, configuration: configuration)
                 view.navigationDelegate = self

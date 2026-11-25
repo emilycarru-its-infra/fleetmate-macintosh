@@ -290,6 +290,7 @@ release-app:
 	HELPER_DIR="$(APP_BUNDLE)/$(INBOX_HELPER_PATH)"; \
 	mkdir -p "$$HELPER_DIR/Contents/MacOS"; \
 	cp "$$REAL_BIN_PATH" "$$HELPER_DIR/Contents/MacOS/$(INBOX_HELPER_EXECUTABLE)"; \
+	python3 build/set-macho-uuid.py "$$HELPER_DIR/Contents/MacOS/$(INBOX_HELPER_EXECUTABLE)" "$$BUNDLE_ID.inbox-agent"; \
 	cp "$(APP_BUNDLE)/Contents/Info.plist" "$$HELPER_DIR/Contents/Info.plist"; \
 	/usr/libexec/PlistBuddy \
 		-c "Set :CFBundleIdentifier $$BUNDLE_ID.inbox-agent" \

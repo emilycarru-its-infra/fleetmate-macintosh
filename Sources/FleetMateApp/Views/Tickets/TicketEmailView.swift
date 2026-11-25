@@ -16,6 +16,9 @@ struct TicketEmailView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PassThroughWebView {
         let configuration = WKWebViewConfiguration()
+        // No AirPlay: looking for AirPlay receivers makes macOS ask for
+        // local network access, which nothing here needs.
+        configuration.allowsAirPlayForMediaPlayback = false
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.websiteDataStore = .nonPersistent()
         let view = PassThroughWebView(frame: .zero, configuration: configuration)

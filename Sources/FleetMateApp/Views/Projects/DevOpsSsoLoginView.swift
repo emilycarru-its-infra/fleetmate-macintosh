@@ -320,6 +320,9 @@ class DevOpsSsoLoginViewModel: NSObject, ObservableObject {
 
         // Create WKWebView with default data store (for Platform SSO Extension interception)
         let wkConfig = WKWebViewConfiguration()
+        // No AirPlay: looking for AirPlay receivers makes macOS ask for
+        // local network access, which nothing here needs.
+        wkConfig.allowsAirPlayForMediaPlayback = false
         wkConfig.websiteDataStore = WKWebsiteDataStore.default()
         wkConfig.defaultWebpagePreferences.allowsContentJavaScript = true
         let wv = WKWebView(frame: .zero, configuration: wkConfig)

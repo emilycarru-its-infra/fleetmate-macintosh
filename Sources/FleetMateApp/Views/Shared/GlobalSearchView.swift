@@ -425,16 +425,7 @@ private struct SearchFieldChrome: ViewModifier {
 
     func body(content: Content) -> some View {
         if large {
-            if #available(macOS 26.0, *) {
-                content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12))
-            } else {
-                content
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .strokeBorder(Color.secondary.opacity(0.25), lineWidth: 1)
-                    )
-            }
+            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 12))
         } else {
             content
                 .background(Color.secondary.opacity(0.08))

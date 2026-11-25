@@ -138,22 +138,13 @@ struct GroupsContentView: View {
             // The count is passive text — keep it out of the glass entirely,
             // or macOS 26 fuses it and the refresh button into one odd capsule.
             if !groups.isEmpty {
-                if #available(macOS 26.0, *) {
-                    ToolbarItem(placement: .automatic) {
-                        Text("\(filteredGroups.count) of \(groups.count)")
-                            .appFont(.caption)
-                            .monospacedDigit()
-                            .foregroundColor(.secondary)
-                    }
-                    .sharedBackgroundVisibility(.hidden)
-                } else {
-                    ToolbarItem(placement: .automatic) {
-                        Text("\(filteredGroups.count) of \(groups.count)")
-                            .appFont(.caption)
-                            .monospacedDigit()
-                            .foregroundColor(.secondary)
-                    }
+                ToolbarItem(placement: .automatic) {
+                    Text("\(filteredGroups.count) of \(groups.count)")
+                        .appFont(.caption)
+                        .monospacedDigit()
+                        .foregroundColor(.secondary)
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
             ToolbarItem(placement: .automatic) {
                 Button(action: loadDeviceGroups) {

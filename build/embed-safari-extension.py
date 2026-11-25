@@ -44,7 +44,7 @@ def embed(app, resources):
             'CFBundlePackageType': 'XPC!',
             'CFBundleShortVersionString': info['CFBundleShortVersionString'],
             'CFBundleVersion': info['CFBundleVersion'],
-            'LSMinimumSystemVersion': '14.0',
+            'LSMinimumSystemVersion': '27.0',
             'NSExtension': {
                 'NSExtensionPointIdentifier': 'com.apple.Safari.web-extension',
                 'NSExtensionPrincipalClass': 'SafariWebExtensionHandler',
@@ -55,7 +55,7 @@ def embed(app, resources):
         for architecture in ['arm64', 'x86_64']:
             binary = work / architecture
             subprocess.run(['xcrun', 'clang', '-arch', architecture, '-isysroot', sdk,
-                            '-mmacosx-version-min=14.0', '-fobjc-arc', '-fapplication-extension',
+                            '-mmacosx-version-min=27.0', '-fobjc-arc', '-fapplication-extension',
                             '-framework', 'Foundation', '-framework', 'SafariServices',
                             '-e', '_NSExtensionMain', '-lextension',
                             str(EXTENSION_SOURCE / 'SafariWebExtensionHandler.m'),

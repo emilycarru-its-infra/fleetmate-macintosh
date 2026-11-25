@@ -70,11 +70,7 @@ struct SegmentedPill<Value: Hashable>: View {
 /// selection) where the design wants two.
 private struct PillEnclosure: ViewModifier {
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
-            content
-        } else {
-            content.background(.secondary.opacity(0.08), in: Capsule())
-        }
+        content
     }
 }
 

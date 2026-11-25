@@ -6,7 +6,7 @@ import PackageDescription
 let package = Package(
     name: "FleetMate",
     platforms: [
-        .macOS("26.0")
+        .macOS("27.0")
     ],
     products: [
         .library(name: "FleetMateCore", targets: ["FleetMateCore"]),
@@ -23,18 +23,18 @@ let package = Package(
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
         // Apple School and Business Manager API client. Pinned to a revision
         // because asbmutil's date-stamped tags are not semantic versions.
-        .package(url: "https://github.com/rodchristiansen/asbmutil.git", revision: "c079d4c4cf26b1e45bab8a1adf699b156e34f630"),
+        .package(url: "https://github.com/rodchristiansen/asbmutil.git", revision: "ed65f6b486f5f4c1382f620c40e7bff2fa493284"),
         // 1.12 added Metal shaders, which the Command Line Tools cannot compile.
         .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", "1.11.2"..<"1.12.0"),
         // The agent terminal: lane sidebar, terminals, status feed and dock.
         // Pinned to a commit on AgentsMate's main; agentsmate-sync.yml moves
         // this revision whenever AgentsMate's main moves and FleetMate still
         // builds and tests.
-        .package(url: "https://github.com/focusedsystems/agentsmate.git", revision: "f6cdebd263605c77cf2413732e52518700d4ef0f"),
+        .package(url: "https://github.com/focusedsystems/agentsmate.git", revision: "65020bb2d00ae6f632a1a5d78772d4b243786947"),
         // The Reporting tab is the ReportMate app's own dashboard. Pinned to a
         // commit on ReportMate's main; reportmate-sync.yml moves this revision
         // whenever ReportMate's main moves and FleetMate still builds and tests.
-        .package(url: "https://github.com/reportmate/reportmate-app-swift.git", revision: "e2463c57c8f70702163628c7c3d9d8d16b01b2a0"),
+        .package(url: "https://github.com/reportmate/reportmate-app-swift.git", revision: "3ccb28d0830f3e85b258d9a6fb07a35dd80371b5"),
     ],
     targets: [
         // Shared library with services, models, and config

@@ -328,26 +328,7 @@ struct ReposListView: View {
     /// Filter, sort and fetch, at the top of the list they act on.
     private var filterBar: some View {
         HStack(spacing: 6) {
-            HStack(spacing: 4) {
-                Image(systemName: "line.3.horizontal.decrease.circle")
-                    .foregroundStyle(.secondary)
-                TextField("Filter", text: $filter)
-                    .textFieldStyle(.plain)
-                if !filter.isEmpty {
-                    Button {
-                        filter = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.secondary)
-                    .help("Clear the filter")
-                }
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(Color(nsColor: .textBackgroundColor), in: .rect(cornerRadius: 5))
-            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.secondary.opacity(0.35)))
+            AgentsSearchField(text: $filter, prompt: "Filter", controlSize: .small)
 
             Menu {
                 Picker("Sort By", selection: $sort) {

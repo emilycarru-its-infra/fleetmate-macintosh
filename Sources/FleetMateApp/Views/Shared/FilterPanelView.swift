@@ -1,4 +1,5 @@
 import SwiftUI
+import AgentsMate
 
 // MARK: - Filter Protocol
 
@@ -104,23 +105,10 @@ struct FilterPanelView<Category: FilterCategoryProtocol>: View {
                 VStack(spacing: 0) {
                     // Search within values
                     HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.secondary)
-                            .appFont(.caption)
-                        TextField("Search...", text: $searchText)
-                            .textFieldStyle(.plain)
-                            .appFont(.caption)
-                        if !searchText.isEmpty {
-                            Button(action: { searchText = "" }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                        }
+                        AgentsSearchField(text: $searchText, prompt: "Search...", controlSize: .small)
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(Color.secondary.opacity(0.06))
 
                     Divider()
 

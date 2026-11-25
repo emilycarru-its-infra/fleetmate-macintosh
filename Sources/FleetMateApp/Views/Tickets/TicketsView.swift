@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 enum TicketSortField: String, CaseIterable {
     case id = "ID"
@@ -2091,26 +2092,19 @@ struct TicketsView: View {
         VStack(alignment: .leading, spacing: 2) {
             // Search field
             HStack(spacing: 4) {
-                Image(systemName: "magnifyingglass")
-                    .appFont(.caption)
-                    .foregroundColor(.secondary)
-                TextField("Search...", text: searchText)
-                    .textFieldStyle(.plain)
-                    .appFont(.caption)
-                    .onChange(of: searchText.wrappedValue) { _, newValue in
-                        if newValue.count >= 2 {
-                            searchPeopleDebounced(text: newValue, results: searchResults, isSearching: isSearching, showResults: showResults)
-                        } else {
-                            showResults.wrappedValue = false
-                        }
-                    }
+                AgentsSearchField(text: searchText, prompt: "Search...", controlSize: .small)
                 if isSearching.wrappedValue {
                     ProgressView().controlSize(.mini)
                 }
             }
             .padding(4)
-            .background(Color.secondary.opacity(0.08))
-            .cornerRadius(4)
+            .onChange(of: searchText.wrappedValue) { _, newValue in
+                if newValue.count >= 2 {
+                    searchPeopleDebounced(text: newValue, results: searchResults, isSearching: isSearching, showResults: showResults)
+                } else {
+                    showResults.wrappedValue = false
+                }
+            }
 
             if showResults.wrappedValue && !searchResults.wrappedValue.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {

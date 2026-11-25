@@ -452,8 +452,7 @@ struct RepositoriesSettingsView: View {
     private var catalogHeaderSection: some View {
         Section {
             HStack {
-                TextField("Search repositories", text: $query)
-                    .textFieldStyle(.roundedBorder)
+                AgentsSearchField(text: $query, prompt: "Search repositories")
                 Button {
                     Task { await model.refreshCatalog(appState: appState) }
                 } label: {

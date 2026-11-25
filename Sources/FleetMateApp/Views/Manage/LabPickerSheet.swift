@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 /// Pick several labs at once, grouped by area, for a multi-room target set.
 struct LabPickerSheet: View {
@@ -52,18 +53,10 @@ struct LabPickerSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).appFont(fixed: 12)
-                TextField("Filter areas or labs", text: $searchText).textFieldStyle(.plain)
-                if !searchText.isEmpty {
-                    Button { searchText = "" } label: {
-                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
+                AgentsSearchField(text: $searchText, prompt: "Filter areas or labs", controlSize: .small)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 9)
-            .background(Color(NSColor.controlBackgroundColor))
 
             Divider()
 

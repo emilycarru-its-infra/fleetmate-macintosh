@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 struct GroupsView: View {
     @EnvironmentObject var appState: AppState
@@ -59,17 +60,7 @@ struct GroupsView: View {
 
             // Search/Filter
             HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                TextField("Filter groups...", text: $searchText)
-                    .textFieldStyle(.plain)
-                if !searchText.isEmpty {
-                    Button(action: { searchText = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
+                AgentsSearchField(text: $searchText, prompt: "Filter groups...", controlSize: .small)
                 if !groups.isEmpty {
                     Text("\(filteredGroups.count) of \(groups.count)")
                         .appFont(.caption)
@@ -77,8 +68,6 @@ struct GroupsView: View {
                 }
             }
             .padding(8)
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(8)
             .padding(.horizontal)
 
             // Content

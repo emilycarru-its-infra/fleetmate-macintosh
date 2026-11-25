@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 /// Create a TDX ticket.
 ///
@@ -302,21 +303,15 @@ struct CreateTicketView: View {
                     }
                 } else {
                     HStack(spacing: 4) {
-                        Image(systemName: "magnifyingglass")
-                            .appFont(.caption)
-                            .foregroundColor(.secondary)
-                        TextField("Search people…", text: query)
-                            .textFieldStyle(.plain)
-                            .onChange(of: query.wrappedValue) { _, newValue in
-                                search(newValue, into: results, isSearching: isSearching)
-                            }
+                        AgentsSearchField(text: query, prompt: "Search people…", controlSize: .small)
                         if isSearching.wrappedValue {
                             ProgressView().controlSize(.mini)
                         }
                     }
                     .padding(4)
-                    .background(Color.secondary.opacity(0.08))
-                    .cornerRadius(4)
+                    .onChange(of: query.wrappedValue) { _, newValue in
+                        search(newValue, into: results, isSearching: isSearching)
+                    }
                 }
             }
 

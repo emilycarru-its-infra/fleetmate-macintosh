@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 /// How a task detail view arranges itself: the Projects sidebar is one
 /// narrow column; the dashboard lightbox is wide enough for two.
@@ -1252,23 +1253,10 @@ struct AzDoTaskSidebarView: View {
 
                     // Search field
                     HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.secondary)
-                        TextField("Search \(linkTab.rawValue.lowercased())…", text: $linkSearchText)
-                            .textFieldStyle(.plain)
-                            .onSubmit { searchCommitBySHA() }
-                        if !linkSearchText.isEmpty {
-                            Button(action: { linkSearchText = "" }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundColor(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                        }
+                        AgentsSearchField(text: $linkSearchText, prompt: "Search \(linkTab.rawValue.lowercased())…", controlSize: .small, onSubmit: { searchCommitBySHA() })
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)
-                    .background(Color.secondary.opacity(0.1))
-                    .cornerRadius(6)
 
                     if isLoadingLinkData {
                         HStack { Spacer(); ProgressView(); Spacer() }

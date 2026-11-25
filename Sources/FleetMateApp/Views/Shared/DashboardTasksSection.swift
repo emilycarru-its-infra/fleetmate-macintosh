@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import FleetMateCore
+import AgentsMate
 
 // MARK: - Model
 
@@ -146,18 +147,11 @@ struct DashboardTasksPane: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     HStack(spacing: 4) {
-                        Image(systemName: "magnifyingglass")
-                            .appFont(.caption2)
-                            .foregroundStyle(.secondary)
-                        TextField("Filter", text: $workItemSearch)
-                            .textFieldStyle(.plain)
-                            .appFont(.caption)
+                        AgentsSearchField(text: $workItemSearch, prompt: "Filter", controlSize: .small)
                             .frame(width: 110)
                     }
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.08))
-                    .clipShape(Capsule())
                 }
                 .padding(.vertical, 6)
 

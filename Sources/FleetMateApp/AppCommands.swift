@@ -213,36 +213,6 @@ struct FleetMateCommands: Commands {
                 }
                 .keyboardShortcut(.return, modifiers: [.command, .shift])
                 AgentWorkspaceMenuItems(terminals: appState.terminals)
-                Button("Jump to Unread Session") {
-                    appState.terminals.lanes.showDock()
-                    appState.terminals.lanes.jumpToUnread()
-                }
-                .agentShortcut(lanes, .jumpToUnread)
-                .disabled(appState.terminals.lanes.unreadLanes.isEmpty)
-                Button("Mark All Sessions Read") { lanes.markAllRead() }
-                    .disabled(lanes.unreadLanes.isEmpty)
-                Button("Message Agent…") {
-                    if !lanes.showMessageAgent(openWindow: openWindow) { lanes.showDock() }
-                }
-                .agentShortcut(lanes, .messageAgent)
-                .disabled(lanes.lanes.isEmpty)
-                Button("Go to Session…") {
-                    appState.terminals.lanes.showDock()
-                    appState.terminals.lanes.paletteVisible = true
-                }
-                // Settings › Shortcuts lists these keys, so
-                // the menu carries them.
-                Button("Reattach Session") {
-                    lanes.showDock()
-                    if let id = lanes.selectedID { lanes.reattach(id) }
-                }
-                .agentShortcut(lanes, .reattach)
-                .disabled(lanes.selectedID == nil)
-                LaneReopenMenu(store: lanes, title: "Reopen Session As") { lanes.showDock() }
-                Button("Collapse All Session Sections") { lanes.setAllCollapsed(true) }
-                    .disabled(lanes.sectionNames.isEmpty && lanes.layout.pinned.isEmpty)
-                Button("Expand All Session Sections") { lanes.setAllCollapsed(false) }
-                    .disabled(lanes.layout.collapsed.isEmpty)
 
                 Divider()
             }
@@ -264,6 +234,16 @@ struct FleetMateCommands: Commands {
                 else { fontScale = AppFontScale.default }
             }
                 .keyboardShortcut("0", modifiers: .command)
+        }
+
+        // The Agent menu is AgentsMate's, the same in every app: the lanes,
+        // moving between them, and the selected one's own menu. Back and
+        // Forward, ⌘1–⌘9 and text size stay with the app's own commands above.
+        if !AppEdition.current.isTicketsOnly {
+            AgentLaneCommands(store: lanes, menuTitle: "Agent", labels: AgentTerminalStore.labels,
+                              numberShortcuts: false, fontCommands: false, historyCommands: false) {
+                lanes.showDock()
+            }
         }
     }
 
@@ -321,17 +301,5 @@ struct FleetMateCommands: Commands {
 
     private func setScale(_ value: Double) {
         fontScale = AppFontScale.clamp((value / AppFontScale.step).rounded() * AppFontScale.step)
-    }
-}
-
-private extension View {
-    /// A menu item's key from the person's agent shortcut bindings, or none.
-    @ViewBuilder
-    func agentShortcut(_ store: AgentLaneStore, _ action: LaneShortcutAction?) -> some View {
-        if let action, let binding = store.shortcuts.binding(for: action) {
-            keyboardShortcut(binding.keyEquivalent, modifiers: binding.modifiers)
-        } else {
-            self
-        }
     }
 }

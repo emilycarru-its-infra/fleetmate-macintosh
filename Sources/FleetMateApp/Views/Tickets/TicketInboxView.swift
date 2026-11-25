@@ -18,6 +18,9 @@ struct TicketInboxView: View {
     @AppStorage(TicketInboxView.unreadOnlyKey) private var showUnreadOnly = false
     @State private var selectedItemId: Int?
     @State private var emailHeights: [Int: CGFloat] = [:]
+    /// The selected comment whose email was folded away by clicking its row again.
+    @State private var collapsedItemId: Int?
+    @State private var selectedAt = Date.distantPast
 
     private var items: [TicketInboxItem] {
         let all = inbox.inbox?.sortedItems ?? []
@@ -53,10 +56,15 @@ struct TicketInboxView: View {
                 }
             }
         } else {
-            List(items, selection: $selectedItemId) { item in
-                VStack(alignment: .leading, spacing: 6) {
+            List(selection: $selectedItemId) {
+                ForEach(items) { item in
                     TicketInboxRow(item: item, isRead: inbox.isRead(item))
-                    if item.id == selectedItemId, let page = emailPage?(item) {
+                        .tag(item.id)
+                        .contextMenu { rowMenu(item) }
+                        .simultaneousGesture(TapGesture().onEnded { toggleEmail(item) })
+                    // Its own row, outside the selection, so the email keeps
+                    // its colours instead of sitting under the blue highlight.
+                    if item.id == selectedItemId, collapsedItemId != item.id, let page = emailPage?(item) {
                         TicketEmailView(
                             html: page.html,
                             baseURL: page.baseURL,
@@ -68,32 +76,18 @@ struct TicketInboxView: View {
                         .frame(height: emailHeights[item.id] ?? 120)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .padding(.leading, 15)
-                        .padding(.bottom, 6)
+                        .padding(.vertical, 4)
+                        .selectionDisabled()
+                        .id("email-\(item.id)")
                         .transition(.opacity)
                     }
                 }
-                .tag(item.id)
-                    .contextMenu {
-                        if inbox.isRead(item) {
-                            Button("Mark as Unread") {
-                                if selectedItemId == item.id { selectedItemId = nil }
-                                inbox.markUnread(item)
-                            }
-                        } else {
-                            Button("Mark as Read") { inbox.markRead(item) }
-                        }
-                        Button("Mark All as Read") { inbox.markAllRead() }
-                            .disabled(inbox.unreadCount == 0)
-                        Divider()
-                        Button("Copy Ticket Number") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(String(item.ticketId), forType: .string)
-                        }
-                    }
             }
             .listStyle(.inset)
             .animation(.easeInOut(duration: 0.15), value: selectedItemId)
             .onChange(of: selectedItemId) { _, id in
+                collapsedItemId = nil
+                selectedAt = Date()
                 guard let id, let item = items.first(where: { $0.id == id }) else { return }
                 inbox.markTicketOpened(item.ticketId)
                 onSelect(item)
@@ -104,6 +98,34 @@ struct TicketInboxView: View {
                       item.ticketId != ticketId else { return }
                 selectedItemId = nil
             }
+        }
+    }
+
+    /// A click on the row already open folds its email away, and another
+    /// click opens it again. The click that selects a row only opens it.
+    private func toggleEmail(_ item: TicketInboxItem) {
+        guard selectedItemId == item.id, Date().timeIntervalSince(selectedAt) > 0.3 else { return }
+        withAnimation(.easeInOut(duration: 0.15)) {
+            collapsedItemId = collapsedItemId == item.id ? nil : item.id
+        }
+    }
+
+    @ViewBuilder
+    private func rowMenu(_ item: TicketInboxItem) -> some View {
+        if inbox.isRead(item) {
+            Button("Mark as Unread") {
+                if selectedItemId == item.id { selectedItemId = nil }
+                inbox.markUnread(item)
+            }
+        } else {
+            Button("Mark as Read") { inbox.markRead(item) }
+        }
+        Button("Mark All as Read") { inbox.markAllRead() }
+            .disabled(inbox.unreadCount == 0)
+        Divider()
+        Button("Copy Ticket Number") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(String(item.ticketId), forType: .string)
         }
     }
 

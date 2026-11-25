@@ -230,94 +230,29 @@ struct ApprovalBadge: View {
     }
 }
 
-/// The Review panel: the pipeline's instructions, an optional comment, and
-/// Approve or Reject. Rejecting asks first, because it fails the run.
+/// The Review panel, opened from a run's context menu: the same card the
+/// run's log shows, for the first approval waiting on the run.
 struct ApprovalReviewSheet: View {
     let run: PipelineRun
     @ObservedObject var model: DevelopmentModel
 
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
-    @State private var comment = ""
-    @State private var working: Bool?
-    @State private var error: String?
-    @State private var confirmReject = false
-
-    private var approval: PipelineApproval? { model.approvals(for: run).first }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
-                Text("Review \(run.pipelineName) \(run.runNumber)").appFont(.title3, weight: .semibold).lineLimit(1)
-            }
-            if let approval {
-                HStack(spacing: 6) {
-                    if let created = approval.createdOn {
-                        Text("Waiting since \(created.formatted(date: .abbreviated, time: .shortened))")
-                    }
-                    if !approval.approvers.isEmpty {
-                        Text("·")
-                        Text("Approvers: \(approval.approvers.joined(separator: ", "))").lineLimit(1)
-                    }
+            Text("Review \(run.pipelineName) \(run.runNumber)").appFont(.title3, weight: .semibold).lineLimit(1)
+            if let approval = model.approvals(for: run).first {
+                ApprovalCard(approval: approval, run: run) { approve, comment in
+                    try await model.respond(to: approval, approve: approve, comment: comment, appState: appState)
+                    if model.approvals(for: run).isEmpty { dismiss() }
                 }
-                .appFont(.caption)
-                .foregroundStyle(.secondary)
-
-                ScrollView {
-                    Text(approval.instructions.isEmpty ? "No instructions given." : approval.instructions)
-                        .appFont(.callout)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                }
-                .frame(minHeight: 120, maxHeight: 320)
-                .background(Color(nsColor: .textBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.2)))
-
-                TextField("Comment (optional)", text: $comment, axis: .vertical)
-                    .lineLimit(2...5)
-                    .textFieldStyle(.roundedBorder)
-
-                if let error {
-                    Label(error, systemImage: "exclamationmark.triangle")
+                if model.approvals(for: run).count > 1 {
+                    Text("\(model.approvals(for: run).count - 1) more after this one")
                         .appFont(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.secondary)
                 }
-
-                HStack {
-                    if model.approvals(for: run).count > 1 {
-                        Text("\(model.approvals(for: run).count - 1) more after this one")
-                            .appFont(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("Cancel") { dismiss() }
-                        .keyboardShortcut(.cancelAction)
-                    Button {
-                        confirmReject = true
-                    } label: {
-                        if working == false { ProgressView().controlSize(.small) } else { Text("Reject") }
-                    }
-                    .tint(.orange)
-                    Button {
-                        respond(approval, approve: true)
-                    } label: {
-                        if working == true { ProgressView().controlSize(.small) } else { Text("Approve") }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.green)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .help("Approve (⌘↩)")
-                }
-                .disabled(working != nil)
-                .confirmationDialog("Reject \(run.pipelineName) \(run.runNumber)?", isPresented: $confirmReject) {
-                    Button("Reject") { respond(approval, approve: false) }
-                    Button("Keep waiting", role: .cancel) {}
-                } message: {
-                    Text("The run stops at this step.")
-                }
+                HStack { Spacer(); Button("Close") { dismiss() }.keyboardShortcut(.cancelAction) }
             } else {
                 Text("Nothing is waiting for approval on this run.").appFont(.callout).foregroundStyle(.secondary)
                 HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }
@@ -325,21 +260,6 @@ struct ApprovalReviewSheet: View {
         }
         .padding(18)
         .frame(width: 560)
-    }
-
-    private func respond(_ approval: PipelineApproval, approve: Bool) {
-        working = approve
-        error = nil
-        Task {
-            defer { working = nil }
-            do {
-                try await model.respond(to: approval, approve: approve, comment: comment, appState: appState)
-                comment = ""
-                if model.approvals(for: run).isEmpty { dismiss() }
-            } catch {
-                self.error = "Could not \(approve ? "approve" : "reject"): \(error.localizedDescription)"
-            }
-        }
     }
 }
 
@@ -369,10 +289,6 @@ struct PipelineRunDetailView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            if !approvals.isEmpty {
-                approvalBanner
-                Divider()
-            }
             content
         }
         .task(id: run.id) { await load() }
@@ -380,6 +296,10 @@ struct PipelineRunDetailView: View {
             if run.source == .azureDevOps, run.status.isActive {
                 await model.refreshApprovals(appState: appState, projects: [run.container])
             }
+        }
+        .onChange(of: approvals.map(\.id)) {
+            // An approval that turns up after the log loaded opens its step.
+            for section in log?.sections ?? [] where approval(for: section) != nil { expanded.insert(section.id) }
         }
         .sheet(isPresented: reviewBinding) {
             ApprovalReviewSheet(run: run, model: model)
@@ -401,21 +321,23 @@ struct PipelineRunDetailView: View {
         )
     }
 
-    private var approvalBanner: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
-            Text(approvals.count == 1
-                 ? "1 approval needs your review before this run can continue"
-                 : "\(approvals.count) approvals need your review before this run can continue")
-                .appFont(.callout)
-            Spacer()
-            Button("Review…") { model.reviewingApprovalRunID = run.id }
-                .buttonStyle(.borderedProminent)
-                .help("Read the instructions, then approve or reject")
+    /// The approval holding this stage's step, if any.
+    private func approval(for section: PipelineRunLog.Section) -> PipelineApproval? {
+        guard let identifier = section.identifier?.lowercased() else { return nil }
+        return approvals.first { $0.id.lowercased() == identifier }
+    }
+
+    /// Approvals that no log section shows, such as an environment check.
+    private var detachedApprovals: [PipelineApproval] {
+        guard let log else { return approvals }
+        return approvals.filter { approval in !log.sections.contains { self.approval(for: $0)?.id == approval.id } }
+    }
+
+    private func card(_ approval: PipelineApproval) -> some View {
+        ApprovalCard(approval: approval, run: run) { approve, comment in
+            try await model.respond(to: approval, approve: approve, comment: comment, appState: appState)
+            await load()
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color.orange.opacity(0.08))
     }
 
     private var header: some View {
@@ -569,6 +491,7 @@ struct PipelineRunDetailView: View {
         } else if let log {
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
+                    ForEach(detachedApprovals) { card($0) }
                     if log.truncated {
                         Text("Long log — each section shows its tail.")
                             .appFont(.caption2)
@@ -658,12 +581,19 @@ struct PipelineRunDetailView: View {
                     Divider()
                     Button("Send Stage to Agent") { send([section]) }
                 }
+                if approval(for: section) != nil {
+                    Divider()
+                    Button("Review Approval…") { model.reviewingApprovalRunID = run.id }
+                }
                 Divider()
                 Button(isOpen ? "Collapse" : "Expand") {
                     if isOpen { expanded.remove(section.id) } else { expanded.insert(section.id) }
                 }
             }
-            if isOpen {
+            if isOpen, let waiting = approval(for: section) {
+                Divider()
+                card(waiting).padding(10)
+            } else if isOpen {
                 Divider()
                 ScrollView(.horizontal) {
                     Text(section.text)
@@ -726,7 +656,8 @@ struct PipelineRunDetailView: View {
             // Failed steps open; on a green run open the last one, which is
             // where the interesting output usually is.
             let failed = loaded.sections.filter { $0.status == .failed }.map(\.id)
-            expanded = failed.isEmpty ? Set(loaded.sections.suffix(1).map(\.id)) : Set(failed)
+            let waiting = loaded.sections.filter { approval(for: $0) != nil }.map(\.id)
+            expanded = !waiting.isEmpty ? Set(waiting) : failed.isEmpty ? Set(loaded.sections.suffix(1).map(\.id)) : Set(failed)
         } catch {
             loadError = error.localizedDescription
         }

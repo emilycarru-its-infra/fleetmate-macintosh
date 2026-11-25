@@ -73,6 +73,13 @@ let package = Package(
             ],
             path: "Sources/FleetMateApp"
         ),
+        // Renders the approval card offscreen from fixtures; shares two files
+        // with FleetMateApp through symlinks and is never shipped.
+        .executableTarget(
+            name: "ApprovalSnapshot",
+            dependencies: ["FleetMateCore"],
+            path: "Sources/ApprovalSnapshot"
+        ),
         .testTarget(
             name: "FleetMateTests",
             dependencies: ["FleetMateCore"],

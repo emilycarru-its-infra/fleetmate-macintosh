@@ -194,6 +194,8 @@ final class DevelopmentModel: ObservableObject {
     @Published var reviewingApprovalRunID: String?
     /// Approval id → build id, once a timeline has resolved it; ids never move.
     private var approvalBuilds: [String: Int] = [:]
+    /// Approval id → the approval with its timeline place and timeout filled in.
+    private var approvalDetails: [String: PipelineApproval] = [:]
 
     private var pipelinesTask: Task<Void, Never>?
     private var pipelineRefreshTask: Task<Void, Never>?
@@ -269,6 +271,7 @@ final class DevelopmentModel: ObservableObject {
                     }
                 }
             }
+            resolved = await enrich(resolved, runs: runs, appState: appState)
             for approval in resolved {
                 guard let build = approval.buildId else { continue }
                 next[Self.approvalKey(project: project, buildId: build), default: []].append(approval)
@@ -276,6 +279,32 @@ final class DevelopmentModel: ObservableObject {
         }
         guard !Task.isCancelled else { return }
         if next != pendingApprovals { pendingApprovals = next }
+    }
+
+    /// Adds each approval's step, stage, start time and, for ManualValidation,
+    /// its timeout. These never change once an approval exists, so they are
+    /// read once and remembered.
+    private func enrich(_ approvals: [PipelineApproval], runs: [PipelineRun], appState: AppState) async -> [PipelineApproval] {
+        var result: [PipelineApproval] = []
+        var timelines: [Int: [String: ApprovalTimelinePlace]] = [:]
+        for approval in approvals {
+            let key = approval.id.lowercased()
+            if let known = approvalDetails[key] { result.append(known.assigned(to: approval.buildId ?? 0)); continue }
+            var detailed = approval
+            if let build = approval.buildId {
+                if timelines[build] == nil {
+                    timelines[build] = (try? await appState.devOpsService.getApprovalPlaces(project: approval.project, buildId: build)) ?? [:]
+                }
+                if let place = timelines[build]?[key] { detailed = detailed.placed(at: place) }
+                if approval.kind == .manualValidation, let run = runs.first(where: { $0.runId == build }), let definition = run.pipelineId,
+                   let all = try? await appState.devOpsService.getManualValidationSettings(project: approval.project, pipelineId: definition, branch: run.branch) {
+                    detailed.settings = all.first { $0.instructions == approval.instructions } ?? (all.count == 1 ? all.first : nil)
+                }
+                if detailed.stepName != nil || detailed.settings != nil { approvalDetails[key] = detailed }
+            }
+            result.append(detailed)
+        }
+        return result
     }
 
     /// Approves or rejects, then drops the approval locally and re-reads the run.

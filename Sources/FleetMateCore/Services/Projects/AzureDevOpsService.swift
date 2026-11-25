@@ -1,4 +1,5 @@
 import Foundation
+import Yams
 
 /// Azure DevOps service — REST API via URLSession with Bearer token authentication.
 /// Token is injected externally by AppState after SSO authentication completes.
@@ -81,7 +82,8 @@ public class AzureDevOpsService {
         return await refreshToken()
     }
 
-    public init(config: FleetMateConfig) {
+    /// - Parameter sessionConfiguration: Overrides the default URLSession setup, for tests.
+    public init(config: FleetMateConfig, sessionConfiguration: URLSessionConfiguration? = nil) {
         self.config = config
         self.cacheDuration = TimeInterval(config.cacheMinutes * 60)
 
@@ -96,7 +98,7 @@ public class AzureDevOpsService {
                        ?? config.devopsProject
                        ?? ""
 
-        let sessionConfig = URLSessionConfiguration.default
+        let sessionConfig = sessionConfiguration ?? URLSessionConfiguration.default
         sessionConfig.timeoutIntervalForRequest = 30
         self.session = URLSession(configuration: sessionConfig)
 
@@ -1431,7 +1433,8 @@ public class AzureDevOpsService {
                 id: record.id ?? String(logId),
                 name: record.name ?? "step",
                 status: Self.mapBuildStatus(state: record.state, result: record.result),
-                text: text
+                text: text,
+                identifier: record.identifier
             ))
         }
         return PipelineRunLog(runId: buildId, sections: sections, truncated: truncated)
@@ -1471,7 +1474,8 @@ public class AzureDevOpsService {
                 buildId: approval.pipeline?.owner?.id,
                 instructions: approval.instructions ?? "",
                 createdOn: PullRequestDateParser.parse(approval.createdOn),
-                approvers: (approval.steps ?? []).compactMap { $0.assignedApprover?.displayName }
+                approvers: (approval.steps ?? []).compactMap { $0.assignedApprover?.displayName },
+                minRequiredApprovers: approval.minRequiredApprovers
             )
         }
     }
@@ -1489,6 +1493,92 @@ public class AzureDevOpsService {
             (record.state ?? "").lowercased() == "completed" ? nil : record.identifier?.lowercased()
         })
     }
+
+    /// Where each unfinished approval sits in the build's timeline, keyed by
+    /// lowercased approval id: its step, its stage and when it began waiting.
+    public func getApprovalPlaces(project: String, buildId: Int) async throws -> [String: ApprovalTimelinePlace] {
+        let encoded = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        let timeline: AzdoTimeline = try await request(
+            "GET",
+            path: "/_apis/build/builds/\(buildId)/timeline?api-version=7.0",
+            forProject: encoded
+        )
+        return Self.approvalPlaces(in: timeline.records ?? [])
+    }
+
+    private static func approvalPlaces(in records: [AzdoTimeline.Record]) -> [String: ApprovalTimelinePlace] {
+        let byId = Dictionary(records.compactMap { record in record.id.map { ($0.lowercased(), record) } }, uniquingKeysWith: { first, _ in first })
+        func stage(of record: AzdoTimeline.Record) -> String? {
+            var parent = record.parentId.flatMap { byId[$0.lowercased()] }
+            var hops = 0
+            while let current = parent, hops < 8 {
+                if (current.type ?? "").lowercased() == "stage" { return current.name }
+                parent = current.parentId.flatMap { byId[$0.lowercased()] }
+                hops += 1
+            }
+            return nil
+        }
+        var places: [String: ApprovalTimelinePlace] = [:]
+        for record in records {
+            guard let identifier = record.identifier?.lowercased(), (record.state ?? "").lowercased() != "completed" else { continue }
+            places[identifier] = ApprovalTimelinePlace(
+                recordId: record.id,
+                stepName: record.name,
+                stageName: stage(of: record),
+                startedAt: PullRequestDateParser.parse(record.startTime)
+            )
+        }
+        return places
+    }
+
+    /// Reads the ManualValidation steps of a pipeline's current definition
+    /// through the read-only preview, which queues nothing. Timeout and
+    /// `onTimeout` live only there; the Approvals API does not report them.
+    public func getManualValidationSettings(project: String, pipelineId: Int, branch: String?) async throws -> [ManualValidationSettings] {
+        let encoded = project.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? project
+        var body: [String: Any] = ["previewRun": true]
+        if let branch, !branch.isEmpty {
+            body["resources"] = ["repositories": ["self": ["refName": branch.hasPrefix("refs/") ? branch : "refs/heads/\(branch)"]]]
+        }
+        let data = try JSONSerialization.data(withJSONObject: body)
+        let preview: AzdoPipelinePreview = try await request(
+            "POST",
+            path: "/_apis/pipelines/\(pipelineId)/preview?api-version=7.1",
+            body: data,
+            forProject: encoded
+        )
+        return Self.manualValidationSettings(inYaml: preview.finalYaml ?? "")
+    }
+
+    static func manualValidationSettings(inYaml yaml: String) -> [ManualValidationSettings] {
+        guard let root = try? Yams.load(yaml: yaml) else { return [] }
+        var found: [ManualValidationSettings] = []
+        func int(_ value: Any?) -> Int? {
+            if let number = value as? Int { return number }
+            if let text = value as? String { return Int(text) }
+            return nil
+        }
+        func walk(_ node: Any) {
+            if let map = node as? [String: Any] {
+                if let task = map["task"] as? String, task.hasPrefix("ManualValidation@") {
+                    let inputs = map["inputs"] as? [String: Any] ?? [:]
+                    let action = (inputs["onTimeout"] as? String)?.lowercased() == "resume" ? ApprovalTimeoutAction.resume : .reject
+                    found.append(ManualValidationSettings(
+                        instructions: inputs["instructions"] as? String,
+                        timeoutMinutes: int(map["timeoutInMinutes"]),
+                        onTimeout: action
+                    ))
+                }
+                map.values.forEach(walk)
+            } else if let list = node as? [Any] {
+                list.forEach(walk)
+            }
+        }
+        walk(root)
+        return found
+    }
+
+    private struct AzdoPipelinePreview: Decodable { let finalYaml: String? }
 
     /// Approves or rejects one approval as the signed-in user.
     public func respondToApproval(project: String, approvalId: String, approve: Bool, comment: String) async throws {
@@ -1523,6 +1613,7 @@ public class AzureDevOpsService {
         let createdOn: String?
         let pipeline: Pipeline?
         let steps: [Step]?
+        let minRequiredApprovers: Int?
         struct Pipeline: Decodable { let owner: Owner?; struct Owner: Decodable { let id: Int? } }
         struct Step: Decodable { let assignedApprover: Identity?; struct Identity: Decodable { let displayName: String? } }
     }
@@ -1602,6 +1693,8 @@ public class AzureDevOpsService {
             let result: String?
             let order: Int?
             let identifier: String?
+            let parentId: String?
+            let startTime: String?
             let log: LogRef?
             struct LogRef: Decodable { let id: Int? }
         }

@@ -113,7 +113,6 @@ enum AcademicTerm: String, CaseIterable {
 }
 
 struct TicketsView: View {
-    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject var appState: AppState
     @Environment(\.appFontScale) private var appFontScale
     @Environment(\.compactModuleToolbar) private var compactToolbar
@@ -129,6 +128,10 @@ struct TicketsView: View {
     @State private var sortAscending = false
     @State private var selectedTicketIds: Set<Int?> = []
     @State private var ticketFeed: [TdxFeedEntry] = []
+    /// Posted comments and replies the feed may not list yet.
+    @State private var feedPending = TicketFeedPending()
+    /// A second read after a change, for what TDX applies a moment later.
+    @State private var followUpRefresh: Task<Void, Never>?
     @State private var isLoadingFeed = false
     @State private var showClosed = false
     @State private var meModeApplied = false
@@ -708,12 +711,15 @@ struct TicketsView: View {
             }
             contentSection
         }
-        .task(id: scenePhase) {
-            guard scenePhase == .active else { return }
+        .task {
+            // Ticks often; automaticRefresh decides what is due.
             while !Task.isCancelled {
                 automaticRefresh()
-                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                do { try await Task.sleep(for: .seconds(15)) } catch { return }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            automaticRefresh(returning: true)
         }
         .onChange(of: selectedTicketIds) { oldIds, newIds in
             if let oldId = oldIds.first ?? nil {
@@ -1454,7 +1460,7 @@ struct TicketsView: View {
             do {
                 _ = try await appState.tdxService.updateTicket(id: ticketId, updates: changes)
                 loadTickets()
-                if selectedTicket?.id == ticketId { loadTicketDetail(ticketId: ticketId) }
+                ticketChanged(ticketId)
             } catch {
                 menuErrorMessage = "Ticket #\(ticketId) was not updated: \(error.localizedDescription)"
             }
@@ -1576,19 +1582,13 @@ struct TicketsView: View {
                             // share a button width and their buttons line up.
                             VStack(alignment: .leading, spacing: 0) {
                                 TicketWorkflowView(ticketId: ticketId, service: appState.tdxService, refreshToken: ticketActivityRevision) {
-                                    guard selectedTicket?.id == ticketId else { return }
-                                    loadTicketDetail(ticketId: ticketId)
-                                    loadTicketFeed(ticketId: ticketId)
-                                    loadTickets()
+                                    ticketChanged(ticketId)
                                 }
                                 .id("workflow-\(ticketId)")
                                 Divider().padding(.vertical, 8)
                                 TicketTasksView(ticketId: ticketId, service: appState.tdxService,
                                                 refreshToken: ticketActivityRevision) {
-                                    guard selectedTicket?.id == ticketId else { return }
-                                    loadTicketDetail(ticketId: ticketId)
-                                    loadTicketFeed(ticketId: ticketId)
-                                    loadTickets()
+                                    ticketChanged(ticketId)
                                 }
                                 .id("tasks-\(ticketId)")
                             }
@@ -2535,6 +2535,7 @@ struct TicketsView: View {
             peopleErrorMessage = nil
             ticketContacts = (try? await appState.tdxService.getTicketContacts(ticketId: ticketId))
                 ?? ticketContacts + [person]
+            loadTicketFeed(ticketId: ticketId, preservingContent: true)
         } catch {
             peopleErrorMessage = "Couldn't add \(person.fullName ?? "contact"): \(error.localizedDescription)"
         }
@@ -2907,13 +2908,16 @@ struct TicketsView: View {
         }
     }
 
-    /// The view task stops when hidden/inactive. Background helpers have their own slower cadence.
-    private func automaticRefresh() {
-        guard scenePhase == .active, NSApp.isActive, appState.selectedTab == .tickets,
+    /// Keeps the open ticket and the list current while the window is on
+    /// screen, frontmost or not. A hidden, minimised or covered window waits,
+    /// and catches up when it comes back (`returning`).
+    private func automaticRefresh(returning: Bool = false) {
+        guard appState.selectedTab == .tickets, Self.ticketsWindowIsOnScreen,
               appState.tdxSsoAuthenticated, !appState.tdxNeedsSignIn else { return }
         let now = Date()
-        let listInterval: TimeInterval = ticketsLoadError == nil ? 120 : 300
-        let detailInterval: TimeInterval = feedLoadError == nil && !detailLoadFailed ? 60 : 300
+        let healthy = feedLoadError == nil && !detailLoadFailed
+        let listInterval: TimeInterval = ticketsLoadError != nil ? 300 : returning ? 30 : 120
+        let detailInterval: TimeInterval = !healthy ? 300 : returning ? 10 : 45
         if now.timeIntervalSince(lastAutomaticListRefresh) >= listInterval, !isLoading {
             lastAutomaticListRefresh = now
             loadTickets()
@@ -2931,6 +2935,46 @@ struct TicketsView: View {
         guard let id = selectedTicket?.id else { return }
         loadTicketDetail(ticketId: id)
         loadTicketFeed(ticketId: id)
+    }
+
+    /// True while any of the app's windows can be seen.
+    private static var ticketsWindowIsOnScreen: Bool {
+        !NSApp.isHidden && NSApp.windows.contains {
+            $0.isVisible && !$0.isMiniaturized && $0.occlusionState.contains(.visible)
+        }
+    }
+
+    /// Something was changed from here: show what TDX now holds — the ticket,
+    /// its activity and its row in the list — then read once more a few
+    /// seconds later for what TDX applies after answering (workflow steps,
+    /// notifications, the modified date).
+    private func ticketChanged(_ ticketId: Int) {
+        if selectedId == ticketId {
+            loadTicketDetail(ticketId: ticketId, preservingEdits: true)
+            loadTicketFeed(ticketId: ticketId, preservingContent: true)
+        } else {
+            refreshListedTicket(ticketId)
+        }
+        followUpRefresh?.cancel()
+        followUpRefresh = Task {
+            do { try await Task.sleep(for: .seconds(5)) } catch { return }
+            if selectedId == ticketId, !isLoadingDetail, !isLoadingFeed {
+                loadTicketDetail(ticketId: ticketId, preservingEdits: true)
+                loadTicketFeed(ticketId: ticketId, preservingContent: true)
+            } else {
+                refreshListedTicket(ticketId)
+            }
+        }
+    }
+
+    /// Re-read one ticket for its row in List and Board.
+    private func refreshListedTicket(_ ticketId: Int) {
+        let service = appState.tdxService
+        Task {
+            guard let fresh = try? await service.getTicket(id: ticketId),
+                  appState.tdxService === service else { return }
+            appState.replaceCachedTicket(fresh)
+        }
     }
 
     private func loadTicketDetail(ticketId: Int, preservingEdits: Bool = false) {
@@ -2951,6 +2995,7 @@ struct TicketsView: View {
                 guard detailLoadGate.accepts(request, selectedTicketId: selectedId),
                       appState.tdxService === service, appState.tdxMe?.uid == personUid else { return }
                 if let full {
+                    appState.replaceCachedTicket(full)
                     if preservingEdits && (hasEdits || isEditingDescription || isSaving || isSavingDescription || isAddingContact) { return }
                     detailLoadFailed = false
                     detailedTicket = full
@@ -2985,7 +3030,7 @@ struct TicketsView: View {
                 let loadedFeed = try await service.getTicketFeed(ticketId: ticketId)
                 guard feedLoadGate.accepts(request, selectedTicketId: selectedId),
                       appState.tdxService === service, appState.tdxMe?.uid == personUid else { return }
-                ticketFeed = loadedFeed
+                ticketFeed = feedPending.merge(loadedFeed, ticketId: ticketId)
             } catch {
                 guard feedLoadGate.accepts(request, selectedTicketId: selectedId),
                       appState.tdxService === service, appState.tdxMe?.uid == personUid else { return }
@@ -3081,6 +3126,7 @@ struct TicketsView: View {
                     detailedTicket = updated
                     editDescription = Self.decodeHtml(updated.description ?? "")
                     isEditingDescription = false
+                    ticketChanged(ticketId)
                 } else {
                     saveErrorMessage = "Failed to save description — server returned no data."
                 }
@@ -3148,8 +3194,7 @@ struct TicketsView: View {
                     detailedTicket = updated
                     populateEditFields(from: updated)
                     saveSucceeded = true
-                    loadTickets()
-                    loadTicketDetail(ticketId: ticketId)
+                    ticketChanged(ticketId)
                     try? await Task.sleep(for: .seconds(2))
                     saveSucceeded = false
                 } else {
@@ -3206,6 +3251,8 @@ struct TicketsView: View {
                     populateEditFields(from: updated)
                     showSetParentSheet = false
                     parentTicketIdText = ""
+                    loadTickets()
+                    ticketChanged(ticketId)
                 } else {
                     saveErrorMessage = "Failed to set parent ticket."
                 }
@@ -3271,6 +3318,8 @@ struct TicketsView: View {
                 populateEditFields(from: updated)
                 showCreateParentSheet = false
                 newParentTitle = ""
+                loadTickets()
+                ticketChanged(ticketId)
             } catch {
                 saveErrorMessage = "Create parent failed: \(error.localizedDescription)"
             }
@@ -3354,12 +3403,12 @@ struct TicketsView: View {
             if isCommentPrivate == submittedPrivate, newComment == submittedComment {
                 isCommentPrivate = false
             }
-            loadTicketFeed(ticketId: ticketId)
+            ticketChanged(ticketId)
             return
         }
 
         do {
-            _ = try await appState.tdxService.addComment(
+            let posted = try await appState.tdxService.addComment(
                 ticketId: ticketId,
                 comment: submittedComment,
                 isPrivate: submittedPrivate,
@@ -3367,7 +3416,12 @@ struct TicketsView: View {
             )
             commentPostErrors[ticketId] = nil
             if commentDrafts[ticketId] == submittedDraft { commentDrafts[ticketId] = nil }
-            guard selectionRevision == revision, selectedTicket?.id == ticketId else { return }
+            if let posted { feedPending.addComment(posted, ticketId: ticketId) }
+            guard selectionRevision == revision, selectedTicket?.id == ticketId else {
+                ticketChanged(ticketId)
+                return
+            }
+            ticketFeed = feedPending.apply(to: ticketFeed, ticketId: ticketId)
             // Leave anything typed while the request was running untouched.
             if newComment == submittedComment, isCommentPrivate == submittedPrivate,
                notifySelection == submittedNotify {
@@ -3375,7 +3429,7 @@ struct TicketsView: View {
                 isCommentPrivate = false
                 notifySelection = []
             }
-            loadTicketFeed(ticketId: ticketId)
+            ticketChanged(ticketId)
         } catch {
             let message = "Comment failed: \(error.localizedDescription)"
             commentPostErrors[ticketId] = message
@@ -3437,7 +3491,8 @@ struct TicketsView: View {
 
         if submitted.hasText {
             do {
-                try await appState.tdxService.replyToFeedEntry(entryId: entryId, body: submitted.text)
+                let reply = try await appState.tdxService.replyToFeedEntry(entryId: entryId, body: submitted.text)
+                feedPending.addReply(reply, parentId: entryId, ticketId: ticketId)
             } catch {
                 if selectionRevision == revision { saveErrorMessage = "Reply failed: \(error.localizedDescription)" }
                 return
@@ -3451,7 +3506,9 @@ struct TicketsView: View {
         if replyDrafts[entryId] == nil, replyingToEntryId == entryId {
             withAnimation(.easeInOut(duration: 0.15)) { replyingToEntryId = nil }
         }
+        ticketFeed = feedPending.apply(to: ticketFeed, ticketId: ticketId)
         await refreshReplies(entryId: entryId, revision: revision)
+        ticketChanged(ticketId)
     }
 
     private func deleteReply(_ pending: PendingReplyDeletion) async {
@@ -3459,6 +3516,7 @@ struct TicketsView: View {
         let revision = selectionRevision
         do {
             try await appState.tdxService.deleteFeedReply(entryId: pending.parentId, replyId: replyId)
+            feedPending.removeReply(id: replyId)
         } catch {
             if selectionRevision == revision { saveErrorMessage = "Couldn't delete the reply: \(error.localizedDescription)" }
             return
@@ -3474,6 +3532,7 @@ struct TicketsView: View {
               let index = ticketFeed.firstIndex(where: { $0.id == entryId }) else { return }
         // The single-entry read carries the replies and a current RepliesCount.
         ticketFeed[index] = fresh
+        if let ticketId = selectedId { ticketFeed = feedPending.apply(to: ticketFeed, ticketId: ticketId) }
     }
 
     /// Re-read the ticket so its Attachments list shows newly uploaded files,
@@ -3551,6 +3610,7 @@ struct TicketsView: View {
                 }
                 _ = try await appState.tdxService.updateTicket(id: ticketId, updates: changes)
                 loadTickets()
+                ticketChanged(ticketId)
             } catch {
                 print("Failed to update ticket via board drop: \(error)")
             }

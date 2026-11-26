@@ -148,6 +148,9 @@ final class AgentTerminalStore: ObservableObject {
                                  rowStyle: Self.rowStyle,
                                  messageWindowID: Self.messageWindowID,
                                  pullRequestResolvers: [AzureDevOpsPullRequestResolver(source: pullRequestSource)],
+                                 // Mirror the rows between Macs through the hub without handing
+                                 // them to agent-lanes-restore, which would start every one.
+                                 sharedLanes: SharedLaneSettings.automatic(restores: false),
                                  // At launch, ask the hub and every lane Mac what is
                                  // running, so the session the window opens on is
                                  // reattached wherever it runs: by the id

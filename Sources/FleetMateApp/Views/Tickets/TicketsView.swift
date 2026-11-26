@@ -751,7 +751,10 @@ struct TicketsView: View {
             let savedText = nextId.flatMap { UnsentDraftStore.comment(ticketId: $0) }
             newComment = draft?.text ?? savedText ?? ""
             isCommentSectionExpanded = draft != nil || savedText != nil
-            isCommentPrivate = draft?.isPrivate ?? false
+            // A comment brought back from disk starts Private: its setting was
+            // not saved, and showing a requestor a staff note is worse than the
+            // reverse.
+            isCommentPrivate = draft?.isPrivate ?? (savedText != nil)
             notifySelection = draft?.notify ?? []
             commentAttachments = draft?.attachments ?? []
             isCommentDropTargeted = false

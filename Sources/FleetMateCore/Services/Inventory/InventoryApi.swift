@@ -88,7 +88,16 @@ public final class InventoryApi: @unchecked Sendable {
         }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 120
-        session = URLSession(configuration: configuration)
+        session = URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
+    }
+
+    /// Redirects are not followed: a redirect to another host would carry the
+    /// API key or bearer with it. An inventory API never needs one.
+    private final class NoRedirects: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil)
+        }
     }
 
     public struct Response: Sendable {

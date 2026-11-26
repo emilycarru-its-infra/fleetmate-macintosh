@@ -163,6 +163,25 @@ public class AzureDevOpsService {
         forProject: String? = nil,
         allowRetryAfterRefresh: Bool = true
     ) async throws -> T {
+        let data = try await requestData(
+            method, path: path, body: body, contentType: contentType,
+            orgLevel: orgLevel, forProject: forProject,
+            allowRetryAfterRefresh: allowRetryAfterRefresh
+        )
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    /// Execute a resource operation with the configured Azure DevOps identity.
+    public func requestData(
+        _ method: String,
+        path: String,
+        body: Data? = nil,
+        contentType: String = "application/json",
+        orgLevel: Bool = false,
+        forProject: String? = nil,
+        releases: Bool = false,
+        allowRetryAfterRefresh: Bool = true
+    ) async throws -> Data {
         // Refresh proactively when the token is spent. Previously only emptiness
         // was checked, so an expired token was sent anyway and came back 401 —
         // reported to the user as "SSO login required" despite a silent token
@@ -175,13 +194,20 @@ public class AzureDevOpsService {
             throw AzDevOpsError.notLoggedIn
         }
 
-        let basePath: String
-        if orgLevel {
-            basePath = orgUrl
-        } else {
-            let proj = forProject ?? project
-            basePath = "\(orgUrl)/\(proj)"
+        guard path.hasPrefix("/") && !path.hasPrefix("//") else {
+            throw AzDevOpsError.invalidUrl(path)
         }
+
+        let root: String
+        if releases, var components = URLComponents(string: orgUrl),
+           let host = components.host, host.hasSuffix(".azure.com"),
+           host.split(separator: ".").first == "dev" {
+            components.host = "vsrm." + host
+            root = components.string ?? orgUrl
+        } else {
+            root = orgUrl
+        }
+        let basePath = orgLevel ? root : "\(root)/\(forProject ?? project)"
         guard let url = URL(string: "\(basePath)\(path)") else {
             throw AzDevOpsError.invalidUrl(path)
         }
@@ -214,13 +240,14 @@ public class AzureDevOpsService {
             if httpResponse.statusCode == 401, allowRetryAfterRefresh {
                 if await refreshToken() {
                     dbg.info("AzDO retrying \(method) \(path) with a refreshed token", category: "azdo-auth")
-                    return try await request(
+                    return try await requestData(
                         method,
                         path: path,
                         body: body,
                         contentType: contentType,
                         orgLevel: orgLevel,
                         forProject: forProject,
+                        releases: releases,
                         allowRetryAfterRefresh: false
                     )
                 }
@@ -235,7 +262,7 @@ public class AzureDevOpsService {
             throw AzDevOpsError.httpError(code: httpResponse.statusCode, message: errBody)
         }
 
-        return try JSONDecoder().decode(T.self, from: data)
+        return data
     }
 
     /// Make an authenticated request without decoding (for status-check calls)

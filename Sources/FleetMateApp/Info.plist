@@ -37,6 +37,8 @@
 	<string>27.0</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 Example Organisation. All rights reserved.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Finds your agent sessions on your other Macs.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>NSHighResolutionCapable</key>

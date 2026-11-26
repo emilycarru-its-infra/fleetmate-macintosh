@@ -169,6 +169,7 @@ final class AgentTerminalStore: ObservableObject {
             statusFeed: LaneStatusFeed(sources: [ClaudeAgentsStatusSource()].compactMap { $0 },
                                        presenceSources: [TmuxPresenceSource()]))
         lanes.register(Self.backgroundBackend(folders: laneFolders))
+        resetFrozenSectionOrderOnce()
         // A saved or shared list from before the registry cannot bring back a
         // session from another app's folders.
         let scopeFolders = laneFolders
@@ -367,6 +368,7 @@ final class AgentTerminalStore: ObservableObject {
     private func prepare(_ lane: AgentLane) -> AgentLane {
         var lane = lane
         if lane.backendID == Self.followsDefaultID { lane.backendID = backendID(for: defaultLaunch.command) }
+        routeToHost(&lane)
         brief.refresh()
         do {
             try workspace.prepare()
@@ -393,6 +395,24 @@ final class AgentTerminalStore: ObservableObject {
         // The person's own sessions report through AGENTSMATE_LANE.
         if !program.hasSuffix("-remote") { lane.statusMatch = .lane(lane.id) }
         return lane
+    }
+
+    /// A lane in a repository whose host is another machine starts, resumes
+    /// and attaches there, through the remote wrapper for its agent, never as
+    /// a local agent here. The hosts come from the registry and `hosts.conf`.
+    /// A lane the person already sent to a host keeps it. A shell stays local,
+    /// and so does a lane when this Mac has no wrapper to reach the host.
+    private func routeToHost(_ lane: inout AgentLane) {
+        guard let hosts = AgentHosts.load(),
+              let route = LaneHostRouting.route(directory: lane.path, registry: AgentAppsRepoRegistry.loadCurrent(),
+                                               selfName: hosts.selfName, hub: hosts.hub?.name,
+                                               laneHosts: Set(hosts.laneHosts.map(\.name))),
+              let current = lanes.backend(id: lane.backendID) as? CommandLaneBackend,
+              let remote = LaneHostRouting.remoteCommand(for: current.command) else { return }
+        let alreadyRemote = current.command.trimmingCharacters(in: .whitespaces) == remote
+        guard alreadyRemote || AgentLaunch.isInstalled(remote) else { return }
+        if !alreadyRemote { lane.backendID = backendID(for: remote) }
+        if lane.host == nil { lane.host = route.laneHost }
     }
 
     // MARK: Sessions
@@ -719,8 +739,11 @@ final class AgentTerminalStore: ObservableObject {
         for section in workspaceFile.baseline?.sections ?? [] {
             let name = section.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty else { continue }
-            if section.collapsed == true, !lanes.layout.sections.contains(name) { lanes.layout.collapsed.insert(name) }
-            lanes.addSection(name)
+            // A section is not added to the list's saved order: that order
+            // is the person's own, and one written here froze the sections in
+            // the order they were first seen, ahead of the default
+            // (RepositoryDefaultOrder). Each lane names its section already.
+            if section.collapsed == true, Self.markBaselineSectionSeen(name) { lanes.layout.collapsed.insert(name) }
             for saved in section.sessions {
                 guard let directory = saved.directory, scope.contains(directory: directory) else { continue }
                 let key = TerminalWorkspaceBaseline.normalized(directory)
@@ -743,6 +766,31 @@ final class AgentTerminalStore: ObservableObject {
                 lanes.sessions[id]?.resumeOnStart = saved.resume == true
             }
         }
+    }
+
+    private static let seenSectionsKey = "agentTerminal.baselineSectionsSeen"
+
+    /// Whether `name` is a section the Repos workspace brings for the first
+    /// time here, so its collapsed state applies once and the person's later
+    /// choice stands.
+    private static func markBaselineSectionSeen(_ name: String) -> Bool {
+        var seen = UserDefaults.standard.stringArray(forKey: seenSectionsKey) ?? []
+        guard !seen.contains(name) else { return false }
+        seen.append(name)
+        UserDefaults.standard.set(seen, forKey: seenSectionsKey)
+        return true
+    }
+
+    private static let defaultSectionOrderKey = "agentTerminal.sectionOrderDefaulted.v1"
+
+    /// Once, give up a saved section order so the default shows: earlier
+    /// builds saved every section in the order first seen (alphabetical by
+    /// project, GitHub owners among them), which outranked the default. A
+    /// section the person arranges afterwards is saved and kept.
+    func resetFrozenSectionOrderOnce() {
+        guard !UserDefaults.standard.bool(forKey: Self.defaultSectionOrderKey) else { return }
+        UserDefaults.standard.set(true, forKey: Self.defaultSectionOrderKey)
+        if !lanes.layout.sections.isEmpty { lanes.layout.sections = [] }
     }
 
     /// The one-section-per-host headings an older build made, once

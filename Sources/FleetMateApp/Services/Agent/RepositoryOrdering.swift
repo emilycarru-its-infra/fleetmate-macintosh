@@ -28,9 +28,17 @@ final class RepositoryOrdering: ObservableObject {
         registry = AgentAppsRepoRegistry.loadCurrent()
     }
 
-    /// The default order: the registry's, else `fallback` (the Agent's list).
-    func defaultOrder(fallback: [String]) -> [String] {
-        registry?.orderedPaths ?? AgentRepoList.localPaths(fallback)
+    /// The default order: the registry's (else `fallback`, the Agent's list)
+    /// with Azure DevOps first and GitHub last, Devices leading, and the
+    /// checkouts the registry does not list after those it does
+    /// (``RepositoryDefaultOrder``).
+    func defaultOrder(fallback: [String], records: [RepoRecord] = []) -> [String] {
+        let entries = records.compactMap { record -> RepositoryDefaultOrder.Entry? in
+            guard let path = record.local?.path else { return nil }
+            return RepositoryDefaultOrder.Entry(path: path, provider: record.key.provider,
+                                                scope: record.key.scope, name: record.key.name)
+        }
+        return RepositoryDefaultOrder.make(listed: registry?.orderedPaths ?? AgentRepoList.localPaths(fallback), entries: entries)
     }
 
     /// Follow `store`, re-reading whenever the saved order, the registry or
@@ -60,10 +68,10 @@ final class RepositoryOrdering: ObservableObject {
         if loaded != registry { registry = loaded }
         guard let store else { return }
         let agent = fallback()
-        let defaults = defaultOrder(fallback: agent)
+        let records = ((try? RepoManager().records()) ?? []).filter { $0.isLocal && !$0.isHidden }
+        let defaults = defaultOrder(fallback: agent, records: records.filter(\.isTracked))
         if store.defaultRepositoryOrder != defaults { store.defaultRepositoryOrder = defaults }
 
-        let records = ((try? RepoManager().records()) ?? []).filter { $0.isLocal && !$0.isHidden }
         var byPath: [String: RepoRecord] = [:]
         for record in records {
             guard let path = record.local?.path else { continue }

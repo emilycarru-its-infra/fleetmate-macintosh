@@ -722,6 +722,13 @@ struct TicketsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             automaticRefresh(returning: true)
         }
+        .onChange(of: newComment) { _, text in
+            if let id = selectedId { UnsentDraftStore.setComment(text, ticketId: id) }
+        }
+        .onChange(of: replyDrafts) { _, drafts in
+            UnsentDraftStore.setReplies(drafts.mapValues(\.text),
+                                        entryIds: Set(ticketFeed.compactMap(\.id)))
+        }
         .onChange(of: selectedTicketIds) { oldIds, newIds in
             if let oldId = oldIds.first ?? nil {
                 commentDrafts[oldId] = commentDraft.isEmpty ? nil : commentDraft
@@ -737,8 +744,9 @@ struct TicketsView: View {
             isLoadingDetail = false
             isLoadingFeed = false
             feedLoadError = nil
-            newComment = draft?.text ?? ""
-            isCommentSectionExpanded = draft != nil
+            let savedText = nextId.flatMap { UnsentDraftStore.comment(ticketId: $0) }
+            newComment = draft?.text ?? savedText ?? ""
+            isCommentSectionExpanded = draft != nil || savedText != nil
             isCommentPrivate = draft?.isPrivate ?? false
             notifySelection = draft?.notify ?? []
             commentAttachments = draft?.attachments ?? []
@@ -2633,16 +2641,25 @@ struct TicketsView: View {
         }
     }
 
+    /// Writing a comment or a reply: automatic refreshes wait until it is
+    /// posted or put away, so nothing is redrawn under the cursor.
+    private var isComposing: Bool {
+        hasCommentDraft || replyingToEntryId != nil || postingReplyEntryId != nil || isAddingComment
+    }
+
     private var hasCommentDraft: Bool {
         !newComment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !commentAttachments.isEmpty
     }
 
     private var activityFeed: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if isLoadingFeed {
+            // A refresh keeps the activity on screen. Swapping it for a spinner
+            // made the pane flicker, lost the scroll position and tore down a
+            // reply being typed.
+            if isLoadingFeed && ticketFeed.isEmpty {
                 ProgressView("Loading activity...")
                     .padding()
-            } else if let feedLoadError {
+            } else if let feedLoadError, ticketFeed.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(feedLoadError).foregroundStyle(.secondary)
                     Button("Retry Activity") {
@@ -2934,7 +2951,7 @@ struct TicketsView: View {
             loadTickets()
         }
         if now.timeIntervalSince(lastAutomaticDetailRefresh) >= detailInterval, let id = selectedId,
-           !isLoadingDetail, !isLoadingFeed, !hasEdits, !isEditingDescription, !isSaving, !isSavingDescription, !isAddingContact {
+           !isComposing, !isLoadingDetail, !isLoadingFeed, !hasEdits, !isEditingDescription, !isSaving, !isSavingDescription, !isAddingContact {
             lastAutomaticDetailRefresh = now
             loadTicketDetail(ticketId: id, preservingEdits: true)
             loadTicketFeed(ticketId: id, preservingContent: true)
@@ -3009,7 +3026,7 @@ struct TicketsView: View {
                     appState.replaceCachedTicket(full)
                     if preservingEdits && (hasEdits || isEditingDescription || isSaving || isSavingDescription || isAddingContact) { return }
                     detailLoadFailed = false
-                    detailedTicket = full
+                    if detailedTicket != full { detailedTicket = full }
                     if !preservingEdits || (!hasEdits && !isEditingDescription && !isSaving && !isSavingDescription) {
                         populateEditFields(from: full)
                     }
@@ -3021,6 +3038,17 @@ struct TicketsView: View {
                 detailLoadFailed = true
                 saveErrorMessage = "Could not load ticket details: \(error.localizedDescription)"
             }
+        }
+    }
+
+    /// Bring back replies left unsent by a crash or a quit, and reopen the
+    /// composer under the first one.
+    private func restoreSavedReplies(in feed: [TdxFeedEntry]) {
+        for entry in feed {
+            guard let id = entry.id, replyDrafts[id] == nil,
+                  let text = UnsentDraftStore.reply(entryId: id) else { continue }
+            replyDrafts[id] = FeedReplyDraft(text: text)
+            if replyingToEntryId == nil { replyingToEntryId = id }
         }
     }
 
@@ -3041,7 +3069,9 @@ struct TicketsView: View {
                 let loadedFeed = try await service.getTicketFeed(ticketId: ticketId)
                 guard feedLoadGate.accepts(request, selectedTicketId: selectedId),
                       appState.tdxService === service, appState.tdxMe?.uid == personUid else { return }
-                ticketFeed = feedPending.merge(loadedFeed, ticketId: ticketId)
+                let merged = feedPending.merge(loadedFeed, ticketId: ticketId)
+                if merged != ticketFeed { ticketFeed = merged }
+                restoreSavedReplies(in: merged)
             } catch {
                 guard feedLoadGate.accepts(request, selectedTicketId: selectedId),
                       appState.tdxService === service, appState.tdxMe?.uid == personUid else { return }

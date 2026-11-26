@@ -1,5 +1,6 @@
 import SwiftUI
 import FleetMateCore
+import AgentsMate
 
 /// Settings window tabs. Every tab needs an explicit tag: a tab without one
 /// can never become the selection, so clicking it left the pane blank.
@@ -66,7 +67,7 @@ struct SettingsView: View {
                 .tabItem { Label("About", systemImage: "info.circle") }
                 .tag(SettingsTab.about)
         }
-        .frame(minWidth: 600, maxWidth: 700, minHeight: 700, idealHeight: 900, maxHeight: 1100)
+        .resizableSettingsWindow(minWidth: 600, minHeight: 480, idealHeight: 760, autosaveName: "FleetMateSettings")
     }
 }
 

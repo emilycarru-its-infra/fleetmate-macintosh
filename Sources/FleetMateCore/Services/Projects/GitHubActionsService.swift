@@ -89,6 +89,14 @@ public actor GitHubActionsService {
         return PipelineRunLog(runId: runId, sections: sections, truncated: truncated)
     }
 
+    /// The body of a GET on the REST API, for DevMate's run view. A job's log
+    /// answers with a redirect to where the text lives, which the text reader
+    /// follows.
+    public func readText(path: String) async throws -> String {
+        if path.hasSuffix("/logs") { return try await client.executeRESTText(path: path) }
+        return String(decoding: try await client.executeREST(path: path), as: UTF8.self)
+    }
+
     /// One Actions run by id, in the Pipelines list's shape.
     public func getRun(owner: String, repo: String, runId: Int) async throws -> PipelineRun {
         func enc(_ s: String) -> String { s.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-_."))) ?? s }

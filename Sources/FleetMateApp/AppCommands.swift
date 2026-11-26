@@ -2,6 +2,7 @@ import SwiftUI
 import AgentsMate
 import AppKit
 import FleetMateCore
+import DevMateUI
 
 // MARK: - Command bus
 
@@ -59,6 +60,9 @@ extension View {
 
 struct FleetMateCommands: Commands {
     @ObservedObject var appState: AppState
+    /// The run view in the focused window; while it has the keyboard, Back,
+    /// Forward and Find act on it.
+    @FocusedValue(\.runDetailModel) private var runDetail
     @Environment(\.openWindow) private var openWindow
     @AppStorage(AppFontScale.storageKey) private var fontScale: Double = AppFontScale.default
     @AppStorage(DiffLayout.storageKey) private var diffLayout: DiffLayout = .split
@@ -73,7 +77,14 @@ struct FleetMateCommands: Commands {
         AppTab.enabledTabs(config: appState.config, modules: appState.modules)
     }
 
+    /// A run's outline is on screen, so Back and Forward step through what was
+    /// read there before they leave the tab.
+    private var runDetailHasKeyboard: Bool {
+        runDetail != nil && appState.selectedTab == .development && appState.development.segment == .pipelines
+    }
+
     var body: some Commands {
+        RunDetailCommands(navigation: false)
         CommandGroup(after: .appSettings) {
             Button("Sign In to TeamDynamix…") { appState.signInToTdxInteractively() }
                 .disabled(!appState.config.isTdxConfigured)
@@ -96,9 +107,16 @@ struct FleetMateCommands: Commands {
         CommandGroup(after: .pasteboard) {
             Divider()
 
-            Button("Find") { appState.tabSearchFocusRequest += 1 }
+            Button("Find") {
+                if let runDetail, appState.selectedTab == .development, appState.development.segment == .pipelines,
+                   runDetail.selection != nil {
+                    runDetail.requestFind()
+                } else {
+                    appState.tabSearchFocusRequest += 1
+                }
+            }
                 .keyboardShortcut("f", modifiers: .command)
-                .disabled(!hasSearchField)
+                .disabled(!hasSearchField && runDetail?.selection == nil)
             Button("Search Everything") { appState.globalSearchFocusRequest += 1 }
                 .keyboardShortcut("k", modifiers: .command)
         }
@@ -119,15 +137,19 @@ struct FleetMateCommands: Commands {
             // the sessions visited, and the tab keys through the sessions,
             // as zoom acts on the terminal's text below.
             Button("Back") {
-                if terminalHasKeyboard, lanes.canGoBack { lanes.goBack() } else { appState.goBack() }
+                if terminalHasKeyboard, lanes.canGoBack { lanes.goBack() }
+                else if runDetailHasKeyboard, runDetail?.canGoBack == true { runDetail?.goBack() }
+                else { appState.goBack() }
             }
                 .keyboardShortcut("[", modifiers: .command)
-                .disabled(!appState.canGoBack && !lanes.canGoBack)
+                .disabled(!appState.canGoBack && !lanes.canGoBack && !(runDetailHasKeyboard && runDetail?.canGoBack == true))
             Button("Forward") {
-                if terminalHasKeyboard, lanes.canGoForward { lanes.goForward() } else { appState.goForward() }
+                if terminalHasKeyboard, lanes.canGoForward { lanes.goForward() }
+                else if runDetailHasKeyboard, runDetail?.canGoForward == true { runDetail?.goForward() }
+                else { appState.goForward() }
             }
                 .keyboardShortcut("]", modifiers: .command)
-                .disabled(!appState.canGoForward && !lanes.canGoForward)
+                .disabled(!appState.canGoForward && !lanes.canGoForward && !(runDetailHasKeyboard && runDetail?.canGoForward == true))
 
             Divider()
 

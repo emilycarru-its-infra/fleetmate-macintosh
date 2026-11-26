@@ -1205,6 +1205,16 @@ class AppState: ObservableObject {
     /// The Enterprise SSO Extension can intercept WKWebView requests (but not plain URLSession),
     /// so this may complete silently where Phase 1 failed.
     func attemptHeadlessTdxSso() {
+        // The background helper never opens a sign-in page. Entra can land
+        // on its passkey step, and passkey discovery makes macOS ask whether
+        // "Inbox Helper" may find devices on the local network — a prompt
+        // nobody can approve ahead of time. The helper waits for the app's
+        // session instead, which it adopts from the shared cache.
+        guard !InboxAgent.isAgentProcess else {
+            dbg.info("[SSO Phase 1.5] Skipped in the inbox helper — waiting for the app's session", category: "tdx-sso")
+            finishTdxSignIn(succeeded: false)
+            return
+        }
         guard ssoViewModel == nil else {
             finishTdxSignIn(succeeded: false)
             return

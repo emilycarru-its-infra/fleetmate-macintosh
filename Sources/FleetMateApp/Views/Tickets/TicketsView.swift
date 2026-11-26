@@ -1105,13 +1105,30 @@ struct TicketsView: View {
                 inbox: appState.ticketInbox,
                 requiresSignIn: appState.requiresTdxSsoLogin,
                 openTicketId: selectedId,
-                onSelect: { item in selectedTicketIds = [item.ticketId] }
+                onSelect: { item in selectedTicketIds = [item.ticketId] },
+                emailPage: inboxEmailPage
             )
             .onAppear { startInbox(scanNow: false) }
         } trailing: {
             detailSidebarView
                 .background(Color(nsColor: .windowBackgroundColor))
         }
+    }
+
+    /// An Inbox comment as the email TDX sent, from the managed templates
+    /// package when it is installed, otherwise the comment on its own.
+    private func inboxEmailPage(_ item: TicketInboxItem) -> (html: String, baseURL: URL?) {
+        let ticket = (detailedTicket?.id == item.ticketId ? detailedTicket : nil)
+            ?? appState.cachedTickets.first { $0.id == item.ticketId }
+        let dateText = item.date?.formatted(date: .abbreviated, time: .shortened) ?? item.createdDate
+        let html = TicketEmailTemplates().commentEmail(
+            item: item,
+            ticket: ticket,
+            appId: appState.config.tdxTicketingAppId,
+            ticketUrl: appState.config.tdxTicketBrowserUrl(item.ticketId),
+            dateText: dateText
+        ) ?? TicketEmailTemplates.plainCommentPage(item)
+        return (html, appState.config.tdxWebRootUrl)
     }
 
     /// Start the inbox once the signed-in person is known. It keeps

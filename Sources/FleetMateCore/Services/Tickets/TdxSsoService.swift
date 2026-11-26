@@ -170,6 +170,9 @@ public class TdxSsoService: NSObject {
     /// - Returns: A configured WKWebView ready for SSO login
     public func createSsoWebView() -> WKWebView {
         let configuration = WKWebViewConfiguration()
+        // No AirPlay: looking for AirPlay receivers makes macOS ask for
+        // local network access, which nothing here needs.
+        configuration.allowsAirPlayForMediaPlayback = false
         
         // Use default (shared) data store to leverage system cookies and SSO
         let dataStore = WKWebsiteDataStore.default()

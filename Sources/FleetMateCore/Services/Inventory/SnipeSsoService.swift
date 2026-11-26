@@ -38,6 +38,9 @@ public class SnipeSsoService: NSObject, ObservableObject, WKNavigationDelegate {
     /// Create and configure a WKWebView for SSO.
     public func createWebView() -> WKWebView {
         let config = WKWebViewConfiguration()
+        // No AirPlay: looking for AirPlay receivers makes macOS ask for
+        // local network access, which nothing here needs.
+        config.allowsAirPlayForMediaPlayback = false
         config.websiteDataStore = .default()
 
         let wv = WKWebView(frame: .zero, configuration: config)

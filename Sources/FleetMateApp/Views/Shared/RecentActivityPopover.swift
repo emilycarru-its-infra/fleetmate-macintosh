@@ -48,7 +48,7 @@ struct RecentActivityToolbarButton: View {
                 isPresented = false
             }
             .environmentObject(appState)
-            .frame(width: 560)
+            .frame(width: 780)
             .frame(minHeight: 320, idealHeight: 560, maxHeight: 640)
         }
     }
@@ -185,6 +185,7 @@ struct ActivityFeedRow: View {
                 .lineLimit(1)
                 .foregroundStyle(.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .help(item.name)
             if let context = item.context, !context.isEmpty {
                 Text(context)
                     .appFont(fixed: 10)

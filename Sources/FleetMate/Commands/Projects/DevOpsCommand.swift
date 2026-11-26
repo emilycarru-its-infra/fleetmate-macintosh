@@ -6,7 +6,7 @@ import Rainbow
 struct DevOpsCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "devops",
-        abstract: "Query Azure DevOps work items",
+        abstract: "Manage Azure DevOps work items, repositories and pipelines",
         subcommands: [
             ItemsSubcommand.self,
             ItemSubcommand.self,
@@ -16,7 +16,9 @@ struct DevOpsCommand: AsyncParsableCommand {
             BoardsSubcommand.self,
             QueriesSubcommand.self,
             FromErrorSubcommand.self,
-            DevOpsTestSubcommand.self
+            DevOpsTestSubcommand.self,
+            DevOpsReposCommand.self,
+            DevOpsPipelinesCommand.self
         ],
         defaultSubcommand: ItemsSubcommand.self
     )

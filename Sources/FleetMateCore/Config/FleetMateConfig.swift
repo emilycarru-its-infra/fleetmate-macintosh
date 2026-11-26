@@ -92,6 +92,18 @@ public struct FleetMateConfig: Codable {
     /// once Snipe-IT's OIDC guard ships and a Snipe API app registration exists.
     public var snipeOidcAudience: String?
     public var snipeAuthMethod: SnipeAuthMethod = .auto
+
+    /// Which inventory system `fleetmate inventory` talks to: `snipe` (default)
+    /// or `cellarum`. One switch moves every inventory operation across; the
+    /// operation names stay the same. YAML `inventory_backend`, profile
+    /// `inventoryBackend`, or FLEETMATE_INVENTORY_BACKEND.
+    public var inventoryBackend: String?
+    /// Cellarum deployment root (with or without `/api/v1`).
+    public var cellarumUrl: String?
+    /// Entra audience for a Cellarum bearer token minted off the operator's sign-in.
+    public var cellarumOidcAudience: String?
+    /// Scoped Cellarum API key, sent as X-API-Key when no audience is set.
+    public var cellarumApiKey: String?
     public var snipeSsoEnabled: Bool = true
 
     // Microsoft Graph settings - shared tenant
@@ -252,6 +264,10 @@ public struct FleetMateConfig: Codable {
         case snipeUrl = "snipe_url"
         case snipeApiKey = "snipe_api_key"
         case snipeOidcAudience = "snipe_oidc_audience"
+        case inventoryBackend = "inventory_backend"
+        case cellarumUrl = "cellarum_url"
+        case cellarumOidcAudience = "cellarum_oidc_audience"
+        case cellarumApiKey = "cellarum_api_key"
         case graphTenantId = "graph_tenant_id"
         case azureTenantId = "azure_tenant_id"
         case azureSubscriptionId = "azure_subscription_id"
@@ -364,6 +380,10 @@ public struct FleetMateConfig: Codable {
         snipeApiKey = nil
         snipeSsoEnabled = false
         snipeOidcAudience = nil
+        inventoryBackend = nil
+        cellarumUrl = nil
+        cellarumOidcAudience = nil
+        cellarumApiKey = nil
         teamsApiUrl = nil
         teamsApiScope = nil
         teamsApiPurpose = nil
@@ -413,6 +433,10 @@ public struct FleetMateConfig: Codable {
         if let v = str("snipe_url"), !v.isEmpty { config.snipeUrl = v }
         if let v = str("snipe_api_key"), !v.isEmpty { config.snipeApiKey = v }
         if let v = str("snipe_oidc_audience"), !v.isEmpty { config.snipeOidcAudience = v }
+        if let v = str("inventory_backend"), !v.isEmpty { config.inventoryBackend = v }
+        if let v = str("cellarum_url"), !v.isEmpty { config.cellarumUrl = v }
+        if let v = str("cellarum_oidc_audience"), !v.isEmpty { config.cellarumOidcAudience = v }
+        if let v = str("cellarum_api_key"), !v.isEmpty { config.cellarumApiKey = v }
         
         // Microsoft Graph - shared tenant
         if let v = str("graph_tenant_id"), !v.isEmpty { config.graphTenantId = v }
@@ -484,6 +508,11 @@ public struct FleetMateConfig: Codable {
         // Apple School / Business Manager credentials in Key Vault
         if let v = (yaml["apple_org_key_vault"] ?? yaml["appleOrgKeyVault"]) as? String { config.appleOrgKeyVault = v }
         if let v = (yaml["apple_org_secret_prefixes"] ?? yaml["appleOrgSecretPrefixes"]) as? [String] { config.appleOrgSecretPrefixes = v }
+
+        // Inventory backend
+        if let v = (yaml["inventory_backend"] ?? yaml["inventoryBackend"]) as? String, !v.isEmpty { config.inventoryBackend = v }
+        if let v = (yaml["cellarum_url"] ?? yaml["cellarumUrl"]) as? String, !v.isEmpty { config.cellarumUrl = v }
+        if let v = (yaml["cellarum_oidc_audience"] ?? yaml["cellarumOidcAudience"]) as? String, !v.isEmpty { config.cellarumOidcAudience = v }
 
         // Teams channel-message search
         if let v = (yaml["teams_api_url"] ?? yaml["teamsApiUrl"]) as? String, !v.isEmpty { config.teamsApiUrl = v }
@@ -688,6 +717,10 @@ public struct FleetMateConfig: Codable {
             config.appleOrgSecretPrefixes = v.split(whereSeparator: { $0 == "\n" || $0 == "," }).map(String.init)
         }
         if let v = get("snipeOidcAudience")  { config.snipeOidcAudience = v }
+        if let v = get("inventoryBackend"), !v.isEmpty { config.inventoryBackend = v }
+        if let v = get("cellarumUrl"), !v.isEmpty { config.cellarumUrl = v }
+        if let v = get("cellarumOidcAudience"), !v.isEmpty { config.cellarumOidcAudience = v }
+        if let v = get("cellarumApiKey"), !v.isEmpty { config.cellarumApiKey = v }
         if let v = get("graphClientId")      { config.graphClientId = v }
         if let v = get("graphClientSecret")  { config.graphClientSecret = v }
         if let v = get("devicesGraphId")     { config.devicesGraphId = v }
@@ -763,6 +796,9 @@ public struct FleetMateConfig: Codable {
         // Snipe-IT
         if let v = env["SNIPE_URL"] { config.snipeUrl = v }
         if let v = env["SNIPE_API_KEY"] { config.snipeApiKey = v }
+        if let v = env["FLEETMATE_INVENTORY_BACKEND"], !v.isEmpty { config.inventoryBackend = v }
+        if let v = env["CELLARUM_API_URL"], !v.isEmpty { config.cellarumUrl = v }
+        if let v = env["CELLARUM_API_KEY"], !v.isEmpty { config.cellarumApiKey = v }
 
         // Microsoft Graph
         if let v = env["GRAPH_TENANT_ID"] { config.graphTenantId = v }
@@ -1030,6 +1066,7 @@ public struct FleetMateConfig: Codable {
         set("teamsDefaultChannels", config.teamsDefaultChannels)
         set("snipeUrl", config.snipeUrl)
         set("snipeApiKey", config.snipeApiKey)
+        set("cellarumApiKey", config.cellarumApiKey)
         set("graphTenantId", config.graphTenantId)
         set("graphClientId", config.graphClientId)
         set("graphClientSecret", config.graphClientSecret)

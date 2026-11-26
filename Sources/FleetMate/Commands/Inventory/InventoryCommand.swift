@@ -98,6 +98,8 @@ struct InventoryArguments: ParsableArguments {
         }
         lines.append("  files")
         lines.append("    [SC] upload")
+        lines.append("  buyouts")
+        lines.append("    [SC] attach (files the document on the buyout's asset)")
         lines.append("")
         lines.append("Also: backend (which system is active), operations [--json] (routes on the active backend),")
         lines.append("and api --method M --api-path P for any endpoint outside the named operations.")
@@ -134,6 +136,10 @@ struct InventoryArguments: ParsableArguments {
 
         if group == "files", name == "upload" {
             try await upload(try InventoryApi(config: config, backend: selected))
+            return
+        }
+        if group == "buyouts", name == "attach" {
+            try await attachToBuyoutAsset(try InventoryApi(config: config, backend: selected))
             return
         }
 
@@ -244,6 +250,38 @@ struct InventoryArguments: ParsableArguments {
         let response = try await api.upload(
             file: URL(fileURLWithPath: path), snipeRecord: names.snipe, cellarumRecord: names.cellarum,
             id: try required(id, "--id"), notes: notes, domain: domain
+        )
+        try printResponse(response)
+    }
+
+    /// A buyout's documents (quote, invoice, agreement) live on its asset, so
+    /// this resolves the buyout to its asset and files the upload there.
+    private func attachToBuyoutAsset(_ api: InventoryApi) async throws {
+        let path = NSString(string: try required(file, "--file")).expandingTildeInPath
+        guard FileManager.default.isReadableFile(atPath: path) else {
+            throw ValidationError("Cannot read \(path).")
+        }
+        let buyoutID = InventoryApi.escape(try required(id, "--id"))
+        let lookup = try await api.send("GET", path: api.backend == .snipe ? "buyouts/\(buyoutID)" : "lease-buyouts/\(buyoutID)")
+        let object = (try? JSONSerialization.jsonObject(with: lookup.data)) as? [String: Any] ?? [:]
+        let buyout = (object["payload"] as? [String: Any]) ?? object
+        func text(_ key: String) -> String? {
+            switch buyout[key] {
+            case let value as String: return value.isEmpty ? nil : value
+            case let value as NSNumber: return value.stringValue
+            default: return nil
+            }
+        }
+        guard let assetID = text(api.backend == .snipe ? "asset_id" : "item_id") else {
+            throw ValidationError("Buyout \(id ?? "") has no asset to attach the file to.")
+        }
+        let holdingDomain = domain ?? text("domain_id")
+        if api.backend == .cellarum, holdingDomain == nil {
+            throw ValidationError("Cellarum needs --domain for a file on an asset.")
+        }
+        let response = try await api.upload(
+            file: URL(fileURLWithPath: path), snipeRecord: "hardware", cellarumRecord: "item",
+            id: assetID, notes: notes, domain: holdingDomain
         )
         try printResponse(response)
     }

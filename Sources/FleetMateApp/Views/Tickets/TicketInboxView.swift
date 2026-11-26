@@ -18,9 +18,8 @@ struct TicketInboxView: View {
     @AppStorage(TicketInboxView.unreadOnlyKey) private var showUnreadOnly = false
     @State private var selectedItemId: Int?
     @State private var emailHeights: [Int: CGFloat] = [:]
-    /// The selected comment whose email was folded away by clicking its row again.
-    @State private var collapsedItemId: Int?
-    @State private var selectedAt = Date.distantPast
+    /// The comment whose email is open under its row, from its chevron.
+    @State private var expandedItemId: Int?
 
     private var items: [TicketInboxItem] {
         let all = inbox.inbox?.sortedItems ?? []
@@ -58,13 +57,18 @@ struct TicketInboxView: View {
         } else {
             List(selection: $selectedItemId) {
                 ForEach(items) { item in
-                    TicketInboxRow(item: item, isRead: inbox.isRead(item))
-                        .tag(item.id)
-                        .contextMenu { rowMenu(item) }
-                        .simultaneousGesture(TapGesture().onEnded { toggleEmail(item) })
+                    TicketInboxRow(
+                        item: item,
+                        isRead: inbox.isRead(item),
+                        showsEmailToggle: emailPage != nil,
+                        isEmailOpen: expandedItemId == item.id,
+                        toggleEmail: { toggleEmail(item) }
+                    )
+                    .tag(item.id)
+                    .contextMenu { rowMenu(item) }
                     // Its own row, outside the selection, so the email keeps
                     // its colours instead of sitting under the blue highlight.
-                    if item.id == selectedItemId, collapsedItemId != item.id, let page = emailPage?(item) {
+                    if item.id == expandedItemId, let page = emailPage?(item) {
                         TicketEmailView(
                             html: page.html,
                             baseURL: page.baseURL,
@@ -86,8 +90,6 @@ struct TicketInboxView: View {
             .listStyle(.inset)
             .animation(.easeInOut(duration: 0.15), value: selectedItemId)
             .onChange(of: selectedItemId) { _, id in
-                collapsedItemId = nil
-                selectedAt = Date()
                 guard let id, let item = items.first(where: { $0.id == id }) else { return }
                 inbox.markTicketOpened(item.ticketId)
                 onSelect(item)
@@ -101,12 +103,11 @@ struct TicketInboxView: View {
         }
     }
 
-    /// A click on the row already open folds its email away, and another
-    /// click opens it again. The click that selects a row only opens it.
+    /// The chevron opens the email under its row; opening the ticket is
+    /// what a click on the row does.
     private func toggleEmail(_ item: TicketInboxItem) {
-        guard selectedItemId == item.id, Date().timeIntervalSince(selectedAt) > 0.3 else { return }
         withAnimation(.easeInOut(duration: 0.15)) {
-            collapsedItemId = collapsedItemId == item.id ? nil : item.id
+            expandedItemId = expandedItemId == item.id ? nil : item.id
         }
     }
 
@@ -159,6 +160,9 @@ struct TicketInboxView: View {
 private struct TicketInboxRow: View {
     let item: TicketInboxItem
     let isRead: Bool
+    var showsEmailToggle = false
+    var isEmailOpen = false
+    var toggleEmail: () -> Void = {}
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -197,17 +201,40 @@ private struct TicketInboxRow: View {
                         .foregroundStyle(.secondary)
                         .fixedSize()
                 }
-                Text(Self.preview(item.body))
-                    .appFont(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
+                HStack(alignment: .top, spacing: 6) {
+                    previewText
+                    if showsEmailToggle {
+                        Spacer(minLength: 4)
+                        Button(action: toggleEmail) {
+                            Image(systemName: "chevron.right")
+                                .rotationEffect(.degrees(isEmailOpen ? 90 : 0))
+                                .frame(width: 16, height: 16)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help(isEmailOpen ? "Hide Email" : "Show Email")
+                        .accessibilityLabel(isEmailOpen ? "Hide Email" : "Show Email")
+                    }
+                }
             }
         }
         .appFont(.body)
         .padding(.vertical, 5)
         .accessibilityElement(children: .combine)
+        .accessibilityAction(named: isEmailOpen ? "Hide Email" : "Show Email") {
+            if showsEmailToggle { toggleEmail() }
+        }
         .accessibilityValue(isRead ? "" : "Unread")
+    }
+
+    private var previewText: some View {
+        Text(Self.preview(item.body))
+            .appFont(.callout)
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Mail's dates: a time today, "Yesterday", a weekday this week, then a date.

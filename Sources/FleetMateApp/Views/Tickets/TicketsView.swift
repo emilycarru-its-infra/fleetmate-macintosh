@@ -204,6 +204,10 @@ struct TicketsView: View {
     @State private var newComment = ""
     @State private var isCommentSectionExpanded = false
     @State private var scrollToCommentToken = 0
+    /// The comment to scroll to once the ticket's activity has loaded, from the Inbox.
+    @State private var focusFeedEntryId: Int?
+    /// The comment just scrolled to, briefly tinted so the eye finds it.
+    @State private var highlightedFeedEntryId: Int?
     @State private var isCommentPrivate = false
     @State private var isAddingComment = false
     /// Files to upload with the next comment.
@@ -1113,7 +1117,10 @@ struct TicketsView: View {
                 inbox: appState.ticketInbox,
                 requiresSignIn: appState.requiresTdxSsoLogin,
                 openTicketId: selectedId,
-                onSelect: { item in selectedTicketIds = [item.ticketId] },
+                onSelect: { item in
+                    selectedTicketIds = [item.ticketId]
+                    focusFeedEntryId = item.id
+                },
                 emailPage: inboxEmailPage
             )
             .onAppear { startInbox(scanNow: false) }
@@ -1650,6 +1657,8 @@ struct TicketsView: View {
                             proxy.scrollTo("addComment", anchor: .top)
                         }
                     }
+                    .onChange(of: ticketFeed) { _, _ in scrollToFocusedComment(proxy) }
+                    .onChange(of: focusFeedEntryId) { _, _ in scrollToFocusedComment(proxy) }
                 }
             }
         } else {
@@ -2696,7 +2705,38 @@ struct TicketsView: View {
         }
     }
 
+    /// Open the Inbox's comment where it sits in the activity. The activity is
+    /// at the end of a lazy stack, so the Add Comment anchor beside it is
+    /// reached first and the comment a moment later, once it is laid out.
+    private func scrollToFocusedComment(_ proxy: ScrollViewProxy) {
+        guard let target = focusFeedEntryId, ticketFeed.contains(where: { $0.id == target }) else { return }
+        focusFeedEntryId = nil
+        if !filteredFeed.contains(where: { $0.id == target }) { feedFilter = .all }
+        proxy.scrollTo("addComment", anchor: .top)
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            withAnimation(.easeInOut(duration: 0.25)) {
+                proxy.scrollTo("feed-\(target)", anchor: .top)
+            }
+            highlightedFeedEntryId = target
+            try? await Task.sleep(for: .seconds(2))
+            if highlightedFeedEntryId == target {
+                withAnimation(.easeOut(duration: 0.6)) { highlightedFeedEntryId = nil }
+            }
+        }
+    }
+
     private func feedEntryRow(_ entry: TdxFeedEntry) -> some View {
+        feedEntryRowContent(entry)
+            .id("feed-\(entry.id ?? 0)")
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.accentColor.opacity(entry.id != nil && entry.id == highlightedFeedEntryId ? 0.15 : 0))
+                    .padding(-4)
+            )
+    }
+
+    private func feedEntryRowContent(_ entry: TdxFeedEntry) -> some View {
         let isComposing = entry.id != nil && entry.id == replyingToEntryId
         return FeedEntryRow(
             entry: entry,

@@ -941,7 +941,7 @@ struct TicketsView: View {
                         ? "line.3.horizontal.decrease.circle.fill"
                         : "line.3.horizontal.decrease.circle")
                 }
-                .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+                .autoClosingPopover(isPresented: $showFilters, arrowEdge: .bottom) {
                     FilterPanelView(filters: filters)
                 }
 
@@ -949,7 +949,7 @@ struct TicketsView: View {
                     Label("Create Ticket", systemImage: "plus")
                 }
                 .help("Create a ticket")
-                .popover(isPresented: $showCreateTicket, arrowEdge: .bottom) {
+                .autoClosingPopover(isPresented: $showCreateTicket, arrowEdge: .bottom) {
                     CreateTicketView(
                         defaultResponsible: appState.tdxMe,
                         onCreated: { ticket in
@@ -1843,7 +1843,7 @@ struct TicketsView: View {
             .help("Choose a different responsible person or group")
             // Only the variant ViewThatFits is showing presents the popover,
             // so it anchors to the Reassign button actually on screen.
-            .popover(isPresented: Binding(
+            .autoClosingPopover(isPresented: Binding(
                 get: { isReassigning && actionsIconOnly == iconOnly },
                 set: { if !$0 { isReassigning = false } }
             ), arrowEdge: .bottom) {

@@ -397,7 +397,7 @@ private struct DevicesContentView: View {
                         ? "line.3.horizontal.decrease.circle.fill"
                         : "line.3.horizontal.decrease.circle")
                 }
-                .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+                .autoClosingPopover(isPresented: $showFilters, arrowEdge: .bottom) {
                     FilterPanelView(filters: filters)
                 }
 
@@ -405,7 +405,7 @@ private struct DevicesContentView: View {
                     Label("Serials", systemImage: serialLookup.isEmpty ? "barcode.viewfinder" : "barcode")
                 }
                 .help("Look up a typed, pasted or imported list of serial numbers")
-                .popover(isPresented: $showSerials, arrowEdge: .bottom) {
+                .autoClosingPopover(isPresented: $showSerials, arrowEdge: .bottom) {
                     SerialLookupView(text: $serialLookupText, serials: $serialLookup, unknownCount: unknownLookupCount)
                         .frame(width: 360, height: 320)
                 }

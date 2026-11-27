@@ -320,7 +320,7 @@ struct AssetsView: View {
                         ? "line.3.horizontal.decrease.circle.fill"
                         : "line.3.horizontal.decrease.circle")
                 }
-                .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+                .autoClosingPopover(isPresented: $showFilters, arrowEdge: .bottom) {
                     FilterPanelView(filters: filters)
                 }
 
@@ -332,7 +332,7 @@ struct AssetsView: View {
                 Button(action: { showColumnPicker.toggle() }) {
                     Label("Columns", systemImage: "tablecells.badge.ellipsis")
                 }
-                .popover(isPresented: $showColumnPicker, arrowEdge: .bottom) {
+                .autoClosingPopover(isPresented: $showColumnPicker, arrowEdge: .bottom) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Columns").appFont(.headline).padding(.bottom, 4)
                         ForEach(AssetSortField.allCases, id: \.self) { field in

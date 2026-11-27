@@ -43,7 +43,7 @@ struct RecentActivityToolbarButton: View {
             }
         }
         .help("Recent activity in \(appState.selectedTab.rawValue)")
-        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+        .autoClosingPopover(isPresented: $isPresented, arrowEdge: .bottom) {
             RecentActivityPopover(tab: appState.selectedTab, development: appState.development) {
                 isPresented = false
             }

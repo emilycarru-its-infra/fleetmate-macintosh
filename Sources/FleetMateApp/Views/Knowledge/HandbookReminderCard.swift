@@ -92,7 +92,7 @@ struct HandbookReminderCard: View {
             Button("Write it up") { draft(item) }
                 .help("Open an agent session with the Handbook skill and this work item")
             Button("Not needed") { reason = ""; notNeededFor = item.id }
-                .popover(isPresented: Binding(get: { notNeededFor == item.id }, set: { if !$0 { notNeededFor = nil } })) {
+                .autoClosingPopover(isPresented: Binding(get: { notNeededFor == item.id }, set: { if !$0 { notNeededFor = nil } })) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Why no Handbook change?").appFont(.headline)
                         TextField("Nothing changed in how it is built or run", text: $reason)

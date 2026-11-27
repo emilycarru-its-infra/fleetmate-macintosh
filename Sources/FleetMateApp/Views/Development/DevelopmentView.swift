@@ -1194,7 +1194,7 @@ private struct DevelopmentContent: View {
                 Label("Inbox", systemImage: model.unreadCount > 0 ? "tray.full" : "tray")
             }
             .help(model.inboxError == nil ? "GitHub notification inbox" : "GitHub inbox needs attention")
-            .popover(isPresented: $model.showInbox, arrowEdge: .bottom) {
+            .autoClosingPopover(isPresented: $model.showInbox, arrowEdge: .bottom) {
                 inboxList.frame(width: 440, height: 520)
             }
 

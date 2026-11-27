@@ -173,7 +173,7 @@ struct GitCommitsPanel: View {
                 }
             }
         }
-        .popover(item: $pendingAction, arrowEdge: .trailing) { action in
+        .autoClosingPopover(item: $pendingAction, arrowEdge: .trailing) { action in
             GitCommitActionSheet(
                 action: action,
                 currentBranch: state.currentBranch,

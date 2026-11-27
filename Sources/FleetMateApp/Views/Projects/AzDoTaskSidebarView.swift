@@ -1082,7 +1082,7 @@ struct AzDoTaskSidebarView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .popover(isPresented: $showLinkCodePopover, arrowEdge: .trailing) {
+                .autoClosingPopover(isPresented: $showLinkCodePopover, arrowEdge: .trailing) {
                     linkCodePopoverContent
                 }
             }
@@ -2086,7 +2086,7 @@ private struct DevOpsCommentBubble: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .help("Add reaction")
-                .popover(isPresented: $showReactionPicker) {
+                .autoClosingPopover(isPresented: $showReactionPicker) {
                     HStack(spacing: 10) {
                         ForEach(reactionEmojis, id: \.type) { item in
                             Button(item.emoji) {

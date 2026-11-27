@@ -89,7 +89,7 @@ struct TicketAttachmentsView: View {
                 }
                 .buttonStyle(.borderless)
                 .help("Preview \(attachment.displayName)")
-                .popover(isPresented: Binding(
+                .autoClosingPopover(isPresented: Binding(
                     get: { preview?.attachmentId == attachment.id },
                     set: { if !$0 { preview = nil } }
                 )) {

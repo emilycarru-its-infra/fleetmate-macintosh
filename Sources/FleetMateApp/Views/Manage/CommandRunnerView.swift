@@ -154,7 +154,7 @@ struct CommandToolbar: View {
             Button { showHistoryPopover = true } label: { Image(systemName: "clock") }
                 .buttonStyle(.borderless)
                 .help("Command history")
-                .popover(isPresented: $showHistoryPopover, arrowEdge: .bottom) {
+                .autoClosingPopover(isPresented: $showHistoryPopover, arrowEdge: .bottom) {
                     CommandHistoryPopover(manage: manage, isPresented: $showHistoryPopover)
                 }
 

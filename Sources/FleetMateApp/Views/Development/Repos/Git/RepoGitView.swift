@@ -107,7 +107,7 @@ struct RepoGitView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .popover(item: $newBranchAction, arrowEdge: .bottom) { action in
+        .autoClosingPopover(item: $newBranchAction, arrowEdge: .bottom) { action in
             GitCommitActionSheet(action: action, currentBranch: state.currentBranch) { request in
                 await state.run(request)
             }
@@ -140,7 +140,7 @@ struct RepoGitView: View {
                 Label("Help", systemImage: "questionmark.circle")
             }
             .help("Show shortcuts (?)")
-            .popover(isPresented: Bindable(state).helpVisible, arrowEdge: .bottom) { GitHelpSheet() }
+            .autoClosingPopover(isPresented: Bindable(state).helpVisible, arrowEdge: .bottom) { GitHelpSheet() }
             Spacer()
             agentsMarker
             Button {

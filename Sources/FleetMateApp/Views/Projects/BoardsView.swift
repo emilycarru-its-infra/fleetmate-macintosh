@@ -438,7 +438,7 @@ struct BoardsView: View {
             }
             .disabled(allTasks.isEmpty && queryRuns.isEmpty)
             .help("Filters")
-            .popover(isPresented: $showFilters, arrowEdge: .bottom) {
+            .autoClosingPopover(isPresented: $showFilters, arrowEdge: .bottom) {
                 projectsFilterPopover
             }
 

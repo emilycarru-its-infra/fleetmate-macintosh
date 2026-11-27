@@ -112,7 +112,7 @@ struct ContentView: View {
                             ElevationShieldLabel()
                         }
                     }
-                    .popover(isPresented: $showAuthPopover, arrowEdge: .bottom) {
+                    .autoClosingPopover(isPresented: $showAuthPopover, arrowEdge: .bottom) {
                         AuthSettingsView()
                             .environmentObject(appState)
                             .frame(width: 480)
@@ -175,6 +175,9 @@ struct ContentView: View {
                 appState.agentSelection = nil
                 writeAgentContext()
             }
+            // The toolbar drops its items in Agents mode, so a popover anchored to
+            // one would be left floating with nothing under it.
+            .onChange(of: inAgentsMode) { _, _ in showAuthPopover = false }
             .onChange(of: appState.agentSelection) { _, _ in writeAgentContext() }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                 terminals.terminateAll()

@@ -113,7 +113,7 @@ struct ReposListView: View {
             Spacer(minLength: 4)
             Button("Review…") { reviewingNewClones = true }
                 .help("Choose which of them to track")
-                .popover(isPresented: $reviewingNewClones, arrowEdge: .bottom) {
+                .autoClosingPopover(isPresented: $reviewingNewClones, arrowEdge: .bottom) {
                     NewClonesReview(model: model) { reviewingNewClones = false }
                 }
         }

@@ -104,7 +104,7 @@ struct PillMenu<Value: Hashable>: View {
         .accessibilityHint("Shows the other choices")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { isPresented.toggle() }
-        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+        .autoClosingPopover(isPresented: $isPresented, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 1) {
                 ForEach(options, id: \.self) { option in
                     Button {

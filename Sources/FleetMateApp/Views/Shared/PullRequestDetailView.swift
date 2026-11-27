@@ -265,7 +265,7 @@ struct PullRequestDetailView: View {
         } message: { verb in
             Text(confirmationMessage(for: verb))
         }
-        .popover(
+        .autoClosingPopover(
             isPresented: Binding(get: { composingVerb != nil }, set: { if !$0 { composingVerb = nil } }),
             arrowEdge: .top
         ) {

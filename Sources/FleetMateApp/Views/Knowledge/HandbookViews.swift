@@ -68,31 +68,41 @@ struct HandbookReaderHost: ViewModifier {
 }
 
 /// "Handbook" card: the pages about the thing on screen, found from the
-/// words that describe it. Hidden when nothing relevant turns up.
+/// words that describe it. Hidden when nothing relevant turns up. Collapses
+/// from its header; open by default, and the choice is remembered.
 struct HandbookRelatedSection: View {
     @ObservedObject var knowledge: KnowledgeStore
     let terms: [String]
+    @AppStorage("handbookRelatedExpanded") private var isExpanded = true
 
     private var pages: [HandbookPage] { knowledge.handbook.related(to: terms, limit: 5) }
 
     var body: some View {
         let pages = self.pages
         if !pages.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
+            DisclosureGroup(isExpanded: $isExpanded) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(pages) { page in
+                        Button { knowledge.openPage = page } label: {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(page.title).appFont(.callout, weight: .medium)
+                                Text(page.breadcrumb).appFont(.caption2).foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.top, 6)
+            } label: {
                 Label("Handbook", systemImage: "book.closed")
                     .appFont(.headline)
-                ForEach(pages) { page in
-                    Button { knowledge.openPage = page } label: {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(page.title).appFont(.callout, weight: .medium)
-                            Text(page.breadcrumb).appFont(.caption2).foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { withAnimation { isExpanded.toggle() } }
             }
+            .help(isExpanded ? "Collapse the Handbook pages" : "Expand the Handbook pages")
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))

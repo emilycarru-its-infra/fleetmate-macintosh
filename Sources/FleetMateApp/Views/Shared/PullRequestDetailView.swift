@@ -679,8 +679,8 @@ struct PullRequestDetailView: View {
         }
     }
     private func overviewSection(_ detail: PullRequestDetail) -> some View {
+        // No header: the description card's top lines up with the Handbook card beside it.
         VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("Overview")
             if let body = detail.body, !body.isEmpty {
                 GroupBox {
                     // Prose stops at a readable line length on a wide lightbox.
@@ -710,17 +710,15 @@ struct PullRequestDetailView: View {
                 }
             }
             if !system.isEmpty {
-                DisclosureGroup("\(system.count) status updates") {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(system) { comment in
-                            Text(comment.body.strippedOfHtml)
-                                .appFont(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(system) { comment in
+                        Text(comment.body.strippedOfHtml)
+                            .appFont(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .appFont(.caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }

@@ -292,6 +292,8 @@ final class AgentTerminalStore: ObservableObject {
         if program == "codex", updater.isEnabled { line = line.replacingOccurrences(of: "codex", with: "codex -c check_for_update_on_startup=false", options: .anchored) }
         var backend = CommandLaneBackend(id: id, displayName: name, command: line, returnsToShell: !command.isEmpty)
         backend.extraDirectories = [workspace.root.path, brief.sessionDirectory.path]
+        // Every hook Codex finds comes from the owner's own repos, so a lane starts without the review prompt.
+        backend.codexBypassesHookTrust = true
         return backend
     }
 

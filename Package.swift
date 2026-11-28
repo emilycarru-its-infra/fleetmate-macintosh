@@ -30,7 +30,7 @@ let package = Package(
         // Pinned to a commit on AgentsMate's main; agentsmate-sync.yml moves
         // this revision whenever AgentsMate's main moves and FleetMate still
         // builds and tests.
-        .package(url: "https://github.com/focusedsystems/agentsmate.git", revision: "9062557a206c0bb35ddf32ba75a1b365b04c40f6"),
+        .package(url: "https://github.com/focusedsystems/agentsmate.git", revision: "238f27e74ea34b759f2ff84c58c1d2fc8d212884"),
         // The run view: stages, jobs and steps with the selected step's log,
         // and the approval card. Pinned to a commit on DevMate's main.
         .package(url: "https://github.com/focusedsystems/devmate.git", revision: "0af89ac68c2ae66b904659d1ad51c7418fca6965"),
